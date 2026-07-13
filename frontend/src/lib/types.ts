@@ -289,6 +289,235 @@ export type RoomChatProjection = {
   };
 };
 
+export type RoomCodexCapabilityId =
+  | "goal_set"
+  | "goal_pause"
+  | "goal_resume"
+  | "goal_get"
+  | "goal_clear"
+  | "settings_update"
+  | "models_list"
+  | "console_turn_start"
+  | "turn_steer"
+  | "turn_interrupt"
+  | "compact_start"
+  | "review_start";
+
+export type RoomCodexGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export type RoomCodexGoal = {
+  objective: string;
+  status: RoomCodexGoalStatus;
+  token_budget: number | null;
+  tokens_used: number | null;
+  time_used_seconds: number | null;
+};
+
+export type RoomCodexNativeSnapshot = {
+  schema_version: "room_codex_native_snapshot/v1";
+  source: "codex_app_server";
+  goal: RoomCodexGoal | null;
+  settings: { model: string | null; effort: string | null };
+  active_turn: boolean;
+  guards: {
+    session: string;
+    goal: string | null;
+    settings: string | null;
+    turn: string | null;
+  };
+};
+
+export type RoomCodexModel = {
+  id: string;
+  model: string;
+  is_default: boolean;
+  default_effort: string | null;
+  efforts: string[];
+};
+
+export type RoomCodexNativeCapability = {
+  capability_id: RoomCodexCapabilityId;
+  native_source: string;
+  availability: "available" | "runtime_unsupported" | "policy_disabled" | "session_conflict";
+  disabled_reason: string | null;
+  session_guard: string;
+};
+
+export type RoomCodexNativeCapabilities = {
+  schema_version: "room_codex_native_capabilities/v1";
+  source: "codex_app_server";
+  capabilities: RoomCodexNativeCapability[];
+  models: RoomCodexModel[];
+};
+
+export type RoomCodexActionDescriptor = {
+  capability_id: RoomCodexCapabilityId;
+  available: boolean;
+  disabled_reason: string | null;
+  method: "POST";
+  href: string;
+  expected_session_guard: string;
+  expected_goal_guard: string | null;
+  expected_settings_guard: string | null;
+  expected_turn_guard: string | null;
+  confirmation_required: boolean;
+};
+
+export type RoomCodexBridgeAction = {
+  action_id: string;
+  control_seq: number;
+  client_action_id: string | null;
+  capability_id: RoomCodexCapabilityId;
+  status: string | null;
+  reason_code: string | null;
+  requested_at: string | null;
+  completed_at: string | null;
+  updated_at: string | null;
+};
+
+export type RoomCodexParticipantProjection = {
+  participant: {
+    participant_id: string;
+    role: string;
+    display_name: string;
+    status: "active" | "stopped";
+  };
+  native_snapshot: {
+    source: "codex_app_server_projection_cache";
+    observed_at: string | null;
+    available: boolean;
+    value: RoomCodexNativeSnapshot | null;
+  };
+  capabilities: {
+    source: "codex_app_server_projection_cache";
+    observed_at: string | null;
+    available: boolean;
+    value: RoomCodexNativeCapabilities | null;
+    actions: RoomCodexActionDescriptor[];
+  };
+  room_bridge: {
+    source: "chat.db:room_codex_bridge";
+    observed_at: string | null;
+    hold: {
+      state: string | null;
+      hold_revision: number;
+      session_guard: string | null;
+      goal_guard: string | null;
+      settings_guard: string | null;
+      active_turn_guard: string | null;
+      reason_code: string | null;
+      observed_at: string | null;
+      updated_at: string | null;
+    } | null;
+    queue: {
+      unresolved_count: number;
+      active_attempt_count: number;
+      root_blocking: boolean;
+    };
+    actions: RoomCodexBridgeAction[];
+  };
+  history_partial: boolean;
+  omitted_event_count: number;
+};
+
+export type RoomCodexTokenUsage = {
+  cached_input_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+};
+
+export type RoomCodexNativeEvent = {
+  event_seq: number;
+  participant_seq: number;
+  participant_id: string | null;
+  observed_at: string | null;
+  kind: string | null;
+  status?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  item_type?: string | null;
+  usage?: {
+    last: RoomCodexTokenUsage;
+    total: RoomCodexTokenUsage;
+    model_context_window: number | null;
+  };
+  status_counts?: Record<string, number>;
+  step_count?: number;
+  file_count?: number;
+  addition_count?: number;
+  deletion_count?: number;
+  duration_ms?: number;
+  exit_code?: number;
+  truncated?: boolean;
+  text?: string;
+  steps?: Array<{ step: string; status: string }>;
+  explanation?: string | null;
+};
+
+export type RoomCodexProjection = {
+  schema_version: "room_codex_projection/v1";
+  conversation_id: string;
+  generated_at: string;
+  projection_only: true;
+  proof_boundary: "projection_not_codex_app_server_or_room_authority";
+  participants: RoomCodexParticipantProjection[];
+  native_events: {
+    source: "codex_app_server_projection_cache";
+    projection_available: boolean;
+    reason_code: string | null;
+    event_seq_domain: "room_codex_projection_cache";
+    items: RoomCodexNativeEvent[];
+    latest_event_seq: number;
+    has_older: boolean;
+    has_newer: boolean;
+    next_before_event_seq: number | null;
+    next_after_event_seq: number | null;
+  };
+};
+
+export type RoomCodexSafeRequestByCapability = {
+  goal_set: { objective: string; token_budget: number };
+  goal_pause: Record<string, never>;
+  goal_resume: Record<string, never>;
+  goal_get: Record<string, never>;
+  goal_clear: Record<string, never>;
+  settings_update: { model?: string; effort?: string };
+  models_list: Record<string, never>;
+  console_turn_start: { text: string; mode: "default" | "plan" };
+  turn_steer: { text: string };
+  turn_interrupt: Record<string, never>;
+  compact_start: Record<string, never>;
+  review_start: { target: "uncommitted" | "base" | "commit" };
+};
+
+export type RoomCodexActionInput = {
+  [K in RoomCodexCapabilityId]: {
+    capability_id: K;
+    request: RoomCodexSafeRequestByCapability[K];
+  };
+}[RoomCodexCapabilityId];
+
+export type RoomCodexActionResult = {
+  action_id: string | null;
+  client_action_id: string;
+  status: string;
+  participant_id: string;
+  conversation_id: string | null;
+  control_seq: number | null;
+  capability_id: RoomCodexCapabilityId | null;
+  reason_code: string | null;
+  updated_at: string | null;
+  proof_boundary: "operator_action_receipt_not_codex_or_room_authority";
+};
+
 export type RoomMessageReceipt = {
   client_request_id: string;
   activity_id?: string | null;

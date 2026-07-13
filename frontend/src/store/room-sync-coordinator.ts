@@ -1,4 +1,4 @@
-export const ROOM_SYNC_CHANNELS = ["room", "operations", "execution", "memory"] as const;
+export const ROOM_SYNC_CHANNELS = ["room", "operations", "execution", "memory", "codex"] as const;
 
 export type RoomSyncChannel = (typeof ROOM_SYNC_CHANNELS)[number];
 

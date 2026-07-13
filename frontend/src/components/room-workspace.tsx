@@ -6,7 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent
+  type KeyboardEvent,
+  type ReactNode
 } from "react";
 
 import {
@@ -51,6 +52,7 @@ import { RoomMessage, RoomPendingBubble } from "./room-message";
 import { RoomInspector as RoomInspectorShell } from "./room-inspector";
 import { RoomSidebar } from "./room-sidebar";
 import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
+import { AgentConsole } from "./agent-console";
 
 type RoomWorkspaceProps = {
   onNavigateRoom: (roomId: string) => void;
@@ -962,6 +964,7 @@ function memoryKindLabel(kind: RoomMemoryCandidate["kind"]): string {
 }
 
 function RoomInspector({
+  agentConsoleSection,
   executionCache,
   executionActionPending,
   executionActionError,
@@ -996,6 +999,7 @@ function RoomInspector({
   onResolveMemoryCandidate,
   onRebuildMemoryIndex
 }: {
+  agentConsoleSection: ReactNode;
   executionCache: RoomExecutionCache | null;
   executionActionPending: boolean;
   executionActionError: { message: string; status: number } | null;
@@ -1056,6 +1060,7 @@ function RoomInspector({
 
   return (
     <RoomInspectorShell
+      agentConsoleSection={agentConsoleSection}
       executionSection={<RoomExecutionInspector
         actionError={executionActionError}
         actionPending={executionActionPending}
@@ -1456,6 +1461,13 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   const memoryCache = store.selectedRoomId
     ? store.memoryByRoom[store.selectedRoomId] ?? null
     : null;
+  const codexCache = store.selectedRoomId
+    ? store.codexByRoom[store.selectedRoomId] ?? null
+    : null;
+  const codexParticipants = codexCache?.projection?.participants ?? [];
+  const selectedCodexParticipant = codexParticipants.find(
+    (item) => item.participant.participant_id === codexCache?.selectedParticipantId
+  ) ?? codexParticipants[0] ?? null;
   const projection = cache?.projection ?? null;
   const participants = projection?.participants ?? selectedRoom?.members ?? [];
   const activeTurns = projection?.turns.filter((turn) => turn.state !== "settled") ?? [];
@@ -1737,6 +1749,54 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             />
           ) : null}
           <RoomInspector
+            agentConsoleSection={(
+              <section className="room-agent-console-section" aria-label="Codex Agent Console">
+                <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
+                  {codexParticipants.map((item) => (
+                    <button
+                      aria-selected={item.participant.participant_id === selectedCodexParticipant?.participant.participant_id}
+                      key={item.participant.participant_id}
+                      onClick={() => store.selectCodexParticipant(item.participant.participant_id)}
+                      role="tab"
+                      type="button"
+                    >{item.participant.display_name}</button>
+                  ))}
+                </div>
+                {selectedCodexParticipant && codexCache?.projection ? (
+                  <AgentConsole
+                    error={codexCache.actionErrors[selectedCodexParticipant.participant.participant_id]?.message
+                      ?? codexCache.error?.message
+                      ?? null}
+                    key={selectedCodexParticipant.participant.participant_id}
+                    localMode={store.getCodexConsolePreference(selectedCodexParticipant.participant.participant_id)}
+                    nativeEvents={codexCache.projection.native_events.items}
+                    onAction={(capabilityId, safeRequest, descriptor, confirmed) =>
+                      store.submitCodexAction(
+                        selectedCodexParticipant.participant.participant_id,
+                        capabilityId,
+                        safeRequest,
+                        descriptor,
+                        confirmed
+                      )}
+                    onPreferenceChange={(mode) => {
+                      store.setCodexConsolePreference(
+                        selectedCodexParticipant.participant.participant_id,
+                        mode
+                      );
+                    }}
+                    onRefresh={() => void store.refreshCodexAgents()}
+                    participant={selectedCodexParticipant}
+                    pending={Boolean(codexCache.actionPending[selectedCodexParticipant.participant.participant_id])}
+                  />
+                ) : (
+                  <div className="agent-console agent-console--empty" role="status">
+                    <h3>Agent Console</h3>
+                    <p>{codexCache?.loading ? "正在读取 Codex 原生状态…" : "当前房间没有可用的 Codex Agent 投影。"}</p>
+                    {codexCache?.error ? <button onClick={() => void store.refreshCodexAgents()} type="button">重试</button> : null}
+                  </div>
+                )}
+              </section>
+            )}
             controlPending={cache?.controlPending ?? null}
             executionActionError={store.executionActionError}
             executionActionPending={Boolean(store.executionActionPending)}
