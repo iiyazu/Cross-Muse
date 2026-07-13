@@ -3,6 +3,11 @@ import type {
   FrontendEventsResponse,
   JsonRecord,
   RoomChatProjection,
+  RoomCodexActionDescriptor,
+  RoomCodexActionResult,
+  RoomCodexCapabilityId,
+  RoomCodexProjection,
+  RoomCodexSafeRequestByCapability,
   RoomControlActionDescriptor,
   RoomControlResult,
   RoomExecutionActionResult,
@@ -184,6 +189,111 @@ export async function fetchRoomMemory(
     `${chatApiBaseUrl(options)}/conversations/${encodeURIComponent(conversationId)}/memory`,
     { method: "GET", cache: "no-store" },
     options
+  );
+}
+
+export async function fetchRoomCodexAgents(
+  conversationId: string,
+  options: ApiClientOptions & {
+    limit?: number;
+    beforeEventSeq?: number;
+    afterEventSeq?: number;
+  } = {}
+): Promise<RoomCodexProjection> {
+  if (options.beforeEventSeq !== undefined && options.afterEventSeq !== undefined) {
+    throw new XmuseApiError({
+      code: "room_codex_projection_cursor_conflict",
+      message: "Codex event cursors cannot be used in both directions",
+      retryable: false,
+      status: 400
+    });
+  }
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(100, options.limit ?? 100)))
+  });
+  if (options.beforeEventSeq !== undefined) {
+    params.set("before_event_seq", String(Math.max(1, options.beforeEventSeq)));
+  }
+  if (options.afterEventSeq !== undefined) {
+    params.set("after_event_seq", String(Math.max(0, options.afterEventSeq)));
+  }
+  const projection = await fetchJson<RoomCodexProjection>(
+    `${chatApiBaseUrl(options)}/conversations/${encodeURIComponent(
+      conversationId
+    )}/codex-agents?${params.toString()}`,
+    { method: "GET", cache: "no-store" },
+    options
+  );
+  if (projection.schema_version !== "room_codex_projection/v1") {
+    throw new XmuseApiError({
+      code: "room_codex_projection_schema_unsupported",
+      message: "This Codex Agent projection version is not supported",
+      retryable: false,
+      status: 422
+    });
+  }
+  return projection;
+}
+
+const OPAQUE_CODEX_GUARD = /^sha256:[0-9a-f]{64}$/;
+
+function validCodexGuard(value: string | null, required = false): boolean {
+  return value === null ? !required : OPAQUE_CODEX_GUARD.test(value);
+}
+
+export async function submitRoomCodexAction<K extends RoomCodexCapabilityId>(
+  participantId: string,
+  capabilityId: K,
+  request: RoomCodexSafeRequestByCapability[K],
+  descriptor: RoomCodexActionDescriptor,
+  options: ApiClientOptions & {
+    clientActionId?: string;
+    confirmedPendingObservations?: boolean;
+  } = {}
+): Promise<RoomCodexActionResult> {
+  const expectedHref = `/api/chat/operator/room-participants/${encodeURIComponent(
+    participantId
+  )}/codex-actions`;
+  const confirmation = options.confirmedPendingObservations === true;
+  const guardsValid =
+    validCodexGuard(descriptor.expected_session_guard, true) &&
+    validCodexGuard(descriptor.expected_goal_guard) &&
+    validCodexGuard(descriptor.expected_settings_guard) &&
+    validCodexGuard(descriptor.expected_turn_guard);
+  if (
+    !descriptor.available ||
+    descriptor.method !== "POST" ||
+    descriptor.href !== expectedHref ||
+    descriptor.capability_id !== capabilityId ||
+    !guardsValid ||
+    (descriptor.confirmation_required && !confirmation)
+  ) {
+    throw new XmuseApiError({
+      code: "room_codex_action_descriptor_invalid",
+      message: "Native Codex action is unavailable or its projection guard is invalid",
+      retryable: false,
+      status: 400
+    });
+  }
+  return fetchJson<RoomCodexActionResult>(
+    `/api/room-participants/${encodeURIComponent(participantId)}/codex-actions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_action_id: options.clientActionId ?? `ui_codex_action_${crypto.randomUUID()}`,
+        capability_id: capabilityId,
+        request,
+        expected_session_guard: descriptor.expected_session_guard,
+        expected_goal_guard: descriptor.expected_goal_guard,
+        expected_settings_guard: descriptor.expected_settings_guard,
+        expected_turn_guard: descriptor.expected_turn_guard,
+        confirmed_pending_observations: confirmation
+      }),
+      cache: "no-store",
+      credentials: "same-origin"
+    },
+    { ...options, timeoutMs: options.timeoutMs ?? 30_000 }
   );
 }
 

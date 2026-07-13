@@ -6,7 +6,7 @@ import {
 } from "./room-sync-coordinator";
 
 describe("room sync coordinator", () => {
-  it("owns four independent timers and rejects stale epochs", async () => {
+  it("owns independent domain timers and rejects stale epochs", async () => {
     vi.useFakeTimers();
     const runs = vi.fn();
     const coordinator = createRoomSyncCoordinator();
@@ -26,7 +26,8 @@ describe("room sync coordinator", () => {
     expect(runs.mock.calls.map(([channel]) => channel)).toEqual([
       "operations",
       "execution",
-      "memory"
+      "memory",
+      "codex"
     ]);
     await vi.advanceTimersByTimeAsync(10);
     expect(runs).toHaveBeenLastCalledWith("room");

@@ -41,7 +41,10 @@ async function installRoomFixture(
   let executionRunRevision = 0;
   let memoryCandidatePending = true;
   let memoryRebuildPending = false;
+  let codexGoalStatus: string | null = null;
+  let codexActionCount = 0;
   let roomSeq = 2;
+  const codexGuard = `sha256:${"a".repeat(64)}`;
   const configuredGateProfile = {
     schema_version: "room_execution_gate_profile/v1",
     profile_id: "xmuse-monorepo/v2",
@@ -144,6 +147,72 @@ async function installRoomFixture(
     const url = new URL(request.url());
     if (request.method() === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    if (url.pathname === "/api/chat/conversations/conv-1/codex-agents") {
+      const participant = (id: string, name: string) => ({
+        participant: { participant_id: id, role: id === "part-builder" ? "builder" : "reviewer", display_name: name, status: "active" },
+        native_snapshot: {
+          source: "codex_app_server_projection_cache",
+          observed_at: "2026-07-10T10:00:00Z",
+          available: true,
+          value: {
+            schema_version: "room_codex_native_snapshot/v1",
+            source: "codex_app_server",
+            goal: codexGoalStatus ? { objective: "完成原生控制验收", status: codexGoalStatus, token_budget: 100000, tokens_used: 2400, time_used_seconds: 18 } : null,
+            settings: { model: "gpt-5.6-terra", effort: "medium" },
+            active_turn: false,
+            guards: { session: codexGuard, goal: codexGuard, settings: codexGuard, turn: null }
+          }
+        },
+        capabilities: {
+          source: "codex_app_server_projection_cache",
+          observed_at: "2026-07-10T10:00:00Z",
+          available: true,
+          value: {
+            schema_version: "room_codex_native_capabilities/v1",
+            source: "codex_app_server",
+            capabilities: ["goal_set", "goal_pause", "goal_resume", "goal_get", "goal_clear", "settings_update", "models_list", "console_turn_start", "turn_steer", "turn_interrupt", "compact_start", "review_start"].map((capability_id) => ({
+              capability_id,
+              native_source: "fixture/native",
+              availability: "available",
+              disabled_reason: null,
+              session_guard: codexGuard
+            })),
+            models: [{ id: "gpt-5.6-terra", model: "gpt-5.6-terra", is_default: true, default_effort: "medium", efforts: ["medium", "high", "max"] }]
+          },
+          actions: ["goal_set", "goal_pause", "goal_resume", "goal_get", "goal_clear", "settings_update", "models_list", "console_turn_start", "turn_steer", "turn_interrupt", "compact_start", "review_start"].map((capability_id) => ({
+            capability_id,
+            available: capability_id === "goal_set" ? !codexGoalStatus : capability_id === "goal_pause" ? codexGoalStatus === "active" : capability_id === "goal_resume" ? codexGoalStatus === "paused" : true,
+            disabled_reason: null,
+            method: "POST",
+            href: `/api/chat/operator/room-participants/${id}/codex-actions`,
+            expected_session_guard: codexGuard,
+            expected_goal_guard: codexGuard,
+            expected_settings_guard: codexGuard,
+            expected_turn_guard: null,
+            confirmation_required: capability_id === "goal_set"
+          }))
+        },
+        room_bridge: {
+          source: "chat.db:room_codex_bridge",
+          observed_at: "2026-07-10T10:00:00Z",
+          hold: { state: codexGoalStatus ? "goal_active" : "accepting", hold_revision: codexActionCount, session_guard: codexGuard, goal_guard: codexGuard, settings_guard: codexGuard, active_turn_guard: null, reason_code: null, observed_at: "2026-07-10T10:00:00Z", updated_at: "2026-07-10T10:00:00Z" },
+          queue: { unresolved_count: id === "part-builder" ? 1 : 0, active_attempt_count: 0, root_blocking: Boolean(codexGoalStatus && id === "part-builder") },
+          actions: codexActionCount ? [{ action_id: "codex-action-1", control_seq: 1, client_action_id: "fixture", capability_id: "goal_set", status: "applied", reason_code: null, requested_at: "2026-07-10T10:00:00Z", completed_at: "2026-07-10T10:00:01Z", updated_at: "2026-07-10T10:00:01Z" }] : []
+        },
+        history_partial: true,
+        omitted_event_count: 2
+      });
+      await json(route, {
+        schema_version: "room_codex_projection/v1",
+        conversation_id: "conv-1",
+        generated_at: "2026-07-10T10:00:00Z",
+        projection_only: true,
+        proof_boundary: "projection_not_codex_app_server_or_room_authority",
+        participants: [participant("part-builder", "Builder"), participant("part-reviewer", "Reviewer")],
+        native_events: { source: "codex_app_server_projection_cache", projection_available: true, reason_code: null, event_seq_domain: "room_codex_projection_cache", items: [{ event_seq: 1, participant_seq: 1, participant_id: "part-builder", observed_at: "2026-07-10T10:00:00Z", kind: "plan_updated", step_count: 2, steps: [{ step: "核验契约", status: "completed" }, { step: "完成验收", status: "in_progress" }] }], latest_event_seq: 1, has_older: false, has_newer: false, next_before_event_seq: null, next_after_event_seq: null }
+      });
       return;
     }
     if (url.pathname === "/api/chat/runtime/operations") {
@@ -705,6 +774,17 @@ async function installRoomFixture(
     cancelled = true;
     await json(route, { action_id: "cancel-1", status: "succeeded", event_cursor: 11 });
   });
+  await page.route("**/api/room-participants/*/codex-actions", async (route) => {
+    const payload = route.request().postDataJSON() as { capability_id: string; confirmed_pending_observations: boolean };
+    if (payload.capability_id === "goal_set") {
+      expect(payload.confirmed_pending_observations).toBe(true);
+      codexGoalStatus = "active";
+    } else if (payload.capability_id === "goal_pause") codexGoalStatus = "paused";
+    else if (payload.capability_id === "goal_resume") codexGoalStatus = "active";
+    else if (payload.capability_id === "goal_clear") codexGoalStatus = null;
+    codexActionCount += 1;
+    await json(route, { action_id: `codex-action-${codexActionCount}`, client_action_id: "fixture", status: "requested", participant_id: "part-builder", conversation_id: "conv-1", control_seq: codexActionCount, capability_id: payload.capability_id, reason_code: null, updated_at: "2026-07-10T10:00:01Z", proof_boundary: "operator_action_receipt_not_codex_or_room_authority" });
+  });
   await page.route("**/api/room-observations/obs-1/retry", async (route) => {
     cancelled = false;
     await json(route, { action_id: "retry-1", status: "succeeded", event_cursor: 12 });
@@ -845,6 +925,37 @@ test("all active turn frontiers remain discoverable in the inspector", async ({ 
   await expect(inspector.getByRole("region", { name: "当前 frontier Skill" }).first()).toContainText("上下文已提交");
   await expect(inspector.getByRole("region", { name: "最新 outcome Skill" })).toContainText("evidence-review");
   await expect(page.getByRole("log", { name: "房间消息" })).not.toContainText("Skill 已选择");
+  expect(await inspector.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+});
+
+test("Agent Console renders discovered native capabilities and guarded Goal state", async ({ page }) => {
+  await installRoomFixture(page);
+  await page.goto("/rooms/conv-1");
+  await page.getByRole("button", { name: "成员与状态" }).click();
+  const inspector = page.locator(".room-inspector");
+  const console = inspector.getByRole("region", { name: "Codex Agent Console" });
+  await expect(console.getByRole("tab", { name: "Builder" })).toHaveAttribute("aria-selected", "true");
+  await expect(console).toContainText("Codex 原生状态");
+  await expect(console).toContainText("xmuse Room Bridge");
+  await console.getByRole("button", { name: /计划更新/ }).click();
+  const detail = page.getByRole("dialog", { name: "Codex 原生事件详情" });
+  await expect(detail).toContainText("核验契约");
+  await detail.getByRole("button", { name: "关闭" }).click();
+
+  const input = console.getByLabel("给 Builder 的 Console 输入");
+  await input.fill("/goal 完成原生控制验收");
+  await input.press("Enter");
+  const confirmation = page.getByRole("alertdialog", { name: "启动新的 Codex Goal？" });
+  await expect(confirmation).toContainText("待处理的 Room observation");
+  await confirmation.getByRole("button", { name: "确认启动 Goal" }).click();
+  await expect(console).toContainText("active");
+  await expect(console).toContainText("其他 Agent 可完成根回应；后续同轮跟进正在等待此 Agent");
+
+  await console.getByRole("tab", { name: "Reviewer" }).click();
+  await expect(console.getByRole("heading", { name: "Reviewer" })).toBeVisible();
+  await expect(console.getByLabel("Codex 模型")).toHaveValue("gpt-5.6-terra");
+  await console.getByLabel("Console 默认模式").selectOption("plan");
+  await expect(console).toContainText("Plan（仅本机偏好）");
   expect(await inspector.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 });
 

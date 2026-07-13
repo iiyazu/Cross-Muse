@@ -9,6 +9,7 @@ import {
   describeError,
   fetchEvents,
   fetchRoomMemory,
+  fetchRoomCodexAgents,
   fetchRoomOperations,
   fetchRoomExecutionCandidate,
   fetchRoomExecutions,
@@ -20,6 +21,7 @@ import {
   resolveRoomMemoryCandidate,
   sendThreadMessage,
   submitRoomObservationControl,
+  submitRoomCodexAction,
   updateRoomExecutionPolicy
 } from "@/lib/api";
 import {
@@ -30,6 +32,11 @@ import {
 } from "@/lib/room-view";
 import type {
   RoomChatProjection,
+  RoomCodexActionDescriptor,
+  RoomCodexActionResult,
+  RoomCodexCapabilityId,
+  RoomCodexProjection,
+  RoomCodexSafeRequestByCapability,
   RoomControlActionDescriptor,
   RoomExecutionCancelDescriptor,
   RoomExecutionCandidateProjection,
@@ -73,6 +80,11 @@ import {
 } from "@/store/room-persistence";
 import type { ScrollAnchor } from "@/store/room-persistence";
 import { createRoomSyncCoordinator } from "@/store/room-sync-coordinator";
+import {
+  persistCodexConsolePreference,
+  readCodexConsolePreference
+} from "@/store/codex-console-preferences";
+import type { CodexConsoleTurnMode } from "@/store/codex-console-preferences";
 
 export type { ScrollAnchor } from "@/store/room-persistence";
 
@@ -124,6 +136,18 @@ export type RoomMemoryCache = {
   error: XmuseApiErrorShape | null;
 };
 
+export type RoomCodexCache = {
+  projection: RoomCodexProjection | null;
+  selectedParticipantId: string | null;
+  loading: boolean;
+  requestGeneration: number;
+  consecutiveFailures: number;
+  lastSyncedAt: number;
+  error: XmuseApiErrorShape | null;
+  actionPending: Record<string, { capabilityId: string; clientActionId: string }>;
+  actionErrors: Record<string, XmuseApiErrorShape | null>;
+};
+
 type RoomState = {
   rooms: RoomSummary[];
   roomsById: Record<string, RoomCache>;
@@ -146,6 +170,8 @@ type RoomState = {
   operationsConsecutiveFailures: number;
   executionsByRoom: Record<string, RoomExecutionCache>;
   memoryByRoom: Record<string, RoomMemoryCache>;
+  codexByRoom: Record<string, RoomCodexCache>;
+  codexPreferenceRevision: number;
   executionActionPending: {
     kind: "policy" | "execute" | "reject" | "cancel";
     targetId: string;
@@ -183,6 +209,17 @@ type RoomState = {
   refreshOperations: () => Promise<void>;
   refreshExecutions: (roomId?: string, candidateId?: string | null) => Promise<void>;
   refreshMemory: (roomId?: string) => Promise<void>;
+  refreshCodexAgents: (roomId?: string) => Promise<void>;
+  selectCodexParticipant: (participantId: string | null, roomId?: string) => void;
+  submitCodexAction: (
+    participantId: string,
+    capabilityId: RoomCodexCapabilityId,
+    request: RoomCodexSafeRequestByCapability[RoomCodexCapabilityId],
+    descriptor: RoomCodexActionDescriptor,
+    confirmedPendingObservations?: boolean
+  ) => Promise<RoomCodexActionResult | null>;
+  getCodexConsolePreference: (participantId: string) => CodexConsoleTurnMode;
+  setCodexConsolePreference: (participantId: string, mode: CodexConsoleTurnMode) => void;
   resolveMemoryCandidate: (
     candidateId: string,
     decision: "approve" | "reject",
@@ -217,6 +254,7 @@ type RoomState = {
   startOperationsSync: () => void;
   startExecutionSync: () => void;
   startMemorySync: () => void;
+  startCodexSync: () => void;
   stopSync: () => void;
 };
 
@@ -237,6 +275,10 @@ const executionControllers = new Map<string, AbortController>();
 const executionRequests = new Map<string, Promise<void>>();
 const memoryControllers = new Map<string, AbortController>();
 const memoryRequests = new Map<string, Promise<void>>();
+const codexControllers = new Map<string, AbortController>();
+const codexRequests = new Map<string, Promise<void>>();
+let codexFocusHandler: (() => void) | null = null;
+const CODEX_ACTION_STORAGE_KEY = "xmuse.codex-action-ids.v1";
 
 function apiOptions(signal?: AbortSignal) {
   return { chatApiBaseUrl, signal };
@@ -283,6 +325,20 @@ function emptyMemoryCache(): RoomMemoryCache {
     consecutiveFailures: 0,
     lastSyncedAt: 0,
     error: null
+  };
+}
+
+function emptyCodexCache(): RoomCodexCache {
+  return {
+    projection: null,
+    selectedParticipantId: null,
+    loading: false,
+    requestGeneration: 0,
+    consecutiveFailures: 0,
+    lastSyncedAt: 0,
+    error: null,
+    actionPending: {},
+    actionErrors: {}
   };
 }
 
@@ -402,6 +458,49 @@ function abortMemoryRequest(roomId: string) {
   memoryRequests.delete(roomId);
 }
 
+function abortCodexRequest(roomId: string) {
+  codexControllers.get(roomId)?.abort();
+  codexControllers.delete(roomId);
+  codexRequests.delete(roomId);
+}
+
+function codexActionClientId(fingerprint: string): string {
+  const storage = browserStorage("session");
+  if (!storage) return `ui_codex_${crypto.randomUUID()}`;
+  try {
+    const parsed = JSON.parse(storage.getItem(CODEX_ACTION_STORAGE_KEY) ?? "{}") as unknown;
+    const retained = Object.fromEntries(
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? Object.entries(parsed)
+            .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+            .slice(-49)
+        : []
+    );
+    const existing = retained[fingerprint];
+    if (existing) return existing;
+    const created = `ui_codex_${crypto.randomUUID()}`;
+    retained[fingerprint] = created;
+    storage.setItem(CODEX_ACTION_STORAGE_KEY, JSON.stringify(retained));
+    return created;
+  } catch {
+    return `ui_codex_${crypto.randomUUID()}`;
+  }
+}
+
+function clearCodexActionClientId(fingerprint: string) {
+  const storage = browserStorage("session");
+  if (!storage) return;
+  try {
+    const parsed = JSON.parse(storage.getItem(CODEX_ACTION_STORAGE_KEY) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object") return;
+    const values = parsed as Record<string, string>;
+    delete values[fingerprint];
+    storage.setItem(CODEX_ACTION_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // Action IDs are best-effort browser replay protection; the server is authoritative.
+  }
+}
+
 export const useRoomStore = create<RoomState>((set, get) => ({
   rooms: [],
   roomsById: {},
@@ -424,6 +523,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   operationsConsecutiveFailures: 0,
   executionsByRoom: {},
   memoryByRoom: {},
+  codexByRoom: {},
+  codexPreferenceRevision: 0,
   executionActionPending: null,
   executionActionError: null,
   memoryActionPending: null,
@@ -494,6 +595,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       abortEventRequest(previous);
       abortExecutionRequest(previous);
       abortMemoryRequest(previous);
+      abortCodexRequest(previous);
     }
     const savedDraft = readRoomDraft(browserStorage("session"), roomId);
     set((state) => {
@@ -519,6 +621,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     if (get().inspectorOpen) {
       void get().refreshExecutions(roomId);
       void get().refreshMemory(roomId);
+      void get().refreshCodexAgents(roomId);
     }
     get().startSync();
   },
@@ -1049,6 +1152,197 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     return request;
   },
 
+  async refreshCodexAgents(roomId = get().selectedRoomId ?? "") {
+    if (!roomId) return;
+    const inFlight = codexRequests.get(roomId);
+    if (inFlight) return inFlight;
+    const current = get().codexByRoom[roomId] ?? emptyCodexCache();
+    const generation = current.requestGeneration + 1;
+    const controller = new AbortController();
+    codexControllers.set(roomId, controller);
+    set((state) => ({
+      codexByRoom: {
+        ...state.codexByRoom,
+        [roomId]: {
+          ...(state.codexByRoom[roomId] ?? emptyCodexCache()),
+          loading: true,
+          requestGeneration: generation
+        }
+      }
+    }));
+    let request!: Promise<void>;
+    request = (async () => {
+      try {
+        const projection = await fetchRoomCodexAgents(
+          roomId,
+          apiOptions(controller.signal)
+        );
+        if (controller.signal.aborted || get().codexByRoom[roomId]?.requestGeneration !== generation) {
+          return;
+        }
+        set((state) => {
+          const cache = state.codexByRoom[roomId] ?? emptyCodexCache();
+          if (cache.requestGeneration !== generation) return {};
+          const participantIds = projection.participants.map(
+            (item) => item.participant.participant_id
+          );
+          const selectedParticipantId = cache.selectedParticipantId
+            && participantIds.includes(cache.selectedParticipantId)
+            ? cache.selectedParticipantId
+            : participantIds[0] ?? null;
+          return {
+            codexByRoom: {
+              ...state.codexByRoom,
+              [roomId]: {
+                ...cache,
+                projection,
+                selectedParticipantId,
+                loading: false,
+                consecutiveFailures: 0,
+                lastSyncedAt: Date.now(),
+                error: null
+              }
+            }
+          };
+        });
+      } catch (error) {
+        if (controller.signal.aborted || isCallerAbort(error)) return;
+        set((state) => {
+          const cache = state.codexByRoom[roomId] ?? emptyCodexCache();
+          if (cache.requestGeneration !== generation) return {};
+          return {
+            codexByRoom: {
+              ...state.codexByRoom,
+              [roomId]: {
+                ...cache,
+                loading: false,
+                consecutiveFailures: cache.consecutiveFailures + 1,
+                error: describeError(error)
+              }
+            }
+          };
+        });
+      } finally {
+        if (codexControllers.get(roomId) === controller) codexControllers.delete(roomId);
+        if (codexRequests.get(roomId) === request) codexRequests.delete(roomId);
+      }
+    })();
+    codexRequests.set(roomId, request);
+    return request;
+  },
+
+  selectCodexParticipant(participantId, roomId = get().selectedRoomId ?? "") {
+    if (!roomId) return;
+    set((state) => {
+      const cache = state.codexByRoom[roomId] ?? emptyCodexCache();
+      return {
+        codexByRoom: {
+          ...state.codexByRoom,
+          [roomId]: { ...cache, selectedParticipantId: participantId }
+        }
+      };
+    });
+  },
+
+  async submitCodexAction(
+    participantId,
+    capabilityId,
+    requestBody,
+    descriptor,
+    confirmedPendingObservations = false
+  ) {
+    const roomId = get().selectedRoomId;
+    if (!roomId || !descriptor.available) return null;
+    const cache = get().codexByRoom[roomId] ?? emptyCodexCache();
+    if (cache.actionPending[participantId]) return null;
+    const fingerprint = [
+      participantId,
+      capabilityId,
+      descriptor.expected_session_guard,
+      descriptor.expected_goal_guard ?? "",
+      descriptor.expected_settings_guard ?? "",
+      descriptor.expected_turn_guard ?? "",
+      JSON.stringify(requestBody)
+    ].join(":");
+    const clientActionId = codexActionClientId(fingerprint);
+    set((state) => {
+      const latest = state.codexByRoom[roomId] ?? emptyCodexCache();
+      return {
+        codexByRoom: {
+          ...state.codexByRoom,
+          [roomId]: {
+            ...latest,
+            actionPending: {
+              ...latest.actionPending,
+              [participantId]: { capabilityId, clientActionId }
+            },
+            actionErrors: { ...latest.actionErrors, [participantId]: null }
+          }
+        }
+      };
+    });
+    try {
+      const result = await submitRoomCodexAction(
+        participantId,
+        capabilityId,
+        requestBody,
+        descriptor,
+        {
+          ...apiOptions(),
+          clientActionId,
+          confirmedPendingObservations
+        }
+      );
+      clearCodexActionClientId(fingerprint);
+      set((state) => {
+        const latest = state.codexByRoom[roomId] ?? emptyCodexCache();
+        const actionPending = { ...latest.actionPending };
+        delete actionPending[participantId];
+        return {
+          codexByRoom: {
+            ...state.codexByRoom,
+            [roomId]: { ...latest, actionPending, actionErrors: { ...latest.actionErrors, [participantId]: null } }
+          }
+        };
+      });
+      abortCodexRequest(roomId);
+      await get().refreshCodexAgents(roomId);
+      return result;
+    } catch (error) {
+      const failure = describeError(error);
+      if (![0, 502, 503, 504].includes(failure.status)) clearCodexActionClientId(fingerprint);
+      set((state) => {
+        const latest = state.codexByRoom[roomId] ?? emptyCodexCache();
+        const actionPending = { ...latest.actionPending };
+        delete actionPending[participantId];
+        return {
+          codexByRoom: {
+            ...state.codexByRoom,
+            [roomId]: {
+              ...latest,
+              actionPending,
+              actionErrors: { ...latest.actionErrors, [participantId]: failure }
+            }
+          }
+        };
+      });
+      if (failure.status === 409 || failure.status === 503) {
+        abortCodexRequest(roomId);
+        await get().refreshCodexAgents(roomId);
+      }
+      return null;
+    }
+  },
+
+  getCodexConsolePreference(participantId) {
+    return readCodexConsolePreference(browserStorage("session"), participantId);
+  },
+
+  setCodexConsolePreference(participantId, mode) {
+    persistCodexConsolePreference(browserStorage("session"), participantId, mode);
+    set((state) => ({ codexPreferenceRevision: state.codexPreferenceRevision + 1 }));
+  },
+
   async resolveMemoryCandidate(candidateId, decision, descriptor) {
     const roomId = get().selectedRoomId;
     if (!roomId || get().memoryActionPending || !descriptor.available) return false;
@@ -1337,10 +1631,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       void get().refreshOperations();
       void get().refreshExecutions();
       void get().refreshMemory();
+      void get().refreshCodexAgents();
     }
     get().startOperationsSync();
     get().startExecutionSync();
     get().startMemorySync();
+    get().startCodexSync();
   },
 
   setInspectorTarget(target) {
@@ -1350,6 +1646,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       void get().refreshOperations();
       void get().refreshExecutions();
       void get().refreshMemory();
+      void get().refreshCodexAgents();
     }
   },
 
@@ -1409,6 +1706,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().startOperationsSync();
     get().startExecutionSync();
     get().startMemorySync();
+    get().startCodexSync();
   },
 
   startOperationsSync() {
@@ -1483,6 +1781,42 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     scheduleMemory();
   },
 
+  startCodexSync() {
+    const currentCodexEpoch = syncCoordinator.restart("codex");
+    const scheduleCodex = () => {
+      if (!syncCoordinator.isCurrent("codex", currentCodexEpoch)) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      const roomId = get().selectedRoomId;
+      const cache = roomId ? get().codexByRoom[roomId] : null;
+      const base = hidden ? 15_000 : 2_000;
+      const delay = Math.min(
+        30_000,
+        base * 2 ** Math.min(cache?.consecutiveFailures ?? 0, 3)
+      );
+      const jitter = Math.round(delay * 0.12 * Math.random());
+      syncCoordinator.schedule("codex", currentCodexEpoch, delay + jitter, async () => {
+        const currentRoomId = get().selectedRoomId;
+        if (currentRoomId) {
+          await get().refreshCodexAgents(currentRoomId);
+        }
+        scheduleCodex();
+      });
+    };
+    const roomId = get().selectedRoomId;
+    if (roomId && !get().codexByRoom[roomId]?.projection) {
+      void get().refreshCodexAgents(roomId);
+    }
+    if (typeof window !== "undefined") {
+      if (codexFocusHandler) window.removeEventListener("focus", codexFocusHandler);
+      codexFocusHandler = () => {
+        const currentRoomId = get().selectedRoomId;
+        if (currentRoomId) void get().refreshCodexAgents(currentRoomId);
+      };
+      window.addEventListener("focus", codexFocusHandler);
+    }
+    scheduleCodex();
+  },
+
   stopSync() {
     syncCoordinator.teardown();
     operationsController?.abort();
@@ -1494,6 +1828,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     for (const controller of memoryControllers.values()) controller.abort();
     memoryControllers.clear();
     memoryRequests.clear();
+    for (const controller of codexControllers.values()) controller.abort();
+    codexControllers.clear();
+    codexRequests.clear();
+    if (typeof window !== "undefined" && codexFocusHandler) {
+      window.removeEventListener("focus", codexFocusHandler);
+      codexFocusHandler = null;
+    }
     set((state) => ({
       operationsLoading: false,
       operationsGeneration: state.operationsGeneration + 1,
@@ -1510,6 +1851,16 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       ),
       memoryByRoom: Object.fromEntries(
         Object.entries(state.memoryByRoom).map(([roomId, cache]) => [
+          roomId,
+          {
+            ...cache,
+            loading: false,
+            requestGeneration: cache.requestGeneration + 1
+          }
+        ])
+      ),
+      codexByRoom: Object.fromEntries(
+        Object.entries(state.codexByRoom).map(([roomId, cache]) => [
           roomId,
           {
             ...cache,

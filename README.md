@@ -66,7 +66,10 @@ optional source-backed memory
 - Confirmed-dead Runner attempts are fenced and reopened only after provider cleanup.
   Cancel/retry and guarded Runtime recovery use durable, idempotent control ledgers.
 - The browser consumes bounded `room_list_projection/v1`,
-  `room_chat_projection/v3`, and `room_operations_projection/v2`.
+  `room_chat_projection/v3`, `room_operations_projection/v2`, and the non-authoritative
+  `room_codex_projection/v1` used by the per-participant Agent Console. Console controls are
+  rendered only from native capability descriptors; their slash aliases do not add xmuse
+  semantics or enter the shared Room composer.
 - Provider context uses `room_context_envelope/v2`: the Human root, primary source, causal
   ancestry, batch members, bounded recent burst, active roster, and frozen role persona are
   retained under a 64 KiB limit. A peer follow-up may create visible speech once; its tail is

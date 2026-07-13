@@ -48,10 +48,18 @@ not count as ready.
 
 The launcher injects the local `XMUSE_OPERATOR_TOKEN` only into the Chat API and Next server
 processes. The browser never receives it, and it must never use a `NEXT_PUBLIC_*` name or be
-embedded in the build. Room creation, human messages, cancel/retry, and Runtime recovery go
-through fixed same-origin Next routes that validate Origin/Host, JSON type and size, fixed
+embedded in the build. Room creation, human messages, cancel/retry, native Codex Agent
+Console actions, and Runtime recovery go through fixed same-origin Next routes that validate
+Origin/Host, JSON type and size, fixed
 upstream paths, timeouts, response bounds, and redirect behavior before adding the token
 server-side.
+
+The Inspector's per-participant Agent Console presents capabilities discovered from each
+participant-bound Codex App Server session: Goal lifecycle, model/effort, one-turn Plan mode,
+steer, interrupt, compact, review, bounded native events, and Room Bridge queue evidence.
+`/goal`, `/plan`, and the other listed aliases are shortcuts for those descriptors, not a raw
+CLI or RPC surface. Shared Room messages never parse slash commands, and native progress never
+becomes Agent speech in the Room timeline.
 
 This is a loopback-only, single-user local application. Native Windows and macOS lifecycle
 support is not yet provided; Windows users should run it inside WSL.
