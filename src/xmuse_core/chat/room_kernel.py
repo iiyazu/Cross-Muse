@@ -692,10 +692,7 @@ class RoomKernelStore:
                 """,
                 (INIT_GOD_ROLE, max_attempts_per_observation, stamp),
             ).fetchall()
-        return [
-            (str(row["conversation_id"]), str(row["participant_id"]))
-            for row in rows
-        ]
+        return [(str(row["conversation_id"]), str(row["participant_id"])) for row in rows]
 
     def get_participant_cursor(
         self, conversation_id: str, participant_id: str

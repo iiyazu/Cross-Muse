@@ -153,9 +153,12 @@ def test_completed_bound_attempt_does_not_permanently_block_future_goal(
 
     assert created is True
     assert action["status"] == "requested"
-    assert store.room_participant_work_counts(participant.conversation_id)[participant_id][
-        "active_attempt_count"
-    ] == 0
+    assert (
+        store.room_participant_work_counts(participant.conversation_id)[participant_id][
+            "active_attempt_count"
+        ]
+        == 0
+    )
 
 
 class _NeverEventStream:

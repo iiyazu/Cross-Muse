@@ -490,9 +490,7 @@ class CodexAppServerTransport:
             active_turn_id=self._native_active_turn_id,
         )
 
-    async def _refresh_native_active_turn(
-        self, connection: CodexAppServerConnection
-    ) -> None:
+    async def _refresh_native_active_turn(self, connection: CodexAppServerConnection) -> None:
         """Re-prove the live turn from bounded App Server state.
 
         Notifications remain the low-latency path, but review and compaction may

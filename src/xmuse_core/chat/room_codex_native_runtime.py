@@ -108,9 +108,7 @@ class RoomCodexNativeRuntime:
     async def reconcile_participant(
         self, participant: Participant, *, force: bool = False
     ) -> dict[str, object]:
-        if not force and self._bridge.participant_has_unfinished_action(
-            participant.participant_id
-        ):
+        if not force and self._bridge.participant_has_unfinished_action(participant.participant_id):
             raise RoomCodexBridgeError("codex_native_action_pending")
         record = await self._ensure_session(participant)
         self._ensure_watcher(participant, record)
@@ -125,9 +123,7 @@ class RoomCodexNativeRuntime:
                 session_guard=session_guard,
             )
         if self._capability_session_guards.get(participant.participant_id) != session_guard:
-            capabilities = await self._sessions.discover_native_capabilities(
-                record.god_session_id
-            )
+            capabilities = await self._sessions.discover_native_capabilities(record.god_session_id)
             self._capabilities[participant.participant_id] = capabilities
             self._capability_session_guards[participant.participant_id] = session_guard
         self._apply_snapshot(participant, snapshot)
@@ -139,9 +135,7 @@ class RoomCodexNativeRuntime:
         return snapshot
 
     async def pump_action_once(self) -> bool:
-        action = self._bridge.claim_next_action(
-            runner_generation=self._runner_generation
-        )
+        action = self._bridge.claim_next_action(runner_generation=self._runner_generation)
         if action is None:
             return False
         await self.execute_claimed_action(action)
@@ -250,9 +244,7 @@ class RoomCodexNativeRuntime:
             feature_scope_id=_ROOM_SESSION_SCOPE,
         )
 
-    def _apply_snapshot(
-        self, participant: Participant, snapshot: Mapping[str, object]
-    ) -> None:
+    def _apply_snapshot(self, participant: Participant, snapshot: Mapping[str, object]) -> None:
         guards = _snapshot_guards(snapshot)
         goal = snapshot.get("goal")
         goal_active = isinstance(goal, Mapping) and goal.get("status") == "active"
@@ -289,9 +281,7 @@ class RoomCodexNativeRuntime:
             and participant.cli_kind == "codex"
         ]
 
-    def _ensure_watcher(
-        self, participant: Participant, record: GodSessionRecord
-    ) -> None:
+    def _ensure_watcher(self, participant: Participant, record: GodSessionRecord) -> None:
         prior = self._watchers.get(participant.participant_id)
         if prior is not None and prior[0] == record.god_session_id and not prior[2].done():
             return
@@ -367,9 +357,7 @@ class RoomCodexNativeRuntime:
         except RoomCodexProjectionCacheError as exc:
             self._projection_cache_error = exc.code
 
-    def _append_cached_event(
-        self, participant: Participant, event: Mapping[str, object]
-    ) -> None:
+    def _append_cached_event(self, participant: Participant, event: Mapping[str, object]) -> None:
         if self._projection_cache is None:
             return
         try:
@@ -478,9 +466,7 @@ def _snapshot_guards(snapshot: Mapping[str, object]) -> _SnapshotGuards:
     values: dict[str, str | None] = {}
     for key in ("session", "goal", "settings", "turn"):
         value = raw.get(key)
-        if value is not None and (
-            not isinstance(value, str) or not value.startswith("sha256:")
-        ):
+        if value is not None and (not isinstance(value, str) or not value.startswith("sha256:")):
             raise RoomCodexBridgeError("codex_native_snapshot_guard_invalid")
         values[key] = value
     session = values["session"]
@@ -494,9 +480,7 @@ def _snapshot_guards(snapshot: Mapping[str, object]) -> _SnapshotGuards:
     }
 
 
-def _assert_action_guards(
-    action: Mapping[str, object], snapshot: Mapping[str, object]
-) -> None:
+def _assert_action_guards(action: Mapping[str, object], snapshot: Mapping[str, object]) -> None:
     guards = _snapshot_guards(snapshot)
     for action_key, guard_key in (
         ("expected_session_guard", "session"),

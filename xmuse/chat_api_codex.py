@@ -130,9 +130,7 @@ def register_room_codex_routes(
             }
         participants = [
             participant_summary(item)
-            for item in ParticipantStore(root / "chat.db").list_by_conversation(
-                conversation_id
-            )
+            for item in ParticipantStore(root / "chat.db").list_by_conversation(conversation_id)
             if item.role != "init"
         ]
         try:

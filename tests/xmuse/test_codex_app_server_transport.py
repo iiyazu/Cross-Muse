@@ -375,9 +375,7 @@ async def test_native_snapshot_reproves_active_turn_and_clears_stale_event_state
 
         async def request(self, method: str, _params: dict[str, object]) -> object:
             if method == "thread/read":
-                return {
-                    "thread": {"status": {"type": "active" if self.active else "idle"}}
-                }
+                return {"thread": {"status": {"type": "active" if self.active else "idle"}}}
             if method == "thread/turns/list":
                 return {
                     "data": [

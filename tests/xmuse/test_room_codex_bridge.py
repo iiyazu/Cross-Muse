@@ -274,9 +274,9 @@ def test_mutating_action_requires_its_authoritative_native_guard(
         "conversation_id": "room-1",
         "participant_id": "participant-1",
         "capability_id": capability_id,
-        "safe_request": {"text": "focus"} if capability_id == "turn_steer" else (
-            {"model": "gpt-test"} if capability_id == "settings_update" else {}
-        ),
+        "safe_request": {"text": "focus"}
+        if capability_id == "turn_steer"
+        else ({"model": "gpt-test"} if capability_id == "settings_update" else {}),
         "client_action_id": f"missing-{missing}",
         "expected_session_guard": session,
         "expected_goal_guard": None if missing == "goal" else goal,

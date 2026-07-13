@@ -207,9 +207,7 @@ class RoomCodexBridgeStore:
                 normalized_request = normalize_native_safe_request(capability_id, safe_request)
             except CodexNativeContractError as exc:
                 raise RoomCodexBridgeError(exc.code) from exc
-            request_json = _bounded_json(
-                normalized_request, "codex_native_request_too_large"
-            )
+            request_json = _bounded_json(normalized_request, "codex_native_request_too_large")
             hold = _hold_row(conn, participant_id)
             _verify_guards(hold, session=session, goal=goal, settings=settings, turn=turn)
             _verify_capability_hold(hold, capability_id)
@@ -401,9 +399,7 @@ class RoomCodexBridgeStore:
             ).fetchall()
         return [_action_view(row, include_request=False) for row in rows]
 
-    def room_participant_work_counts(
-        self, conversation_id: str
-    ) -> dict[str, dict[str, int]]:
+    def room_participant_work_counts(self, conversation_id: str) -> dict[str, dict[str, int]]:
         with RoomDatabase(self._path).connect(readonly=True) as conn:
             rows = conn.execute(
                 """select p.participant_id,
@@ -505,8 +501,7 @@ def _verify_guards(
     turn: str | None,
 ) -> None:
     if hold["state"] in {"session_conflict", "native_unavailable"} or (
-        hold["state"] == "reconciling"
-        and hold["reason_code"] != "codex_native_action_pending"
+        hold["state"] == "reconciling" and hold["reason_code"] != "codex_native_action_pending"
     ):
         raise RoomCodexBridgeError("codex_native_session_conflict")
     for column, expected in (
@@ -564,9 +559,7 @@ def _verify_goal_set_observation_policy(
         (participant_id,),
     ).fetchone()
     if pending is not None and not confirmed_pending_observations:
-        raise RoomCodexBridgeError(
-            "codex_native_pending_observations_confirmation_required"
-        )
+        raise RoomCodexBridgeError("codex_native_pending_observations_confirmation_required")
 
 
 def _has_live_delivery(conn: sqlite3.Connection, participant_id: str) -> bool:

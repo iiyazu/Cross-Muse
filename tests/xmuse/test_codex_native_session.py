@@ -89,9 +89,7 @@ async def test_steer_and_interrupt_bypass_active_console_turn_lock() -> None:
     steer = await asyncio.wait_for(
         session.invoke_native("turn_steer", {"text": "focus"}), timeout=0.1
     )
-    interrupt = await asyncio.wait_for(
-        session.invoke_native("turn_interrupt", {}), timeout=0.1
-    )
+    interrupt = await asyncio.wait_for(session.invoke_native("turn_interrupt", {}), timeout=0.1)
 
     assert steer.invocation.capability_id == "turn_steer"
     assert interrupt.invocation.capability_id == "turn_interrupt"
@@ -150,9 +148,7 @@ async def test_unrelated_mutation_waits_but_interrupt_remains_actionable() -> No
     session = CodexAppServerSession(transport)  # type: ignore[arg-type]
     await session.invoke_native("console_turn_start", {"text": "work"})
 
-    settings = asyncio.create_task(
-        session.invoke_native("settings_update", {"model": "gpt-test"})
-    )
+    settings = asyncio.create_task(session.invoke_native("settings_update", {"model": "gpt-test"}))
     await asyncio.sleep(0)
     assert settings.done() is False
 

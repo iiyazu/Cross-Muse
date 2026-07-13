@@ -187,9 +187,7 @@ def normalize_native_safe_request(
     if capability == "goal_set":
         _exact_keys(request, {"objective", "token_budget"})
         return {
-            "objective": _required_text(
-                request.get("objective"), "codex_native_objective_invalid"
-            ),
+            "objective": _required_text(request.get("objective"), "codex_native_objective_invalid"),
             "token_budget": _bounded_integer(
                 request.get("token_budget"),
                 10_000,
@@ -216,9 +214,7 @@ def normalize_native_safe_request(
                 request.get("model"), "codex_native_model_invalid", 256
             )
         if "effort" in request:
-            effort = _required_text(
-                request.get("effort"), "codex_native_effort_invalid", 64
-            )
+            effort = _required_text(request.get("effort"), "codex_native_effort_invalid", 64)
             if effort == "ultra":
                 raise CodexNativeContractError("codex_native_effort_unsupported")
             normalized["effort"] = effort
@@ -234,9 +230,7 @@ def normalize_native_safe_request(
         }
     if capability == "turn_steer":
         _exact_keys(request, {"text"})
-        return {
-            "text": _required_text(request.get("text"), "codex_native_turn_text_invalid")
-        }
+        return {"text": _required_text(request.get("text"), "codex_native_turn_text_invalid")}
     if capability == "review_start":
         _exact_keys(request, {"target"})
         target = request.get("target")

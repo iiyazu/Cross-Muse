@@ -21,9 +21,7 @@ class RoomCodexBridgeReadStore(Protocol):
         limit: int = 50,
     ) -> list[dict[str, object]]: ...
 
-    def room_participant_work_counts(
-        self, conversation_id: str
-    ) -> dict[str, dict[str, int]]: ...
+    def room_participant_work_counts(self, conversation_id: str) -> dict[str, dict[str, int]]: ...
 
 
 def build_room_codex_projection(
@@ -118,9 +116,7 @@ def build_room_codex_projection(
             "latest_event_seq": _integer(cache_page.get("latest_event_seq")),
             "has_older": cache_page.get("has_older") is True,
             "has_newer": cache_page.get("has_newer") is True,
-            "next_before_event_seq": _optional_integer(
-                cache_page.get("next_before_event_seq")
-            ),
+            "next_before_event_seq": _optional_integer(cache_page.get("next_before_event_seq")),
             "next_after_event_seq": _optional_integer(cache_page.get("next_after_event_seq")),
         },
     }
@@ -164,13 +160,18 @@ def _action_descriptors(
         elif capability_id == "goal_resume":
             available = available and goal_status in {"paused", "blocked"}
         elif capability_id == "goal_clear":
-            available = available and not active_turn and goal_status in {
-                "paused",
-                "blocked",
-                "usageLimited",
-                "budgetLimited",
-                "complete",
-            }
+            available = (
+                available
+                and not active_turn
+                and goal_status
+                in {
+                    "paused",
+                    "blocked",
+                    "usageLimited",
+                    "budgetLimited",
+                    "complete",
+                }
+            )
         elif capability_id == "goal_set":
             available = available and hold_state == "accepting" and active_attempt_count == 0
             confirmation = available and unresolved_count > 0
@@ -181,13 +182,12 @@ def _action_descriptors(
                 "capability_id": capability_id,
                 "available": available,
                 "disabled_reason": (
-                    None if available else _identifier(raw.get("disabled_reason"))
-                    or "codex_native_state_conflict"
+                    None
+                    if available
+                    else _identifier(raw.get("disabled_reason")) or "codex_native_state_conflict"
                 ),
                 "method": "POST",
-                "href": (
-                    f"/api/chat/operator/room-participants/{participant_id}/codex-actions"
-                ),
+                "href": (f"/api/chat/operator/room-participants/{participant_id}/codex-actions"),
                 "expected_session_guard": guards.get("session"),
                 "expected_goal_guard": guards.get("goal"),
                 "expected_settings_guard": guards.get("settings"),
