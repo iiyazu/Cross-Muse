@@ -335,6 +335,8 @@ async def test_same_thread_rebind_changes_opaque_session_guard(tmp_path: Path, m
         generation = 1
 
         async def request(self, method: str, _params: dict[str, object]) -> object:
+            if method == "thread/read":
+                return {"thread": {"status": {"type": "idle"}}}
             assert method == "thread/goal/get"
             return {"goal": None}
 
@@ -361,6 +363,56 @@ async def test_same_thread_rebind_changes_opaque_session_guard(tmp_path: Path, m
         guards.append(session_guard)
 
     assert guards[0] != guards[1]
+
+
+@pytest.mark.asyncio
+async def test_native_snapshot_reproves_active_turn_and_clears_stale_event_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class Connection:
+        generation = 1
+        active = True
+
+        async def request(self, method: str, _params: dict[str, object]) -> object:
+            if method == "thread/read":
+                return {
+                    "thread": {"status": {"type": "active" if self.active else "idle"}}
+                }
+            if method == "thread/turns/list":
+                return {
+                    "data": [
+                        {
+                            "id": "native-review-turn",
+                            "status": "inProgress",
+                            "items": [],
+                        }
+                    ]
+                }
+            assert method == "thread/goal/get"
+            return {"goal": None}
+
+    async def no_start() -> None: ...
+
+    connection = Connection()
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._thread_id = "thread-existing"
+    transport._connection = connection  # type: ignore[assignment]
+    transport._native_active_turn_id = "stale-nested-turn"
+    monkeypatch.setattr(transport, "start", no_start)
+
+    active = await transport.native_snapshot()
+    assert active["active_turn"] is True
+    connection.active = False
+    idle = await transport.native_snapshot()
+    assert idle["active_turn"] is False
+    assert transport._native_active_turn_id is None
 
 
 @pytest.mark.parametrize("effort", ["unknown", "ultra", "", None])

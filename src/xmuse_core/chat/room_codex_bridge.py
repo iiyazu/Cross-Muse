@@ -411,7 +411,7 @@ class RoomCodexBridgeStore:
                               as unresolved_count,
                           coalesce(sum(case when a.state in ('claimed','delivering')
                                                 or a.provider_phase in
-                                                   ('ensure_started','bound','cleanup_pending')
+                                                   ('ensure_started','cleanup_pending')
                                                 or a.recovery_state in
                                                    ('fenced','cleanup_pending')
                                             then 1 else 0 end), 0) as active_attempt_count
@@ -574,7 +574,7 @@ def _has_live_delivery(conn: sqlite3.Connection, participant_id: str) -> bool:
         """select 1 from room_observation_attempts
            where participant_id = ? and (
                state in ('claimed','delivering','cancel_requested','cancel_pending')
-               or provider_phase in ('ensure_started','bound','cleanup_pending')
+               or provider_phase in ('ensure_started','cleanup_pending')
                or recovery_state in ('fenced','cleanup_pending')
            ) limit 1""",
         (participant_id,),

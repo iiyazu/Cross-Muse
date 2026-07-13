@@ -480,6 +480,7 @@ class CodexAppServerTransport:
         if self._thread_id is None:
             raise RuntimeError("codex app-server thread is not initialized")
         connection = self._ensure_connection()
+        await self._refresh_native_active_turn(connection)
         return await self._native_adapter.snapshot(
             thread_id=self._thread_id,
             session_identity=f"{self._thread_id}\0{self._native_incarnation}",
@@ -488,6 +489,53 @@ class CodexAppServerTransport:
             current_effort=self._native_effort,
             active_turn_id=self._native_active_turn_id,
         )
+
+    async def _refresh_native_active_turn(
+        self, connection: CodexAppServerConnection
+    ) -> None:
+        """Re-prove the live turn from bounded App Server state.
+
+        Notifications remain the low-latency path, but review and compaction may
+        produce nested turn identifiers.  The thread status and a one-page turn
+        query prevent an identifier mismatch from holding Room delivery forever.
+        """
+
+        assert self._thread_id is not None
+        response = await connection.request(
+            "thread/read", {"threadId": self._thread_id, "includeTurns": False}
+        )
+        thread = response.get("thread") if isinstance(response, dict) else None
+        status = thread.get("status") if isinstance(thread, dict) else None
+        status_type = status.get("type") if isinstance(status, dict) else None
+        if status_type == "idle":
+            self._native_active_turn_id = None
+            self._native_idle.set()
+            return
+        if status_type != "active":
+            raise RuntimeError("codex native thread state unavailable")
+        turns_response = await connection.request(
+            "thread/turns/list",
+            {
+                "threadId": self._thread_id,
+                "limit": 16,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            },
+        )
+        turns = turns_response.get("data") if isinstance(turns_response, dict) else None
+        if not isinstance(turns, list):
+            raise RuntimeError("codex native turn state unavailable")
+        active_ids = [
+            turn_id
+            for raw in turns
+            if isinstance(raw, dict)
+            and raw.get("status") == "inProgress"
+            and (turn_id := _clean_text(raw.get("id"))) is not None
+        ]
+        if len(active_ids) != 1:
+            raise RuntimeError("codex native active turn unproven")
+        self._native_active_turn_id = active_ids[0]
+        self._native_idle.clear()
 
     async def assert_room_delivery_allowed(self) -> None:
         snapshot = await self.native_snapshot()

@@ -520,7 +520,7 @@ def _assert_action_policy(
                 """select 1 from room_observation_attempts
                    where participant_id = ? and (
                        state in ('claimed','delivering','cancel_requested','cancel_pending')
-                       or provider_phase in ('ensure_started','bound','cleanup_pending')
+                       or provider_phase in ('ensure_started','cleanup_pending')
                        or recovery_state in ('fenced','cleanup_pending')
                    ) limit 1""",
                 (participant_id,),

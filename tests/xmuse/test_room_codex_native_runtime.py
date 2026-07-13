@@ -99,6 +99,65 @@ def test_goal_set_rejects_live_delivery_and_unfinished_cleanup(
     assert error.value.code == "codex_native_delivery_conflict"
 
 
+def test_completed_bound_attempt_does_not_permanently_block_future_goal(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    participant_id, attempt_id = _attempt(path)
+    participant = ParticipantStore(path).get(participant_id)
+    with RoomDatabase(path).connect() as conn:
+        conn.execute("begin immediate")
+        conn.execute(
+            """update room_observation_attempts
+               set state = 'completed', provider_phase = 'bound', finished_at = 'now'
+               where attempt_id = ?""",
+            (attempt_id,),
+        )
+        conn.commit()
+
+    _assert_action_policy(
+        path,
+        {"capability_id": "goal_set", "participant_id": participant_id},
+        {"goal": None, "active_turn": False},
+    )
+    store = RoomCodexBridgeStore(path)
+    session = opaque_guard(participant_id, "session")
+    goal = opaque_guard(participant_id, "goal")
+    settings = opaque_guard(participant_id, "settings")
+    store.begin_reconcile(
+        conversation_id=participant.conversation_id,
+        participant_id=participant_id,
+        session_guard=session,
+    )
+    store.apply_native_snapshot(
+        conversation_id=participant.conversation_id,
+        participant_id=participant_id,
+        expected_session_guard=session,
+        state="accepting",
+        goal_guard=goal,
+        settings_guard=settings,
+        active_turn_guard=None,
+    )
+
+    action, created = store.request_action(
+        conversation_id=participant.conversation_id,
+        participant_id=participant_id,
+        capability_id="goal_set",
+        safe_request={"objective": "continue safely", "token_budget": 10_000},
+        client_action_id="goal-after-completion",
+        expected_session_guard=session,
+        expected_goal_guard=goal,
+        expected_settings_guard=settings,
+        confirmed_pending_observations=True,
+    )
+
+    assert created is True
+    assert action["status"] == "requested"
+    assert store.room_participant_work_counts(participant.conversation_id)[participant_id][
+        "active_attempt_count"
+    ] == 0
+
+
 class _NeverEventStream:
     def __init__(self) -> None:
         self.closed = False
