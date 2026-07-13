@@ -11,15 +11,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from xmuse_core.agents.codex_native_contract import CAPABILITY_IDS
+from xmuse_core.agents.codex_native_contract import (
+    CAPABILITY_IDS,
+    CodexNativeContractError,
+    normalize_native_safe_request,
+)
 from xmuse_core.chat.room_database import FRONTEND_EVENT_PROOF_BOUNDARY, RoomDatabase
 
 HoldState = Literal[
-    "reconciling", "accepting", "goal_active", "session_conflict", "native_unavailable"
+    "reconciling",
+    "accepting",
+    "goal_active",
+    "turn_active",
+    "session_conflict",
+    "native_unavailable",
 ]
 ActionStatus = Literal["requested", "applying", "applied", "rejected", "failed"]
 _HOLD_STATES = frozenset(
-    {"reconciling", "accepting", "goal_active", "session_conflict", "native_unavailable"}
+    {
+        "reconciling",
+        "accepting",
+        "goal_active",
+        "turn_active",
+        "session_conflict",
+        "native_unavailable",
+    }
 )
 _FINAL_ACTION_STATUSES = frozenset({"applied", "rejected", "failed"})
 _ACK_KEYS = frozenset(
@@ -138,6 +154,7 @@ class RoomCodexBridgeStore:
         expected_goal_guard: str | None = None,
         expected_settings_guard: str | None = None,
         expected_turn_guard: str | None = None,
+        confirmed_pending_observations: bool = False,
         operator_identity: str = "operator:local",
     ) -> tuple[dict[str, object], bool]:
         if capability_id not in CAPABILITY_IDS:
@@ -149,17 +166,26 @@ class RoomCodexBridgeStore:
         goal = _guard(expected_goal_guard)
         settings = _guard(expected_settings_guard)
         turn = _guard(expected_turn_guard)
-        request_json = _bounded_json(dict(safe_request), "codex_native_request_too_large")
+        if not isinstance(confirmed_pending_observations, bool):
+            raise RoomCodexBridgeError("codex_native_confirmation_invalid")
+        _require_capability_guards(
+            capability_id,
+            goal=goal,
+            settings=settings,
+            turn=turn,
+        )
+        raw_request_json = _bounded_json(dict(safe_request), "codex_native_request_too_large")
         fingerprint = _digest(
             {
                 "conversation_id": conversation_id,
                 "participant_id": participant_id,
                 "capability_id": capability_id,
-                "request": json.loads(request_json),
+                "request": json.loads(raw_request_json),
                 "session_guard": session,
                 "goal_guard": goal,
                 "settings_guard": settings,
                 "turn_guard": turn,
+                "confirmed_pending_observations": confirmed_pending_observations,
             }
         )
         stamp = _timestamp()
@@ -177,8 +203,26 @@ class RoomCodexBridgeStore:
                     raise RoomCodexBridgeError("codex_native_action_idempotency_conflict")
                 conn.commit()
                 return _action_view(prior, include_request=False), False
+            try:
+                normalized_request = normalize_native_safe_request(capability_id, safe_request)
+            except CodexNativeContractError as exc:
+                raise RoomCodexBridgeError(exc.code) from exc
+            request_json = _bounded_json(
+                normalized_request, "codex_native_request_too_large"
+            )
             hold = _hold_row(conn, participant_id)
             _verify_guards(hold, session=session, goal=goal, settings=settings, turn=turn)
+            _verify_capability_hold(hold, capability_id)
+            if capability_id == "goal_set":
+                _verify_goal_set_observation_policy(
+                    conn,
+                    participant_id,
+                    confirmed_pending_observations=confirmed_pending_observations,
+                )
+            if capability_id in {"turn_steer", "turn_interrupt"} and _has_live_delivery(
+                conn, participant_id
+            ):
+                raise RoomCodexBridgeError("codex_native_room_turn_conflict")
             control_seq = int(hold["next_control_seq"]) + 1
             action_id = f"codex_action_{uuid.uuid4().hex}"
             conn.execute(
@@ -209,7 +253,9 @@ class RoomCodexBridgeStore:
             )
             conn.execute(
                 """update room_codex_delivery_holds
-                   set next_control_seq = ?, updated_at = ? where participant_id = ?""",
+                   set next_control_seq = ?, hold_revision = hold_revision + 1,
+                       state = 'reconciling', reason_code = 'codex_native_action_pending',
+                       updated_at = ? where participant_id = ?""",
                 (control_seq, stamp, participant_id),
             )
             _append_projection_event(conn, conversation_id, action_id, "action", stamp)
@@ -228,6 +274,11 @@ class RoomCodexBridgeStore:
                        select 1 from room_codex_bridge_actions active
                        where active.participant_id = candidate.participant_id
                          and active.status = 'applying'
+                   ) and not exists (
+                       select 1 from room_codex_bridge_actions prior
+                       where prior.participant_id = candidate.participant_id
+                         and prior.status in ('requested','applying')
+                         and prior.control_seq < candidate.control_seq
                    ) order by candidate.requested_at, candidate.participant_id,
                               candidate.control_seq limit 1"""
             ).fetchone()
@@ -243,9 +294,144 @@ class RoomCodexBridgeStore:
             if changed != 1:
                 conn.rollback()
                 return None
+            conn.execute(
+                """update room_codex_delivery_holds
+                   set hold_revision = hold_revision + 1, state = 'reconciling',
+                       reason_code = 'codex_native_action_applying', updated_at = ?
+                   where participant_id = ?""",
+                (stamp, row["participant_id"]),
+            )
             claimed = _action_row(conn, str(row["action_id"]))
             conn.commit()
         return _action_view(claimed, include_request=True)
+
+    def fence_interrupted_actions(self) -> int:
+        """Fail in-flight native calls whose result cannot be proved after restart.
+
+        Replaying an App Server mutation is unsafe: a completed ``turn/start`` may
+        already have emitted output even when xmuse crashed before recording its ack.
+        The new Runner reconciles current native state and requires a new operator
+        action instead of guessing or duplicating the mutation.
+        """
+
+        stamp = _timestamp()
+        with RoomDatabase(self._path).connect() as conn:
+            conn.execute("begin immediate")
+            rows = conn.execute(
+                """select action_id, conversation_id, participant_id
+                   from room_codex_bridge_actions
+                   where status = 'applying' order by requested_at, action_id"""
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """update room_codex_bridge_actions
+                       set status = 'failed', reason_code = ?, completed_at = ?,
+                           updated_at = ? where action_id = ? and status = 'applying'""",
+                    (
+                        "codex_native_action_result_unknown",
+                        stamp,
+                        stamp,
+                        row["action_id"],
+                    ),
+                )
+                _append_projection_event(
+                    conn,
+                    str(row["conversation_id"]),
+                    str(row["action_id"]),
+                    "action",
+                    stamp,
+                )
+                conn.execute(
+                    """update room_codex_delivery_holds
+                       set hold_revision = hold_revision + 1, state = 'reconciling',
+                           reason_code = 'codex_native_reconcile_required', updated_at = ?
+                       where participant_id = ?""",
+                    (stamp, row["participant_id"]),
+                )
+            conn.commit()
+        return len(rows)
+
+    def get_hold(self, participant_id: str) -> dict[str, object] | None:
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            row = conn.execute(
+                "select * from room_codex_delivery_holds where participant_id = ?",
+                (participant_id,),
+            ).fetchone()
+        return _hold_view(row) if row is not None else None
+
+    def participant_has_unfinished_action(self, participant_id: str) -> bool:
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            row = conn.execute(
+                """select 1 from room_codex_bridge_actions
+                   where participant_id = ? and status in ('requested','applying') limit 1""",
+                (participant_id,),
+            ).fetchone()
+        return row is not None
+
+    def list_room_holds(self, conversation_id: str) -> list[dict[str, object]]:
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            rows = conn.execute(
+                """select * from room_codex_delivery_holds
+                   where conversation_id = ? order by participant_id""",
+                (conversation_id,),
+            ).fetchall()
+        return [_hold_view(row) for row in rows]
+
+    def list_room_actions(
+        self,
+        conversation_id: str,
+        *,
+        participant_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, object]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise RoomCodexBridgeError("codex_native_action_limit_invalid")
+        params: list[object] = [conversation_id]
+        participant_clause = ""
+        if participant_id is not None:
+            participant_clause = " and participant_id = ?"
+            params.append(participant_id)
+        params.append(limit)
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            rows = conn.execute(
+                f"""select * from room_codex_bridge_actions
+                    where conversation_id = ?{participant_clause}
+                    order by control_seq desc, requested_at desc limit ?""",  # noqa: S608
+                params,
+            ).fetchall()
+        return [_action_view(row, include_request=False) for row in rows]
+
+    def room_participant_work_counts(
+        self, conversation_id: str
+    ) -> dict[str, dict[str, int]]:
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            rows = conn.execute(
+                """select p.participant_id,
+                          coalesce(sum(case when o.status <> 'completed' then 1 else 0 end), 0)
+                              as unresolved_count,
+                          coalesce(sum(case when a.state in ('claimed','delivering')
+                                                or a.provider_phase in
+                                                   ('ensure_started','bound','cleanup_pending')
+                                                or a.recovery_state in
+                                                   ('fenced','cleanup_pending')
+                                            then 1 else 0 end), 0) as active_attempt_count
+                   from participants p
+                   left join room_observations o
+                     on o.participant_id = p.participant_id
+                   left join room_observation_attempts a
+                     on a.attempt_id = o.current_attempt_id
+                   where p.conversation_id = ? and p.status = 'active'
+                     and p.cli_kind = 'codex' and p.role <> 'init'
+                   group by p.participant_id order by p.participant_id""",
+                (conversation_id,),
+            ).fetchall()
+        return {
+            str(row["participant_id"]): {
+                "unresolved_count": int(row["unresolved_count"]),
+                "active_attempt_count": int(row["active_attempt_count"]),
+            }
+            for row in rows
+        }
 
     def complete_action(
         self,
@@ -318,7 +504,10 @@ def _verify_guards(
     settings: str | None,
     turn: str | None,
 ) -> None:
-    if hold["state"] in {"reconciling", "session_conflict", "native_unavailable"}:
+    if hold["state"] in {"session_conflict", "native_unavailable"} or (
+        hold["state"] == "reconciling"
+        and hold["reason_code"] != "codex_native_action_pending"
+    ):
         raise RoomCodexBridgeError("codex_native_session_conflict")
     for column, expected in (
         ("session_guard", session),
@@ -328,6 +517,69 @@ def _verify_guards(
     ):
         if expected is not None and hold[column] != expected:
             raise RoomCodexBridgeError(f"codex_native_{column}_conflict")
+
+
+def _require_capability_guards(
+    capability_id: str,
+    *,
+    goal: str | None,
+    settings: str | None,
+    turn: str | None,
+) -> None:
+    if capability_id in {"goal_set", "goal_pause", "goal_resume", "goal_clear"} and goal is None:
+        raise RoomCodexBridgeError("codex_native_goal_guard_required")
+    if capability_id == "settings_update" and settings is None:
+        raise RoomCodexBridgeError("codex_native_settings_guard_required")
+    if capability_id in {"turn_steer", "turn_interrupt"} and turn is None:
+        raise RoomCodexBridgeError("codex_native_turn_guard_required")
+
+
+def _verify_capability_hold(hold: sqlite3.Row, capability_id: str) -> None:
+    state = str(hold["state"])
+    if capability_id in {"turn_steer", "turn_interrupt"}:
+        if hold["active_turn_guard"] is None:
+            raise RoomCodexBridgeError("codex_native_turn_conflict")
+        return
+    if capability_id == "goal_pause":
+        if state != "goal_active":
+            raise RoomCodexBridgeError("codex_native_goal_conflict")
+        return
+    if capability_id in {"goal_get", "models_list"}:
+        return
+    if state != "accepting":
+        raise RoomCodexBridgeError("codex_native_action_state_conflict")
+
+
+def _verify_goal_set_observation_policy(
+    conn: sqlite3.Connection,
+    participant_id: str,
+    *,
+    confirmed_pending_observations: bool,
+) -> None:
+    if _has_live_delivery(conn, participant_id):
+        raise RoomCodexBridgeError("codex_native_delivery_conflict")
+    pending = conn.execute(
+        """select 1 from room_observations
+           where participant_id = ? and status <> 'completed' limit 1""",
+        (participant_id,),
+    ).fetchone()
+    if pending is not None and not confirmed_pending_observations:
+        raise RoomCodexBridgeError(
+            "codex_native_pending_observations_confirmation_required"
+        )
+
+
+def _has_live_delivery(conn: sqlite3.Connection, participant_id: str) -> bool:
+    active = conn.execute(
+        """select 1 from room_observation_attempts
+           where participant_id = ? and (
+               state in ('claimed','delivering','cancel_requested','cancel_pending')
+               or provider_phase in ('ensure_started','bound','cleanup_pending')
+               or recovery_state in ('fenced','cleanup_pending')
+           ) limit 1""",
+        (participant_id,),
+    ).fetchone()
+    return active is not None
 
 
 def _hold_row(conn: sqlite3.Connection, participant_id: str) -> sqlite3.Row:

@@ -23,7 +23,8 @@ def create_room_codex_schema(conn: sqlite3.Connection) -> None:
             hold_revision integer not null check (hold_revision >= 0),
             next_control_seq integer not null check (next_control_seq >= 0),
             state text not null check (state in (
-                'reconciling','accepting','goal_active','session_conflict','native_unavailable'
+                'reconciling','accepting','goal_active','turn_active',
+                'session_conflict','native_unavailable'
             )),
             session_guard text,
             goal_guard text,

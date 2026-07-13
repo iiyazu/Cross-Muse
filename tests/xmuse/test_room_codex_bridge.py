@@ -203,6 +203,95 @@ def test_runner_claim_serializes_actions_per_participant(tmp_path: Path) -> None
     assert second is not None and second["control_seq"] == 2
 
 
+def test_participant_control_seq_wins_over_non_monotonic_wall_clock(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    first, _ = _request(
+        store,
+        client_action_id="client-1",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    second, _ = _request(
+        store,
+        client_action_id="client-2",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    with RoomDatabase(path).connect() as conn:
+        conn.execute("begin immediate")
+        conn.execute(
+            "update room_codex_bridge_actions set requested_at = 'later' where action_id = ?",
+            (first["action_id"],),
+        )
+        conn.execute(
+            "update room_codex_bridge_actions set requested_at = 'earlier' where action_id = ?",
+            (second["action_id"],),
+        )
+        conn.commit()
+
+    claimed = store.claim_next_action(runner_generation="runner-1")
+
+    assert claimed is not None
+    assert claimed["action_id"] == first["action_id"]
+    assert claimed["control_seq"] == 1
+
+
+@pytest.mark.parametrize(
+    ("capability_id", "missing", "expected_code"),
+    [
+        ("goal_pause", "goal", "codex_native_goal_guard_required"),
+        ("settings_update", "settings", "codex_native_settings_guard_required"),
+        ("turn_steer", "turn", "codex_native_turn_guard_required"),
+        ("turn_interrupt", "turn", "codex_native_turn_guard_required"),
+    ],
+)
+def test_mutating_action_requires_its_authoritative_native_guard(
+    tmp_path: Path,
+    capability_id: str,
+    missing: str,
+    expected_code: str,
+) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    turn = opaque_guard("participant-1", "turn")
+    store.apply_native_snapshot(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        expected_session_guard=session,
+        state="turn_active" if capability_id.startswith("turn_") else "accepting",
+        goal_guard=goal,
+        settings_guard=settings,
+        active_turn_guard=turn if capability_id.startswith("turn_") else None,
+    )
+    kwargs: dict[str, object] = {
+        "conversation_id": "room-1",
+        "participant_id": "participant-1",
+        "capability_id": capability_id,
+        "safe_request": {"text": "focus"} if capability_id == "turn_steer" else (
+            {"model": "gpt-test"} if capability_id == "settings_update" else {}
+        ),
+        "client_action_id": f"missing-{missing}",
+        "expected_session_guard": session,
+        "expected_goal_guard": None if missing == "goal" else goal,
+        "expected_settings_guard": None if missing == "settings" else settings,
+        "expected_turn_guard": None if missing == "turn" else turn,
+    }
+
+    with pytest.raises(RoomCodexBridgeError) as error:
+        store.request_action(**kwargs)  # type: ignore[arg-type]
+
+    assert error.value.code == expected_code
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        assert conn.execute("select count(*) from room_codex_bridge_actions").fetchone()[0] == 0
+
+
 def test_old_runner_cannot_complete_new_generation_claim(tmp_path: Path) -> None:
     path = tmp_path / "chat.db"
     _seed(path)
@@ -230,6 +319,43 @@ def test_old_runner_cannot_complete_new_generation_claim(tmp_path: Path) -> None
         assert (
             conn.execute("select status from room_codex_bridge_actions").fetchone()[0] == "applying"
         )
+
+
+def test_restart_fences_unknown_applying_result_without_replay(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    first, _ = _request(
+        store,
+        client_action_id="client-1",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    second, _ = _request(
+        store,
+        client_action_id="client-2",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    claimed = store.claim_next_action(runner_generation="runner-dead")
+    assert claimed is not None and claimed["action_id"] == first["action_id"]
+
+    assert store.fence_interrupted_actions() == 1
+
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        rows = conn.execute(
+            "select action_id, status, reason_code from room_codex_bridge_actions "
+            "order by control_seq"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (first["action_id"], "failed", "codex_native_action_result_unknown"),
+        (second["action_id"], "requested", None),
+    ]
+    next_action = store.claim_next_action(runner_generation="runner-new")
+    assert next_action is not None and next_action["action_id"] == second["action_id"]
 
 
 def test_ack_summary_rejects_provider_text_and_private_identifiers(tmp_path: Path) -> None:

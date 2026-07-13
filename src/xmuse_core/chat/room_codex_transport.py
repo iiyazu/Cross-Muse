@@ -110,6 +110,13 @@ class CodexRoomObservationTransport:
             except RoomControlError as exc:
                 return _failed("room_codex_attempt_binding_failed", exc)
         try:
+            prompt_fingerprint = _resume_prompt_fingerprint(
+                self._god_session_layer,
+                conversation_id=delivery.conversation_id,
+                participant_id=participant.participant_id,
+                feature_scope_id=_ROOM_SESSION_SCOPE,
+                proposed_fingerprint=participant_session_prompt_fingerprint(participant),
+            )
             ensured = await self._god_session_layer.ensure_conversation_session(
                 conversation_id=delivery.conversation_id,
                 participant_id=participant.participant_id,
@@ -121,7 +128,7 @@ class CodexRoomObservationTransport:
                 ),
                 worktree=self._worktree,
                 model=participant.model,
-                prompt_fingerprint=participant_session_prompt_fingerprint(participant),
+                prompt_fingerprint=prompt_fingerprint,
                 feature_scope_id=_ROOM_SESSION_SCOPE,
             )
         except Exception as exc:
@@ -373,7 +380,13 @@ class CodexRoomObservationTransport:
                     ),
                     worktree=self._worktree,
                     model=participant.model,
-                    prompt_fingerprint=participant_session_prompt_fingerprint(participant),
+                    prompt_fingerprint=_resume_prompt_fingerprint(
+                        self._god_session_layer,
+                        conversation_id=conversation_id,
+                        participant_id=participant.participant_id,
+                        feature_scope_id=_ROOM_SESSION_SCOPE,
+                        proposed_fingerprint=participant_session_prompt_fingerprint(participant),
+                    ),
                     feature_scope_id=_ROOM_SESSION_SCOPE,
                 )
                 if (
@@ -999,6 +1012,30 @@ def _message_diagnostic(message: StdoutMessage) -> str | None:
 def _diagnostic(value: object) -> str | None:
     text = _text(value)
     return text[:_DIAGNOSTIC_LIMIT] if text is not None else None
+
+
+def _resume_prompt_fingerprint(
+    layer: GodSessionLayer,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    feature_scope_id: str,
+    proposed_fingerprint: str,
+) -> str:
+    resolver = getattr(layer, "prompt_fingerprint_for_resume", None)
+    if not callable(resolver):
+        # Narrow test/compat doubles have no durable registry. Production uses
+        # GodSessionLayer and always proves the existing binding fingerprint.
+        return proposed_fingerprint
+    result = resolver(
+        conversation_id=conversation_id,
+        participant_id=participant_id,
+        feature_scope_id=feature_scope_id,
+        proposed_fingerprint=proposed_fingerprint,
+    )
+    if not isinstance(result, str) or not result:
+        raise RuntimeError("room_codex_prompt_fingerprint_invalid")
+    return result
 
 
 def _text(value: object) -> str | None:

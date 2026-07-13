@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -13,6 +14,11 @@ from xmuse_core.agents.codex_app_server_connection import (
     AppServerConnectionError,
     AppServerEventStream,
     CodexAppServerConnection,
+)
+from xmuse_core.agents.codex_native_adapter import (
+    CodexNativeAdapter,
+    NativeInvokeResult,
+    NativeModelCatalog,
 )
 from xmuse_core.agents.protocol import StdoutMessage
 
@@ -29,7 +35,6 @@ _ROOM_DISABLED_CODEX_FEATURES = (
     "computer_use",
     "image_generation",
     "multi_agent",
-    "goals",
     "code_mode_host",
     "hooks",
     "skill_mcp_dependency_install",
@@ -107,6 +112,14 @@ CODEX_ROOM_READ_ONLY_SANDBOX = CodexSandboxProfile(
     turn_policy_type="readOnly",
     network_access=False,
 )
+
+
+class _TransportNativeRpc:
+    def __init__(self, transport: CodexAppServerTransport) -> None:
+        self._transport = transport
+
+    async def request(self, method: str, params: Mapping[str, object]) -> object:
+        return await self._transport._request(method, dict(params))
 
 
 @dataclass
@@ -286,6 +299,7 @@ class CodexAppServerTransport:
         self._process: asyncio.subprocess.Process | None = None
         self._connection: CodexAppServerConnection | None = None
         self._connection_generation = 0
+        self._native_incarnation = secrets.token_hex(16)
         self._thread_id: str | None = None
         self._resume_thread_id = _clean_text(resume_thread_id)
         self._active_turn_request_id: int | None = None
@@ -294,6 +308,15 @@ class CodexAppServerTransport:
         self._active_accumulator: AppServerTurnAccumulator | None = None
         self._active_request_id: str | None = None
         self._active_message_type: str | None = None
+        self._native_model = self._model or None
+        self._native_effort = self._reasoning_effort
+        self._native_active_turn_id: str | None = None
+        self._native_idle = asyncio.Event()
+        self._native_idle.set()
+        self._native_catalog: NativeModelCatalog | None = None
+        self._native_state_stream: AppServerEventStream | None = None
+        self._native_state_task: asyncio.Task[None] | None = None
+        self._native_adapter = CodexNativeAdapter(_TransportNativeRpc(self))
 
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -337,6 +360,7 @@ class CodexAppServerTransport:
                 if thread_id is None:
                     raise RuntimeError("codex app-server thread/start returned no thread id")
                 self._thread_id = thread_id
+                self._record_thread_settings(response)
                 return
             response = await self._request(
                 "thread/resume",
@@ -349,6 +373,7 @@ class CodexAppServerTransport:
             if thread_id != self._resume_thread_id:
                 raise RuntimeError("codex app-server thread/resume returned mismatched thread id")
             self._thread_id = thread_id
+            self._record_thread_settings(response)
         except BaseException:
             try:
                 await asyncio.shield(self.shutdown())
@@ -376,6 +401,7 @@ class CodexAppServerTransport:
         self._active_accumulator = AppServerTurnAccumulator(
             request_id=request_id,
         )
+        self._native_idle.clear()
         self._active_turn_request_id = await self._send_request(
             "turn/start",
             self._turn_start_params(prompt),
@@ -424,6 +450,12 @@ class CodexAppServerTransport:
             connection, self._connection = self._connection, None
             self._close_active_event_stream()
             await connection.close()
+            if self._native_state_task is not None:
+                await asyncio.gather(self._native_state_task, return_exceptions=True)
+                self._native_state_task = None
+            if self._native_state_stream is not None:
+                self._native_state_stream.close()
+                self._native_state_stream = None
             return
         if self._process is None or self._process.returncode is not None:
             return
@@ -442,6 +474,76 @@ class CodexAppServerTransport:
             "thread_id": self._thread_id,
             "resume_thread_id": self._resume_thread_id,
         }
+
+    async def native_snapshot(self) -> dict[str, object]:
+        await self.start()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        connection = self._ensure_connection()
+        return await self._native_adapter.snapshot(
+            thread_id=self._thread_id,
+            session_identity=f"{self._thread_id}\0{self._native_incarnation}",
+            connection_generation=connection.generation,
+            current_model=self._native_model,
+            current_effort=self._native_effort,
+            active_turn_id=self._native_active_turn_id,
+        )
+
+    async def assert_room_delivery_allowed(self) -> None:
+        snapshot = await self.native_snapshot()
+        goal = snapshot.get("goal")
+        if snapshot.get("active_turn") is True or (
+            isinstance(goal, dict) and goal.get("status") == "active"
+        ):
+            raise RuntimeError("codex_native_room_delivery_conflict")
+
+    async def discover_native_capabilities(self) -> dict[str, object]:
+        snapshot = await self.native_snapshot()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        guards = snapshot.get("guards")
+        session_guard = guards.get("session") if isinstance(guards, dict) else None
+        if not isinstance(session_guard, str):
+            raise RuntimeError("codex native snapshot returned no session guard")
+        descriptor, catalog = await self._native_adapter.discover_capabilities(
+            thread_id=self._thread_id,
+            session_guard=session_guard,
+        )
+        self._native_catalog = catalog
+        return descriptor | {"models": list(catalog.models)}
+
+    async def invoke_native(
+        self,
+        capability_id: str,
+        safe_request: dict[str, object],
+        *,
+        resolved_review_target: dict[str, object] | None = None,
+    ) -> NativeInvokeResult:
+        await self.start()
+        if self._thread_id is None:
+            raise RuntimeError("codex app-server thread is not initialized")
+        if self._native_catalog is None:
+            self._native_catalog = await self._native_adapter.list_models()
+        result = await self._native_adapter.invoke(
+            capability_id,
+            safe_request,
+            thread_id=self._thread_id,
+            active_turn_id=self._native_active_turn_id,
+            current_model=self._native_model,
+            current_effort=self._native_effort,
+            catalog=self._native_catalog,
+            resolved_review_target=resolved_review_target,
+        )
+        if result.private_active_turn_id is not None:
+            self._native_active_turn_id = result.private_active_turn_id
+            self._native_idle.clear()
+        return result
+
+    def subscribe_native_events(self) -> AppServerEventStream:
+        return self._ensure_connection().subscribe()
+
+    async def wait_native_idle(self) -> None:
+        await self._native_idle.wait()
 
     def _command(self) -> list[str]:
         command = [
@@ -508,7 +610,6 @@ class CodexAppServerTransport:
         return {
             "threadId": thread_id,
             "cwd": str(self._worktree),
-            "model": self._model or None,
             "approvalPolicy": "never",
             "sandbox": self._sandbox_profile.thread_sandbox,
             "baseInstructions": self._base_instructions(),
@@ -520,10 +621,8 @@ class CodexAppServerTransport:
             "threadId": self._thread_id,
             "input": [{"type": "text", "text": prompt}],
             "cwd": str(self._worktree),
-            "model": self._model or None,
             "approvalPolicy": "never",
             "sandboxPolicy": self._sandbox_profile.turn_sandbox_policy(),
-            "effort": self._reasoning_effort,
             "summary": "concise",
         }
 
@@ -590,6 +689,11 @@ class CodexAppServerTransport:
             self._process,
             generation=self._connection_generation,
         )
+        self._native_state_stream = self._connection.subscribe()
+        self._native_state_task = asyncio.create_task(
+            self._observe_native_state(self._native_state_stream),
+            name="codex-app-server-native-state",
+        )
         return self._connection
 
     def _bind_active_turn_from_response(self, result: object) -> None:
@@ -597,9 +701,47 @@ class CodexAppServerTransport:
             return
         turn = result.get("turn")
         if isinstance(turn, dict):
-            self._active_accumulator.turn_id = (
-                _clean_text(turn.get("id")) or self._active_accumulator.turn_id
-            )
+            turn_id = _clean_text(turn.get("id"))
+            self._active_accumulator.turn_id = turn_id or self._active_accumulator.turn_id
+            self._native_active_turn_id = turn_id or self._native_active_turn_id
+
+    async def _observe_native_state(self, stream: AppServerEventStream) -> None:
+        try:
+            while True:
+                self._apply_native_event(await stream.receive())
+        except (AppServerConnectionError, asyncio.CancelledError):
+            return
+
+    def _apply_native_event(self, message: dict[str, object]) -> None:
+        method = message.get("method")
+        params = message.get("params")
+        if not isinstance(method, str) or not isinstance(params, dict):
+            return
+        if method == "thread/settings/updated":
+            settings = params.get("threadSettings")
+            if isinstance(settings, dict):
+                self._native_model = _clean_text(settings.get("model")) or self._native_model
+                self._native_effort = _clean_text(settings.get("effort")) or self._native_effort
+            return
+        if method == "turn/started":
+            turn = params.get("turn")
+            turn_id = _clean_text(turn.get("id")) if isinstance(turn, dict) else None
+            self._native_active_turn_id = turn_id or self._native_active_turn_id
+            self._native_idle.clear()
+            return
+        if method == "turn/completed":
+            turn = params.get("turn")
+            turn_id = _clean_text(turn.get("id")) if isinstance(turn, dict) else None
+            turn_id = turn_id or _clean_text(params.get("turnId"))
+            if turn_id is None or turn_id == self._native_active_turn_id:
+                self._native_active_turn_id = None
+                self._native_idle.set()
+
+    def _record_thread_settings(self, response: object) -> None:
+        if not isinstance(response, dict):
+            return
+        self._native_model = _clean_text(response.get("model")) or self._native_model
+        self._native_effort = _clean_text(response.get("reasoningEffort")) or self._native_effort
 
     def _close_active_event_stream(self) -> None:
         if self._active_event_stream is not None:
@@ -618,6 +760,8 @@ class CodexAppServerTransport:
         self._active_turn_request_id = None
         self._active_request_id = None
         self._active_message_type = None
+        self._native_active_turn_id = None
+        self._native_idle.set()
 
     def _is_active_turn_error(self, message: dict[str, Any]) -> bool:
         return bool(
@@ -768,11 +912,13 @@ def _mcp_tool_name(params: dict[str, Any]) -> str | None:
 
 
 def _normalize_effort(value: object) -> str:
-    text = _clean_text(value) or "low"
+    text = _clean_text(value)
+    if text is None:
+        raise ValueError("codex app-server effort is required")
     normalized = text.lower()
-    if normalized in {"none", "minimal", "low", "medium", "high", "xhigh"}:
+    if normalized in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
         return normalized
-    return "low"
+    raise ValueError("codex app-server effort is unsupported")
 
 
 __all__ = [

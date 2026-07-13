@@ -7,6 +7,8 @@ from inspect import Parameter, isawaitable, signature
 from pathlib import Path
 from typing import Never
 
+from xmuse_core.agents.codex_app_server_connection import AppServerEventStream
+from xmuse_core.agents.codex_native_adapter import NativeInvokeResult
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
@@ -486,6 +488,71 @@ class GodSessionLayer:
         self._persist_provider_binding_from_message(live, message)
         return message
 
+    async def native_snapshot(self, god_session_id: str) -> dict[str, object]:
+        live = self._require_native_live_session(god_session_id)
+        method = getattr(live.session, "native_snapshot", None)
+        if not callable(method):
+            raise RuntimeError("native Codex snapshot unsupported")
+        result = method()
+        if isawaitable(result):
+            result = await result
+        if not isinstance(result, dict):
+            raise RuntimeError("native Codex snapshot invalid")
+        return result
+
+    async def discover_native_capabilities(self, god_session_id: str) -> dict[str, object]:
+        live = self._require_native_live_session(god_session_id)
+        method = getattr(live.session, "discover_native_capabilities", None)
+        if not callable(method):
+            raise RuntimeError("native Codex discovery unsupported")
+        result = method()
+        if isawaitable(result):
+            result = await result
+        if not isinstance(result, dict):
+            raise RuntimeError("native Codex discovery invalid")
+        return result
+
+    async def invoke_native(
+        self,
+        god_session_id: str,
+        capability_id: str,
+        safe_request: dict[str, object],
+        *,
+        resolved_review_target: dict[str, object] | None = None,
+    ) -> NativeInvokeResult:
+        live = self._require_native_live_session(god_session_id)
+        method = getattr(live.session, "invoke_native", None)
+        if not callable(method):
+            raise RuntimeError("native Codex invocation unsupported")
+        result = method(
+            capability_id,
+            safe_request,
+            resolved_review_target=resolved_review_target,
+        )
+        if isawaitable(result):
+            result = await result
+        if not isinstance(result, NativeInvokeResult):
+            raise RuntimeError("native Codex invocation invalid")
+        return result
+
+    def subscribe_native_events(self, god_session_id: str) -> AppServerEventStream:
+        live = self._require_native_live_session(god_session_id)
+        method = getattr(live.session, "subscribe_native_events", None)
+        if not callable(method):
+            raise RuntimeError("native Codex events unsupported")
+        stream = method()
+        if not isinstance(stream, AppServerEventStream):
+            raise RuntimeError("native Codex event stream invalid")
+        return stream
+
+    def _require_native_live_session(self, god_session_id: str) -> LiveGodSession:
+        live = self._live_sessions.get(god_session_id)
+        if live is None or not live.session.is_alive():
+            raise RuntimeError("native Codex session unavailable")
+        if live.record.runtime != AgentRuntime.CODEX.value:
+            raise RuntimeError("native Codex session runtime mismatch")
+        return live
+
     async def abort_session(self, god_session_id: str) -> None:
         live = self._live_sessions.get(god_session_id)
         if live is None:
@@ -562,6 +629,32 @@ class GodSessionLayer:
             return value if isinstance(value, str) and value.strip() else None
         value = getattr(launcher, "model", None)
         return value if isinstance(value, str) and value.strip() else None
+
+    def prompt_fingerprint_for_resume(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        feature_scope_id: str | None,
+        proposed_fingerprint: str,
+    ) -> str:
+        """Preserve an existing bound thread identity; use v2 only for new threads."""
+
+        try:
+            record = self._registry.find_by_conversation_participant(
+                conversation_id,
+                participant_id,
+                feature_scope_id=feature_scope_id,
+            )
+        except KeyError:
+            return proposed_fingerprint
+        if (
+            record.provider_session_kind == "codex_app_server_thread"
+            and record.provider_session_id is not None
+            and record.prompt_fingerprint is not None
+        ):
+            return record.prompt_fingerprint
+        return proposed_fingerprint
 
     def _find_live_session_by_role(self, role: str) -> LiveGodSession | None:
         for live in reversed(list(self._live_sessions.values())):

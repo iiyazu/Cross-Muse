@@ -56,7 +56,7 @@ def build_native_invocation(
 
     capability = _capability(capability_id)
     native_thread = _required_text(thread_id, "codex_native_thread_unavailable", 512)
-    request = dict(safe_request)
+    request = normalize_native_safe_request(capability, safe_request)
     if capability == "goal_set":
         _exact_keys(request, {"objective", "token_budget"})
         goal_params = {
@@ -177,6 +177,75 @@ def build_native_invocation(
     raise AssertionError("unreachable capability")
 
 
+def normalize_native_safe_request(
+    capability_id: str, safe_request: Mapping[str, object]
+) -> dict[str, object]:
+    """Validate and normalize the browser-safe shape without native identifiers."""
+
+    capability = _capability(capability_id)
+    request = dict(safe_request)
+    if capability == "goal_set":
+        _exact_keys(request, {"objective", "token_budget"})
+        return {
+            "objective": _required_text(
+                request.get("objective"), "codex_native_objective_invalid"
+            ),
+            "token_budget": _bounded_integer(
+                request.get("token_budget"),
+                10_000,
+                1_000_000,
+                "codex_native_budget_invalid",
+            ),
+        }
+    if capability in {
+        "goal_pause",
+        "goal_resume",
+        "goal_get",
+        "goal_clear",
+        "models_list",
+        "turn_interrupt",
+        "compact_start",
+    }:
+        _exact_keys(request, set())
+        return {}
+    if capability == "settings_update":
+        _exact_keys(request, {"model", "effort"}, require_any=True)
+        normalized: dict[str, object] = {}
+        if "model" in request:
+            normalized["model"] = _required_text(
+                request.get("model"), "codex_native_model_invalid", 256
+            )
+        if "effort" in request:
+            effort = _required_text(
+                request.get("effort"), "codex_native_effort_invalid", 64
+            )
+            if effort == "ultra":
+                raise CodexNativeContractError("codex_native_effort_unsupported")
+            normalized["effort"] = effort
+        return normalized
+    if capability == "console_turn_start":
+        _exact_keys(request, {"text", "mode"})
+        mode = request.get("mode")
+        if mode not in {"default", "plan"}:
+            raise CodexNativeContractError("codex_native_turn_mode_invalid")
+        return {
+            "text": _required_text(request.get("text"), "codex_native_turn_text_invalid"),
+            "mode": mode,
+        }
+    if capability == "turn_steer":
+        _exact_keys(request, {"text"})
+        return {
+            "text": _required_text(request.get("text"), "codex_native_turn_text_invalid")
+        }
+    if capability == "review_start":
+        _exact_keys(request, {"target"})
+        target = request.get("target")
+        if target not in {"uncommitted", "base", "commit"}:
+            raise CodexNativeContractError("codex_native_review_target_invalid")
+        return {"target": target}
+    raise AssertionError("unreachable capability")
+
+
 def _safe_turn_params(thread_id: str, text: str) -> dict[str, object]:
     return {
         "threadId": thread_id,
@@ -236,4 +305,5 @@ __all__ = [
     "CodexNativeContractError",
     "NativeInvocation",
     "build_native_invocation",
+    "normalize_native_safe_request",
 ]
