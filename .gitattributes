@@ -1,0 +1,2 @@
+# Unified-diff context lines intentionally consist of one leading space.
+scripts/fixtures/memoryos-python-uv-7e85e85.patch -whitespace

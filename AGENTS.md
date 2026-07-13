@@ -1,114 +1,96 @@
-# xmuse
+# xmuse contributor guide
 
-Autonomous software development platform. Standalone sibling export of the `memoryOS` repo, developed in a git worktree.
+## Direction and evidence
 
-## Package Structure
+xmuse implements natural, logically decentralized Agent group conversations. Persistent
+Agents observe shared Room events and independently choose whether and how to respond.
+Infrastructure owns delivery, identity, causality, attempts, safety, and privileged
+execution; it must not impersonate an Agent.
 
-Two packages, one `pyproject.toml`:
+Treat implementation and fresh tests as evidence. Documentation is descriptive.
 
-| Path | Role | Notable |
-|------|------|---------|
-| `xmuse/` | Runtime/application layer | Intentionally **no `__init__.py`** — keeps runtime namespace boundary |
-| `src/xmuse_core/` | Reusable core library | All platform logic lives here |
-| `tests/xmuse/` | All xmuse tests | 167+ test files, `asyncio_mode = auto` |
+## Layout
 
-`xmuse/` imports from `xmuse_core.*` (not from `xmuse.`). The split mirrors the old in-repo boundary with MemoryOS: `xmuse/` was the runtime dir, `src/xmuse_core/` was the shared library.
+| Path | Role |
+| --- | --- |
+| `xmuse/` | Runtime/application layer; intentionally has no `__init__.py`. |
+| `src/xmuse_core/` | Reusable Room, Agent, runtime, provider, and Skill logic. |
+| `tests/xmuse/` | Backend behavior and boundary tests. |
+| `frontend/` | Browser Workroom. |
 
-## Entrypoints
+`xmuse/` may import `xmuse_core.*`; core must not import the application layer or
+`memoryos_lite`. The optional adapter speaks only the public loopback HTTP contract.
 
-```bash
-uv run xmuse-chat-api          # REST API (FastAPI)
-uv run xmuse-mcp-server        # MCP-over-HTTP server (FastAPI)
-uv run xmuse-platform-runner   # Platform orchestrator
-uv run xmuse-tui               # Textual TUI
-```
-
-Or directly:
-```bash
-uv run python xmuse/chat_api.py
-uv run python -m xmuse.tui
-uv run python xmuse/platform_runner.py
-uv run python xmuse/mcp_server.py
-```
-
-## Developer Commands
+## Commands
 
 ```bash
-uv run pytest                           # All tests
-uv run pytest tests/xmuse/test_foo.py   # Single file
-uv run ruff check .                     # Lint
-uv run ruff check <file>                # Lint single file
+uv sync --frozen --all-groups
+TMPDIR=/tmp uv run pytest -q
+uv run ruff check .
+uv run mypy --explicit-package-bases xmuse src/xmuse_core scripts/room_first_real_acceptance.py
+cd frontend
+npm ci
+npm run typecheck
+npm test
+npm run lint
+npm run build
+npm run test:e2e
 ```
 
-Always use `uv run` — never bare `pytest` or `ruff`. The `.venv` is managed by `uv`.
+Public commands: `xmuse-chat-api`, `xmuse-mcp-server`, `xmuse-room-runner`,
+`xmuse-workroom`, and `xmuse-data`. Entrypoints read exported environment variables and
+do not load `.env`.
 
-## Architecture Facts
+## Runtime boundaries
 
-- **GOD 群聊**: `src/xmuse_core/chat/` + `xmuse/chat_api.py`. `chat.db` (sqlite) holds conversations/messages/participants.
-- **Feature/lane workflow**: `src/xmuse_core/structuring/`. Blueprint → feature plan → lane graph/graph-set → projection → execution.
-- **Platform orchestrator**: `src/xmuse_core/platform/orchestrator.py`. Coordinates lane execution & review.
-- **Dashboard**: `xmuse/dashboard_api.py` (thin router) + `src/xmuse_core/platform/dashboard_*` (read models).
-- **TUI**: `xmuse/tui/` — Textual app, reads local store/read envelopes.
-- **Providers**: `src/xmuse_core/providers/`. Model adapters for Codex, OpenCode, fake. Policy & registry.
-- **Self-evolution**: `src/xmuse_core/self_evolution/`. Controller, watcher, decomposer, recovery.
-- **MCP**: `xmuse/mcp_server.py` + `src/xmuse_core/platform/mcp_*` modules.
+- `chat.db` is durable Room authority; `god_sessions.json` is durable
+  participant/provider binding state.
+- Human speech atomically creates root observations for every active participant. Once the
+  root phase terminates, same-participant peer observations for that correlation are claimed
+  as an immutable batch with one attempt and outcome. Mentions affect priority, not
+  eligibility or the bounded response budget.
+- The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`, and
+  `room_operations_projection/v2`.
+- The isolated Room Runner does not initialize a platform queue, scheduler, review plane,
+  execution harness, self-evolution controller, or A2A transport.
+- Room Codex sessions are participant-bound, read-only, network-disabled, and config-isolated.
+- Managed MCP exposes only `/health`, `/mcp/room`, and
+  `chat_room_submit_outcome`. New batch deliveries bind that outcome to the exact batch and
+  may name a reply target from the delivered members. Provider final text is not Room truth.
+- `room_context_envelope/v2` preserves the Human root, primary source and ancestry while
+  bounding recent context to 64 KiB. Bundled roster personas are immutable Room snapshots and
+  participate in provider session identity.
+- Managed writes and operator actions require server-only `XMUSE_OPERATOR_TOKEN`.
+- Exact-patch authorization uses only server-owned `room_execution_gate_profile/v1`
+  profiles. The configured profile's repository markers, complete local toolchain capability,
+  and ordered path-selected gates are frozen durably and re-proved before promotion. External
+  workspaces require an explicit profile; their path and private digests never enter browser
+  projections. Harness frontend gates call fixed read-only dependency entrypoints rather than
+  candidate-controlled package scripts.
+- Source-backed memory is opt-in through `xmuse-workroom start --memory` together with
+  `--memoryos-executable ...`. `chat.db` owns its outbox, approvals, delivery evidence, and
+  recall receipts; the MemoryOS archive database is derived and rebuildable. Recall accepts
+  only bounded archival items whose source documents/activities can be re-proved, and any
+  failure remains Host attention rather than Room Runtime failure.
+- The MemoryOS sidecar and Room Runner may receive the server-only MemoryOS API key. Room
+  MCP, Codex sessions, the browser, Operations, commands, receipts, and logs must not.
+- The Workroom manager automatically restarts only its identity-confirmed-dead MemoryOS
+  child with bounded backoff. Live-but-unhealthy, identity-mismatched, and unknown port
+  owners remain degraded without speculative signals. Guarded derived-index rebuilds are
+  durable `chat.db` actions; they stop the proven child before deleting only the fixed cache,
+  reset bindings/outbox transactionally, and resume replay without changing Room readiness.
+- `xmuse-data` may inspect old `xmuse.chat_db/v1` databases only for offline
+  doctor/backup/restore/compact. It must not initialize a retired runtime.
+- The local application remains loopback-only and single-user.
 
-## Key Constraints
+## Cleanup and safety
 
-- **`xmuse/__init__.py` must NOT exist** — it's the runtime namespace boundary. Wheel packaging uses explicit `packages = ["xmuse", "src/xmuse_core"]` in pyproject.toml.
-- **`XMUSE_ROOT` env var** overrides the runtime root (`default_xmuse_root()`). All runtime state files respect this.
-- **`feature_lanes.json`** is a live projection/queue, NOT the authority. Authority is in graph-sets and durable stores.
-- **Ray actors** are not durable state authority. Crash recovery must use durable store.
-- **LangGraph** orchestrates workflows but must NOT write lane status directly.
-- **Dashboard/TUI** read read models and envelopes. They must NOT bypass contracts to write internal state.
-- **Memory refs** use `memory://conversation/<id>/...` or `memory://global/...` format. Feature-scoped refs need `feature_scope_id`.
-- **package boundary tests** (`tests/xmuse/test_package_boundaries.py`) enforce that `xmuse_core` doesn't directly import `memoryos_lite`.
-
-## Docs
-
-Current authoritative docs are in `docs/xmuse/`. Old `docs/superpowers/` specs/plans remain on disk for test/legacy references but are not the current entry point. Start with `docs/xmuse/README.md`.
-
-## OpenCode Orchestration
-
-Multi-agent orchestration system for long-running tasks. Configured in `opencode.json`.
-
-### Subagents (@-mention)
-
-| Agent | When to Use |
-|-------|-------------|
-| @orchestrator | Multi-step tasks (2+ files). Runs 4-phase loop |
-| @planner | Complex tasks needing structured planning first |
-| @coder | Implementation within defined scope (spawned by orchestrator) |
-| @adversarial-reviewer | Code review against spec (spawned by orchestrator) |
-| @swarm-coordinator | Multiple independent features in parallel |
-
-### Skills (load with `skill` tool)
-
-| Skill | Purpose |
-|-------|---------|
-| `start` | Entry point for orchestration system |
-| `orchestrated-execution` | 4-phase loop: IMPLEMENT→VALIDATE→REVIEW→COMMIT |
-| `plan-review-gate` | Adversarial review of implementation plans |
-
-### Workflow Patterns
-
-- **Simple (1-2 files)**: direct prompting, no orchestration
-- **Multi-step (3+ files)**: `@orchestrator {task}`
-- **Complex feature**: `@planner {task}` → review plan → `@orchestrator execute`
-- **Multiple independent**: `@swarm-coordinator {list}`
-
-### Orchestration Rules
-
-1. Coder must follow TDD (test first, then implement)
-2. Orchestrator validates independently (never trust subagent self-reports)
-3. Adversarial reviewer is always a FRESH instance
-4. Max 3 retries per work unit, then escalate to human
-5. Quality gates are BLOCKING — no skipping
-
-## Git Conventions
-
-- Local git worktree development (not yet pushed to GitHub)
-- No CI/GitHub Actions configured
-- Avoid committing runtime state: `*.db`, `*.sqlite3`, `*.jsonl`, `feature_lanes.json`, `xmuse/work/`, `xmuse/history/`, `xmuse/logs/` (all in `.gitignore`)
-- Don't `git reset --hard` — worktree may have user goal dirtiness
-- 78MB old blobs in history; full cleanup needs `git filter-repo` (confirm with user first)
+- Use Git history instead of repository `legacy/`, `archive/`, or source backups.
+- Preserve authority, identity, causality, idempotency, recovery, and data-safety invariants.
+- Avoid inventory and exact-document-wording tests; test behavior and package direction.
+- Do not reintroduce a central speaker queue, platform runner, broad MCP, Dashboard, A2A
+  experiment, an always-on or authoritative MemoryOS runtime, Ray, repository-local OpenCode
+  orchestration, or LangGraph execution into the default product.
+- Do not commit databases, logs, PID/receipt files, runtime roots, `node_modules`,
+  `.next`, or caches.
+- Preserve unrelated user changes. Never use `git reset --hard`.

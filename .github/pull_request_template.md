@@ -1,19 +1,15 @@
-## Mainline Contract
+## Room Contract
 
-- blueprint_id:
-- feature_ids:
-- lane_ids:
-- depends_on_lanes:
+- user-visible change:
+- authority, identity, causality, or recovery impact:
+- Room projection or operator action impact:
 
-## Memory Impact
+## Runtime Boundaries
 
-- memory_impact:
-- memory_refs:
-
-## Artifacts And Providers
-
-- new_artifacts:
-- provider_changes:
+- Room Runner / Room-only MCP impact:
+- Codex sandbox or provider-binding impact:
+- exact-patch Harness impact:
+- optional MemoryOS impact:
 
 ## Gate Profile
 
@@ -22,7 +18,8 @@
 
 ## Review Evidence Bundle
 
-- review_evidence_bundle:
+- behavior and failure-path evidence:
+- real runtime or browser evidence (when applicable):
 
 ## Rollback Plan
 

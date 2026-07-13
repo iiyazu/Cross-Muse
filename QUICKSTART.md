@@ -1,94 +1,154 @@
-# xmuse Quickstart
+# xmuse quickstart
 
-This walkthrough starts from a clean checkout and ends with a fake groupchat demo. The
-demo does not require Codex, Ray, OpenCode, DeepSeek, or memoryOS.
+## Prerequisites
 
-## Clean Environment Setup
+- Linux or WSL. Native Windows and macOS lifecycle support is not yet provided;
+- Python 3.11+, `uv`, and Git;
+- an authenticated Codex CLI on `PATH` for real Agent turns;
+- Node.js 20.9+ and npm when running the browser Workroom.
 
-Prerequisites:
+MemoryOS is optional. Source-backed long-term recall additionally requires a real
+`memoryos` executable; xmuse does not install or import its Python package.
 
-- Python 3.11
-- `uv`
+Backend entrypoints read the process environment directly. They do not automatically load a
+repository `.env` file.
 
-Install all locked dependency groups:
+## Build the local application
+
+Install the Python and frontend dependencies, then create the Next standalone production
+build. Run this once after checkout and again whenever frontend dependencies or source
+change:
 
 ```bash
 uv sync --frozen --all-groups
+cd frontend
+npm ci
+NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL=http://127.0.0.1:8201/api/chat npm run build
+cd ..
 ```
 
-Optional local config:
+The browser API coordinate is intentionally compiled into the frontend build. The default
+local application uses fixed loopback endpoints: Workroom `http://127.0.0.1:3000` and Chat
+API `http://127.0.0.1:8201`. It does not fall back to a public interface or a different port.
+
+## Default Workroom path
+
+Use the unified lifecycle command from the repository root:
 
 ```bash
-cp .env.example .env
+export XMUSE_ROOT=/tmp/xmuse-local
+uv run xmuse-workroom doctor
+uv run xmuse-workroom start
 ```
 
-Default fake demo and CI paths do not need provider secrets.
+`doctor` checks the built frontend, Node runtime, local data directory, and fixed ports before
+startup. `start` supervises the Chat API and built Next server; in this managed mode the Chat
+API starts, reconciles, and stops the Room-only MCP server and isolated Room Runner. Open
+`http://127.0.0.1:3000`; `/` enters the most recent room and durable room links use
+`/rooms/{conversation_id}`.
 
-## Run Health Check
-
-Run the local health summary:
+Inspect or stop the same local generation with:
 
 ```bash
-uv run xmuse-platform-runner --health-once
+uv run xmuse-workroom status
+uv run xmuse-workroom stop
 ```
 
-To include HTTP readiness probes while the Chat API and MCP server are already running:
+The launcher creates and injects the local operator token into the Chat API and Next server
+processes. In managed mode every default write uses it: Room creation and human speech go
+through `/api/rooms` and `/api/rooms/{conversation_id}/messages`; cancel/retry and guarded
+Runtime recovery use their own fixed Next routes. The token must never use a `NEXT_PUBLIC_*`
+name, enter browser storage, or be copied into frontend build files.
+
+Starting `xmuse-chat-api` manually without a token remains an explicit trusted-loopback
+debugging mode. Managed startup fails closed when its operator token is absent; neither mode
+is remote multi-user authentication.
+
+This remains a loopback-only, single-user local application. Do not expose either fixed port
+to the LAN or Internet.
+
+## Optional source-backed memory
+
+Start the same Workroom with the archive-only MemoryOS sidecar explicitly enabled:
 
 ```bash
-uv run xmuse-platform-runner --health-once --health-check-http --mcp-port 8100
+uv run xmuse-workroom start \
+  --memory \
+  --memoryos-executable /absolute/path/to/memoryos
 ```
 
-## Run Fake Groupchat Demo
+Both flags are required together. Workroom binds MemoryOS to `127.0.0.1:8301`, gives it a
+random server-only API key and a private `<XMUSE_ROOT>/runtime/memoryos-derived` directory,
+and starts it with v3 memory/v2 recall while LLM rewriting, reranking, paging, item
+extraction, recall cache, and archival vectors are disabled. The key is never put in argv,
+the browser, the Room MCP process, or a Codex session.
 
-Run:
+MemoryOS is a rebuildable index. `chat.db` remains authority for source activities, pending
+and approved memory candidates, delivery state, and recall receipts. If the sidecar is slow
+or unavailable, Inspector reports memory degradation while Agent turns continue with their
+durable Room causal context. Stop Workroom before changing this opt-in mode.
+
+## Manual runtime debugging
+
+The unified lifecycle command is the default. For explicit backend debugging only, first run
+`xmuse-workroom stop`, then use separate terminals and keep the same `XMUSE_ROOT`. Do not
+start these commands beside an already supervised generation:
 
 ```bash
-uv run python scripts/demo_fake_groupchat.py
+uv run xmuse-mcp-server --xmuse-root "$XMUSE_ROOT" --port 8100
 ```
-
-Use a custom runtime root and message:
 
 ```bash
-uv run python scripts/demo_fake_groupchat.py \
-  --xmuse-root /tmp/xmuse-fake-demo \
-  --message "Create a small release candidate checklist."
+uv run xmuse-room-runner \
+  --xmuse-root "$XMUSE_ROOT" \
+  --generation manual-debug \
+  --worktree "$PWD" \
+  --max-concurrent-rooms 4 \
+  --mcp-port 8100 \
+  --delivery-timeout-s 180 \
+  --cleanup-grace-s 8
 ```
 
-Expected output includes:
+Those runner settings match the Chat API's supervised Workroom defaults.
 
-```text
-fake-groupchat-demo-ok
-scheduler_happy_path=1
-GOD reply: Architect GOD demo reply: ...
-```
-
-The script creates a conversation, posts a human message, runs the existing scheduler, and
-verifies a GOD reply was persisted through the existing chat/store/scheduler path.
-
-## Optional Real Runtime Notes
-
-The real Ray/Codex/MCP path needs local runtime services and a working Codex CLI:
+## Health and checks
 
 ```bash
-export XMUSE_PEER_GOD_BACKEND=ray
-export XMUSE_EXECUTE_GOD_BACKEND=ray
-export XMUSE_REVIEW_GOD_BACKEND=ray
-export XMUSE_RAY_GOD_TRANSPORT=app-server
-export XMUSE_RAY_GOD_EFFORT=low
-export XMUSE_RAY_GOD_MCP=1
-export XMUSE_CHAT_API_URL=http://127.0.0.1:8201
+uv run xmuse-workroom doctor
+uv run xmuse-workroom status
+curl http://127.0.0.1:8201/health
+curl http://127.0.0.1:8201/api/chat/runtime/operations
+curl http://127.0.0.1:8100/health
+uv run xmuse-room-runner --help
 ```
 
-Start services from separate terminals:
+With memory enabled, `xmuse-workroom status` lists MemoryOS separately; its degraded state
+does not make the required Chat API, Room Runner, Room MCP, or frontend unready.
 
 ```bash
-uv run python -m xmuse.chat_api
-uv run python -m xmuse.mcp_server --port 8100
-uv run xmuse-platform-runner --peer-chat --mcp-port 8100
+TMPDIR=/tmp uv run pytest -q
+uv run ruff check .
+cd frontend
+npm run typecheck && npm test && npm run lint && npm run build
+npm run test:e2e
 ```
 
-Run the manual real runtime gate only when those dependencies are available:
+For bounded production-path load and recovery checks, use the standalone lab from a clean
+checkout. It writes no production telemetry and requires its result file to be outside the
+repository:
 
 ```bash
-uv run pytest -q tests/xmuse/test_full_chain_real_run.py::test_real_ray_codex_app_server_mcp_writeback_soak_restart_resume
+uv run python scripts/room_soak_chaos.py ci-sim --result /tmp/xmuse-ci-soak.json
+uv run python scripts/room_soak_chaos.py live-short --result /tmp/xmuse-live-short.json
 ```
+
+`memory-recovery` additionally requires `--memoryos-executable` and uses two phases
+(nine warm-up turns plus one post-recovery turn per Room) so recalled evidence is older
+than the default recent Room burst; `live-soak` requires
+`--confirm-provider-cost` and runs for at least 60 minutes. All live profiles start an
+isolated Workroom, use fixed same-origin Next writes, inject identity-fenced faults, refresh
+every Room in a real browser, verify SQLite and process/resource residue, then stop what they
+started. Preflight or startup failures emit a separate bounded CLI error instead of
+manufacturing a complete soak receipt.
+
+Do not commit runtime databases, JSONL logs, PID files, `.next`, `node_modules`, or caches.

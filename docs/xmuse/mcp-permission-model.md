@@ -1,104 +1,59 @@
-# xmuse MCP Permission Model
+# xmuse Room MCP permission boundary
 
-Date: 2026-06-04
+The managed MCP server is a trusted-local, Room-only service bound to
+`127.0.0.1:8100`. Its live contract is defined by
+`src/xmuse_core/chat/room_mcp_contract.py` and `xmuse/room_mcp_server.py`.
 
-Scope: Path A Phase 4 contract closure. This document defines declarative MCP
-permission categories and current enforcement boundaries. It does not implement
-API authentication middleware, broad authorization, dashboard admin UI, or rate
-limiting.
+## Surface
 
-## Vocabulary
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Bounded local readiness. |
+| `POST /mcp/room` | JSON-RPC with exactly `chat_room_submit_outcome`. |
 
-- API authentication is not implemented: `/mcp` and `/mcp/chat` currently accept
-  JSON-RPC requests without a token/header gate.
-- identity verification is not API authentication: selected chat tools verify
-  `god_session_id`, `conversation_id`, and `participant_id` against
-  `god_sessions.json`; this proves session scope, not network caller identity.
-- audit guard is not authorization: tools such as `enqueue_lane`, `abort_lane`,
-  `update_lane_status`, and `apply_takeover_decision` require audit/guard
-  payloads to prevent blind writes, but the payload does not authenticate the caller.
-- permission category is declarative: V11 adds metadata and tests so every tool
-  is classified before future auth/authorization work.
+OpenAPI, SSE, `/messages`, root `/mcp`, and `/mcp/chat` are absent. Room Codex
+app-servers use a config-isolated home, so user MCP registrations and plugins cannot expand
+the tool list. Only `chat_room_submit_outcome` is pre-approved.
 
-## Permission Categories
+This endpoint is not remote caller authentication. Role headers and GOD-session checks are
+capability and authorship checks. Do not bind it to a public interface without a separate
+authentication, authorization, TLS, rate-limit, and secret-management design.
 
-| Category | Meaning | Runtime enforcement in V11 |
-| --- | --- | --- |
-| read_only | Tool is non-mutating and returns bounded read models or diagnostics | Metadata + tests only |
-| write | Tool mutates state and requires a write contract such as audit guard or idempotency | Existing write validation where present |
-| identity_bound_god | Chat GOD tool scoped by `god_session_id`, `conversation_id`, and `participant_id` | Existing `_verify_god_identity()` checks |
-| admin_operator | High-privilege operator action requiring future admin authorization | Existing audit/guard only; no auth middleware |
+## Durable writeback
 
-## Tool Matrix
+Every accepted outcome binds:
 
-| Tool | Category | Mutates | Identity verification | Audit guard | Scope |
-| --- | --- | --- | --- | --- | --- |
-| list_lanes | read_only | false | none | none | lane_projection |
-| enqueue_lane | write | true | none | audit_guard_required | lane_projection |
-| get_status | read_only | false | none | none | lane_projection |
-| abort_lane | admin_operator | true | none | audit_guard_required | lane_projection_and_active_session |
-| get_error_knowledge | read_only | false | none | none | error_knowledge |
-| get_logs | read_only | false | none | none | execution_logs |
-| get_tool_inventory | read_only | false | none | none | tool_inventory |
-| get_lane | read_only | false | none | none | lane_projection |
-| get_gate_report | read_only | false | none | none | gate_report |
-| get_diff | read_only | false | none | none | lane_worktree |
-| query_knowledge | read_only | false | none | none | error_knowledge |
-| update_lane_status | write | true | none | audit_guard_required | lane_projection |
-| apply_takeover_decision | admin_operator | true | none | audit_guard_required | lane_projection_and_takeover |
-| read_lane_contract | read_only | false | none | none | lane_contract |
-| read_blueprint_contract | read_only | false | none | none | blueprint_contract |
-| read_feature_plan_contract | read_only | false | none | none | feature_plan_contract |
-| read_review_contract | read_only | false | none | none | review_contract |
-| read_graph_set_summary | read_only | false | none | none | graph_set |
-| read_health_contract | read_only | false | none | none | run_health |
-| read_graph_set_contract | read_only | false | none | none | graph_set |
-| read_evidence_refs | read_only | false | none | none | evidence_refs |
-| read_review_verdict | read_only | false | none | none | review_verdict |
-| read_takeover_context | read_only | false | none | none | takeover_context |
-| read_run_health | read_only | false | none | none | run_health |
-| read_provider_inventory | read_only | false | none | none | provider_inventory |
-| chat_list_conversations | read_only | false | none | none | all_conversations |
-| chat_create_conversation | write | true | none | none | conversation_creation |
-| chat_list_participants | read_only | false | none | none | conversation |
-| chat_post_message | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_read_inbox | identity_bound_god | false | god_session | none | conversation_participant_session |
-| chat_mark_inbox | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_mention | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_emit_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_approve_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_create_collaboration_request | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_record_collaboration_response | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_raise_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_resolve_collaboration_blocker | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_evaluate_dispatch_gate | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
-| chat_inspect_conversation | read_only | false | none | none | conversation |
-| chat_emit_blueprint_proposal | identity_bound_god | true | god_session | chat_identity_idempotency | conversation_participant_session |
+- conversation, participant, and durable GOD session;
+- observation, attempt, and current lease;
+- an idempotent client request;
+- one validated outcome: `respond`, `handoff`, `propose`, `defer`, or `noop`.
 
-## Disabled MemoryOS MCP Policy Entries
+For a batched delivery, the same tool call also carries the exact
+`observation_batch_id`. A `respond` or `handoff` may include `reply_to_activity_id`, but only
+for an activity present in that delivered batch. The server derives message causation and
+reply linkage from that validated source; the provider cannot name arbitrary Room history.
 
-These names have permission metadata for authorization policy checks, but they
-are not registered in the MCP server tool schema:
+A `propose` outcome may include a bounded `room_execution_patch/v1`. Exact diff bytes are
+removed from Room activity, messages, outcome receipts, request logs, and frontend events;
+only the execution candidate authority table stores them. Peer outcomes may include
+`proposal_assessments`, but only after the Host delivered the complete candidate in that
+exact batch and the transport bound its final context digest as a durable review receipt.
+Self-votes, summary-only votes, wrong digests, and votes from another batch fail closed.
 
-| Tool | Category | Mutates | Identity verification | Audit guard | Scope |
-| --- | --- | --- | --- | --- | --- |
-| memory_search | read_only | false | none | none | memory_namespace |
-| memory_build_context | read_only | false | none | none | memory_namespace |
-| memory_ingest | write | true | none | audit_guard_required | memory_namespace |
+The same single outcome call may carry at most three `memory_candidates`. Each candidate is
+one of `room_fact`, `room_decision`, `user_preference`, or `project_rule`, contains at most
+4 KiB of text, and cites one to eight activity IDs that were actually available in the
+current batch/causal envelope. The server re-proves those sources in `chat.db`; candidate
+text is stored only in memory-candidate authority, while the outcome/activity/request-log
+surfaces retain safe IDs and digests. Infrastructure never creates a candidate or summarizes
+conversation into long-term memory.
 
-`memory_search` and `memory_build_context` remain REST-sidecar read concepts.
-`memory_ingest` is a disabled MCP write concept and is denied unless host
-auth/RBAC is explicitly enabled. MemoryOS must not become xmuse truth authority
-through MCP tool registration.
+Source-valid Room facts and decisions are automatically queued only for the current Room.
+User preferences and project rules remain pending until a guarded operator approval queues
+them into the shared local-user or project archive. Recall still treats the resulting text
+as untrusted evidence: it cannot change Room identity, permissions, Skills, leases, or the
+durable outcome contract.
 
-## V11 Runtime Rejection Contract
-
-The identity-bound chat tools must reject:
-
-- wrong `conversation_id` for the `god_session_id`,
-- wrong `participant_id` for the `god_session_id`,
-- unknown `god_session_id`.
-
-Read-only tools are classified as non-mutating. They still require future API
-authentication and caller authorization before exposing the MCP server beyond a
-trusted local operator boundary.
+Unknown tools, identities, leases, attempts, and malformed outcomes fail closed. Provider
+final text and provider-turn completion never materialize Room speech. Adding a tool requires
+updating the schema, enforcement, isolated Codex configuration, and focused tests together.

@@ -8,7 +8,6 @@
 
 /src/xmuse_core/integrations/ @iiyazu
 /src/xmuse_core/platform/memory_refs.py @iiyazu
-/src/xmuse_core/platform/memory_update_events.py @iiyazu
 
 /src/xmuse_core/providers/ @iiyazu
 

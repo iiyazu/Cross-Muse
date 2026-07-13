@@ -1,1025 +1,216 @@
-# xmuse Frontend API Contract
+# xmuse Room-first browser API
 
-> 面向前端实现的 xmuse API 契约文档
-> Last updated: 2026-06-02 HKT
-> Audience:
-> - repo 内 xmuse 前端
-> - 独立 xmuse 前端实现者
->
-> 当前前端/TUI 实现入口请先读：`docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md`、
-> `docs/xmuse/README.md` 和 `docs/xmuse/解耦开发协议.md`。
+Verified against `frontend/src/` on 2026-07-12. This is a navigation contract, not runtime
+authority; TypeScript source, backend implementation, and fresh tests take precedence.
 
-## Scope
+## Local boundary and configuration
 
-这份文档只描述前端应直接消费的接口契约，不描述后端内部实现。
+| Use | Environment value | Default |
+| --- | --- | --- |
+| Browser Chat REST | `NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL` | `http://localhost:8201/api/chat` |
+| Next server Chat REST | `XMUSE_CHAT_API_BASE_URL` | `http://127.0.0.1:8201/api/chat` |
+| Next server operator credential | `XMUSE_OPERATOR_TOKEN` | none |
 
-当前状态：
+Only Chat REST coordinates are public. `XMUSE_OPERATOR_TOKEN` stays in the Next server
+process and must never use a `NEXT_PUBLIC_*` name. The current deployment model is still a
+loopback, single-user Workroom; the proxy described below is CSRF/secret hygiene, not remote
+user authentication.
 
-- 当前用户前门方向是 Textual TUI；旧 `xmuse/frontend/` browser frontend 已归档到
-  `xmuse/history/cleanup_20260601T163850Z/`。
-- Chat/Dashboard REST 和本地 read envelope 已足够支持 chat-first/TUI MVP。
-- Dashboard drill-down、lane graph、feature graph-set、run health、peer-chat
-  read models 已有可消费接口。
-- `docs/xmuse/frontend/FRONTEND_VISION.md` 中的部分 north-star endpoint 仍未实现；不要把
-  vision 文档当作全部 live API。
-- 当前不要假设有 live runner。PlanningRun、autonomous execution card、approved
-  blueprint -> feature/lane graph 自动生成 API 仍按迁移中能力处理。
-- TUI/dashboard/workflow 的跨层边界以 `docs/xmuse/解耦开发协议.md` 为准。
+The default Room UI does not hold an operator-token WebSocket. It uses durable event polling
+plus bounded Room projection refreshes.
 
-文档按三层语义组织：
+## Default browser calls
 
-1. `live now`
-   当前后端已经返回，前端可以立即接入。
-2. `mixed-run compatibility`
-   为 GOD session-first 迁移准备的兼容约束。部分字段可能尚未 live，但前端必须按该语义预留。
-3. `reserved next`
-   已在 spec / plan 中锁定，前端可以先建类型与 UI 占位，但不能假定后端今天一定返回。
+| Use | Request |
+| --- | --- |
+| List room summaries | `GET /api/chat/rooms` |
+| Create a room | `POST /api/rooms` on the Next origin → fixed backend `POST /api/chat/conversations` |
+| Read bounded Room state | `GET /api/chat/conversations/{id}/room-projection` |
+| Catch up invalidations | `GET /api/chat/conversations/{id}/events?after_seq=&limit=` |
+| Send human speech | `POST /api/rooms/{id}/messages` on the Next origin → fixed backend `POST /api/chat/threads/{id}/messages` |
+| Cancel one Agent attempt | `POST /api/room-observations/{observation_id}/cancel` on the Next origin |
+| Retry one observation | `POST /api/room-observations/{observation_id}/retry` on the Next origin |
+| Inspect runtime incidents | `GET /api/chat/runtime/operations` |
+| Recover degraded runtime | `POST /api/room-runtime/recover` on the Next origin |
+| Rebuild a blocked MemoryOS index | `POST /api/room-memory/rebuild` on the Next origin |
+| List Room executions | `GET /api/chat/conversations/{id}/executions` |
+| Read one exact candidate | `GET /api/chat/execution-candidates/{candidate_id}` |
+| Change execution policy | `PUT /api/room-execution-policy/{id}` on the Next origin |
+| Decide a candidate | `POST /api/room-execution-candidates/{id}/decision` on the Next origin |
+| Cancel an execution run | `POST /api/room-execution-runs/{id}/cancel` on the Next origin |
+| Inspect source-backed memory | `GET /api/chat/conversations/{id}/memory` |
+| Resolve a memory candidate | `POST /api/room-memory-candidates/{id}/resolve` on the Next origin |
 
-## Base URLs
+Room creation accepts `title`, a `client_request_id`, and either `roster_template_id` or a
+bounded `initial_participants` list. The backend atomically writes the Room, roster, and
+`room_setup_requests` receipt. Identical retries return the same `room_setup/v2` response;
+reusing the request ID with a different payload returns `409`. Bootstrap mode, provider
+override, fork, and template-management fields are not part of the Room product. Fresh Room
+creation does not emit a system message or create an init participant/provider session.
+Custom participant identity fields are bounded at the API boundary (role 64 characters,
+display name 120, model and role-template reference 200); a Room title is capped at 200.
+These are identity metadata, not free-form persona prompts. Bundled templates alone freeze a
+server-authored `persona_snapshot/v1` of at most 2 KiB into each participant identity.
 
-默认本地开发地址：
+## Room list projection
 
-| Surface | Base URL | Status |
-|---|---|---|
-| Dashboard REST | `http://localhost:8200/api` | `live now` |
-| Chat REST | `http://localhost:8201/api/chat` | `live now` |
-| MCP JSON-RPC | `http://localhost:8100/mcp` | `live now` |
+`GET /api/chat/rooms` returns `room_list_projection/v1`. Each summary contains the durable
+conversation id/title, up to four members, latest visible Room item and sequence, and active
+and attention turn counts. The backend builds the list with batch queries; it does not build
+one legacy worklist/evidence projection per room.
 
-旧 browser frontend 的环境变量如下，仅供兼容历史实现；Textual TUI 可以直接读取
-本地 store/read envelope 或后续稳定 API。
+## Bounded Room projection
 
-```bash
-NEXT_PUBLIC_XMUSE_API_BASE_URL=http://localhost:8200/api
-NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL=http://localhost:8201/api/chat
-NEXT_PUBLIC_XMUSE_MCP_ENDPOINT=http://localhost:8100/mcp
+```http
+GET /api/chat/conversations/{conversation_id}/room-projection?limit=60
+GET /api/chat/conversations/{conversation_id}/room-projection?before_room_seq=81&limit=60
+GET /api/chat/conversations/{conversation_id}/room-projection?after_room_seq=140&limit=60
 ```
 
-注意：
+`before_room_seq` and `after_room_seq` are mutually exclusive; `limit` is capped at 100.
+The response is `room_chat_projection/v3` and includes:
 
-- 当前前端工程里的 `frontend/lib/mcp-config.ts` 默认把 MCP 指到 `http://localhost:8200/mcp`。
-- 除非前面有反向代理，否则应改为 `8100/mcp`。
+- a bounded durable timeline with Room sequence, stable public participant identity,
+  causation/correlation, message/proposal ids and proof boundary; provider/GOD session and
+  attempt identifiers never cross this boundary;
+- participant global frontiers and last outcomes;
+- the latest eight human-root turns plus total active/attention counts;
+- canonical observation-batch evidence, real provider-attempt and Skill-decision counts,
+  context-only tail coverage, and resolved reply/handoff targets without exposing leases or
+  provider identity;
+- `page.has_older`, `page.has_newer`, and next Room cursors;
+- a separate `event_cursor` for frontend invalidations.
 
-## Compatibility Rules
+Room sequence and frontend event sequence are different domains and must never be merged.
+The store drains event pages first, then performs one incremental Room projection refresh; a
+15-second safety refresh covers lease expiry, which does not create an event.
 
-### 1. `status` 不是最终语义层
+## Human messages
 
-当前 lane 记录里的 `status` 仍然是 MVP runtime 状态。
-前端必须优先使用后端返回的 `effective_status`。旧数据或部分兼容接口可能只
-有 `status`，此时前端按混跑映射降级解释。
-
-约束：
-
-- 如果响应里同时有 `status` 和 `effective_status`，UI 语义优先使用 `effective_status`
-- 如果只有 `status`，按下面的 mixed-run 映射在前端本地降级解释
-
-### 2. 混跑期状态映射
-
-| Raw `status` | Mixed-run meaning | Preferred UI label |
-|---|---|---|
-| `pending` | dependency-ready but not yet dispatched | `ready` |
-| `dispatched` | worker assigned | `dispatched` |
-| `executed` | worker finished | `executed` |
-| `gated` | gate passed, review queue bridge in progress | `under_review` |
-| `reviewed` | verdict accepted through bridge | `reviewed` |
-| `awaiting_final_action` | waiting human final gate | `awaiting_final_action` |
-| `merged` | merged | `merged` |
-| `rejected` | rework requested | `requeued` |
-| `reworking` | retry/rework running | `requeued` |
-| `exec_failed` | execution failure | `exec_failed` |
-| `gate_failed` | gate failure | `gate_failed` |
-| `failed` | terminal failure under legacy runtime | `terminated` by default |
-
-### 3. 会话身份兼容规则
-
-前端不能再把 session 唯一性绑定到 `feature_id`。
-
-兼容约束：
-
-- `feature_id` 只代表当前 work assignment
-- `god_session_id` 才是未来稳定主键
-- `session_address` 和 `session_inbox_id` 是路由与投递标识
-
-如果 `/api/sessions` 还只返回旧 shape，前端可以继续展示；但一旦新字段出现，前端应以新字段为主。
-
-## Dashboard REST API
-
-当前 Dashboard API 的真实 endpoint 以 `xmuse/dashboard_api.py` 为准。
-Dashboard 是灰盒 drill-down surface：前端主流程应从 chat card / worklist
-跳转进入，不应把 dashboard 做成唯一入口。
-
-### `GET /api/health`
-
-用途：
-
-- 获取系统健康、graph authority 摘要、lane summary、run health 和错误计数。
-- 顶栏或 dashboard 首页可使用该接口显示 `ok/degraded`。
-
-### `GET /api/run-health`
-
-查询参数：
-
-- `conversation_id?: string`
-- `workspace_id?: string`
-
-用途：
-
-- 获取 live / stale / retrying / blocked / infra-failed / terminal 等运行健康视图。
-- chat 右侧摘要和 dashboard 首页都应优先使用该接口，而不是只看 lane status。
-
-### `GET /api/lanes`
-
-用途：
-
-- 读取 lane 列表
-- 作为 observability / lane control / audit surface 的主列表数据源
-
-当前响应：
+```http
+POST /api/chat/threads/{conversation_id}/messages
+Content-Type: application/json
+```
 
 ```json
 {
-  "lanes": [
-    {
-      "feature_id": "chat-backend",
-      "task_type": "execute",
-      "status": "pending",
-      "prompt": "Build chat API",
-      "capabilities": ["code"],
-      "priority": 0,
-      "depends_on": [],
-      "conversation_id": "conv-1",
-      "resolution_id": "res-1",
-      "graph_id": "graph-1",
-      "graph_version": 1,
-      "gate_profile": "xmuse-core"
-    }
-  ]
+  "message": "请一起审视这个边界，@reviewer 优先关注安全性。",
+  "client_request_id": "ui_<uuid>"
 }
 ```
 
-字段契约：
+The durable receipt returns `client_request_id`, `activity_id`, `room_activity_seq`, and the
+complete message id/content/time. A recognized Mention raises one Agent's attention
+priority; all active non-init Agents still observe the room activity.
 
-| Field | Type | Status | Notes |
-|---|---|---|---|
-| `feature_id` | `string` | `live now` | lane id |
-| `task_type` | `"execute" \| string` | `live now` | 当前几乎总是 `execute` |
-| `status` | `string` | `live now` | 原始 runtime 状态 |
-| `effective_status` | `string` | `live now` | 混跑归一化状态，UI 优先使用 |
-| `prompt` | `string` | `live now` | lane 描述 |
-| `capabilities` | `string[]` | `live now` | 需要的能力 |
-| `priority` | `number` | `live now` | 调度优先级 |
-| `depends_on` | `string[]` | `live now` | graph 依赖 |
-| `conversation_id` | `string` | `live now` | 来自 chat plane |
-| `resolution_id` | `string` | `live now` | 来自 structured resolution |
-| `graph_id` | `string` | `live now` | lane graph id |
-| `graph_version` | `number` | `live now` | graph version |
-| `gate_profile` | `string` | `live now` | gate profile |
-| `gate_profiles` | `string[]` | `live now` | 多 profile 扩展 |
-| `source_lane_id` | `string` | `live now` | patch-forward / follow-up lane 来源 |
-| `review_decision` | `string` | `live now` | legacy bridge metadata |
-| `review_summary` | `string` | `live now` | legacy bridge metadata |
-| `review_verdict_id` | `string` | `live now` | legacy bridge metadata |
-| `final_action_hold_id` | `string` | `live now` | final-action hold 标识 |
-| `failure_reason` | `string` | `live now` | `exec_failed/gate_failed/failed` 解释 |
+Each active Agent has one root action opportunity for a Human turn. After all root
+observations terminate, its peer observations for that correlation may be claimed as one
+immutable batch of at most 16 items, producing at most one visible follow-up. Activities from
+that follow-up remain durable context but do not create a third provider wave. The timeline
+can render and navigate durable `reply_to` and handoff targets.
 
-前端建议：
+## Fixed managed-write proxies
 
-- 列表筛选先兼容旧 `status`
-- 一旦 `effective_status` 出现，筛选和颜色映射改用 `effective_status`
-- `prompt` 只用于摘要，不要当作结构化业务字段
+The browser never calls a managed backend write directly and never receives the operator
+token. Ten fixed same-origin Next routes cover Room creation, human messages, observation
+cancel/retry, Runtime recovery, MemoryOS index rebuild, execution policy, candidate decision,
+run cancellation, and memory-candidate resolution.
+They enforce loopback-only configured upstreams, matching Origin/Host, JSON type, exact fixed
+paths, `no-store`, no redirects, bounded responses, and distinct client abort versus server
+deadline handling.
 
-### `GET /api/lanes/{feature_id}`
+Create/control/recovery bodies are capped at 8KB; human messages are capped at 40KB. Create,
+message, control, and recovery deadlines are respectively 10, 20, 15, and 30 seconds. Upstream
+responses are streamed with a 1MiB limit. `XMUSE_CHAT_API_BASE_URL` is server-only and does
+not fall back to a `NEXT_PUBLIC_*` value.
 
-用途：
+## Observation cancel/retry
 
-- 读取单个 lane 详情
-- 读取聚合日志
-
-当前响应：
+Room frontiers carry guarded action descriptors. The browser sends only the descriptor's
+expected state, attempt count, and control sequence to one of two fixed same-origin Next
+routes:
 
 ```json
 {
-  "lane": {
-    "feature_id": "chat-backend",
-    "status": "gated",
-    "prompt": "Build chat API"
-  },
-  "execution_log": "started\nfinished\n",
-  "logs": [
-    {
-      "path": "logs/chat-backend-round-1.log",
-      "content": "started\nfinished\n"
-    }
-  ]
+  "client_action_id": "ui_control_<uuid>",
+  "expected_state": "active",
+  "expected_attempt_count": 1,
+  "expected_control_seq": 0
 }
 ```
 
-字段契约：
-
-| Field | Type | Status | Notes |
-|---|---|---|---|
-| `lane` | `Lane` | `live now` | 与列表项同 shape，但字段通常更全 |
-| `execution_log` | `string` | `live now` | 所有匹配日志拼接文本 |
-| `logs` | `Array<{ path: string; content: string }>` | `live now` | 原始日志片段 |
-
-### `POST /api/lanes`
-
-用途：
-
-- 人工创建 lane
-
-请求体：
-
-```json
-{
-  "feature_id": "manual-fix",
-  "prompt": "Investigate dashboard state mismatch",
-  "capabilities": ["code", "test"],
-  "priority": 70
-}
-```
-
-响应：
-
-- 返回创建后的 lane 对象
-- 当前默认状态仍是 `pending`
-
-注意：
-
-- `pending` 在 mixed-run UI 里应显示为 `ready`
-
-### `POST /api/lanes/{feature_id}/approve`
-
-用途：
-
-- 批准已完成 lane
-- 或 resolve `awaiting_final_action` 的 pending hold
-
-当前可批准状态：
-
-- `done`
-- `merged`
-- `awaiting_final_action`
-
-当前行为：
-
-- 若 lane 是 `awaiting_final_action` 且 hold action 为 `merge`，批准后 lane 状态变 `merged`
-- 若 hold action 为 `terminate`，批准后 lane 状态会落到 legacy `failed`
-
-前端注意：
-
-- mixed-run UI 应将上面第二种结果显示为 `terminated`
-- 不能把 approve 按钮只绑定到 `done`
-
-### `POST /api/lanes/{feature_id}/reject`
-
-用途：
-
-- 人工拒绝 lane
-- 请求 rework
-
-请求体：
-
-```json
-{
-  "reason": "Missing tests",
-  "rework": true
-}
-```
-
-当前行为：
-
-- 写入 `approval_status = "rejected"`
-- 写入 `rejection_reason`
-- 如果 `rework = true`，当前会把状态重置为 legacy `pending`
-
-前端语义：
-
-- 将此行为解释为 `requeued`
-- 不要把它理解成“全新 lane”
-
-### `GET /api/sessions`
-
-用途：
-
-- 读取活跃 session
-- 当前既兼容旧 list shape，也兼容旧 dict shape
-- 后续承接 GOD session registry
-
-当前旧 shape 示例：
-
-```json
-{
-  "sessions": [
-    {
-      "feature_id": "lane-a",
-      "pid": 12345,
-      "state": "running"
-    }
-  ]
-}
-```
-
-当前兼容的 MCP dict shape：
-
-```json
-{
-  "sessions": [
-    {
-      "feature_id": "lane-a",
-      "session_id": "sess-1",
-      "pid": 12345,
-      "status": "running"
-    }
-  ]
-}
-```
-
-预留新 shape：
-
-```json
-{
-  "sessions": [
-    {
-      "god_session_id": "god-1",
-      "role": "review",
-      "agent_name": "review-god",
-      "runtime": "codex",
-      "session_address": "@review",
-      "session_inbox_id": "inbox-review",
-      "status": "running",
-      "assignment_feature_id": "lane-a",
-      "pid": 12345
-    }
-  ]
-}
-```
-
-前端建议：
-
-- session row key 优先级：`god_session_id` -> `session_id` -> `feature_id`
-- 展示 assignment 时用 `assignment_feature_id`，不要把它当 session id
-
-### `GET /api/errors`
-
-用途：
-
-- 读取 error knowledge entries
-
-响应：
-
-```json
-{
-  "errors": [
-    {
-      "entry_id": "err-1",
-      "pit": "pytest failed"
-    }
-  ]
-}
-```
-
-注意：
-
-- 当前后端对 `error_knowledge.json` 的 shape 比较宽松
-- 前端最好容忍字段不全
-
-### `GET /api/resolutions`
-
-用途：
-
-- 读取 resolution read model
-
-当前响应示例：
-
-```json
-{
-  "resolutions": [
-    {
-      "resolution_id": "res-1",
-      "conversation_id": "conv-1",
-      "version": 1,
-      "status": "approved",
-      "goal_summary": "Build chat MVP",
-      "approved_by": ["human"],
-      "approval_mode": "manual"
-    }
-  ]
-}
-```
-
-前端建议：
-
-- 这是 chat -> execution handoff 的摘要视图
-- 不要把它当成完整 resolution 内容，完整对象走 chat API
-
-### `GET /api/verdicts`
-
-用途：
-
-- 读取 verdict read model
-
-当前状态：
-
-- endpoint `live now`
-- 但 read model 内容仍偏薄，很多环境下可能为空
-
-前端建议：
-
-- 接口应被消费，但 UI 需要接受空列表
-- 后续 authoritative verdict store 落地后，这里会变成审计主数据源
-
-### `GET /api/self-evolution`
-
-用途：
-
-- 读取 self-evolution 相关 read-model collection。
-- 当前适合 dashboard 灰盒页或调试页，不建议塞进 chat 主消息流。
-
-### `GET /api/self-evolution/audit`
-
-用途：
-
-- 读取 self-evolution audit snapshot。
-- 可用于 blueprint / graph / proposal / conversation 的审计 drill-down。
-
-### `GET /api/self-evolution/conversations`
-
-用途：
-
-- 读取 self-evolution conversation read model。
-
-### `GET /api/self-evolution/clarifications`
-
-用途：
-
-- 读取 clarification request read model。
-- 当前只做展示；clarification resolution REST action 尚未作为前端契约暴露。
-
-### `GET /api/metrics`
-
-当前响应：
-
-```json
-{
-  "total": 4,
-  "done": 1,
-  "failed": 1,
-  "pending": 2,
-  "avg_time_seconds": 20.0
-}
-```
-
-当前 mixed-run 扩展：
-
-```json
-{
-  "total": 4,
-  "done": 1,
-  "failed": 1,
-  "pending": 2,
-  "avg_time_seconds": 20.0,
-  "ready": 1,
-  "requeued": 1,
-  "merged": 1,
-  "terminal": 2
-}
-```
-
-前端建议：
-
-- `total/done/failed/pending` 可继续作为兼容指标。
-- `ready/requeued` 是当前 live 字段，优先用于细分运行状态。
-- `terminal` 不在当前响应中；如需终态细分，读 `/api/run-health` 或 lane summary。
-
-### `GET /api/lane-graphs`
-
-用途：
-
-- 列出 live authoritative lane graph snapshots。
-- 每项包含 graph definition 和由当前 lane 状态推导的 `derived_state`。
-
-### `GET /api/lane-graphs/{graph_id}`
-
-用途：
-
-- 读取单个 lane graph、derived_state、lineage 和 aggregation。
-- `/dashboard/lane-graphs/:graph_id` 应使用此接口。
-
-### `GET /api/feature-graph-sets`
-
-用途：
-
-- 列出 feature graph-set snapshots。
-- 这是多 feature 并行能力的主要 read model。
-
-### `GET /api/feature-graph-sets/{graph_set_id}`
-
-用途：
-
-- 读取单个 feature graph-set 和 summary。
-- `/dashboard/feature-graph-sets/:graph_set_id` 应使用此接口。
-
-### `GET /api/dashboard/audit-events`
-
-查询参数：
-
-- `event_type?: string`
-- `since?: string`
-- `until?: string`
-- `page?: number`
-- `page_size?: number`
-
-用途：
-
-- 分页读取 event bus audit log。
-
-### `GET /api/dashboard/state-history`
-
-查询参数：
-
-- `lane_id?: string`
-- `state_key?: string`
-- `since?: string`
-- `until?: string`
-- `page?: number`
-- `page_size?: number`
-
-用途：
-
-- 分页读取 state machine history。
-
-### `GET /api/dashboard/lineage`
-
-查询参数：
-
-- `from_node?: string`
-- `run_id?: string`
-- `depth?: number`
-
-用途：
-
-- 读取 self-evolution / graph lineage DAG。
-
-### Dashboard Peer-Chat Read Endpoints
-
-这些接口用于 dashboard drill-down，不是主 chat API 的替代：
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/dashboard/peer-chat/conversations` | peer-chat conversation 摘要，含 inbox counts |
-| `GET /api/dashboard/peer-chat/conversations/{conversation_id}` | 单个 conversation 的 messages/cards/items/inbox/sessions |
-| `GET /api/dashboard/peer-chat/conversations/{conversation_id}/lane-graphs/{graph_id}` | conversation-scoped lane graph card detail |
-| `GET /api/dashboard/peer-chat/conversations/{conversation_id}/feature-graph-sets/{graph_set_id}` | conversation-scoped feature graph-set card detail |
-| `GET /api/dashboard/peer-chat/conversations/{conversation_id}/run-health` | conversation-scoped run health detail |
-| `GET /api/dashboard/peer-chat/conversations/{conversation_id}/execution-cards/{intent_id}` | execution card detail |
-| `GET /api/dashboard/peer-chat/sessions/{god_session_id}` | persistent peer/GOD session detail |
-| `GET /api/dashboard/peer-chat/requests/{request_id}` | peer request detail |
-| `GET /api/dashboard/peer-chat/requests/{request_id}/result` | peer request result |
-| `GET /api/peer-requests/{request_id}` | peer request detail alias |
-| `GET /api/peer-requests/{request_id}/result` | peer request result alias |
-
-## Chat REST API
-
-当前 Chat API 的真实 endpoint 以 `xmuse/chat_api.py` 为准。MVP 可用，但
-WebSocket、proposal narrow/reject endpoint 仍未落地。
-
-`GET /api/chat/conversations/{conversation_id}/worklist` 已作为只读投影落地：
-它复用 peer-chat UX projection 的 `worklist` / `groupchat_worklist` 读模型，
-返回 `schema_version=chat_worklist_projection/v1`、`projection_only=true`、
-`write_capabilities=[]`、`source_authority`、`counts` 和 worklist items。该
-endpoint 只能读取 `chat.db`/projection authority，不能创建 proposal、dispatch
-或其他 truth。
-
-### `POST /api/chat/conversations`
-
-请求：
-
-```json
-{ "title": "xmuse MVP" }
-```
-
-响应：
-
-```json
-{
-  "id": "conv-1",
-  "title": "xmuse MVP",
-  "created_at": "2026-05-28T10:00:00Z"
-}
-```
-
-### `GET /api/chat/conversations`
-
-响应：
-
-```json
-{
-  "conversations": [
-    {
-      "id": "conv-1",
-      "title": "xmuse MVP",
-      "created_at": "2026-05-28T10:00:00Z"
-    }
-  ]
-}
-```
-
-### `GET /api/chat/conversations/{conversation_id}/messages`
-
-响应：
-
-```json
-{
-  "messages": [
-    {
-      "id": "msg-1",
-      "conversation_id": "conv-1",
-      "author": "Human operator",
-      "role": "human",
-      "content": "Need chat-driven lanes.",
-      "created_at": "2026-05-28T10:01:00Z"
-    }
-  ]
-}
-```
-
-### `POST /api/chat/conversations/{conversation_id}/messages`
-
-请求：
-
-```json
-{
-  "author": "Architect God",
-  "role": "assistant",
-  "content": "Propose splitting the work into three lanes."
-}
-```
-
-当前说明：
-
-- 这是通用 message append endpoint
-- 当前前端 `/chat` 页面主要使用更窄的 thread message endpoint
-- human 消息会尝试通过 peer chat service 投递到 inbox；若目标未知，会降级为
-  普通 human message payload
-
-### `GET /api/chat/conversations/{conversation_id}/participants`
-
-用途：
-
-- 读取 conversation-scoped GOD/human participants。
-- 前端左侧参与者列表应使用此接口，而不是从 lane 或 session 反推。
-
-### `POST /api/chat/conversations/{conversation_id}/participants`
-
-用途：
-
-- 向群聊添加参与者。
-- 当前请求体使用 `ParticipantInit`，支持 role、display_name、cli_kind、
-  model、role_template_id 等字段。
-
-### `DELETE /api/chat/conversations/{conversation_id}/participants/{participant_id}`
-
-用途：
-
-- 从群聊移除参与者。
-
-### `GET /api/chat/conversations/{conversation_id}/forks`
-
-用途：
-
-- 查看 peer/GOD fork lineage。
-
-### `POST /api/chat/conversations/{conversation_id}/forks`
-
-用途：
-
-- 从已有 peer fork 新参与者，支持 prompt delta、inherited refs、model policy、
-  feature scope 等字段。
-
-### `GET /api/chat/role-templates`
-
-用途：
-
-- 读取预置和用户自定义 role templates。
-
-### `POST /api/chat/role-templates`
-
-用途：
-
-- 创建自定义 role template。预置模板不可覆盖。
-
-### `PUT /api/chat/role-templates/{template_id}`
-
-用途：
-
-- 更新非预置 role template。
-
-### `DELETE /api/chat/role-templates/{template_id}`
-
-用途：
-
-- 删除未被 participant 引用的非预置 role template。
-
-### `POST /api/chat/conversations/{conversation_id}/proposals`
-
-请求：
-
-```json
-{
-  "author": "Architect God",
-  "proposal_type": "plan",
-  "content": "Build chat, planner, dashboard.",
-  "references": ["docs/spec.md"]
-}
-```
-
-响应：
-
-- 返回 `Proposal`
-- `status` 初始为 `open`
-
-### `POST /api/chat/proposals/{proposal_id}/approve`
-
-用途：
-
-- proposal -> `StructuredResolution`
-- 并触发：
-  - resolution read model append
-  - lane graph save
-  - ready lane projection into `feature_lanes.json`
-
-请求：
-
-```json
-{
-  "approved_by": ["Human operator"],
-  "approval_mode": "manual",
-  "goal_summary": "Build chat MVP",
-  "content": {
-    "lanes": [
-      { "feature_id": "chat-backend", "prompt": "Build chat API", "depends_on": [] }
-    ]
-  }
-}
-```
-
-响应：
-
-- 返回完整 `StructuredResolution`
-
-当前额外行为：
-
-- 当 proposal 类型为 `feature_plan` 时，approve 会保存 feature plan artifact、
-  feature graph-set snapshot，并将 ready lanes 投影到 `feature_lanes.json`。
-- 当前没有对应的 `narrow` / `reject` REST endpoint；前端只能做禁用占位或通过
-  人类消息表达修改意见。
-
-### `GET /api/chat/proposals/{proposal_id}`
-
-用途：
-
-- 读取单个 proposal。
-- 前端可用于 proposal card 的详情弹层或调试视图。
-
-### `GET /api/chat/resolutions/{resolution_id}`
-
-用途：
-
-- 读取完整 resolution 对象
-
-响应关键字段：
-
-| Field | Type |
-|---|---|
-| `id` | `string` |
-| `conversation_id` | `string` |
-| `version` | `number` |
-| `status` | `draft \| approved \| superseded \| cancelled` |
-| `derived_from_proposal_ids` | `string[]` |
-| `approved_by` | `string[]` |
-| `approval_mode` | `string` |
-| `goal_summary` | `string` |
-| `content` | `object` |
-| `created_at` | `string` |
-
-### `GET /api/chat/threads`
-
-用途：
-
-- `/chat` 页面当前主入口
-
-当前响应示例：
-
-```json
-{
-  "threads": [
-    {
-      "id": "conv-1",
-      "featureId": "xmuse MVP",
-      "title": "xmuse MVP",
-      "agent": "Human + Gods",
-      "status": "reviewed",
-      "updatedAt": "2026-05-28T10:05:00Z",
-      "summary": "Need a dashboard lane",
-      "messages": [
-        {
-          "id": "msg-1",
-          "role": "user",
-          "author": "Human operator",
-          "kind": "checkpoint",
-          "content": "Need a dashboard lane"
-        }
-      ]
-    }
-  ]
-}
-```
-
-注意：
-
-- 这是 thread read model，不是底层 chat store 原始表结构
-- 当前 `status` 仍较粗糙，后续 GOD session layer 落地后会增强
-- 当前响应也会携带 `cards`、`card_counts`、`recent_cards`、`items`，前端应优先
-  用它渲染 compact card 和轻量工作流摘要。
-
-### `POST /api/chat/threads/{conversation_id}/messages`
-
-用途：
-
-- `/chat` 页面发送人类 checkpoint
-
-请求：
-
-```json
-{
-  "message": "Approved. Proceed with the next minimal patch."
-}
-```
-
-响应：
-
-```json
-{
-  "thread_id": "conv-1",
-  "message": {
-    "id": "msg-2",
-    "role": "user",
-    "author": "Human operator",
-    "kind": "checkpoint",
-    "content": "Approved. Proceed with the next minimal patch."
-  }
-}
-```
-
-## MCP JSON-RPC
-
-MCP 主要用于 agent/tool surface，不是当前前端主数据源。
-前端若只做 chat + observability，可先优先接 REST。
-
-当前入口：
-
-| Method | Path |
-|---|---|
-| `GET` | `/health` |
-| `GET` | `/sse` |
-| `POST` | `/messages` |
-| `POST` | `/mcp` |
-
-标准调用：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "get_lane",
-    "arguments": { "lane_id": "chat-backend" }
-  }
-}
-```
-
-前端只建议把 MCP 用于：
-
-- 调试卡片
-- raw tool call viewer
-- 对照 REST 数据做低层排障
-
-不建议：
-
-- 用 MCP 取代 dashboard/chat 主 REST
-
-## Recommended Frontend Type Updates
-
-独立 xmuse 前端当前最需要的类型修正：
-
-### `frontend/lib/types.ts`
-
-建议新增或预留：
-
-```ts
-export type EffectiveLaneStatus =
-  | "planned"
-  | "ready"
-  | "dispatched"
-  | "executed"
-  | "under_review"
-  | "reviewed"
-  | "awaiting_final_action"
-  | "merged"
-  | "requeued"
-  | "terminated"
-  | "exec_failed"
-  | "gate_failed";
-
-export type Lane = {
-  feature_id: string;
-  task_type: string;
-  status: string;
-  effective_status?: EffectiveLaneStatus;
-  prompt: string;
-  capabilities: string[];
-  priority: number;
-  depends_on?: string[];
-  conversation_id?: string;
-  resolution_id?: string;
-  graph_id?: string;
-  graph_version?: number;
-  gate_profile?: string;
-  gate_profiles?: string[];
-  source_lane_id?: string;
-  review_decision?: string;
-  review_summary?: string;
-  review_verdict_id?: string;
-  final_action_hold_id?: string;
-  failure_reason?: string;
-};
-
-export type GodSession = {
-  god_session_id?: string;
-  session_id?: string;
-  feature_id?: string;
-  role?: string;
-  agent_name?: string;
-  runtime?: string;
-  session_address?: string;
-  session_inbox_id?: string;
-  assignment_feature_id?: string;
-  status?: string;
-  state?: string;
-  pid?: number;
-};
-```
-
-### `frontend/lib/dashboard-api-client.ts`
-
-建议补充接口：
-
-- `listSessions()`
-- `listMetrics()`
-- `listResolutions()`
-- `listVerdicts()`
-
-并且：
-
-- lane normalize 时保留 `raw status`
-- 如果收到 `effective_status`，不要丢掉
-
-### `frontend/components/observability-client.tsx`
-
-建议把当前这些硬编码语义迁移为兼容层：
-
-- `pending` 视图文案改成 `ready`
-- `rejected/reworking` 统一显示为 `requeued`
-- `failed` 在有 `failure_reason` 时显示更具体原因
-
-## Reserved Next-Phase Read Models
-
-这些对象已经在架构和计划中定案，但当前接口未必 live：
-
-- `lane_graphs`
-- `execution_runs`
-- `lane_runs`
-- `review_tasks`
-- `verdicts` authoritative store-backed view
-- `final_actions`
-- `audit_timeline`
-
-前端现在可以先做：
-
-- 信息架构
-- types 占位
-- 空态 UI
-
-前端现在不要做：
-
-- 假设这些 endpoint 一定已经存在
-- 把 lane metadata 逆向拼成 authoritative review truth
-
-## Summary
-
-当前前端实现应以这三条为主：
-
-1. 主数据面继续走 `8200/api` 和 `8201/api/chat`
-2. lane/session 视图按 mixed-run 兼容层解释，不再把原始 `status` 当最终语义
-3. 为 `god_session_id`、`effective_status`、verdict/read-model 扩展字段预留类型和 UI
+The control routes validate the exact fields, use a fixed upstream path, and add the
+server-only operator token. They never proxy an href supplied by the browser.
+
+The backend endpoints are:
+
+- `POST /api/chat/operator/room-observations/{id}/cancel`;
+- `POST /api/chat/operator/room-observations/{id}/retry`.
+
+Cancel fences the current lease before transport cleanup. Retry is unavailable while cancel
+cleanup is pending and reopens only the same durable observation after `cancelled` or
+`exhausted`. Guard races return `409`; the UI immediately refreshes the Room projection.
+
+## Exact-patch execution
+
+An execution proposal stores one immutable `room_execution_patch/v1` candidate. The list
+projection never contains raw diff bytes; the Inspector loads them only from the bounded
+candidate-detail endpoint. The browser may reject or manually execute an open candidate,
+switch the Room between `manual` and `consensus`, inspect frozen votes and gate progress, or
+cancel a pre-promotion run. It cannot submit a patch, command, path, gate, PID, or proxy URL.
+
+`manual` is the default. `consensus` is effective only when the Chat API started with
+`XMUSE_ENABLE_AGENT_CONSENSUS_EXECUTION=1`; all frozen peers must have received the complete
+candidate bytes and endorsed the same digest, and the server must prove the low-risk policy
+and current workspace guard. A stale action descriptor returns `409` and causes a refresh.
+
+The list and candidate projections expose only the safe
+`room_execution_gate_profile/v1` reference: fixed profile ID/revision, ordered gate IDs, and
+`ready|blocked` with a stable reason code. They never expose the workspace path, repository
+or toolchain digest, dependency path, command output, or process identity. Missing or blocked
+profile evidence disables both manual and consensus execution in the Inspector; the backend
+re-proves the complete configured profile before authorization and again before promotion.
+The currently supported profiles are `docs/v1`, `python-uv/v1`, and
+`xmuse-monorepo/v2`. Only the explicit docs profile may select diff-check alone.
+
+## Source-backed memory
+
+`GET /api/chat/conversations/{id}/memory` returns the bounded
+`room_memory_projection/v1`: safe sidecar state, outbox counts, at most eight recent recall
+receipts with activity references, and at most twenty pending Agent memory candidates. It
+never returns MemoryOS session/archive/document IDs, process identity, endpoint, API key,
+trace, path, prompt, or provider output.
+
+`room_fact` and `room_decision` candidates are source-validated and automatically approved
+for their current Room, so they do not appear as operator work. `user_preference` and
+`project_rule` remain pending until the user approves or rejects the exact candidate digest
+and revision through the fixed Next route. The action body contains only
+`client_action_id`, `approve|reject`, `expected_digest`, and `expected_revision`; it is JSON,
+8 KiB maximum, `no-store`, same-origin guarded, non-redirecting, and has a 30-second server
+deadline. A `404` or `409` refreshes evidence instead of displaying success.
+
+The Inspector polls memory about every five seconds while open and visible, otherwise about
+every fifteen seconds, with single-flight requests, abort-on-room-switch, jittered backoff,
+and focus refresh. A MemoryOS read failure preserves both the Room projection and the last
+memory evidence; it is never reported as a Room Runtime failure.
+
+`GET /api/chat/runtime/operations` returns `room_operations_projection/v2`, including a
+strictly safe MemoryOS component, at most one guarded rebuild descriptor, and durable action
+phase/status. For crash-loop or explicit derived-cache/schema blockers, the Inspector may
+confirm `POST /api/room-memory/rebuild` with only `client_action_id` and
+`expected_incident_id`. The fixed proxy uses the same Origin/Host, JSON, 8 KiB, no-redirect,
+`no-store`, and server-token boundary and reconstructs both success and error payloads from
+an allowlist. Pending phases survive browser reloads; `409` refreshes Operations and Room
+memory instead of claiming success. Process identity, generation, API key, endpoint, cache
+path, Room content, session bindings, and MemoryOS trace never enter this projection.
+
+## Browser state and authority
+
+The URL is `/rooms/{conversation_id}`. The store keeps at most eight recent Room projections
+unless pending sends protect additional rooms from eviction. Drafts use `sessionStorage`;
+versioned read cursors, stable message anchors, theme, and rail state use `localStorage` for
+up to 50 rooms. Async responses are scoped by room and request generation.
+
+Browser state, optimistic bubbles, events, telemetry, screenshots, provider final text, and
+HTTP success text are not room authority. Only accepted `chat.db` transitions establish
+messages, Agent outcomes, attempts, controls, and convergence state.

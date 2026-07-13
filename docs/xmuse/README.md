@@ -1,183 +1,103 @@
-# xmuse Documentation Entry
+# xmuse implementation map
 
-Updated: 2026-06-30
+Implementation and fresh tests are authoritative; this file is a navigation aid.
 
-This directory is the current xmuse documentation entrypoint. It is intentionally
-an index, not a runtime ledger. Long PR histories, local run transcripts, and
-sentinel artifacts belong in status or archive documents.
-
-## Read First
-
-For the current natural groupchat production goal, read:
-
-| Document | Purpose |
-| --- | --- |
-| `docs/xmuse/document-status.md` | Current document map, baselines, and cleanup boundaries |
-| `docs/xmuse/natural-groupchat-a2a-goal.md` | Current vision, baseline, A2A/Ray/MemoryOS boundaries |
-| `docs/xmuse/natural-groupchat-a2a-behavior.md` | Authority-first behavior policy and execution discipline |
-| `docs/xmuse/natural-groupchat-a2a-task-plan.md` | Track A/B/C task plan and durable stop conditions |
-| `docs/xmuse/natural-groupchat-a2a-goal-prompt.md` | Minimal `/goal` prompt |
-| `docs/xmuse/mainline-contracts.md` | Product north-star and mainline authority contracts |
-
-External references:
-
-- `docs/superpowers/specs/2026-06-30-natural-groupchat-kernel-design.md`
-  is the approved design-source correction for the Track A natural groupchat
-  kernel. It has been internalized into the current goal package below; the
-  operational entrypoint remains `docs/xmuse/`.
-- `/home/iiyatu/projects/python/xmuse-m7-natural-groupchat-goal-design/docs/superpowers/specs/2026-06-26-natural-groupchat-a2a-production-goal-design.md`
-  is design-source context only.
-- `/home/iiyatu/clowder-ai` is a natural groupchat implementation reference,
-  not xmuse authority.
-
-## Baseline Snapshot
-
-Static documentation baselines are recorded so a future goal can orient quickly,
-but they are not live GitHub truth.
-
-- `last_observed_baseline`:
-  `5d03bbe82a3f17f2d854d46ee4dcbf7972fe533d` after PR #279. This records the
-  older support-chain calibration, including the PR #259 dispatch proof split.
-- `post_abc_closure_baseline`:
-  `07630131dcb6e26c8dc09dcf41690381e5cd0ee6`, produced by PR #294 from run
-  `track-abc-integrated-memoryos-degraded-20260629-01`, conversation
-  `conv_c7528fbf03b84755b8d4eb65166aa0a1`, final action
-  `final-cce17cc5e0e7`, PR head
-  `9be3b17190380171756bd8375fcb946247217d7c`, PR CI run `28332878486`, main
-  CI run `28332906024`, and GitHub gate evidence
-  `github_gate_evidence.json#evidence=ghgate_e3e90b98395d4c6e81136db6241ecf49`.
-  Proof level: one docs-only A/B/C integrated closure.
-
-Every execution loop must refresh `origin/main`, open PRs, and CI status from
-GitHub server facts before acting.
-
-## Current Product Mainline
-
-`docs/xmuse/mainline-contracts.md` keeps the north-star:
+## Product chain
 
 ```text
-GOD groupchat deliberation
--> frozen blueprint
--> feature/lane/laneDAG
--> centralized execution/review
--> GitHub merge gate
--> REST-first MemoryOS
+POST /api/chat/conversations
+  -> RoomSetupService: conversation + roster + idempotency receipt
+
+POST /api/chat/threads/{conversation_id}/messages
+  -> RoomKernelStore: human activity + per-participant observations
+  -> RoomParticipantHost / isolated Room Runner
+  -> correlation root barrier + immutable peer batch (one attempt/outcome)
+  -> participant-bound read-only Codex room_v1 session
+  -> bundled Skills
+  -> /mcp/room chat_room_submit_outcome
+  -> durable outcome + bounded projections
+
+optional MemoryOS
+  -> transaction-local visible activity / approved candidate outbox
+  -> archive ingest + Room session attachments
+  -> source-validated, bounded memory_evidence (failure never blocks Room outcome)
 ```
 
-`blueprint freeze 是去中心化 GOD deliberation 与中心化 execution/review 的边界`。
-`feature_lanes.json` is a live queue/projection, not authority.
-
-The current Track A design is kernel-first:
-
-```text
-A1 Natural Groupchat Kernel
--> A2 Groupchat Decision Closure
--> A3 Dispatch To Execution Harness
--> A4 Result Writeback To Groupchat
--> A5 Unattended Groupchat Development Loop
-```
-
-A1/A2 are natural groupchat success boundaries. PR/CI/guarded merge is
-downstream A3-A5 proof, not A1 completion.
-
-After durable groupchat decisions exist, the downstream development route is:
-
-```text
-natural groupchat
--> A2A SDK interop / handoff / artifact envelope
--> xmuse chat.db / inbox / proposal / review / dispatch authority
--> provider-native execution
--> PR / exact-head CI / guarded merge
-```
-
-Authority rules:
-
-- `chat.db`, inbox, proposal, review verdict, dispatch queue, final action, and
-  GitHub server facts are authority.
-- A2A SDK is an interop boundary, not proposal/review/dispatch/merge authority.
-- MemoryOS is a sidecar for context continuity, not truth creation.
-- Frontend/API/TUI are read projections and must not create truth.
-- Ray is optional legacy runtime support, not the default natural groupchat path.
-- Provider stdout, local tests, and worker summaries are diagnostics unless a
-  durable authority surface records them.
-
-## Contract And Gate Docs
-
-These top-level documents are still current because tests, CI contracts, or
-operator flows reference them:
-
-| Document | Purpose |
+| Module | Responsibility |
 | --- | --- |
-| `docs/xmuse/contract-smoke-gates.md` | No-secrets contract smoke CI gate |
-| `docs/xmuse/peer-chat-runtime-gate.md` | No-secrets peer-chat runtime focused gate |
-| `docs/xmuse/deep-research-03-next-goal.md` | Contract-vs-runtime proof split used by CI docs tests |
-| `docs/xmuse/real-runtime-integration-gate.md` | No-secrets real runtime integration gate contract |
-| `docs/xmuse/acceptance-spine.md` | Human-demand acceptance spine authority contract |
-| `docs/xmuse/broad-suite-baseline-debt.md` | Known broad-suite baseline gaps |
-| `docs/xmuse/quality-gates-and-provider-matrix.md` | Test-backed default CI/provider gate matrix |
-| `docs/xmuse/schema-migration-strategy.md` | Test-backed durable-store migration and cleanup stance |
-| `docs/xmuse/mcp-permission-model.md` | Test-backed MCP permission classification model |
-| `docs/xmuse/memoryos-file-separation.md` | xmuse/MemoryOS file ownership and split-export boundary |
-| `docs/xmuse/memoryos-governance-contract.md` | MemoryOS sidecar governance and MCP write boundary |
-| `docs/xmuse/memoryos-lite-runtime-compatibility.md` | MemoryOS Lite public compatibility contract |
-| `docs/xmuse/github-server-side-gate-live-evidence-2026-06-25.md` | Latest committed GitHub server-side evidence snapshot |
-| `docs/xmuse/github-server-side-gate.md` | GitHub server-side gate contract |
-| `docs/xmuse/github-review-merge-contract.md` | PR template, CODEOWNERS, and merge-ready contract |
-| `docs/xmuse/release-checklist.md` | Release claim boundary |
-| `docs/xmuse/shared-contract-fixtures.md` | Contract fixture inventory for `tests/fixtures/xmuse/contracts/` |
-| `docs/xmuse/split-export-manifest.json` | Standalone xmuse export manifest consumed by `scripts/export_xmuse.py` |
-| `docs/xmuse/xmuse-package.pyproject.toml` | Standalone xmuse package metadata template |
+| `xmuse/chat_api.py` | Room-only HTTP composition. |
+| `xmuse/chat_api_room_setup.py` | Atomic Room and roster creation. |
+| `xmuse/chat_api_room_messages.py` | Human speech write path. |
+| `xmuse/chat_api_room_projection.py` | Bounded Room list, timeline, and events. |
+| `xmuse/chat_api_room_controls.py` | Observation-local cancel/retry. |
+| `xmuse/chat_api_operations.py` | Safe incidents plus guarded Room Runtime and Memory index recovery. |
+| `xmuse/chat_api_executions.py` | Bounded execution projections and guarded operator actions. |
+| `xmuse/chat_api_execution_runtime.py` | Consensus and one-shot controller reconciliation. |
+| `xmuse/chat_api_memory.py` | Safe memory projection and guarded candidate resolution. |
+| `xmuse/memoryos_adapter.py` | Strict HTTP-only archive/recall adapter; no MemoryOS package import. |
+| `xmuse/room_execution_controller.py` | Internal process entrypoint; accepts only root/worktree/run ID. |
+| `xmuse/room_runner.py` | Host process lock, receipt, heartbeat, and pump lifecycle. |
+| `xmuse/room_mcp_server.py` | `/health` and `/mcp/room`; one outcome tool. |
+| `xmuse/workroom.py` | Local Chat API/frontend lifecycle and optional derived MemoryOS sidecar. |
+| `xmuse/data_cli.py` | Offline doctor, backup, restore, and compact. |
+| `src/xmuse_core/chat/room_database.py` | Room schema and SQLite connection policy. |
+| `src/xmuse_core/chat/room_batches.py` | Immutable observation batches and canonical membership. |
+| `src/xmuse_core/chat/room_kernel.py` | Activity, observations, leases, causality, and outcomes. |
+| `src/xmuse_core/chat/room_controls.py` | Attempts, fencing, cleanup, and retry. |
+| `src/xmuse_core/chat/room_host.py` | Fair participant delivery and recovery. |
+| `src/xmuse_core/chat/room_projection.py` | `room_chat_projection/v3`. |
+| `src/xmuse_core/chat/room_operations.py` | Operational projection and action ledger. |
+| `src/xmuse_core/chat/room_execution_contracts.py` | Strict unified-diff and assessment contracts. |
+| `src/xmuse_core/chat/room_execution_store.py` | Candidate, vote, authorization, run, gate, and promotion authority. |
+| `src/xmuse_core/chat/room_execution_controller.py` | Exact staging, guard checks, promotion, and crash classification. |
+| `src/xmuse_core/chat/room_execution_sandbox.py` | Fixed networkless Bubblewrap gate surface. |
+| `src/xmuse_core/chat/room_execution_projection.py` | Safe bounded Inspector read models. |
+| `src/xmuse_core/chat/room_memory_contracts.py` | Bounded Agent candidate and receipt contracts. |
+| `src/xmuse_core/chat/room_memory_schema.py` | Memory authority schema, additive migrations, and deterministic backfills. |
+| `src/xmuse_core/chat/room_memory_binding_conn.py` | DB-neutral caller-transaction binding materialization. |
+| `src/xmuse_core/chat/room_memory_delivery_store.py` | Archive bindings, attachments, outbox leases, and delivery state. |
+| `src/xmuse_core/chat/room_memory_governance_store.py` | Source-bound candidates and guarded operator decisions. |
+| `src/xmuse_core/chat/room_memory_recall_store.py` | Source proof, recall requests, receipts, and context binding. |
+| `src/xmuse_core/chat/room_memory_rebuild_store.py` | Durable guarded rebuild action and transactional derived-index replay reset. |
+| `src/xmuse_core/chat/room_memory_runtime.py` | Sidecar-neutral Host evidence protocol. |
+| `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` safe read model. |
+| `src/xmuse_core/chat/memoryos_supervisor.py` | Optional sidecar command, environment, receipt, and safe status. |
+| `src/xmuse_core/chat/room_soak_chaos.py` | Fixed soak profiles, strict aggregate evidence, and `room_soak_chaos_result/v1` gates. |
+| `src/xmuse_core/chat/room_soak_ci.py` | Deterministic 12-Room production Kernel/Host CI simulation. |
+| `src/xmuse_core/agents/room_codex_launcher.py` | Isolated persistent Codex launcher. |
+| `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
+| `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
+| `frontend/src/` | Room-first browser and fixed write proxies. |
 
-## Policy Docs
+## Authority
 
-| Document | Purpose |
-| --- | --- |
-| `docs/xmuse/code-quality-and-archive-policy.md` | Reuse, refactor, archive, and state-write quality rules |
-| `docs/xmuse/parallel-development-runbook.md` | Parallel session coordination after interfaces are frozen |
-| `docs/xmuse/goal-copilot-behavior-policy.md` | Optional read-only copilot behavior |
-| `docs/xmuse/goal-stage-harness.md` | Standard stage/evidence vocabulary |
-| `docs/xmuse/production-operations.md` | Operational commands and expectations |
-| `docs/xmuse/provider-matrix.md` | Provider support matrix |
-| `docs/xmuse/config-matrix.md` | Configuration surface |
-| `docs/xmuse/解耦开发协议.md` | Layer and event boundary protocol |
+| State | Authority | Not authority |
+| --- | --- | --- |
+| Room activity, observations, attempts, controls, outcomes | `chat.db` | UI cache or provider text |
+| Participant/provider binding | `god_sessions.json` plus live reconciliation | rendered identity or PID alone |
+| Runtime recovery | process evidence, Runner receipt, operator ledger | HTTP success text |
+| Skill decision/context | durable attempt Skill rows | prompt text |
+| Exact patch and execution | execution ledger and promotion journal in `chat.db` | Agent prose, browser action state, raw gate output |
+| Long-term memory governance and delivery | memory outbox/candidate/receipt rows in `chat.db` | MemoryOS database, recalled text alone, browser cache |
 
-## Frontend Projection Docs
+The optional MemoryOS database is deleted and rebuilt rather than backed up. Only archival
+items with source documents and activities re-proved from `chat.db` may enter Agent context;
+shared user/project evidence additionally requires an approved and delivered candidate plus
+the target Room's shared-archive attachment. The Workroom manager retries only a confirmed-
+dead owned sidecar, preserves generation-local capability identity, and exposes crash-loop or
+explicit cache/schema rebuilds through a guarded Inspector action. Rebuild stops the proven
+child before fixed-cache deletion, resets only derived bindings/outbox in one transaction,
+then waits for replay evidence; it never changes Room Runtime readiness or manufactures Room
+activity.
 
-Frontend/TUI contracts live under `docs/xmuse/frontend/`, not in the runtime
-`xmuse/` package root:
+`xmuse-data` has a narrow offline verifier for old `xmuse.chat_db/v1` databases. There
+is no executable compatibility API, MCP, runner, UI projection, or ChatStore runtime.
 
-| Document | Purpose |
-| --- | --- |
-| `docs/xmuse/frontend/FRONTEND_IMPLEMENTATION_GUIDE.md` | Frontend/TUI implementation entrypoint |
-| `docs/xmuse/frontend/FRONTEND_API.md` | Current frontend-readable API contract |
-| `docs/xmuse/frontend/FRONTEND_API_INCREMENTAL.md` | Incremental frontend API notes |
-| `docs/xmuse/frontend/FRONTEND_CONTEXT.md` | Frontend/TUI background context |
-| `docs/xmuse/frontend/FRONTEND_VISION.md` | Frontend projection north-star reference |
+Use Git history for retired implementations; do not create repository-local archive or
+legacy source trees.
 
-## Archive Rules
+## References
 
-Historical material lives under:
-
-```text
-docs/xmuse/archive/
-```
-
-Rules:
-
-1. Do not treat archived evidence as proof for a new PR head.
-2. Do not restart old L8-L11, overnight-readiness, Path-A, or closure-ledger
-   framing from archive content.
-3. If an archived implementation detail is reused, cite it as reference and
-   re-verify the current code path.
-
-Older self-iteration, vision-runtime, and OpenCode-in proof-closure documents
-live under `docs/xmuse/archive/2026-06-proof-closure-legacy/`. They remain
-testable historical contract material, not current `/goal` entrypoints.
-
-Older parallel-session prompt material lives under
-`docs/xmuse/archive/2026-06-session-prompts-legacy/`. It remains contract
-fixture reference material, not a current operator prompt tree.
-
-Old `docs/superpowers/specs/` and `docs/superpowers/plans/` remain historical
-implementation records because tests and lane history may reference their
-paths. They are not the current entrypoint.
+- [Quickstart](../../QUICKSTART.md)
+- [Frontend API](frontend/FRONTEND_API.md)
+- [MCP permission boundary](mcp-permission-model.md)
