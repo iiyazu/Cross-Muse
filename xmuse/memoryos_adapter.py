@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
 import time
 import urllib.error
@@ -32,21 +33,55 @@ from xmuse_core.chat.room_memory_runtime import (
     disabled_memory_evidence,
 )
 
-MEMORYOS_CONTEXT_SCHEMA = "memoryos_v3_context/v1"
+MEMORYOS_CONTEXT_SCHEMA = "memoryos_source_evidence/v1"
+MEMORYOS_SOURCE_EVIDENCE_PROFILE = "source_evidence/v1"
 MEMORYOS_DOCUMENT_PREFIX = "xmuse-room-activity-"
 _MAX_REQUEST_BYTES = 64 * 1024
 # MemoryOS v3 duplicates bounded retrieval diagnostics around archival items, so
 # its transport envelope is materially larger than the evidence admitted into a
 # Room prompt.  Keep that untrusted envelope bounded independently; validated
 # ``memory_evidence`` remains capped at 8 KiB below.
-_MEMORYOS_CONTEXT_HTTP_MAX_BYTES = 1024 * 1024
+_MEMORYOS_CONTEXT_HTTP_MAX_BYTES = 128 * 1024
+_MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES = 64 * 1024
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+_SOURCE_EVIDENCE_KEYS = {
+    "schema",
+    "items",
+    "omitted_count",
+    "estimated_tokens",
+    "truncated",
+    "diagnostics_digest",
+}
+_SOURCE_EVIDENCE_ITEM_KEYS = {
+    "item_id",
+    "archive_id",
+    "document_id",
+    "source_refs",
+    "text",
+    "estimated_tokens",
+    "content_sha256",
+    "score",
+    "rank",
+    "truncated",
+}
 
 
 class MemoryOSAdapterError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class _SourceEvidenceItemWire:
+    item_id: str
+    archive_id: str
+    document_id: str
+    text: str
+    estimated_tokens: int
+    source_ids: tuple[str, ...]
+    content_sha256: str
+    rank: int
 
 
 class RoomMemoryDeliveryStoreProtocol(Protocol):
@@ -181,6 +216,12 @@ class MemoryOSArchiveAdapter:
     base_url: str
     api_key: str = field(repr=False)
     default_timeout_s: float = 2.0
+    _build_context_profiles: frozenset[str] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         parsed = urllib.parse.urlsplit(self.base_url)
@@ -206,6 +247,24 @@ class MemoryOSArchiveAdapter:
         payload = self._request_json("GET", "/health", None, timeout_s=timeout_s)
         if payload.get("status") != "ok":
             raise MemoryOSAdapterError("memoryos_health_invalid")
+        capabilities = payload.get("capabilities")
+        profiles = (
+            capabilities.get("build_context_profiles")
+            if isinstance(capabilities, Mapping)
+            else None
+        )
+        if (
+            not isinstance(profiles, list)
+            or len(profiles) > 16
+            or any(
+                not isinstance(value, str) or not value or len(value) > 128 for value in profiles
+            )
+            or len(set(profiles)) != len(profiles)
+        ):
+            normalized_profiles: frozenset[str] = frozenset()
+        else:
+            normalized_profiles = frozenset(profiles)
+        object.__setattr__(self, "_build_context_profiles", normalized_profiles)
         return payload
 
     def create_session(self, *, title: str) -> str:
@@ -254,18 +313,28 @@ class MemoryOSArchiveAdapter:
         budget: int = ROOM_MEMORY_MAX_TOKENS,
         timeout_s: float = ROOM_MEMORY_RECALL_TIMEOUT_S,
     ) -> Mapping[str, Any]:
-        return self._request_json(
-            "POST",
-            f"/sessions/{urllib.parse.quote(session_id, safe='')}/build-context",
-            {
-                "task": task,
-                "budget": budget,
-                "retrieval_query": retrieval_query,
-                "include_global_core": False,
-            },
-            timeout_s=timeout_s,
-            max_response_bytes=_MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
-        )
+        if self._build_context_profiles is None:
+            self.health(timeout_s=min(timeout_s, 0.25))
+        if MEMORYOS_SOURCE_EVIDENCE_PROFILE not in (self._build_context_profiles or ()):
+            raise MemoryOSAdapterError("memoryos_source_evidence_unsupported")
+        try:
+            return self._request_json(
+                "POST",
+                f"/sessions/{urllib.parse.quote(session_id, safe='')}/build-context",
+                {
+                    "task": task,
+                    "budget": budget,
+                    "retrieval_query": retrieval_query,
+                    "include_global_core": False,
+                    "response_profile": MEMORYOS_SOURCE_EVIDENCE_PROFILE,
+                },
+                timeout_s=timeout_s,
+                max_response_bytes=_MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
+            )
+        except MemoryOSAdapterError as exc:
+            if exc.code in {"memoryos_response_invalid", "memoryos_response_too_large"}:
+                raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift") from exc
+            raise
 
     def _request_json(
         self,
@@ -311,6 +380,8 @@ class MemoryOSArchiveAdapter:
             code = (
                 "memoryos_document_conflict"
                 if path == "/archives/ingest" and exc.code == 409
+                else "memoryos_source_evidence_capability_drift"
+                if path.endswith("/build-context") and exc.code in {413, 422}
                 else "memoryos_http_error"
             )
             raise MemoryOSAdapterError(code) from exc
@@ -626,18 +697,47 @@ class ArchiveOnlyRoomMemoryRuntime:
         durable_request: Mapping[str, Any],
         latency_ms: int,
     ) -> RoomMemoryEvidence:
-        metadata = payload.get("metadata")
-        if not isinstance(metadata, Mapping):
-            raise MemoryOSAdapterError("room_memory_schema_rejected")
-        context = metadata.get("v3_context")
-        if not isinstance(context, Mapping):
-            raise MemoryOSAdapterError("room_memory_schema_rejected")
-        context_metadata = context.get("metadata")
-        if not isinstance(context_metadata, Mapping) or context_metadata.get("memory_arch") != "v3":
-            raise MemoryOSAdapterError("room_memory_schema_rejected")
-        raw_items = context.get("items")
-        if not isinstance(raw_items, list):
-            raise MemoryOSAdapterError("room_memory_schema_rejected")
+        try:
+            semantic_bytes = json.dumps(
+                dict(payload),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift") from exc
+        if len(semantic_bytes) > _MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES:
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        if (
+            not _SOURCE_EVIDENCE_KEYS <= set(payload)
+            or payload.get("schema") != MEMORYOS_CONTEXT_SCHEMA
+        ):
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        raw_items = payload.get("items")
+        omitted_count = payload.get("omitted_count")
+        estimated_tokens = payload.get("estimated_tokens")
+        truncated = payload.get("truncated")
+        diagnostics_digest = payload.get("diagnostics_digest")
+        if (
+            not isinstance(raw_items, list)
+            or len(raw_items) > ROOM_MEMORY_MAX_ITEMS
+            or isinstance(omitted_count, bool)
+            or not isinstance(omitted_count, int)
+            or omitted_count < 0
+            or isinstance(estimated_tokens, bool)
+            or not isinstance(estimated_tokens, int)
+            or not 0 <= estimated_tokens <= ROOM_MEMORY_MAX_TOKENS
+            or not isinstance(truncated, bool)
+            or not isinstance(diagnostics_digest, str)
+            or _DIGEST_RE.fullmatch(diagnostics_digest) is None
+        ):
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        digest_payload = {
+            key: payload[key] for key in _SOURCE_EVIDENCE_KEYS - {"diagnostics_digest"}
+        }
+        if _canonical_digest(digest_payload) != diagnostics_digest:
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
         excluded = {
             str(value)
             for value in durable_request.get("excluded_activity_ids", [])
@@ -649,13 +749,35 @@ class ArchiveOnlyRoomMemoryRuntime:
             for value in durable_request.get("excluded_document_ids", [])
             if isinstance(value, str)
         }
-        items: list[RoomMemoryEvidenceItem] = []
-        total_tokens = 0
+        raw_archive_ids = durable_request.get("archive_ids")
+        if not isinstance(raw_archive_ids, list) or not raw_archive_ids:
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        try:
+            archive_ids = {
+                _required_source_evidence_id({"archive_id": value}, "archive_id")
+                for value in raw_archive_ids
+            }
+        except MemoryOSAdapterError as exc:
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift") from exc
+        if len(archive_ids) != len(raw_archive_ids):
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        wire_items: list[_SourceEvidenceItemWire] = []
         for raw in raw_items:
-            if not isinstance(raw, Mapping) or raw.get("layer") != "archival":
-                continue
-            item = self._validated_item(
-                raw,
+            if not isinstance(raw, Mapping):
+                raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+            wire_items.append(_source_evidence_item_wire(raw))
+        if (
+            any(item.archive_id not in archive_ids for item in wire_items)
+            or len({item.rank for item in wire_items}) != len(wire_items)
+            or sum(item.estimated_tokens for item in wire_items) != estimated_tokens
+            or sum(len(item.text.encode("utf-8")) for item in wire_items) > 32 * 1024
+        ):
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+
+        items: list[RoomMemoryEvidenceItem] = []
+        for wire_item in wire_items:
+            item = self._reprove_item(
+                wire_item,
                 conversation_id=request.conversation_id,
                 correlation_id=request.correlation_id,
                 excluded_activity_ids=excluded,
@@ -663,17 +785,12 @@ class ArchiveOnlyRoomMemoryRuntime:
             )
             if item is None:
                 continue
-            if len(items) >= ROOM_MEMORY_MAX_ITEMS:
-                break
-            if total_tokens + item.estimated_tokens > ROOM_MEMORY_MAX_TOKENS:
-                break
             candidate_items = [*items, item]
             if _memory_context_size(candidate_items) > ROOM_MEMORY_MAX_RESPONSE_BYTES:
                 if not items:
                     raise MemoryOSAdapterError("room_memory_evidence_too_large")
                 break
             items.append(item)
-            total_tokens += item.estimated_tokens
         status: Literal["ok", "empty"] = "ok" if items else "empty"
         reason = "room_memory_recalled" if items else "room_memory_no_evidence"
         evidence_digest = _canonical_digest(
@@ -699,54 +816,27 @@ class ArchiveOnlyRoomMemoryRuntime:
             items=tuple(items),
         )
 
-    def _validated_item(
+    def _reprove_item(
         self,
-        raw: Mapping[str, Any],
+        wire: _SourceEvidenceItemWire,
         *,
         conversation_id: str,
         correlation_id: str,
         excluded_activity_ids: set[str],
         excluded_document_ids: set[str],
     ) -> RoomMemoryEvidenceItem | None:
-        item_id = _required_id(raw, "item_id", "room_memory_schema_rejected")
-        text = raw.get("text")
-        tokens = raw.get("estimated_tokens")
-        refs = raw.get("source_refs")
-        metadata = raw.get("metadata")
-        if (
-            not isinstance(text, str)
-            or not text.strip()
-            or isinstance(tokens, bool)
-            or not isinstance(tokens, int)
-            or tokens <= 0
-            or not isinstance(refs, list)
-            or not refs
-            or not isinstance(metadata, Mapping)
-        ):
-            raise MemoryOSAdapterError("room_memory_schema_rejected")
-        document_id = metadata.get("document_id")
-        if not isinstance(document_id, str) or not document_id:
-            raise MemoryOSAdapterError("room_memory_source_rejected")
-        if document_id in excluded_document_ids:
+        if wire.document_id in excluded_document_ids:
             return None
-        source_ids: list[str] = []
-        for ref in refs:
-            if not isinstance(ref, Mapping) or ref.get("source_type") != "document":
-                raise MemoryOSAdapterError("room_memory_source_rejected")
-            activity_id = ref.get("source_id")
-            if not isinstance(activity_id, str) or not activity_id:
-                raise MemoryOSAdapterError("room_memory_source_rejected")
+        for activity_id in wire.source_ids:
             if activity_id in excluded_activity_ids:
                 return None
-            source_ids.append(activity_id)
-        content_sha256 = f"sha256:{hashlib.sha256(text.strip().encode('utf-8')).hexdigest()}"
         try:
             authority = self.recall_store.resolve_recall_source(
                 conversation_id=conversation_id,
-                document_id=document_id,
-                source_activity_ids=tuple(sorted(set(source_ids))),
-                content_sha256=content_sha256,
-                item_text=text.strip(),
+                document_id=wire.document_id,
+                source_activity_ids=tuple(sorted(wire.source_ids)),
+                content_sha256=wire.content_sha256,
+                item_text=wire.text,
             )
         except Exception as exc:
             raise MemoryOSAdapterError("room_memory_source_rejected") from exc
@@ -765,12 +855,12 @@ class ArchiveOnlyRoomMemoryRuntime:
             if isinstance(source_id, str) and source_id in excluded_activity_ids:
                 return None
         return RoomMemoryEvidenceItem(
-            item_id=item_id,
-            document_id=document_id,
-            text=text.strip(),
-            estimated_tokens=tokens,
-            source_activity_ids=tuple(sorted(set(source_ids))),
-            content_sha256=content_sha256,
+            item_id=wire.item_id,
+            document_id=wire.document_id,
+            text=wire.text,
+            estimated_tokens=wire.estimated_tokens,
+            source_activity_ids=tuple(sorted(wire.source_ids)),
+            content_sha256=wire.content_sha256,
         )
 
 
@@ -826,6 +916,74 @@ def _required_id(payload: Mapping[str, Any], key: str, code: str) -> str:
     return value
 
 
+def _required_source_evidence_id(payload: Mapping[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 512:
+        raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+    return value
+
+
+def _source_evidence_item_wire(
+    raw: Mapping[str, Any],
+) -> _SourceEvidenceItemWire:
+    if not _SOURCE_EVIDENCE_ITEM_KEYS <= set(raw):
+        raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+    item_id = _required_source_evidence_id(raw, "item_id")
+    archive_id = _required_source_evidence_id(raw, "archive_id")
+    document_id = _required_source_evidence_id(raw, "document_id")
+    text = raw.get("text")
+    tokens = raw.get("estimated_tokens")
+    refs = raw.get("source_refs")
+    content_sha256 = raw.get("content_sha256")
+    score = raw.get("score")
+    rank = raw.get("rank")
+    if (
+        not isinstance(text, str)
+        or not text.strip()
+        or len(text.encode("utf-8")) > 8 * 1024
+        or isinstance(tokens, bool)
+        or not isinstance(tokens, int)
+        or not 0 < tokens <= ROOM_MEMORY_MAX_TOKENS
+        or not isinstance(refs, list)
+        or not refs
+        or len(refs) > 8
+        or not isinstance(content_sha256, str)
+        or _DIGEST_RE.fullmatch(content_sha256) is None
+        or isinstance(rank, bool)
+        or not isinstance(rank, int)
+        or not 1 <= rank <= ROOM_MEMORY_MAX_ITEMS
+        or not isinstance(raw.get("truncated"), bool)
+        or isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(score)
+    ):
+        raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+    expected_content_sha256 = f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+    if content_sha256 != expected_content_sha256:
+        raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+    source_ids: list[str] = []
+    for ref in refs:
+        if (
+            not isinstance(ref, Mapping)
+            or not {"source_type", "source_id"} <= set(ref)
+            or ref.get("source_type") != "document"
+        ):
+            raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+        source_ids.append(_required_source_evidence_id(ref, "source_id"))
+    if len(set(source_ids)) != len(source_ids):
+        raise MemoryOSAdapterError("memoryos_source_evidence_capability_drift")
+    return _SourceEvidenceItemWire(
+        item_id=item_id,
+        archive_id=archive_id,
+        document_id=document_id,
+        text=text,
+        estimated_tokens=tokens,
+        source_ids=tuple(source_ids),
+        content_sha256=content_sha256,
+        rank=rank,
+    )
+
+
 def _revision(payload: Mapping[str, Any]) -> int:
     value = payload.get("revision")
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -847,6 +1005,7 @@ def _canonical_digest(value: Mapping[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise MemoryOSAdapterError("room_memory_digest_invalid") from exc
