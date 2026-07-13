@@ -49,6 +49,10 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - run: uv sync --frozen --all-groups
+      - name: Install the Harness sandbox runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
       - name: Full warning-strict backend suite
         env:
           PYTHONWARNINGS: error
