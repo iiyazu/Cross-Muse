@@ -56,6 +56,7 @@ select = ["E", "F", "I", "UP", "B"]
 testpaths = ["tests/xmuse"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "--strict-config --strict-markers"
 
 [tool.mypy]
