@@ -99,6 +99,7 @@ class SandboxLayout:
     python_root: Path | None
     site_packages: Path | None
     ruff: Path | None
+    node: Path | None
     frontend_node_modules: Path | None
     bwrap: Path
 
@@ -149,7 +150,7 @@ GATE_SPECS: Mapping[str, GateSpec] = {
     "frontend_typecheck": GateSpec(
         "frontend_typecheck",
         (
-            "/usr/bin/node",
+            "/tools/node",
             "/workspace/frontend/node_modules/typescript/bin/tsc",
             "--noEmit",
         ),
@@ -159,7 +160,7 @@ GATE_SPECS: Mapping[str, GateSpec] = {
     "frontend_lint": GateSpec(
         "frontend_lint",
         (
-            "/usr/bin/node",
+            "/tools/node",
             "/workspace/frontend/node_modules/eslint/bin/eslint.js",
             ".",
         ),
@@ -169,7 +170,7 @@ GATE_SPECS: Mapping[str, GateSpec] = {
     "frontend_vitest": GateSpec(
         "frontend_vitest",
         (
-            "/usr/bin/node",
+            "/tools/node",
             "/workspace/frontend/node_modules/vitest/vitest.mjs",
             "run",
         ),
@@ -179,7 +180,7 @@ GATE_SPECS: Mapping[str, GateSpec] = {
     "frontend_build": GateSpec(
         "frontend_build",
         (
-            "/usr/bin/node",
+            "/tools/node",
             "/workspace/frontend/node_modules/next/dist/bin/next",
             "build",
         ),
@@ -226,6 +227,9 @@ def discover_sandbox_layout(
     node_modules = root / "frontend" / "node_modules"
     if needs_frontend and not node_modules.is_dir():
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+    node = Path(shutil.which("node") or "")
+    if needs_frontend and not node.is_file():
+        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     return SandboxLayout(
         stage=worktree,
         git_common_dir=git_common,
@@ -233,6 +237,7 @@ def discover_sandbox_layout(
         python_root=python_root,
         site_packages=site_packages,
         ruff=ruff,
+        node=(node.resolve(strict=True) if needs_frontend else None),
         frontend_node_modules=(node_modules.resolve(strict=True) if needs_frontend else None),
         bwrap=bwrap.resolve(strict=True),
     )
@@ -318,10 +323,13 @@ def build_toolchain_capability_digest(
         node = Path(shutil.which("node") or "")
         if not node.is_file():
             raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
-        facts["node"] = _tool_version(node, "--version")
         installed_lock = node_modules / ".package-lock.json"
         facts["frontend_dependencies"] = _trusted_file_digest(installed_lock)
         facts["frontend_gate_entries"] = _frontend_gate_entry_digest(root, selected)
+        facts["node"] = {
+            "digest": _trusted_node_digest(node.resolve(strict=True)),
+            "version": _tool_version(node, "--version"),
+        }
     return _canonical_digest(facts)
 
 
@@ -384,6 +392,8 @@ def run_gate(
     assert spec is not None
     _validate_spec(spec)
     if spec.gate_id.startswith("frontend_") and layout.frontend_node_modules is None:
+        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+    if spec.gate_id.startswith("frontend_") and layout.node is None:
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
 
     command = build_bwrap_command(layout, spec)
@@ -557,8 +567,13 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
             )
         )
     if layout.frontend_node_modules is not None:
+        if layout.node is None:
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
         command.extend(
             (
+                "--ro-bind",
+                str(layout.node),
+                "/tools/node",
                 "--dir",
                 "/workspace/frontend/node_modules",
                 "--ro-bind",
@@ -948,6 +963,31 @@ def _trusted_file_digest(path: Path) -> str:
                 digest.update(chunk)
     except OSError as exc:
         raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid") from exc
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _trusted_node_digest(path: Path) -> str:
+    """Hash the trusted Node executable without applying marker-size limits."""
+
+    try:
+        before = path.stat()
+        if not path.is_file() or before.st_size > 256 * 1024 * 1024:
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        after = path.stat()
+    except OSError as exc:
+        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable") from exc
+    if (
+        after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_ctime_ns != before.st_ctime_ns
+    ):
+        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     return f"sha256:{digest.hexdigest()}"
 
 
