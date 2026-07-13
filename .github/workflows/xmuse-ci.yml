@@ -47,12 +47,22 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           enable-cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: uv python install 3.11
       - run: uv sync --frozen --all-groups
+      - run: npm ci --prefix frontend
       - name: Install the Harness sandbox runtime
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
       - name: Full warning-strict backend suite
         env:
           PYTHONWARNINGS: error
