@@ -194,6 +194,7 @@ def test_readonly_and_stores_do_not_create_a_missing_database(tmp_path: Path) ->
         "create_room_execution_schema",
         "create_room_memory_schema",
         "create_room_operations_schema",
+        "create_room_codex_schema",
         "_validate_room_schema",
         "_utc_now",
     ],

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.room_codex_schema import create_room_codex_schema
 from xmuse_core.chat.room_execution_schema import create_room_execution_schema
 from xmuse_core.chat.room_kernel_schema import create_room_kernel_schema
 from xmuse_core.chat.room_memory_schema import create_room_memory_schema
@@ -662,6 +663,48 @@ ROOM_REQUIRED_COLUMNS: Mapping[str, frozenset[str]] = {
         }
     ),
     "room_runtime_restore_fences": frozenset({"operation_id", "result_json", "applied_at"}),
+    "room_codex_delivery_holds": frozenset(
+        {
+            "participant_id",
+            "conversation_id",
+            "hold_revision",
+            "next_control_seq",
+            "state",
+            "session_guard",
+            "goal_guard",
+            "settings_guard",
+            "active_turn_guard",
+            "reason_code",
+            "observed_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "room_codex_bridge_actions": frozenset(
+        {
+            "action_id",
+            "conversation_id",
+            "participant_id",
+            "control_seq",
+            "client_action_id",
+            "operator_identity",
+            "request_fingerprint",
+            "capability_id",
+            "expected_session_guard",
+            "expected_goal_guard",
+            "expected_settings_guard",
+            "expected_turn_guard",
+            "request_json",
+            "status",
+            "reason_code",
+            "ack_summary_json",
+            "runner_generation",
+            "requested_at",
+            "applying_at",
+            "completed_at",
+            "updated_at",
+        }
+    ),
 }
 
 ROOM_REQUIRED_UNIQUE_KEYS = frozenset(
@@ -700,6 +743,11 @@ ROOM_REQUIRED_UNIQUE_KEYS = frozenset(
             ("observation_id", "operator_identity", "client_action_id"),
         ),
         ("chat_frontend_events", ("conversation_id", "seq")),
+        (
+            "room_codex_bridge_actions",
+            ("participant_id", "operator_identity", "client_action_id"),
+        ),
+        ("room_codex_bridge_actions", ("participant_id", "control_seq")),
     }
 )
 
@@ -892,6 +940,7 @@ def initialize_room_schema_conn(conn: sqlite3.Connection) -> None:
     create_room_execution_schema(conn)
     create_room_memory_schema(conn)
     create_room_operations_schema(conn)
+    create_room_codex_schema(conn)
     _validate_room_schema(conn)
     conn.execute(
         """insert into chat_schema_meta(schema_id, version, updated_at)
