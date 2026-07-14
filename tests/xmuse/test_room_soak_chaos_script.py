@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -270,6 +271,42 @@ def test_memory_recovery_requires_executable_before_start(tmp_path: Path) -> Non
         "reason_code": "soak_memoryos_executable_required",
         "proof_boundary": soak.CLI_ERROR_PROOF_BOUNDARY,
     }
+    assert system.spawned is False
+
+
+def test_goal_memory_profile_requires_cost_and_safe_memory_executable(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    executable = tmp_path / "memoryos"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    missing_cost = soak.run_soak(
+        soak.SoakConfig(
+            repo_root=repo,
+            profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+            runtime_root=tmp_path / "runtime-cost",
+            result_path=tmp_path / "result-cost.json",
+            memoryos_executable=executable,
+        ),
+        dependencies=system.dependencies(),
+    )
+    assert missing_cost["reason_code"] == "soak_provider_cost_confirmation_required"
+
+    symlink = tmp_path / "memoryos-link"
+    symlink.symlink_to(executable)
+    unsafe = soak.run_soak(
+        soak.SoakConfig(
+            repo_root=repo,
+            profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+            runtime_root=tmp_path / "runtime-link",
+            result_path=tmp_path / "result-link.json",
+            memoryos_executable=symlink,
+            confirm_provider_cost=True,
+        ),
+        dependencies=system.dependencies(),
+    )
+    assert unsafe["reason_code"] == "soak_memoryos_executable_unsafe"
     assert system.spawned is False
 
 
@@ -924,7 +961,330 @@ def test_provider_fault_target_must_be_a_current_delivering_attempt(tmp_path: Pa
         require_pending_followup=True,
     )
 
-    assert selected == ("attempt_live", "god_beta", beta)
+    assert selected == soak._ProviderFaultTarget(
+        attempt_id="attempt_live",
+        god_session_id="god_beta",
+        conversation_id="conv_preferred",
+        participant_id="participant_live",
+        binding=beta,
+    )
+
+
+def test_provider_recovery_proof_keeps_private_identity_and_requires_exact_actions(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "god_sessions.json").write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "god_session_id": "god-stable",
+                        "conversation_id": "conv-room",
+                        "participant_id": "participant-target",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    proof = soak._ProviderRecoveryProof(
+        conversation_id="conv-room",
+        participant_id="participant-target",
+        god_session_id="god-stable",
+        session_guard_before="sha256:" + "a" * 64,
+    )
+    target_view = {
+        "native_snapshot": {
+            "value": {
+                "guards": {"session": "sha256:" + "b" * 64},
+            }
+        }
+    }
+    target, identity = soak._prove_provider_recovery_identity(
+        runtime,
+        proof,
+        [
+            ("conv-other", "participant-other", {}),
+            ("conv-room", "participant-target", target_view),
+        ],
+    )
+    assert target[:2] == ("conv-room", "participant-target")
+    assert identity == {"god_identity_unchanged": 1, "session_guard_changed": 1}
+    assert "god-stable" not in json.dumps(identity)
+
+    with sqlite3.connect(runtime / "chat.db") as conn:
+        conn.execute(
+            """create table room_codex_bridge_actions(
+                   conversation_id text, participant_id text,
+                   capability_id text, status text
+               )"""
+        )
+        conn.executemany(
+            "insert into room_codex_bridge_actions values (?, ?, ?, 'applied')",
+            [
+                ("conv-room", "participant-target", "settings_update"),
+                ("conv-room", "participant-target", "console_turn_start"),
+                ("conv-room", "participant-other", "console_turn_start"),
+            ],
+        )
+    assert soak._provider_recovery_action_counts(runtime / "chat.db", proof) == {
+        "settings_update": 1,
+        "console_turn_start": 1,
+    }
+
+
+def test_provider_recovery_proof_rejects_unchanged_guard_and_duplicate_action(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "god_sessions.json").write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "god_session_id": "god-stable",
+                        "conversation_id": "conv-room",
+                        "participant_id": "participant-target",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    guard = "sha256:" + "a" * 64
+    proof = soak._ProviderRecoveryProof(
+        conversation_id="conv-room",
+        participant_id="participant-target",
+        god_session_id="god-stable",
+        session_guard_before=guard,
+    )
+    with pytest.raises(soak.SoakError, match="soak_provider_recovery_session_guard_unchanged"):
+        soak._prove_provider_recovery_identity(
+            runtime,
+            proof,
+            [
+                (
+                    "conv-room",
+                    "participant-target",
+                    {"native_snapshot": {"value": {"guards": {"session": guard}}}},
+                )
+            ],
+        )
+
+    with sqlite3.connect(runtime / "chat.db") as conn:
+        conn.execute(
+            """create table room_codex_bridge_actions(
+                   conversation_id text, participant_id text,
+                   capability_id text, status text
+               )"""
+        )
+        conn.executemany(
+            "insert into room_codex_bridge_actions values (?, ?, ?, 'applied')",
+            [
+                ("conv-room", "participant-target", "settings_update"),
+                ("conv-room", "participant-target", "settings_update"),
+                ("conv-room", "participant-target", "console_turn_start"),
+            ],
+        )
+    with pytest.raises(
+        soak.SoakError,
+        match="soak_provider_recovery_native_action_evidence_invalid",
+    ):
+        soak._provider_recovery_action_counts(runtime / "chat.db", proof)
+
+
+def test_native_action_refreshes_stale_guard_after_409_without_changing_action_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    stale_guard = "sha256:" + "a" * 64
+    fresh_guard = "sha256:" + "b" * 64
+    action_id = "codex_action_once"
+
+    def projection(guard: str, *, applied: bool = False) -> dict[str, Any]:
+        return {
+            "participants": [
+                {
+                    "participant": {"participant_id": "participant-target"},
+                    "capabilities": {
+                        "actions": [
+                            {
+                                "capability_id": "console_turn_start",
+                                "available": True,
+                                "expected_session_guard": guard,
+                                "expected_turn_guard": guard,
+                                "confirmation_required": False,
+                            }
+                        ]
+                    },
+                    "room_bridge": {
+                        "actions": (
+                            [{"action_id": action_id, "status": "applied"}] if applied else []
+                        )
+                    },
+                }
+            ]
+        }
+
+    projections = iter(
+        [
+            projection(stale_guard),
+            projection(fresh_guard),
+            projection(fresh_guard, applied=True),
+        ]
+    )
+    monkeypatch.setattr(soak, "_codex_projection", lambda *_args: next(projections))
+    posted: list[Mapping[str, Any]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        posted.append(payload)
+        if len(posted) == 1:
+            return soak.HttpJsonResponse(409, {"detail": "codex_native_guard_conflict"})
+        return soak.HttpJsonResponse(202, {"action_id": action_id})
+
+    deps.http_json = http_json
+    result = soak._invoke_native_action(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        "conv-room",
+        "participant-target",
+        "console_turn_start",
+        {"text": "safe"},
+        timeout_s=5.0,
+    )
+
+    assert result == projection(fresh_guard, applied=True)
+    assert len(posted) == 2
+    assert posted[0]["client_action_id"] == posted[1]["client_action_id"]
+    assert posted[0]["expected_session_guard"] == stale_guard
+    assert posted[1]["expected_session_guard"] == fresh_guard
+
+
+def test_goal_native_coverage_does_not_require_recovered_session_to_steer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    rooms = [f"conv-{index}" for index in range(4)]
+    participants_by_room: dict[str, list[dict[str, Any]]] = {}
+    flat: list[tuple[str, str]] = []
+    for room_index, room_id in enumerate(rooms):
+        participants_by_room[room_id] = []
+        for agent_index in range(2):
+            participant_id = f"participant-{room_index}-{agent_index}"
+            flat.append((room_id, participant_id))
+            participants_by_room[room_id].append(
+                {
+                    "participant": {"participant_id": participant_id},
+                    "capabilities": {
+                        "value": {
+                            "models": [
+                                {
+                                    "id": "model-one",
+                                    "model": "model-one",
+                                    "efforts": ["max", "high"],
+                                }
+                            ]
+                        }
+                    },
+                }
+            )
+
+    def codex_projection(_deps: object, conversation_id: str) -> dict[str, Any]:
+        return {
+            "participants": participants_by_room[conversation_id],
+            "native_events": {"latest_event_seq": 0},
+        }
+
+    monkeypatch.setattr(soak, "_codex_projection", codex_projection)
+    recovered = flat[0]
+    monkeypatch.setattr(
+        soak,
+        "_prove_provider_recovery_identity",
+        lambda *_args: (
+            (*recovered, participants_by_room[recovered[0]][0]),
+            {"god_identity_unchanged": 1, "session_guard_changed": 1},
+        ),
+    )
+    calls: list[tuple[str, str, str]] = []
+
+    def invoke(
+        _config: object,
+        _deps: object,
+        conversation_id: str,
+        participant_id: str,
+        capability_id: str,
+        _request: Mapping[str, Any],
+        **_kwargs: object,
+    ) -> dict[str, Any]:
+        calls.append((conversation_id, participant_id, capability_id))
+        return {}
+
+    monkeypatch.setattr(soak, "_invoke_native_action", invoke)
+    monkeypatch.setattr(
+        soak,
+        "_wait_native_state",
+        lambda *_args, **_kwargs: {
+            "native_snapshot": {"value": {"goal": {"status": "paused"}, "active_turn": False}}
+        },
+    )
+    monkeypatch.setattr(
+        soak,
+        "_provider_recovery_action_counts",
+        lambda *_args: {"settings_update": 1, "console_turn_start": 1},
+    )
+    monkeypatch.setattr(soak, "_wait_goal_continuation", lambda *_args: 1)
+    state = soak._LiveState(
+        room_ids=rooms,
+        provider_recovery_proof=soak._ProviderRecoveryProof(
+            conversation_id=recovered[0],
+            participant_id=recovered[1],
+            god_session_id="god-stable",
+            session_guard_before="sha256:" + "a" * 64,
+        ),
+    )
+
+    soak._prepare_goal_native_capabilities(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        state,
+        tmp_path / "runtime",
+    )
+    soak._resume_goal_for_hold(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        state,
+    )
+
+    recovered_calls = [item[2] for item in calls if item[:2] == recovered]
+    assert recovered_calls == ["settings_update", "console_turn_start"]
+    console_targets = [item[:2] for item in calls if item[2] == "console_turn_start"]
+    steer_targets = [item[:2] for item in calls if item[2] == "turn_steer"]
+    goal_targets = [item[:2] for item in calls if item[2] == "goal_set"]
+    pause_targets = [item[:2] for item in calls if item[2] == "goal_pause"]
+    resume_targets = [item[:2] for item in calls if item[2] == "goal_resume"]
+    assert len(console_targets) == 2
+    assert len(steer_targets) == len(goal_targets) == 1
+    assert steer_targets[0] != recovered
+    assert goal_targets[0] not in {recovered, steer_targets[0]}
+    assert pause_targets == resume_targets == goal_targets
+    goal_capabilities = [item[2] for item in calls if item[:2] == goal_targets[0]]
+    assert goal_capabilities[-3:] == ["goal_set", "goal_pause", "goal_resume"]
+    assert state.goal_memory_evidence["goal_initial_continuation_checkpoint"] == 1
+    assert state.goal_memory_evidence["goal_auto_continuations"] == 1
 
 
 def test_provider_recovery_requires_durable_cleanup_proof(tmp_path: Path) -> None:
@@ -1114,6 +1474,111 @@ def test_provider_fault_fences_and_signals_native_then_wrapper() -> None:
             signal_pid=signal_pid,
         )
     assert signals == []
+
+
+def test_projection_cache_leaf_rejects_symlink_and_hardlink(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime-root"
+    cache_dir = runtime / "runtime"
+    cache_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_text("cache", encoding="utf-8")
+    cache = cache_dir / "room-codex-projection.sqlite3"
+    cache.symlink_to(outside)
+    with pytest.raises(soak.SoakError, match="soak_projection_cache_unsafe"):
+        soak._unlink_projection_cache_leaf(runtime)
+    cache.unlink()
+    cache.write_text("cache", encoding="utf-8")
+    os_link = tmp_path / "cache-hardlink"
+    os_link.hardlink_to(cache)
+    with pytest.raises(soak.SoakError, match="soak_projection_cache_unsafe"):
+        soak._unlink_projection_cache_leaf(runtime)
+    assert cache.exists()
+
+
+def test_projection_cache_reset_fences_runner_before_unlink_and_uses_managed_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime-root"
+    cache_dir = runtime / "runtime"
+    cache_dir.mkdir(parents=True)
+    cache = cache_dir / "room-codex-projection.sqlite3"
+    cache.write_text("cache", encoding="utf-8")
+    identity = {41: "runner-start"}
+    clock = [0.0]
+    boot = ["boot-before"]
+    runtime_lock_held = [False]
+
+    def status(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "state": "ready",
+            "services": [
+                {"service": "frontend", "ready": True},
+                {"service": "chat_api", "ready": True},
+                {
+                    "service": "room_runner",
+                    "ready": True,
+                    "pid": 41 if boot[0] == "boot-before" else 42,
+                    "boot_id": boot[0],
+                    "host": {"active_delivery_count": 0},
+                },
+                {"service": "room_mcp", "ready": True},
+            ],
+        }
+
+    monkeypatch.setattr(soak, "_workroom_status", status)
+    monkeypatch.setattr(soak, "_sample_runtime", lambda *args, **kwargs: None)
+    from xmuse import chat_api_runtime
+    from xmuse_core.chat import room_runtime_supervisor
+
+    @contextmanager
+    def runtime_lock(*args: Any, **kwargs: Any):
+        del args, kwargs
+        runtime_lock_held[0] = True
+        try:
+            yield
+        finally:
+            runtime_lock_held[0] = False
+
+    monkeypatch.setattr(chat_api_runtime, "_locked_workroom_runtime_start", runtime_lock)
+    monkeypatch.setattr(
+        chat_api_runtime,
+        "_stop_workroom_room_runtime_locked",
+        lambda *args, **kwargs: (identity.pop(41), {"state": "stopped"})[-1],
+    )
+
+    def direct_ensure_is_forbidden(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        raise AssertionError("the soak process must not start the managed Room runtime")
+
+    monkeypatch.setattr(room_runtime_supervisor, "ensure_room_runtime", direct_ensure_is_forbidden)
+
+    def sleep(seconds: float) -> None:
+        assert runtime_lock_held[0] is False
+        clock[0] += seconds
+        boot[0] = "boot-after"
+
+    deps = soak.SoakDependencies(
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+        runner_process_binding=lambda _root: soak.ProcessBinding(41, "runner-start"),
+        process_start_identity=identity.get,
+        runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
+    )
+
+    event = soak._reset_projection_cache_and_wait_recovery(
+        soak.SoakConfig(repo_root=tmp_path, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        soak._LiveState(),
+        runtime,
+        {},
+        run_started_at=0.0,
+    )
+
+    assert not cache.exists()
+    assert event.kind == "codex_projection_cache_delete"
+    assert event.runner_count == event.mcp_count == 1
 
 
 def test_cleanup_incomplete_preserves_auto_runtime_root(
@@ -1306,6 +1771,7 @@ def test_profile_matrix_is_fixed_and_live_result_has_no_private_fields() -> None
         "live-short": (4, 2, 2, 2, 48, 0.0, False),
         "live-soak": (6, 2, 4, 4, 128, 3600.0, False),
         "memory-recovery": (2, 2, 2, 10, None, 0.0, True),
+        soak.GOAL_MEMORY_PROFILE_ID: (4, 2, 4, 4, 128, 3600.0, True),
     }
     source = Path(soak.__file__).read_text(encoding="utf-8")
     assert "provider_output" not in source
@@ -1313,7 +1779,705 @@ def test_profile_matrix_is_fixed_and_live_result_has_no_private_fields() -> None
         {"schema_version": "room_soak_chaos_result/v1", "status": "passed"},
         (),
     )
+    assert soak._safe_result_strings(
+        {
+            "numeric_usage": {
+                "input_tokens": 10,
+                "cached_input_tokens": 2,
+                "output_tokens": 3,
+                "total_tokens": 15,
+            }
+        },
+        (),
+    )
     assert not soak._safe_result_strings({"operator_token": "secret"}, ())
+    assert not soak._safe_result_strings({"input_tokens": "secret"}, ())
+
+
+def test_goal_native_continuation_and_peer_wait_are_projection_proven() -> None:
+    assert soak._goal_console_turn_request("inspect") == {
+        "text": "inspect",
+        "mode": "default",
+    }
+    goal_request = soak._goal_native_request()
+    assert goal_request["token_budget"] == 100_000
+    assert 0 < len(str(goal_request["objective"])) <= 4_000
+    native = {
+        "native_events": {
+            "items": [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10},
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 11},
+                {"kind": "turn_started", "participant_id": "part-peer", "event_seq": 12},
+            ]
+        }
+    }
+    assert soak._goal_turn_started_count(native, "part-goal", 9) == 2
+    assert soak._goal_turn_started_count(native, "part-goal", 10) == 1
+
+    room = {
+        "turns": [
+            {
+                "root_activity_id": "activity-root",
+                "status": "active",
+                "participants": [
+                    {
+                        "participant_id": "part-goal",
+                        "state": "pending",
+                        "frontier": {"phase": "root", "attempt_count": 0},
+                    },
+                    {
+                        "participant_id": "part-peer",
+                        "state": "respond",
+                        "latest_outcome": {"outcome_type": "respond"},
+                    },
+                ],
+            }
+        ]
+    }
+    assert (
+        soak._goal_hold_projection_count(
+            room,
+            root_activity_ids=["activity-root"],
+            goal_participant_id="part-goal",
+        )
+        == 1
+    )
+    room["turns"][0]["participants"][0]["frontier"]["attempt_count"] = 1
+    assert (
+        soak._goal_hold_projection_count(
+            room,
+            root_activity_ids=["activity-root"],
+            goal_participant_id="part-goal",
+        )
+        == 0
+    )
+
+
+def test_goal_hold_projection_waits_for_runner_recovery_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empty = {"turns": []}
+    ready = {
+        "turns": [
+            {
+                "root_activity_id": "activity-root",
+                "status": "active",
+                "participants": [
+                    {
+                        "participant_id": "part-goal",
+                        "state": "pending",
+                        "frontier": {"phase": "root", "attempt_count": 0},
+                    },
+                    {
+                        "participant_id": "part-peer",
+                        "state": "respond",
+                        "latest_outcome": {"outcome_type": "respond"},
+                    },
+                ],
+            }
+        ]
+    }
+    projections = iter((empty, ready))
+    monkeypatch.setattr(soak, "_room_projection", lambda _deps, _conversation: next(projections))
+    clock = [0.0]
+    deps = soak.SoakDependencies(
+        monotonic=lambda: clock[0],
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+
+    assert (
+        soak._wait_goal_hold_projection(
+            deps,
+            "conv-room",
+            root_activity_ids=["activity-root"],
+            goal_participant_id="part-goal",
+            deadline=1.0,
+        )
+        == 1
+    )
+    assert clock[0] == pytest.approx(0.25)
+
+
+def test_goal_peer_delivery_requires_completed_attempt(tmp_path: Path) -> None:
+    database = tmp_path / "chat.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """create table room_observations(
+                   observation_id text primary key,
+                   activity_id text not null,
+                   participant_id text not null
+               )"""
+        )
+        connection.execute(
+            """create table room_observation_attempts(
+                   attempt_id text primary key,
+                   observation_id text not null,
+                   state text not null
+               )"""
+        )
+        connection.executemany(
+            "insert into room_observations values (?,?,?)",
+            (
+                ("obs-goal", "activity-root", "part-goal"),
+                ("obs-peer", "activity-root", "part-peer"),
+            ),
+        )
+        connection.execute(
+            "insert into room_observation_attempts values (?,?,?)",
+            ("attempt-peer", "obs-peer", "claimed"),
+        )
+        connection.commit()
+
+    assert (
+        soak._other_completed_goal_attempt_count(
+            database,
+            ["activity-root"],
+            "part-goal",
+        )
+        == 0
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "update room_observation_attempts set state = 'completed' where attempt_id = ?",
+            ("attempt-peer",),
+        )
+        connection.commit()
+    assert (
+        soak._other_completed_goal_attempt_count(
+            database,
+            ["activity-root"],
+            "part-goal",
+        )
+        == 1
+    )
+
+
+def _goal_progress_projection(
+    events: list[dict[str, Any]],
+    *,
+    status: str | None = "active",
+) -> dict[str, Any]:
+    projection: dict[str, Any] = {
+        "native_events": {"items": events},
+        "participants": [],
+    }
+    if status is not None:
+        projection["participants"] = [
+            {
+                "participant": {"participant_id": "part-goal"},
+                "native_snapshot": {
+                    "value": {"goal": {"status": status}, "active_turn": status == "active"}
+                },
+            }
+        ]
+    return projection
+
+
+def test_goal_progress_observer_allows_long_first_turn_with_continuous_progress() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [{"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10}]
+        ),
+        1.0,
+    )
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10},
+                {
+                    "kind": "goal_updated",
+                    "status": "active",
+                    "participant_id": "part-goal",
+                    "event_seq": 11,
+                },
+                {
+                    "kind": "token_usage_updated",
+                    "participant_id": "part-goal",
+                    "event_seq": 12,
+                },
+            ]
+        ),
+        1_000.0,
+    )
+
+    assert observer.turn_started_count == 1
+    assert observer.continuation_checkpoint_count == 1
+    assert observer.last_progress_at == 1_000.0
+    assert observer.stop_reason(1_050.0, wall_s=None, idle_s=60.0) is None
+    assert observer.stop_reason(100_000.0, wall_s=None, idle_s=None) is None
+
+
+def test_goal_progress_observer_proves_in_turn_continuation_checkpoint() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10},
+                {
+                    "kind": "goal_updated",
+                    "status": "active",
+                    "participant_id": "part-goal",
+                    "event_seq": 13,
+                },
+            ]
+        ),
+        10.0,
+    )
+
+    assert observer.turn_started_count == 1
+    assert observer.continuation_checkpoint_count == 1
+    assert observer.stop_reason(10.0, wall_s=1.0, idle_s=1.0) is None
+
+
+def test_goal_progress_checkpoint_requires_order_and_is_idempotent() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    first = _goal_progress_projection(
+        [
+            {
+                "kind": "goal_updated",
+                "status": "active",
+                "participant_id": "part-goal",
+                "event_seq": 10,
+            },
+            {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 11},
+            {
+                "kind": "goal_updated",
+                "status": "active",
+                "participant_id": "part-peer",
+                "event_seq": 12,
+            },
+        ]
+    )
+    observer.observe(first, 1.0)
+    observer.observe(first, 2.0)
+    assert observer.continuation_checkpoint_count == 0
+
+    completed = _goal_progress_projection(
+        first["native_events"]["items"]
+        + [
+            {
+                "kind": "goal_updated",
+                "status": "active",
+                "participant_id": "part-goal",
+                "event_seq": 13,
+            }
+        ]
+    )
+    observer.observe(completed, 3.0)
+    observer.observe(completed, 4.0)
+    assert observer.continuation_checkpoint_count == 1
+
+
+def test_goal_progress_observer_uses_events_while_snapshot_is_missing() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {
+                    "kind": "goal_updated",
+                    "status": "active",
+                    "participant_id": "part-goal",
+                    "event_seq": 10,
+                },
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 11},
+            ],
+            status=None,
+        ),
+        1.0,
+    )
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {
+                    "kind": "token_usage_updated",
+                    "participant_id": "part-goal",
+                    "event_seq": 12,
+                }
+            ],
+            status=None,
+        ),
+        121.0,
+    )
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 13},
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 13},
+                {"kind": "turn_started", "participant_id": "part-peer", "event_seq": 14},
+            ],
+            status=None,
+        ),
+        181.0,
+    )
+
+    assert observer.turn_started_count == 2
+    assert observer.last_progress_at == 181.0
+    assert observer.stop_reason(181.0, wall_s=None, idle_s=60.0) is None
+
+
+def test_goal_progress_observer_terminal_event_is_sticky_without_snapshot() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10},
+                {
+                    "kind": "goal_updated",
+                    "status": "complete",
+                    "participant_id": "part-goal",
+                    "event_seq": 11,
+                },
+            ],
+            status=None,
+        ),
+        10.0,
+    )
+    observer.observe(_goal_progress_projection([], status=None), 11.0)
+
+    assert observer.stop_reason(11.0, wall_s=None, idle_s=None) == (
+        "soak_codex_goal_terminal_before_continuation"
+    )
+
+
+def test_goal_progress_terminal_wins_same_poll_as_checkpoint() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [
+                {"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10},
+                {
+                    "kind": "goal_updated",
+                    "status": "active",
+                    "participant_id": "part-goal",
+                    "event_seq": 11,
+                },
+                {
+                    "kind": "goal_updated",
+                    "status": "complete",
+                    "participant_id": "part-goal",
+                    "event_seq": 12,
+                },
+            ],
+            status=None,
+        ),
+        10.0,
+    )
+
+    assert observer.continuation_checkpoint_count == 1
+    assert observer.stop_reason(10.0, wall_s=None, idle_s=None) == (
+        "soak_codex_goal_terminal_before_continuation"
+    )
+
+
+def test_goal_progress_observer_reports_optional_guard_reasons() -> None:
+    wall = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    assert wall.stop_reason(120.0, wall_s=120.0, idle_s=None) == (
+        "soak_goal_guard_wall_limit_reached"
+    )
+
+    idle = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    idle.observe(
+        _goal_progress_projection(
+            [{"kind": "goal_updated", "participant_id": "part-goal", "event_seq": 10}]
+        ),
+        50.0,
+    )
+    assert idle.stop_reason(111.0, wall_s=None, idle_s=60.0) == (
+        "soak_goal_guard_idle_limit_reached"
+    )
+
+
+def test_goal_progress_observer_reports_terminal_before_continuation() -> None:
+    observer = soak._GoalContinuationObserver.start("part-goal", 9, 0.0)
+    observer.observe(
+        _goal_progress_projection(
+            [{"kind": "turn_started", "participant_id": "part-goal", "event_seq": 10}],
+            status="complete",
+        ),
+        10.0,
+    )
+
+    assert observer.turn_started_count == 1
+    assert observer.stop_reason(10.0, wall_s=None, idle_s=None) == (
+        "soak_codex_goal_terminal_before_continuation"
+    )
+
+
+def test_goal_guards_are_optional_cli_outer_limits() -> None:
+    config = soak.SoakConfig(repo_root=Path("."), profile_id=soak.GOAL_MEMORY_PROFILE_ID)
+    assert config.goal_guard_wall_s is None
+    assert config.goal_guard_idle_s is None
+    args = soak.build_parser().parse_args(
+        [
+            soak.GOAL_MEMORY_PROFILE_ID,
+            "--goal-guard-wall-s",
+            "3600",
+            "--goal-guard-idle-s",
+            "900",
+        ]
+    )
+    assert args.goal_guard_wall_s == 3600.0
+    assert args.goal_guard_idle_s == 900.0
+
+
+def test_goal_pause_waits_for_paused_thread_to_become_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    calls: list[str] = []
+    checks: list[tuple[bool, bool, float, str]] = []
+    active = {"native_snapshot": {"value": {"goal": {"status": "paused"}, "active_turn": True}}}
+    idle = {"native_snapshot": {"value": {"goal": {"status": "paused"}, "active_turn": False}}}
+
+    def invoke(*args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append(str(args[4]))
+        return {}
+
+    def wait(
+        _deps: object,
+        _conversation_id: str,
+        _participant_id: str,
+        predicate: Any,
+        *,
+        timeout_s: float,
+        code: str,
+    ) -> Mapping[str, Any]:
+        checks.append((predicate(active), predicate(idle), timeout_s, code))
+        return idle
+
+    monkeypatch.setattr(soak, "_invoke_native_action", invoke)
+    monkeypatch.setattr(soak, "_wait_native_state", wait)
+    soak._pause_native_goal(
+        soak.SoakConfig(
+            repo_root=repo,
+            profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+            settle_timeout_s=777.0,
+        ),
+        deps,
+        "conv-goal",
+        "part-goal",
+    )
+
+    assert calls == ["goal_pause"]
+    assert checks == [
+        (True, True, 30.0, "soak_codex_goal_pause_unproven"),
+        (False, True, 777.0, "soak_codex_goal_pause_idle_unproven"),
+    ]
+
+
+def test_goal_pause_interrupts_the_guarded_running_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    calls: list[str] = []
+    active = {
+        "participant": {"participant_id": "part-goal"},
+        "native_snapshot": {"value": {"goal": {"status": "paused"}, "active_turn": True}},
+    }
+    idle = {
+        "participant": {"participant_id": "part-goal"},
+        "native_snapshot": {"value": {"goal": {"status": "paused"}, "active_turn": False}},
+    }
+    waits = iter((active, idle))
+
+    def invoke(*args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append(str(args[4]))
+        return {}
+
+    monkeypatch.setattr(soak, "_invoke_native_action", invoke)
+    monkeypatch.setattr(soak, "_wait_native_state", lambda *_args, **_kwargs: next(waits))
+
+    soak._pause_native_goal(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        "conv-goal",
+        "part-goal",
+    )
+
+    assert calls == ["goal_pause", "turn_interrupt"]
+
+
+@pytest.mark.parametrize(
+    ("guard_kwargs", "expected"),
+    [
+        ({"goal_guard_wall_s": 1.0}, "soak_goal_guard_wall_limit_reached"),
+        ({"goal_guard_idle_s": 1.0}, "soak_goal_guard_idle_limit_reached"),
+    ],
+)
+def test_goal_guard_pauses_through_native_action_before_reporting_limit(
+    guard_kwargs: dict[str, float], expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    projection = _goal_progress_projection([], status="active")
+    calls: list[str] = []
+    monkeypatch.setattr(soak, "_codex_projection", lambda *_args: projection)
+
+    def invoke(*_args: object, **_kwargs: object) -> dict[str, object]:
+        calls.append(str(_args[4]))
+        return _goal_progress_projection(
+            [
+                {
+                    "kind": "goal_updated",
+                    "status": "paused",
+                    "participant_id": "part-goal",
+                    "event_seq": 10,
+                }
+            ],
+            status="paused",
+        )
+
+    monkeypatch.setattr(soak, "_invoke_native_action", invoke)
+    config = soak.SoakConfig(
+        repo_root=repo,
+        profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+        **guard_kwargs,
+    )
+    system.clock = 1.0
+
+    with pytest.raises(soak.SoakError, match=expected):
+        soak._wait_goal_continuation(config, deps, "conv_goal", "part-goal", 9)
+
+    assert calls == ["goal_pause"]
+
+
+def test_goal_guard_reports_terminal_race_instead_of_pause_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    system.clock = 1.0
+    deps = system.dependencies()
+    projections = iter(
+        [
+            _goal_progress_projection([], status="active"),
+            _goal_progress_projection(
+                [
+                    {
+                        "kind": "goal_updated",
+                        "status": "complete",
+                        "participant_id": "part-goal",
+                        "event_seq": 10,
+                    }
+                ],
+                status=None,
+            ),
+        ]
+    )
+    monkeypatch.setattr(soak, "_codex_projection", lambda *_args: next(projections))
+
+    def reject(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise soak.SoakError("soak_codex_goal_pause_not_applied")
+
+    monkeypatch.setattr(soak, "_invoke_native_action", reject)
+    config = soak.SoakConfig(
+        repo_root=repo,
+        profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+        goal_guard_wall_s=1.0,
+    )
+
+    with pytest.raises(soak.SoakError, match="soak_codex_goal_terminal_before_continuation"):
+        soak._wait_goal_continuation(config, deps, "conv_goal", "part-goal", 9)
+
+
+def test_goal_guard_uses_distinct_pause_unconfirmed_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    system.clock = 1.0
+    deps = system.dependencies()
+    monkeypatch.setattr(
+        soak,
+        "_codex_projection",
+        lambda *_args: _goal_progress_projection([], status="active"),
+    )
+
+    def reject(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise soak.SoakError("soak_codex_goal_pause_not_applied")
+
+    monkeypatch.setattr(soak, "_invoke_native_action", reject)
+    config = soak.SoakConfig(
+        repo_root=repo,
+        profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+        goal_guard_wall_s=1.0,
+    )
+
+    with pytest.raises(soak.SoakError, match="soak_goal_guard_pause_unconfirmed"):
+        soak._wait_goal_continuation(config, deps, "conv_goal", "part-goal", 9)
+
+
+def test_goal_fault_mapping_requires_exact_reconcile_evidence() -> None:
+    events = [
+        {
+            "kind": kind,
+            "reason_code": reason,
+            "recovery_ms": 10,
+            "active_delivery_count": active,
+            "runner_count": 1,
+            "mcp_count": 1,
+            "managed_reconcile": managed,
+            "recovery_wave_settled": True,
+        }
+        for kind, reason, managed, active in (
+            ("codex_app_server_sigkill", "codex_app_server_cleanup_confirmed", False, 1),
+            ("runner_sigkill", "runner_reconciled", True, 2),
+            ("memoryos_sigkill", "memoryos_reconciled", True, 0),
+            ("codex_projection_cache_delete", "codex_projection_cache_rebuilt", True, 0),
+        )
+    ]
+    mapped = soak._map_goal_faults(events)
+    assert [item["reason_code"] for item in mapped] == [item["reason_code"] for item in events]
+    events[1]["managed_reconcile"] = False
+    with pytest.raises(soak.SoakError, match="soak_fault_sequence_invalid"):
+        soak._map_goal_faults(events)
+
+
+def test_goal_browser_item_and_top_digests_are_independently_verified(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    state = soak._LiveState(room_ids=[f"conv_{index:08d}" for index in range(4)])
+    viewports: dict[str, dict[str, int | str]] = {}
+    for key, (width, height) in {
+        "640x900": (640, 900),
+        "1280x720": (1280, 720),
+        "1440x900": (1440, 900),
+    }.items():
+        numeric = {
+            "width": width,
+            "height": height,
+            "room_count": 4,
+            "refresh_count": 4,
+            "console_error_count": 0,
+            "page_error_count": 0,
+            "http_5xx_count": 0,
+            "native_snapshot_count": 8,
+            "native_capabilities_count": 8,
+            "history_partial_count": 8,
+        }
+        viewports[key] = {**numeric, "digest": soak._canonical_digest_json(numeric)}
+    payload = {
+        "schema_version": soak.GOAL_BROWSER_EVIDENCE_SCHEMA,
+        "consumer": soak.GOAL_BROWSER_CONSUMER,
+        "headed": True,
+        "viewports": viewports,
+        "digest": soak._canonical_digest_json(
+            {"consumer": soak.GOAL_BROWSER_CONSUMER, "headed": True, "viewports": viewports}
+        ),
+    }
+    deps = _FakeSystem(repo).dependencies()
+    deps.browser_verifier = lambda _request: payload
+    config = soak.SoakConfig(profile_id=soak.GOAL_MEMORY_PROFILE_ID, repo_root=repo)
+    result = soak._verify_goal_browser(config, deps, state, tmp_path, {})
+    assert result["headed"] is True
+    viewports["640x900"]["refresh_count"] = 3
+    with pytest.raises(soak.SoakError, match="soak_browser_evidence_invalid"):
+        soak._verify_goal_browser(config, deps, state, tmp_path, {})
 
 
 def test_real_browser_spec_is_explicit_and_emits_counts_only() -> None:
@@ -1322,7 +2486,8 @@ def test_real_browser_spec_is_explicit_and_emits_counts_only() -> None:
 
     assert 'process.env.XMUSE_SOAK_BROWSER === "1"' in source
     assert "XMUSE_OPERATOR_TOKEN" not in source
-    evidence_block = source[source.index("await atomicJson(evidencePath") :]
+    evidence_start = source.index("async function updateEvidence")
+    evidence_block = source[evidence_start : source.index("\ntest", evidence_start)]
     assert "room_ids" not in evidence_block
-    assert "console_errors" in evidence_block
-    assert "page_errors" in evidence_block
+    assert "viewports" in evidence_block
+    assert "digest" in evidence_block

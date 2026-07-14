@@ -7,7 +7,7 @@ import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.god_session_registry import GodSessionRecord
@@ -41,6 +41,7 @@ _NATIVE_STATE_METHODS = frozenset(
 )
 _MAX_PARALLEL_RECONCILES = 4
 _RECONCILE_TIMEOUT_S = 5.0
+_FailureStage = Literal["session_preparing", "snapshot_proving", "guards_proving", "dispatching"]
 
 
 class _SnapshotGuards(TypedDict):
@@ -48,6 +49,17 @@ class _SnapshotGuards(TypedDict):
     goal: str | None
     settings: str | None
     turn: str | None
+
+
+class _ActionPreparationError(RuntimeError):
+    def __init__(self, cause: Exception, *, failure_stage: _FailureStage) -> None:
+        super().__init__(failure_stage)
+        self.cause = cause
+        self.failure_stage = failure_stage
+
+
+class _ReconcileDeferred(RuntimeError):
+    """Internal control flow for a native-unavailable participant in backoff."""
 
 
 class RoomCodexNativeRuntime:
@@ -70,7 +82,13 @@ class RoomCodexNativeRuntime:
         self._bridge = RoomCodexBridgeStore(self._db_path)
         self._capabilities: dict[str, dict[str, object]] = {}
         self._capability_session_guards: dict[str, str] = {}
-        self._watchers: dict[str, tuple[str, object, asyncio.Task[None]]] = {}
+        self._watchers: dict[str, tuple[int, object, asyncio.Task[None]]] = {}
+        self._reconcile_semaphore = asyncio.Semaphore(_MAX_PARALLEL_RECONCILES)
+        self._reconcile_tasks: dict[str, asyncio.Task[None]] = {}
+        self._retired_tasks: set[asyncio.Task[None]] = set()
+        self._rebind_attempts: dict[str, int] = {}
+        self._next_rebind_at: dict[str, float] = {}
+        self._shutting_down = False
 
     def accepts_delivery(self, participant_id: str) -> bool:
         return self._bridge.participant_accepts_delivery(participant_id)
@@ -85,32 +103,24 @@ class RoomCodexNativeRuntime:
             self._projection_cache_error = exc.code
 
     async def reconcile_all(self) -> None:
-        semaphore = asyncio.Semaphore(_MAX_PARALLEL_RECONCILES)
-
-        async def reconcile_one(participant: Participant) -> None:
-            try:
-                async with semaphore:
-                    await asyncio.wait_for(
-                        self.reconcile_participant(participant),
-                        timeout=_RECONCILE_TIMEOUT_S,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except RoomCodexBridgeError as exc:
-                if exc.code == "codex_native_action_pending":
-                    return
-                self._mark_native_unavailable(participant)
-            except Exception:
-                self._mark_native_unavailable(participant)
-
-        await asyncio.gather(*(reconcile_one(item) for item in self._active_participants()))
+        participants = self._active_participants()
+        active_ids = {item.participant_id for item in participants}
+        await self._retire_stale_participants(active_ids)
+        tasks = [self._ensure_reconcile_task(item) for item in participants]
+        if tasks:
+            # This is an observation window, not an execution deadline. Session repair can
+            # legitimately exceed five seconds and must remain alive for the next poll.
+            await asyncio.wait(tasks, timeout=_RECONCILE_TIMEOUT_S)
+        self._discard_completed_reconciles()
 
     async def reconcile_participant(
         self, participant: Participant, *, force: bool = False
     ) -> dict[str, object]:
         if not force and self._bridge.participant_has_unfinished_action(participant.participant_id):
             raise RoomCodexBridgeError("codex_native_action_pending")
-        record = await self._ensure_session(participant)
+        hold = self._bridge.get_hold(participant.participant_id)
+        force_rebind = self._rebind_due(participant.participant_id, hold)
+        record = await self._ensure_session(participant, force_rebind=force_rebind)
         self._ensure_watcher(participant, record)
         snapshot = await self._sessions.native_snapshot(record.god_session_id)
         guards = _snapshot_guards(snapshot)
@@ -127,6 +137,9 @@ class RoomCodexNativeRuntime:
             self._capabilities[participant.participant_id] = capabilities
             self._capability_session_guards[participant.participant_id] = session_guard
         self._apply_snapshot(participant, snapshot)
+        if force_rebind:
+            self._rebind_attempts.pop(participant.participant_id, None)
+            self._next_rebind_at.pop(participant.participant_id, None)
         self._replace_cached_current(
             participant,
             snapshot=snapshot,
@@ -144,10 +157,17 @@ class RoomCodexNativeRuntime:
     async def execute_claimed_action(self, action: Mapping[str, object]) -> None:
         action_id = str(action["action_id"])
         participant: Participant | None = None
+        failure_stage: _FailureStage = "session_preparing"
+        provider_acknowledged = False
         try:
             participant = self._participants.get(str(action["participant_id"]))
-            record = await self._ensure_session(participant)
-            before = await self._sessions.native_snapshot(record.god_session_id)
+            record, before = await self._prepare_action_snapshot(participant, action_id=action_id)
+            failure_stage = "guards_proving"
+            self._bridge.advance_action_stage(
+                action_id=action_id,
+                runner_generation=self._runner_generation,
+                stage="guards_proving",
+            )
             _assert_action_guards(action, before)
             _assert_action_policy(self._db_path, action, before)
             self._bridge.begin_reconcile(
@@ -159,16 +179,22 @@ class RoomCodexNativeRuntime:
             safe_request = action.get("safe_request")
             if not isinstance(safe_request, dict):
                 raise RoomCodexBridgeError("codex_native_request_shape_invalid")
+            resolved_review_target = _resolved_review_target(
+                str(action["capability_id"]), safe_request, self._worktree
+            )
+            failure_stage = "dispatching"
+            self._bridge.advance_action_stage(
+                action_id=action_id,
+                runner_generation=self._runner_generation,
+                stage="dispatching",
+            )
             result = await self._sessions.invoke_native(
                 record.god_session_id,
                 str(action["capability_id"]),
                 safe_request,
-                resolved_review_target=_resolved_review_target(
-                    str(action["capability_id"]), safe_request, self._worktree
-                ),
+                resolved_review_target=resolved_review_target,
             )
-            after = await self._sessions.native_snapshot(record.god_session_id)
-            self._apply_snapshot(participant, after)
+            provider_acknowledged = True
             self._bridge.complete_action(
                 action_id=action_id,
                 runner_generation=self._runner_generation,
@@ -176,13 +202,34 @@ class RoomCodexNativeRuntime:
                 reason_code=None,
                 ack_summary=result.safe_ack,
             )
+            try:
+                after = await self._sessions.native_snapshot(record.god_session_id)
+                self._apply_snapshot(participant, after)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                try:
+                    self._mark_native_unavailable(participant)
+                except Exception:
+                    pass
         except Exception as exc:
-            code = _reason_code(exc)
+            if provider_acknowledged:
+                raise
+            reason_error = exc
+            if isinstance(exc, _ActionPreparationError):
+                failure_stage = exc.failure_stage
+                reason_error = exc.cause
+            code = (
+                "codex_native_action_result_unknown"
+                if failure_stage == "dispatching"
+                else _reason_code(reason_error, failure_stage=failure_stage)
+            )
             self._bridge.complete_action(
                 action_id=action_id,
                 runner_generation=self._runner_generation,
                 status="rejected" if code.endswith("_conflict") else "failed",
                 reason_code=code,
+                failure_stage=failure_stage,
             )
             if participant is not None:
                 try:
@@ -195,6 +242,35 @@ class RoomCodexNativeRuntime:
                 except Exception:
                     self._mark_native_unavailable(participant)
 
+    async def _prepare_action_snapshot(
+        self,
+        participant: Participant,
+        *,
+        action_id: str,
+    ) -> tuple[GodSessionRecord, dict[str, object]]:
+        """Prove a live session and snapshot, with one pre-dispatch recovery attempt."""
+
+        for attempt in range(2):
+            failure_stage: _FailureStage = "session_preparing"
+            try:
+                record = await self._ensure_session(participant, force_rebind=attempt == 1)
+                self._ensure_watcher(participant, record)
+                failure_stage = "snapshot_proving"
+                self._bridge.advance_action_stage(
+                    action_id=action_id,
+                    runner_generation=self._runner_generation,
+                    stage="snapshot_proving",
+                )
+                snapshot = await self._sessions.native_snapshot(record.god_session_id)
+                _snapshot_guards(snapshot)
+                return record, snapshot
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if isinstance(exc, RoomCodexBridgeError) or attempt == 1:
+                    raise _ActionPreparationError(exc, failure_stage=failure_stage) from exc
+        raise AssertionError("unreachable")
+
     def capabilities_for_participant(self, participant_id: str) -> dict[str, object] | None:
         value = self._capabilities.get(participant_id)
         return dict(value) if value is not None else None
@@ -204,17 +280,26 @@ class RoomCodexNativeRuntime:
         return self._projection_cache_error
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
+        reconciles = list(self._reconcile_tasks.values())
+        self._reconcile_tasks.clear()
         watchers = list(self._watchers.values())
         self._watchers.clear()
-        for _session_id, stream, task in watchers:
+        for _incarnation, stream, task in watchers:
             close = getattr(stream, "close", None)
             if callable(close):
                 close()
             task.cancel()
-        if watchers:
-            await asyncio.gather(*(item[2] for item in watchers), return_exceptions=True)
+        pending = [*reconciles, *(item[2] for item in watchers), *self._retired_tasks]
+        self._retired_tasks.clear()
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
-    async def _ensure_session(self, participant: Participant) -> GodSessionRecord:
+    async def _ensure_session(
+        self, participant: Participant, *, force_rebind: bool = False
+    ) -> GodSessionRecord:
         proposed = participant_session_prompt_fingerprint(participant)
         fingerprint = self._sessions.prompt_fingerprint_for_resume(
             conversation_id=participant.conversation_id,
@@ -235,6 +320,7 @@ class RoomCodexNativeRuntime:
             model=participant.model,
             prompt_fingerprint=fingerprint,
             feature_scope_id=_ROOM_SESSION_SCOPE,
+            force_rebind=force_rebind,
         )
         return self._sessions.require_live_provider_session_binding(
             conversation_id=participant.conversation_id,
@@ -282,24 +368,95 @@ class RoomCodexNativeRuntime:
         ]
 
     def _ensure_watcher(self, participant: Participant, record: GodSessionRecord) -> None:
+        incarnation = self._sessions.native_session_incarnation(record.god_session_id)
         prior = self._watchers.get(participant.participant_id)
-        if prior is not None and prior[0] == record.god_session_id and not prior[2].done():
+        if prior is not None and prior[0] == incarnation and not prior[2].done():
             return
         if prior is not None:
             close = getattr(prior[1], "close", None)
             if callable(close):
                 close()
             prior[2].cancel()
+            self._track_retired_task(prior[2])
         stream = self._sessions.subscribe_native_events(record.god_session_id)
         task = asyncio.create_task(
             self._watch_native_events(participant, stream),
             name=f"room-codex-native-events:{participant.participant_id}",
         )
         self._watchers[participant.participant_id] = (
-            record.god_session_id,
+            incarnation,
             stream,
             task,
         )
+
+    def _rebind_due(self, participant_id: str, hold: Mapping[str, object] | None) -> bool:
+        if hold is None or hold.get("state") != "native_unavailable":
+            return False
+        now = asyncio.get_running_loop().time()
+        if now < self._next_rebind_at.get(participant_id, 0.0):
+            raise _ReconcileDeferred
+        attempt = self._rebind_attempts.get(participant_id, 0) + 1
+        self._rebind_attempts[participant_id] = attempt
+        self._next_rebind_at[participant_id] = now + min(30.0, 2.0 ** (attempt - 1))
+        return True
+
+    def _ensure_reconcile_task(self, participant: Participant) -> asyncio.Task[None]:
+        participant_id = participant.participant_id
+        prior = self._reconcile_tasks.get(participant_id)
+        if prior is not None and not prior.done():
+            return prior
+        if self._shutting_down:
+            raise RuntimeError("room Codex native runtime is shutting down")
+        task = asyncio.create_task(
+            self._run_background_reconcile(participant),
+            name=f"room-codex-native-reconcile:{participant_id}",
+        )
+        self._reconcile_tasks[participant_id] = task
+        return task
+
+    async def _run_background_reconcile(self, participant: Participant) -> None:
+        try:
+            async with self._reconcile_semaphore:
+                await self.reconcile_participant(participant)
+        except asyncio.CancelledError:
+            raise
+        except _ReconcileDeferred:
+            return
+        except RoomCodexBridgeError as exc:
+            if exc.code != "codex_native_action_pending":
+                self._mark_native_unavailable(participant)
+        except Exception:
+            self._mark_native_unavailable(participant)
+
+    async def _retire_stale_participants(self, active_ids: set[str]) -> None:
+        retired: list[asyncio.Task[None]] = []
+        for participant_id in set(self._reconcile_tasks) - active_ids:
+            task = self._reconcile_tasks.pop(participant_id)
+            task.cancel()
+            retired.append(task)
+        for participant_id in set(self._watchers) - active_ids:
+            _incarnation, stream, task = self._watchers.pop(participant_id)
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
+            task.cancel()
+            retired.append(task)
+        for participant_id in set(self._rebind_attempts) - active_ids:
+            self._rebind_attempts.pop(participant_id, None)
+            self._next_rebind_at.pop(participant_id, None)
+        if retired:
+            await asyncio.gather(*retired, return_exceptions=True)
+
+    def _discard_completed_reconciles(self) -> None:
+        for participant_id, task in tuple(self._reconcile_tasks.items()):
+            if task.done() and self._reconcile_tasks.get(participant_id) is task:
+                self._reconcile_tasks.pop(participant_id, None)
+
+    def _track_retired_task(self, task: asyncio.Task[None]) -> None:
+        if task.done():
+            return
+        self._retired_tasks.add(task)
+        task.add_done_callback(self._retired_tasks.discard)
 
     async def _watch_native_events(self, participant: Participant, stream: object) -> None:
         receive = getattr(stream, "receive", None)
@@ -323,14 +480,10 @@ class RoomCodexNativeRuntime:
                     )
                 await asyncio.sleep(0)
                 try:
-                    await self.reconcile_participant(participant)
+                    task = self._ensure_reconcile_task(participant)
+                    await asyncio.shield(task)
                 except asyncio.CancelledError:
                     raise
-                except RoomCodexBridgeError as exc:
-                    if exc.code != "codex_native_action_pending":
-                        self._mark_native_unavailable(participant)
-                except Exception:
-                    self._mark_native_unavailable(participant)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -604,9 +757,9 @@ def _git_status(worktree: Path, *arguments: str) -> bool:
     return result.returncode == 0
 
 
-def _reason_code(exc: Exception) -> str:
+def _reason_code(exc: Exception, *, failure_stage: str) -> str:
     code = getattr(exc, "code", None)
-    return code if isinstance(code, str) and code else "codex_native_action_failed"
+    return code if isinstance(code, str) and code else f"codex_native_action_{failure_stage}_failed"
 
 
 __all__ = [

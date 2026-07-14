@@ -27,6 +27,14 @@ HoldState = Literal[
     "native_unavailable",
 ]
 ActionStatus = Literal["requested", "applying", "applied", "rejected", "failed"]
+ActionExecutionStage = Literal[
+    "queued",
+    "session_preparing",
+    "snapshot_proving",
+    "guards_proving",
+    "dispatching",
+    "completed",
+]
 _HOLD_STATES = frozenset(
     {
         "reconciling",
@@ -38,6 +46,15 @@ _HOLD_STATES = frozenset(
     }
 )
 _FINAL_ACTION_STATUSES = frozenset({"applied", "rejected", "failed"})
+_ACTION_EXECUTION_STAGES = (
+    "queued",
+    "session_preparing",
+    "snapshot_proving",
+    "guards_proving",
+    "dispatching",
+    "completed",
+)
+_PRE_DISPATCH_STAGES = frozenset(_ACTION_EXECUTION_STAGES[:4])
 _ACK_KEYS = frozenset(
     {"native_method", "acknowledged", "native_error_code", "observed_guard", "event_count"}
 )
@@ -286,7 +303,9 @@ class RoomCodexBridgeStore:
             changed = conn.execute(
                 """update room_codex_bridge_actions
                    set status = 'applying', runner_generation = ?, applying_at = ?,
-                       updated_at = ? where action_id = ? and status = 'requested'""",
+                       execution_stage = 'session_preparing', failure_stage = null,
+                       updated_at = ? where action_id = ? and status = 'requested'
+                       and execution_stage = 'queued'""",
                 (generation, stamp, stamp, row["action_id"]),
             ).rowcount
             if changed != 1:
@@ -303,35 +322,89 @@ class RoomCodexBridgeStore:
             conn.commit()
         return _action_view(claimed, include_request=True)
 
-    def fence_interrupted_actions(self) -> int:
-        """Fail in-flight native calls whose result cannot be proved after restart.
+    def advance_action_stage(
+        self,
+        *,
+        action_id: str,
+        runner_generation: str,
+        stage: Literal["snapshot_proving", "guards_proving", "dispatching"],
+    ) -> None:
+        """Durably cross one pre-dispatch boundary for a claimed native action."""
 
-        Replaying an App Server mutation is unsafe: a completed ``turn/start`` may
-        already have emitted output even when xmuse crashed before recording its ack.
-        The new Runner reconciles current native state and requires a new operator
-        action instead of guessing or duplicating the mutation.
+        action = _identifier(action_id, "codex_native_action_invalid", 128)
+        generation = _identifier(runner_generation, "codex_native_runner_generation_invalid", 128)
+        transitions = {
+            "snapshot_proving": "session_preparing",
+            "guards_proving": "snapshot_proving",
+            "dispatching": "guards_proving",
+        }
+        prior_stage = transitions.get(stage)
+        if prior_stage is None:
+            raise RoomCodexBridgeError("codex_native_action_stage_invalid")
+        stamp = _timestamp()
+        with RoomDatabase(self._path).connect() as conn:
+            conn.execute("begin immediate")
+            row = _action_row(conn, action)
+            if row["status"] != "applying" or row["runner_generation"] != generation:
+                raise RoomCodexBridgeError("codex_native_action_claim_lost")
+            if row["execution_stage"] == stage:
+                conn.commit()
+                return
+            changed = conn.execute(
+                """update room_codex_bridge_actions set execution_stage = ?, updated_at = ?
+                   where action_id = ? and status = 'applying'
+                     and runner_generation = ? and execution_stage = ?""",
+                (stage, stamp, action, generation, prior_stage),
+            ).rowcount
+            if changed != 1:
+                raise RoomCodexBridgeError("codex_native_action_stage_conflict")
+            conn.commit()
+
+    def fence_interrupted_actions(self) -> int:
+        """Recover pre-dispatch work and fail calls with an unknowable result.
+
+        Work that never crossed ``dispatching`` can safely return to the same durable
+        request. Replaying an App Server mutation is unsafe: a completed ``turn/start``
+        may already have emitted output even when xmuse crashed before recording its
+        ack, so dispatching work is fenced instead of guessed or duplicated.
         """
 
         stamp = _timestamp()
         with RoomDatabase(self._path).connect() as conn:
             conn.execute("begin immediate")
             rows = conn.execute(
-                """select action_id, conversation_id, participant_id
+                """select action_id, conversation_id, participant_id, execution_stage
                    from room_codex_bridge_actions
                    where status = 'applying' order by requested_at, action_id"""
             ).fetchall()
             for row in rows:
-                conn.execute(
-                    """update room_codex_bridge_actions
-                       set status = 'failed', reason_code = ?, completed_at = ?,
-                           updated_at = ? where action_id = ? and status = 'applying'""",
-                    (
-                        "codex_native_action_result_unknown",
-                        stamp,
-                        stamp,
-                        row["action_id"],
-                    ),
-                )
+                stage = str(row["execution_stage"])
+                if stage in _PRE_DISPATCH_STAGES:
+                    conn.execute(
+                        """update room_codex_bridge_actions
+                           set status = 'requested', execution_stage = 'queued',
+                               failure_stage = null, reason_code = null,
+                               runner_generation = null, applying_at = null,
+                               completed_at = null, updated_at = ?
+                           where action_id = ? and status = 'applying'""",
+                        (stamp, row["action_id"]),
+                    )
+                    hold_reason = "codex_native_action_pending"
+                else:
+                    conn.execute(
+                        """update room_codex_bridge_actions
+                           set status = 'failed', execution_stage = 'completed',
+                               failure_stage = ?, reason_code = ?, completed_at = ?,
+                               updated_at = ? where action_id = ? and status = 'applying'""",
+                        (
+                            stage,
+                            "codex_native_action_result_unknown",
+                            stamp,
+                            stamp,
+                            row["action_id"],
+                        ),
+                    )
+                    hold_reason = "codex_native_reconcile_required"
                 _append_projection_event(
                     conn,
                     str(row["conversation_id"]),
@@ -342,9 +415,9 @@ class RoomCodexBridgeStore:
                 conn.execute(
                     """update room_codex_delivery_holds
                        set hold_revision = hold_revision + 1, state = 'reconciling',
-                           reason_code = 'codex_native_reconcile_required', updated_at = ?
+                           reason_code = ?, updated_at = ?
                        where participant_id = ?""",
-                    (stamp, row["participant_id"]),
+                    (hold_reason, stamp, row["participant_id"]),
                 )
             conn.commit()
         return len(rows)
@@ -437,12 +510,15 @@ class RoomCodexBridgeStore:
         status: Literal["applied", "rejected", "failed"],
         reason_code: str | None,
         ack_summary: Mapping[str, object] | None = None,
+        failure_stage: ActionExecutionStage | None = None,
     ) -> dict[str, object]:
         if status not in _FINAL_ACTION_STATUSES:
             raise RoomCodexBridgeError("codex_native_action_status_invalid")
         action = _identifier(action_id, "codex_native_action_invalid", 128)
         generation = _identifier(runner_generation, "codex_native_runner_generation_invalid", 128)
         summary = _ack_summary(ack_summary)
+        if failure_stage is not None and failure_stage not in _ACTION_EXECUTION_STAGES:
+            raise RoomCodexBridgeError("codex_native_action_stage_invalid")
         stamp = _timestamp()
         with RoomDatabase(self._path).connect() as conn:
             conn.execute("begin immediate")
@@ -452,11 +528,24 @@ class RoomCodexBridgeStore:
                 return _action_view(row, include_request=False)
             if row["status"] != "applying" or row["runner_generation"] != generation:
                 raise RoomCodexBridgeError("codex_native_action_claim_lost")
+            recorded_failure_stage = (
+                failure_stage or str(row["execution_stage"]) if status == "failed" else None
+            )
             conn.execute(
                 """update room_codex_bridge_actions set status = ?, reason_code = ?,
-                       ack_summary_json = ?, completed_at = ?, updated_at = ?
+                       ack_summary_json = ?, execution_stage = 'completed', failure_stage = ?,
+                       completed_at = ?, updated_at = ?
                    where action_id = ? and status = 'applying' and runner_generation = ?""",
-                (status, reason_code, summary, stamp, stamp, action, generation),
+                (
+                    status,
+                    reason_code,
+                    summary,
+                    recorded_failure_stage,
+                    stamp,
+                    stamp,
+                    action,
+                    generation,
+                ),
             )
             _append_projection_event(conn, str(row["conversation_id"]), action, "action", stamp)
             updated = _action_row(conn, action)

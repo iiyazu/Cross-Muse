@@ -314,6 +314,14 @@ _COMPAT_ONLY_REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
 }
 
 _ROOM_REQUIRED_COLUMNS = dict(_CANONICAL_ROOM_REQUIRED_COLUMNS)
+# Room v1 permits additive runtime migrations without changing the public data
+# contract.  A stopped database created by the previous v1 runtime must remain
+# inspectable and backupable before the new runtime has had a chance to add
+# these internal action-recovery columns.  Runtime initialization still uses
+# the canonical set above and therefore adds and validates both columns.
+_ROOM_REQUIRED_COLUMNS["room_codex_bridge_actions"] = _ROOM_REQUIRED_COLUMNS[
+    "room_codex_bridge_actions"
+] - {"execution_stage", "failure_stage"}
 _CHAT_REQUIRED_COLUMNS = _COMMON_REQUIRED_COLUMNS | _COMPAT_ONLY_REQUIRED_COLUMNS
 
 _REQUIRED_UNIQUE_KEYS = set(ROOM_REQUIRED_UNIQUE_KEYS)

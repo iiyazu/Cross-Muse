@@ -126,6 +126,57 @@ async def test_snapshot_is_safe_and_uses_opaque_guards() -> None:
 
 
 @pytest.mark.asyncio
+async def test_goal_guard_ignores_accounting_churn_but_fences_control_changes() -> None:
+    def response(
+        *,
+        objective: str = "Inspect transactions",
+        status: str = "active",
+        budget: int = 100_000,
+        used: int = 0,
+        elapsed: int = 0,
+    ) -> dict[str, object]:
+        return {
+            "goal": {
+                "objective": objective,
+                "status": status,
+                "tokenBudget": budget,
+                "tokensUsed": used,
+                "timeUsedSeconds": elapsed,
+            }
+        }
+
+    rpc = Rpc(
+        {
+            "thread/goal/get": [
+                response(),
+                response(used=42_000, elapsed=60),
+                response(objective="Inspect recovery"),
+                response(status="paused"),
+                response(budget=200_000),
+            ]
+        }
+    )
+    adapter = CodexNativeAdapter(rpc)
+
+    async def goal_guard() -> object:
+        snapshot = await adapter.snapshot(
+            thread_id="private-thread",
+            session_identity="private-thread",
+            connection_generation=7,
+            current_model="gpt-a",
+            current_effort="max",
+            active_turn_id=None,
+        )
+        guards = snapshot["guards"]
+        assert isinstance(guards, dict)
+        return guards["goal"]
+
+    initial, accounting, objective, status, budget = [await goal_guard() for _ in range(5)]
+    assert accounting == initial
+    assert len({initial, objective, status, budget}) == 4
+
+
+@pytest.mark.asyncio
 async def test_invoke_rebuilds_payload_and_returns_only_safe_ack() -> None:
     rpc = Rpc({"thread/settings/update": [{}]})
     adapter = CodexNativeAdapter(rpc)
