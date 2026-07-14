@@ -55,6 +55,13 @@ class AppServerRequest:
     response: asyncio.Future[object]
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingRequest:
+    response: asyncio.Future[object]
+    method: str
+    requested_thread_id: str | None
+
+
 class AppServerEventStream:
     """A bounded, connection-owned notification subscription."""
 
@@ -105,7 +112,7 @@ class CodexAppServerConnection:
         self._owns_process_group = owns_process_group
         self._write_lock = asyncio.Lock()
         self._next_request_id = 1
-        self._pending: dict[int, asyncio.Future[object]] = {}
+        self._pending: dict[int, _PendingRequest] = {}
         self._streams: set[asyncio.Queue[dict[str, object] | AppServerConnectionError]] = set()
         self._turn_streams: dict[
             str, set[asyncio.Queue[dict[str, object] | AppServerConnectionError]]
@@ -142,7 +149,16 @@ class CodexAppServerConnection:
             self._raise_if_terminal()
             request_id = self._next_request_id
             self._next_request_id += 1
-            self._pending[request_id] = future
+            requested_thread_id = None
+            if method == "thread/resume":
+                raw_thread_id = params.get("threadId")
+                if isinstance(raw_thread_id, str) and raw_thread_id:
+                    requested_thread_id = raw_thread_id
+            self._pending[request_id] = _PendingRequest(
+                response=future,
+                method=method,
+                requested_thread_id=requested_thread_id,
+            )
             try:
                 await self._write_json({"id": request_id, "method": method, "params": dict(params)})
             except BaseException:
@@ -238,15 +254,19 @@ class CodexAppServerConnection:
         if isinstance(request_id, bool) or not isinstance(request_id, int):
             await self._fail("codex_app_server_unknown_response")
             return False
-        future = self._pending.pop(request_id, None)
-        if future is None:
+        pending = self._pending.pop(request_id, None)
+        if pending is None:
             await self._fail("codex_app_server_unknown_response")
             return False
+        future = pending.response
         if future.cancelled():
             return True
         error = message.get("error")
         if error is not None:
-            future.set_exception(AppServerConnectionError("codex_app_server_request_failed"))
+            code = "codex_app_server_request_failed"
+            if _is_missing_resumed_thread_error(error, pending):
+                code = "codex_app_server_thread_not_found"
+            future.set_exception(AppServerConnectionError(code))
         elif "result" in message:
             future.set_result(message.get("result"))
         else:
@@ -324,7 +344,8 @@ class CodexAppServerConnection:
         error = AppServerConnectionError(code)
         self._terminal = error
         pending, self._pending = self._pending, {}
-        for future in pending.values():
+        for request in pending.values():
+            future = request.response
             if not future.done():
                 future.set_exception(AppServerConnectionError(code))
         for queue in self._all_streams():
@@ -407,6 +428,21 @@ def _notification_turn_id(message: Mapping[str, object]) -> str | None:
         if isinstance(nested, str) and nested:
             return nested
     return None
+
+
+def _is_missing_resumed_thread_error(error: object, request: _PendingRequest) -> bool:
+    if request.method != "thread/resume" or request.requested_thread_id is None:
+        return False
+    if not isinstance(error, dict):
+        return False
+    code = error.get("code")
+    message = error.get("message")
+    return (
+        isinstance(code, int)
+        and not isinstance(code, bool)
+        and code == -32600
+        and message == f"no rollout found for thread id {request.requested_thread_id}"
+    )
 
 
 __all__ = [

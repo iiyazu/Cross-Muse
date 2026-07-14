@@ -2,6 +2,12 @@
 
 Implementation and fresh tests are authoritative; this file is a navigation aid.
 
+## Room Collaboration Protocol
+
+The default chain below is xmuse's durable, logically decentralized collaboration protocol.
+It is not Google A2A. A future Google A2A adapter could only attach an opt-in remote
+participant; it must not replace Room observation, causality, attempts, or outcomes.
+
 ## Product chain
 
 ```text

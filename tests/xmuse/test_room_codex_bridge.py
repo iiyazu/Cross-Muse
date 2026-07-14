@@ -190,6 +190,15 @@ def test_runner_claim_serializes_actions_per_participant(tmp_path: Path) -> None
     first = store.claim_next_action(runner_generation="runner-1")
     assert first is not None and first["control_seq"] == 1
     assert first["safe_request"] == {}
+    assert "execution_stage" not in first and "failure_stage" not in first
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        assert (
+            conn.execute(
+                "select execution_stage from room_codex_bridge_actions where action_id = ?",
+                (first["action_id"],),
+            ).fetchone()[0]
+            == "session_preparing"
+        )
     assert store.claim_next_action(runner_generation="runner-1") is None
     completed = store.complete_action(
         action_id=str(first["action_id"]),
@@ -321,7 +330,52 @@ def test_old_runner_cannot_complete_new_generation_claim(tmp_path: Path) -> None
         )
 
 
-def test_restart_fences_unknown_applying_result_without_replay(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "stage",
+    ["session_preparing", "snapshot_proving", "guards_proving"],
+)
+def test_restart_requeues_pre_dispatch_action(tmp_path: Path, stage: str) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    requested, _ = _request(
+        store,
+        client_action_id="client-1",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    claimed = store.claim_next_action(runner_generation="runner-dead")
+    assert claimed is not None
+    if stage in {"snapshot_proving", "guards_proving"}:
+        store.advance_action_stage(
+            action_id=str(claimed["action_id"]),
+            runner_generation="runner-dead",
+            stage="snapshot_proving",
+        )
+    if stage == "guards_proving":
+        store.advance_action_stage(
+            action_id=str(claimed["action_id"]),
+            runner_generation="runner-dead",
+            stage="guards_proving",
+        )
+
+    assert store.fence_interrupted_actions() == 1
+
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        row = conn.execute(
+            """select status, execution_stage, failure_stage, runner_generation,
+                      applying_at, completed_at
+               from room_codex_bridge_actions where action_id = ?""",
+            (requested["action_id"],),
+        ).fetchone()
+    assert tuple(row) == ("requested", "queued", None, None, None, None)
+    reclaimed = store.claim_next_action(runner_generation="runner-new")
+    assert reclaimed is not None and reclaimed["action_id"] == requested["action_id"]
+
+
+def test_restart_fences_unknown_dispatching_result_without_replay(tmp_path: Path) -> None:
     path = tmp_path / "chat.db"
     _seed(path)
     store = RoomCodexBridgeStore(path)
@@ -342,20 +396,127 @@ def test_restart_fences_unknown_applying_result_without_replay(tmp_path: Path) -
     )
     claimed = store.claim_next_action(runner_generation="runner-dead")
     assert claimed is not None and claimed["action_id"] == first["action_id"]
+    for stage in ("snapshot_proving", "guards_proving", "dispatching"):
+        store.advance_action_stage(
+            action_id=str(claimed["action_id"]),
+            runner_generation="runner-dead",
+            stage=stage,  # type: ignore[arg-type]
+        )
 
     assert store.fence_interrupted_actions() == 1
 
     with RoomDatabase(path).connect(readonly=True) as conn:
         rows = conn.execute(
-            "select action_id, status, reason_code from room_codex_bridge_actions "
+            """select action_id, status, reason_code, execution_stage, failure_stage
+               from room_codex_bridge_actions """
             "order by control_seq"
         ).fetchall()
     assert [tuple(row) for row in rows] == [
-        (first["action_id"], "failed", "codex_native_action_result_unknown"),
-        (second["action_id"], "requested", None),
+        (
+            first["action_id"],
+            "failed",
+            "codex_native_action_result_unknown",
+            "completed",
+            "dispatching",
+        ),
+        (second["action_id"], "requested", None, "queued", None),
     ]
     next_action = store.claim_next_action(runner_generation="runner-new")
     assert next_action is not None and next_action["action_id"] == second["action_id"]
+
+
+def test_action_stage_progression_is_ordered_and_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    _request(
+        store,
+        client_action_id="client-1",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    action = store.claim_next_action(runner_generation="runner")
+    assert action is not None
+
+    with pytest.raises(RoomCodexBridgeError) as skipped:
+        store.advance_action_stage(
+            action_id=str(action["action_id"]),
+            runner_generation="runner",
+            stage="guards_proving",
+        )
+    assert skipped.value.code == "codex_native_action_stage_conflict"
+    for stage in ("snapshot_proving", "guards_proving", "dispatching"):
+        store.advance_action_stage(
+            action_id=str(action["action_id"]),
+            runner_generation="runner",
+            stage=stage,  # type: ignore[arg-type]
+        )
+        store.advance_action_stage(
+            action_id=str(action["action_id"]),
+            runner_generation="runner",
+            stage=stage,  # type: ignore[arg-type]
+        )
+
+    completed = store.complete_action(
+        action_id=str(action["action_id"]),
+        runner_generation="runner",
+        status="applied",
+        reason_code=None,
+        ack_summary={"native_method": "thread/goal/get", "acknowledged": True},
+    )
+    assert completed["status"] == "applied"
+    assert "execution_stage" not in completed and "failure_stage" not in completed
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        row = conn.execute(
+            """select execution_stage, failure_stage
+               from room_codex_bridge_actions where action_id = ?""",
+            (action["action_id"],),
+        ).fetchone()
+    assert tuple(row) == ("completed", None)
+
+
+def test_failed_action_records_only_its_safe_failure_stage(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    _request(
+        store,
+        client_action_id="client-1",
+        session=session,
+        goal=goal,
+        settings=settings,
+    )
+    action = store.claim_next_action(runner_generation="runner")
+    assert action is not None
+    store.advance_action_stage(
+        action_id=str(action["action_id"]),
+        runner_generation="runner",
+        stage="snapshot_proving",
+    )
+
+    completed = store.complete_action(
+        action_id=str(action["action_id"]),
+        runner_generation="runner",
+        status="failed",
+        reason_code="codex_native_action_snapshot_failed",
+    )
+
+    assert completed["status"] == "failed"
+    assert "failure_stage" not in completed
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        row = conn.execute(
+            """select execution_stage, failure_stage, reason_code
+               from room_codex_bridge_actions where action_id = ?""",
+            (action["action_id"],),
+        ).fetchone()
+    assert tuple(row) == (
+        "completed",
+        "snapshot_proving",
+        "codex_native_action_snapshot_failed",
+    )
 
 
 def test_ack_summary_rejects_provider_text_and_private_identifiers(tmp_path: Path) -> None:

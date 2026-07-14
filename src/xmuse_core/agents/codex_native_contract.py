@@ -246,7 +246,6 @@ def _safe_turn_params(thread_id: str, text: str) -> dict[str, object]:
         "input": [{"type": "text", "text": text}],
         "approvalPolicy": "never",
         "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
-        "summary": "concise",
     }
 
 

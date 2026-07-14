@@ -244,4 +244,4 @@ async def test_god_session_layer_shutdown_aborts_owned_live_sessions(tmp_path):
 
     assert session.aborted
     assert layer._live_sessions == {}
-    assert layer._pending_conversation_sessions == {}
+    assert layer._active_conversation_session_starts == set()

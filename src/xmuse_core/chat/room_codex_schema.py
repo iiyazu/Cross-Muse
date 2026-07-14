@@ -59,6 +59,18 @@ def create_room_codex_schema(conn: sqlite3.Connection) -> None:
             status text not null check (
                 status in ('requested','applying','applied','rejected','failed')
             ),
+            execution_stage text not null default 'queued' check (
+                execution_stage in (
+                    'queued','session_preparing','snapshot_proving','guards_proving',
+                    'dispatching','completed'
+                )
+            ),
+            failure_stage text check (
+                failure_stage is null or failure_stage in (
+                    'queued','session_preparing','snapshot_proving','guards_proving',
+                    'dispatching','completed'
+                )
+            ),
             reason_code text,
             ack_summary_json text,
             runner_generation text,
@@ -73,6 +85,33 @@ def create_room_codex_schema(conn: sqlite3.Connection) -> None:
             on room_codex_bridge_actions(status, participant_id, control_seq);
         """,
     )
+    columns = {str(row[1]) for row in conn.execute("pragma table_info(room_codex_bridge_actions)")}
+    migrated = False
+    if "execution_stage" not in columns:
+        conn.execute(
+            """alter table room_codex_bridge_actions add column execution_stage text
+               not null default 'queued' check (execution_stage in (
+                   'queued','session_preparing','snapshot_proving','guards_proving',
+                   'dispatching','completed'
+               ))"""
+        )
+        migrated = True
+    if "failure_stage" not in columns:
+        conn.execute(
+            """alter table room_codex_bridge_actions add column failure_stage text
+               check (failure_stage is null or failure_stage in (
+                   'queued','session_preparing','snapshot_proving','guards_proving',
+                   'dispatching','completed'
+               ))"""
+        )
+    if migrated:
+        conn.execute(
+            """update room_codex_bridge_actions set execution_stage = case
+                   when status = 'requested' then 'queued'
+                   when status = 'applying' then 'dispatching'
+                   else 'completed'
+               end"""
+        )
 
 
 __all__ = ["create_room_codex_schema"]
