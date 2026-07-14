@@ -33,10 +33,11 @@ class GodSessionLayer:
         self._registry = GodSessionRegistry(registry_path)
         self._launchers = launchers
         self._live_sessions: dict[str, LiveGodSession] = {}
-        self._pending_conversation_sessions: dict[
-            tuple[str, str, str | None, str, str, str, str | None, str | None, str],
-            asyncio.Task[GodSessionRecord],
-        ] = {}
+        self._conversation_session_locks: dict[tuple[str, str, str | None], asyncio.Lock] = {}
+        self._active_conversation_session_starts: set[asyncio.Task[GodSessionRecord]] = set()
+        self._shutting_down = False
+        self._native_session_incarnations: dict[str, tuple[AgentSession, int]] = {}
+        self._next_native_session_incarnation = 1
 
     async def ensure_session(
         self,
@@ -96,38 +97,35 @@ class GodSessionLayer:
         model: str | None = None,
         prompt_fingerprint: str | None = None,
         feature_scope_id: str | None = None,
+        force_rebind: bool = False,
     ) -> GodSessionRecord:
         pending_key = _conversation_session_pending_key(
             conversation_id=conversation_id,
             participant_id=participant_id,
-            role=role,
-            agent=agent,
-            worktree=worktree,
-            model=model,
-            prompt_fingerprint=prompt_fingerprint,
             feature_scope_id=feature_scope_id,
         )
-        pending = self._pending_conversation_sessions.get(pending_key)
-        if pending is not None:
-            return await pending
-        task = asyncio.create_task(
-            self._ensure_conversation_session_uncached(
-                conversation_id=conversation_id,
-                participant_id=participant_id,
-                role=role,
-                agent=agent,
-                worktree=worktree,
-                model=model,
-                prompt_fingerprint=prompt_fingerprint,
-                feature_scope_id=feature_scope_id,
+        lock = self._conversation_session_locks.setdefault(pending_key, asyncio.Lock())
+        async with lock:
+            if self._shutting_down:
+                raise RuntimeError("god_session_layer_shutting_down")
+            task = asyncio.create_task(
+                self._ensure_conversation_session_uncached(
+                    conversation_id=conversation_id,
+                    participant_id=participant_id,
+                    role=role,
+                    agent=agent,
+                    worktree=worktree,
+                    model=model,
+                    prompt_fingerprint=prompt_fingerprint,
+                    feature_scope_id=feature_scope_id,
+                    force_rebind=force_rebind,
+                )
             )
-        )
-        self._pending_conversation_sessions[pending_key] = task
-        try:
-            return await task
-        finally:
-            if self._pending_conversation_sessions.get(pending_key) is task:
-                self._pending_conversation_sessions.pop(pending_key, None)
+            self._active_conversation_session_starts.add(task)
+            try:
+                return await task
+            finally:
+                self._active_conversation_session_starts.discard(task)
 
     async def _ensure_conversation_session_uncached(
         self,
@@ -140,12 +138,19 @@ class GodSessionLayer:
         model: str | None = None,
         prompt_fingerprint: str | None = None,
         feature_scope_id: str | None = None,
+        force_rebind: bool = False,
     ) -> GodSessionRecord:
         live = self._find_live_session_by_conversation_participant(
             conversation_id,
             participant_id,
             feature_scope_id=feature_scope_id,
         )
+        if force_rebind and live is not None and not live.session.is_alive():
+            try:
+                await live.session.abort()
+            finally:
+                self._live_sessions.pop(live.record.god_session_id, None)
+            live = None
         if live is not None:
             if self._record_peer_metadata_can_migrate(
                 live.record,
@@ -545,6 +550,18 @@ class GodSessionLayer:
             raise RuntimeError("native Codex event stream invalid")
         return stream
 
+    def native_session_incarnation(self, god_session_id: str) -> int:
+        """Return a process-local identity for the currently attached transport."""
+
+        live = self._require_native_live_session(god_session_id)
+        known = self._native_session_incarnations.get(god_session_id)
+        if known is not None and known[0] is live.session:
+            return known[1]
+        incarnation = self._next_native_session_incarnation
+        self._next_native_session_incarnation += 1
+        self._native_session_incarnations[god_session_id] = (live.session, incarnation)
+        return incarnation
+
     def _require_native_live_session(self, god_session_id: str) -> LiveGodSession:
         live = self._live_sessions.get(god_session_id)
         if live is None or not live.session.is_alive():
@@ -558,13 +575,18 @@ class GodSessionLayer:
         if live is None:
             return
         await live.session.abort()
-        self._live_sessions.pop(god_session_id, None)
+        if self._live_sessions.get(god_session_id) is live:
+            self._live_sessions.pop(god_session_id, None)
+        incarnation = self._native_session_incarnations.get(god_session_id)
+        if incarnation is not None and incarnation[0] is live.session:
+            self._native_session_incarnations.pop(god_session_id, None)
 
     async def shutdown(self) -> None:
         """Stop pending starts and every transport owned by this process."""
 
-        pending = list(self._pending_conversation_sessions.values())
-        self._pending_conversation_sessions.clear()
+        self._shutting_down = True
+        pending = list(self._active_conversation_session_starts)
+        self._active_conversation_session_starts.clear()
         for task in pending:
             task.cancel()
         if pending:
@@ -572,6 +594,7 @@ class GodSessionLayer:
 
         live = list(self._live_sessions.values())
         self._live_sessions.clear()
+        self._native_session_incarnations.clear()
         if live:
             await asyncio.gather(
                 *(item.session.abort() for item in live),
@@ -898,23 +921,12 @@ def _conversation_session_pending_key(
     *,
     conversation_id: str,
     participant_id: str,
-    role: str,
-    agent: AgentDescriptor,
-    worktree: Path,
-    model: str | None,
-    prompt_fingerprint: str | None,
     feature_scope_id: str | None,
-) -> tuple[str, str, str | None, str, str, str, str | None, str | None, str]:
+) -> tuple[str, str, str | None]:
     return (
         conversation_id,
         participant_id,
         feature_scope_id,
-        role,
-        agent.name,
-        _runtime_value(agent.runtime),
-        model,
-        prompt_fingerprint,
-        str(worktree),
     )
 
 

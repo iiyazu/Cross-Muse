@@ -133,6 +133,157 @@ class NativeSessionLauncher(FakeLauncher):
         return FakeSession(pid=4242)
 
 
+@pytest.mark.asyncio
+async def test_force_rebind_replaces_dead_conversation_session_without_new_identity(tmp_path):
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+
+    first = await layer.ensure_conversation_session(
+        conversation_id="conv_rebind",
+        participant_id="part_rebind",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        feature_scope_id="room_v1",
+    )
+    old_session = layer._live_sessions[first.god_session_id].session
+    old_session._alive = False  # type: ignore[attr-defined]
+
+    second = await layer.ensure_conversation_session(
+        conversation_id="conv_rebind",
+        participant_id="part_rebind",
+        role="review",
+        agent=agent,
+        worktree=tmp_path,
+        feature_scope_id="room_v1",
+        force_rebind=True,
+    )
+
+    assert second.god_session_id == first.god_session_id
+    assert old_session.aborted is True  # type: ignore[attr-defined]
+    assert len(launcher.spawn_persistent_session_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_normal_and_force_rebind_share_one_identity_lock(tmp_path):
+    launcher = SlowNativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+    arguments = {
+        "conversation_id": "conv_parallel_rebind",
+        "participant_id": "part_parallel_rebind",
+        "role": "review",
+        "agent": agent,
+        "worktree": tmp_path,
+        "feature_scope_id": "room_v1",
+    }
+
+    normal, forced = await asyncio.gather(
+        layer.ensure_conversation_session(**arguments),
+        layer.ensure_conversation_session(**arguments, force_rebind=True),
+    )
+
+    live = layer._live_sessions[normal.god_session_id].session
+    assert forced.god_session_id == normal.god_session_id
+    assert live.aborted is False  # type: ignore[attr-defined]
+    assert len(launcher.spawn_persistent_session_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_late_force_rebind_reuses_new_healthy_incarnation(tmp_path):
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+    arguments = {
+        "conversation_id": "conv_late_rebind",
+        "participant_id": "part_late_rebind",
+        "role": "review",
+        "agent": agent,
+        "worktree": tmp_path,
+        "feature_scope_id": "room_v1",
+    }
+
+    first = await layer.ensure_conversation_session(**arguments)
+    incarnation = layer.native_session_incarnation(first.god_session_id)
+    second = await layer.ensure_conversation_session(**arguments, force_rebind=True)
+
+    live = layer._live_sessions[first.god_session_id].session
+    assert second.god_session_id == first.god_session_id
+    assert layer.native_session_incarnation(second.god_session_id) == incarnation
+    assert live.aborted is False  # type: ignore[attr-defined]
+    assert len(launcher.spawn_persistent_session_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_late_abort_does_not_remove_new_healthy_incarnation(tmp_path):
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+    arguments = {
+        "conversation_id": "conv_late_abort",
+        "participant_id": "part_late_abort",
+        "role": "review",
+        "agent": agent,
+        "worktree": tmp_path,
+        "feature_scope_id": "room_v1",
+    }
+    first = await layer.ensure_conversation_session(**arguments)
+    old_session = layer._live_sessions[first.god_session_id].session
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_abort() -> None:
+        old_session.aborted = True  # type: ignore[attr-defined]
+        old_session._alive = False  # type: ignore[attr-defined]
+        entered.set()
+        await release.wait()
+
+    old_session.abort = slow_abort  # type: ignore[method-assign]
+    abort_task = asyncio.create_task(layer.abort_session(first.god_session_id))
+    await entered.wait()
+
+    second = await layer.ensure_conversation_session(**arguments)
+    replacement = layer._live_sessions[second.god_session_id].session
+    replacement_incarnation = layer.native_session_incarnation(second.god_session_id)
+    release.set()
+    await abort_task
+
+    assert second.god_session_id == first.god_session_id
+    assert layer._live_sessions[second.god_session_id].session is replacement
+    assert layer.native_session_incarnation(second.god_session_id) == replacement_incarnation
+    assert replacement is not old_session
+    assert replacement.is_alive()
+
+
 class SlowNativeSessionLauncher(NativeSessionLauncher):
     async def spawn_persistent_session(
         self,

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from xmuse_core.agents.codex_app_server_connection import AppServerConnectionError
 from xmuse_core.agents.codex_app_server_transport import (
     CODEX_ROOM_READ_ONLY_SANDBOX,
     AppServerTurnAccumulator,
@@ -286,6 +287,102 @@ async def test_app_server_resume_accepts_exact_returned_thread_identity(
     assert transport.get_info()["thread_id"] == "thread-existing"
 
 
+async def test_app_server_missing_resume_starts_one_replacement_thread_in_same_process(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        returncode = None
+        pid = 5151
+
+    process = Process()
+    spawn_count = 0
+    calls: list[str] = []
+
+    async def create_subprocess_exec(*_command, **_kwargs):
+        nonlocal spawn_count
+        spawn_count += 1
+        return process
+
+    async def request(method: str, _params: dict):
+        calls.append(method)
+        if method == "thread/resume":
+            raise AppServerConnectionError("codex_app_server_thread_not_found")
+        if method == "thread/start":
+            return {"thread": {"id": "thread-replacement"}}
+        return {}
+
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-missing",
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    monkeypatch.setattr(transport, "_request", request)
+
+    await transport.start()
+
+    assert calls == ["initialize", "thread/resume", "thread/start"]
+    assert spawn_count == 1
+    assert transport.get_info()["thread_id"] == "thread-replacement"
+    assert transport.get_info()["resume_thread_id"] == "thread-missing"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        AppServerConnectionError("codex_app_server_request_failed"),
+        AppServerConnectionError("codex_app_server_exited"),
+        TimeoutError("provider timeout"),
+    ],
+)
+async def test_app_server_resume_does_not_fallback_for_other_failures(
+    tmp_path: Path,
+    monkeypatch,
+    failure: BaseException,
+) -> None:
+    class Process:
+        returncode = None
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+        async def wait(self) -> int:
+            return int(self.returncode or 0)
+
+    process = Process()
+    calls: list[str] = []
+
+    async def create_subprocess_exec(*_command, **_kwargs):
+        return process
+
+    async def request(method: str, _params: dict):
+        calls.append(method)
+        if method == "thread/resume":
+            raise failure
+        return {}
+
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    monkeypatch.setattr(transport, "_request", request)
+
+    with pytest.raises(type(failure)):
+        await transport.start()
+
+    assert calls == ["initialize", "thread/resume"]
+    assert process.returncode == 0
+
+
 @pytest.mark.parametrize(
     "mcp_path",
     [
@@ -411,6 +508,44 @@ async def test_native_snapshot_reproves_active_turn_and_clears_stale_event_state
     idle = await transport.native_snapshot()
     assert idle["active_turn"] is False
     assert transport._native_active_turn_id is None
+
+
+@pytest.mark.asyncio
+async def test_native_snapshot_treats_system_error_as_recoverable_inactive_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    requested_methods: list[str] = []
+
+    class Connection:
+        generation = 1
+
+        async def request(self, method: str, _params: dict[str, object]) -> object:
+            requested_methods.append(method)
+            if method == "thread/read":
+                return {"thread": {"status": {"type": "systemError"}}}
+            assert method == "thread/goal/get"
+            return {"goal": None}
+
+    async def no_start() -> None: ...
+
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._thread_id = "thread-existing"
+    transport._connection = Connection()  # type: ignore[assignment]
+    transport._native_active_turn_id = "failed-turn"
+    monkeypatch.setattr(transport, "start", no_start)
+
+    snapshot = await transport.native_snapshot()
+
+    assert snapshot["active_turn"] is False
+    assert transport._native_active_turn_id is None
+    assert "thread/turns/list" not in requested_methods
 
 
 @pytest.mark.parametrize("effort", ["unknown", "ultra", "", None])
@@ -539,7 +674,7 @@ def test_app_server_accumulator_records_summary_and_plan_latency_stages() -> Non
     }
 
 
-def test_app_server_turn_start_requests_concise_reasoning_summary(tmp_path: Path) -> None:
+def test_app_server_turn_start_omits_model_optional_reasoning_summary(tmp_path: Path) -> None:
     transport = CodexAppServerTransport(
         god_id="god-architect",
         role="architect",
@@ -552,7 +687,7 @@ def test_app_server_turn_start_requests_concise_reasoning_summary(tmp_path: Path
     params = transport._turn_start_params("hello")
 
     assert params["threadId"] == "thread-1"
-    assert params["summary"] == "concise"
+    assert "summary" not in params
     assert "model" not in params and "effort" not in params
     assert params["input"] == [{"type": "text", "text": "hello"}]
     assert params["approvalPolicy"] == "never"

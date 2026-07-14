@@ -196,6 +196,85 @@ async def test_cancelled_waiter_does_not_poison_connection_generation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exact_missing_resumed_thread_error_maps_to_content_free_code() -> None:
+    process = FakeProcess()
+    connection = CodexAppServerConnection(process, generation=1, owns_process_group=False)
+    pending = await connection.start_request(
+        "thread/resume", {"threadId": "thread-missing", "cwd": "/private/workspace"}
+    )
+    process.feed_stdout(
+        {
+            "id": pending.request_id,
+            "error": {
+                "code": -32600,
+                "message": "no rollout found for thread id thread-missing",
+                "data": {"private": "provider detail"},
+            },
+        }
+    )
+
+    with pytest.raises(AppServerConnectionError) as error:
+        await pending.response
+
+    assert error.value.code == "codex_app_server_thread_not_found"
+    assert str(error.value) == "codex_app_server_thread_not_found"
+    assert "thread-missing" not in str(error.value)
+    assert "provider detail" not in str(error.value)
+    assert connection.terminal_code is None
+    await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "params", "error"),
+    [
+        (
+            "thread/read",
+            {"threadId": "thread-missing"},
+            {"code": -32600, "message": "no rollout found for thread id thread-missing"},
+        ),
+        (
+            "thread/resume",
+            {"threadId": "thread-missing"},
+            {"code": -32601, "message": "no rollout found for thread id thread-missing"},
+        ),
+        (
+            "thread/resume",
+            {"threadId": "thread-missing"},
+            {"code": -32600.0, "message": "no rollout found for thread id thread-missing"},
+        ),
+        (
+            "thread/resume",
+            {"threadId": "thread-missing"},
+            {"code": -32600, "message": "no rollout found for thread id thread-other"},
+        ),
+        (
+            "thread/resume",
+            {"threadId": "thread-missing"},
+            {"code": -32600, "message": "no rollout found for thread id thread-missing "},
+        ),
+    ],
+)
+async def test_missing_thread_error_mapping_fails_closed_for_non_exact_errors(
+    method: str,
+    params: dict[str, object],
+    error: dict[str, object],
+) -> None:
+    process = FakeProcess()
+    connection = CodexAppServerConnection(process, generation=1, owns_process_group=False)
+    pending = await connection.start_request(method, params)
+    process.feed_stdout({"id": pending.request_id, "error": error})
+
+    with pytest.raises(AppServerConnectionError) as raised:
+        await pending.response
+
+    assert raised.value.code == "codex_app_server_request_failed"
+    assert str(raised.value) == "codex_app_server_request_failed"
+    assert connection.terminal_code is None
+    await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_event_overflow_is_terminal_and_wakes_subscriber() -> None:
     process = FakeProcess()
     connection = CodexAppServerConnection(

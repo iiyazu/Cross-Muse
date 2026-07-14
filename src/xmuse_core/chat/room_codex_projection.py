@@ -58,6 +58,7 @@ def build_room_codex_projection(
         snapshot = _mapping(current.get("native_snapshot"))
         capabilities = _mapping(current.get("capabilities"))
         work = counts.get(participant_id, {})
+        participant_actions = actions_by_participant.get(participant_id, [])
         participant_views.append(
             {
                 "participant": _safe_participant(raw_participant),
@@ -79,6 +80,10 @@ def build_room_codex_projection(
                         hold=hold,
                         unresolved_count=_integer(work.get("unresolved_count")),
                         active_attempt_count=_integer(work.get("active_attempt_count")),
+                        unfinished_action=any(
+                            action.get("status") in {"requested", "applying"}
+                            for action in participant_actions
+                        ),
                     ),
                 },
                 "room_bridge": {
@@ -94,7 +99,7 @@ def build_room_codex_projection(
                             and _integer(work.get("unresolved_count")) > 0
                         ),
                     },
-                    "actions": actions_by_participant.get(participant_id, []),
+                    "actions": participant_actions,
                 },
                 "history_partial": current.get("history_partial") is not False,
                 "omitted_event_count": _integer(current.get("omitted_count")),
@@ -130,6 +135,7 @@ def _action_descriptors(
     hold: Mapping[str, Any] | None,
     unresolved_count: int,
     active_attempt_count: int,
+    unfinished_action: bool,
 ) -> list[dict[str, Any]]:
     if snapshot is None or capabilities is None or hold is None:
         return []
@@ -156,13 +162,19 @@ def _action_descriptors(
                 and active_attempt_count == 0
             )
         elif capability_id == "goal_pause":
-            available = available and goal_status == "active"
+            available = available and goal_status == "active" and hold_state == "goal_active"
         elif capability_id == "goal_resume":
-            available = available and goal_status in {"paused", "blocked"}
+            available = (
+                available
+                and not active_turn
+                and hold_state == "accepting"
+                and goal_status in {"paused", "blocked"}
+            )
         elif capability_id == "goal_clear":
             available = (
                 available
                 and not active_turn
+                and hold_state == "accepting"
                 and goal_status
                 in {
                     "paused",
@@ -177,6 +189,8 @@ def _action_descriptors(
             confirmation = available and unresolved_count > 0
         elif capability_id not in {"goal_get", "models_list"}:
             available = available and hold_state == "accepting" and not active_turn
+        if unfinished_action:
+            available = False
         descriptors.append(
             {
                 "capability_id": capability_id,
@@ -184,7 +198,12 @@ def _action_descriptors(
                 "disabled_reason": (
                     None
                     if available
-                    else _identifier(raw.get("disabled_reason")) or "codex_native_state_conflict"
+                    else (
+                        "codex_native_action_pending"
+                        if unfinished_action
+                        else _identifier(raw.get("disabled_reason"))
+                        or "codex_native_state_conflict"
+                    )
                 ),
                 "method": "POST",
                 "href": (f"/api/chat/operator/room-participants/{participant_id}/codex-actions"),

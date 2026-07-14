@@ -4,10 +4,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from xmuse.chat_api import create_app
 from xmuse_core.chat.room_codex_bridge import RoomCodexBridgeStore, opaque_guard
+from xmuse_core.chat.room_codex_projection import _action_descriptors
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_database import RoomDatabase
 
@@ -75,7 +77,21 @@ def _cache(root: Path, session: str, goal: str, settings: str) -> None:
                     "availability": "available",
                     "disabled_reason": None,
                     "session_guard": session,
-                }
+                },
+                {
+                    "capability_id": "goal_get",
+                    "native_source": "thread/goal/get",
+                    "availability": "available",
+                    "disabled_reason": None,
+                    "session_guard": session,
+                },
+                {
+                    "capability_id": "models_list",
+                    "native_source": "model/list",
+                    "availability": "available",
+                    "disabled_reason": None,
+                    "session_guard": session,
+                },
             ],
             "models": [
                 {
@@ -167,3 +183,78 @@ def test_missing_or_future_cache_is_non_authoritative_unavailable(
         "next_before_event_seq": None,
         "next_after_event_seq": None,
     }
+
+
+def test_unfinished_action_disables_every_descriptor_including_read_native_calls(
+    tmp_path: Path,
+) -> None:
+    session, goal, settings, participant_id = _seed(tmp_path)
+    _cache(tmp_path, session, goal, settings)
+    bridge = RoomCodexBridgeStore(tmp_path / "chat.db")
+    action, created = bridge.request_action(
+        conversation_id="room-1",
+        participant_id=participant_id,
+        capability_id="goal_get",
+        safe_request={},
+        client_action_id="unfinished-goal-get",
+        expected_session_guard=session,
+        expected_goal_guard=goal,
+    )
+    assert created is True and action["status"] == "requested"
+
+    with TestClient(create_app(tmp_path, auth_token="operator-secret")) as client:
+        response = client.get("/api/chat/conversations/room-1/codex-agents")
+
+    descriptors = response.json()["participants"][0]["capabilities"]["actions"]
+    assert {item["capability_id"] for item in descriptors} == {
+        "goal_set",
+        "goal_get",
+        "models_list",
+    }
+    assert all(item["available"] is False for item in descriptors)
+    assert {item["disabled_reason"] for item in descriptors} == {"codex_native_action_pending"}
+
+
+@pytest.mark.parametrize(
+    ("capability_id", "goal_status", "active_turn", "hold_state", "available"),
+    [
+        ("goal_pause", "active", True, "goal_active", True),
+        ("goal_pause", "active", True, "turn_active", False),
+        ("goal_resume", "paused", False, "accepting", True),
+        ("goal_resume", "paused", True, "turn_active", False),
+        ("goal_clear", "paused", False, "accepting", True),
+        ("goal_clear", "paused", False, "turn_active", False),
+    ],
+)
+def test_goal_descriptors_require_matching_durable_hold_state(
+    capability_id: str,
+    goal_status: str,
+    active_turn: bool,
+    hold_state: str,
+    available: bool,
+) -> None:
+    session = opaque_guard("session")
+    goal = opaque_guard("goal")
+    descriptors = _action_descriptors(
+        "participant-1",
+        snapshot={
+            "goal": {"status": goal_status},
+            "active_turn": active_turn,
+            "guards": {"session": session, "goal": goal, "settings": None, "turn": None},
+        },
+        capabilities={
+            "capabilities": [
+                {
+                    "capability_id": capability_id,
+                    "availability": "available",
+                    "disabled_reason": None,
+                }
+            ]
+        },
+        hold={"session_guard": session, "state": hold_state},
+        unresolved_count=0,
+        active_attempt_count=0,
+        unfinished_action=False,
+    )
+
+    assert descriptors[0]["available"] is available

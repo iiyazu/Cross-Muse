@@ -696,6 +696,8 @@ ROOM_REQUIRED_COLUMNS: Mapping[str, frozenset[str]] = {
             "expected_turn_guard",
             "request_json",
             "status",
+            "execution_stage",
+            "failure_stage",
             "reason_code",
             "ack_summary_json",
             "runner_generation",

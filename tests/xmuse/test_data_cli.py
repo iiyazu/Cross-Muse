@@ -276,6 +276,66 @@ def test_minimal_room_backup_restore_and_compact_preserve_schema_variant(
     assert "schema_migrations" not in tables
 
 
+def test_offline_room_v1_backup_restore_allows_additive_codex_action_migration(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "pre-stage-room"
+    conversation_id, participant_id = _build_root(source, with_session=False)
+    database = source / data_cli.CHAT_DB_NAME
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            """insert into room_codex_delivery_holds
+               (participant_id, conversation_id, hold_revision, next_control_seq, state,
+                session_guard, created_at, updated_at)
+               values (?, ?, 1, 3, 'reconciling', 'session-guard', 'now', 'now')""",
+            (participant_id, conversation_id),
+        )
+        for control_seq, status in enumerate(("requested", "applying", "applied"), start=1):
+            conn.execute(
+                """insert into room_codex_bridge_actions
+                   (action_id, conversation_id, participant_id, control_seq,
+                    client_action_id, operator_identity, request_fingerprint,
+                    capability_id, expected_session_guard, request_json, status,
+                    requested_at, updated_at)
+                   values (?, ?, ?, ?, ?, 'operator:local', ?, 'goal_get',
+                           'session-guard', '{}', ?, 'now', 'now')""",
+                (
+                    f"action-{control_seq}",
+                    conversation_id,
+                    participant_id,
+                    control_seq,
+                    f"client-{control_seq}",
+                    f"fingerprint-{control_seq}",
+                    status,
+                ),
+            )
+        conn.execute("alter table room_codex_bridge_actions drop column failure_stage")
+        conn.execute("alter table room_codex_bridge_actions drop column execution_stage")
+
+    backup = tmp_path / "pre-stage-backup"
+    _backup(source, backup, capsys)
+    target = tmp_path / "restored-pre-stage-room"
+    assert data_cli.run_cli(["restore", str(backup), "--root", str(target)]) == 0
+    _json_output(capsys)
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+        assert {
+            str(row[1]) for row in conn.execute("pragma table_info(room_codex_bridge_actions)")
+        }.isdisjoint({"execution_stage", "failure_stage"})
+
+    RoomDatabase(target / data_cli.CHAT_DB_NAME).initialize()
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+        rows = conn.execute(
+            """select status, execution_stage, failure_stage
+               from room_codex_bridge_actions order by control_seq"""
+        ).fetchall()
+    assert rows == [
+        ("requested", "queued", None),
+        ("applying", "dispatching", None),
+        ("applied", "completed", None),
+    ]
+
+
 def test_backup_accepts_legacy_chat_v1_without_room_marker(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

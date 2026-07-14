@@ -4,8 +4,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 xmuse is a local runtime for natural, logically decentralized Agent group conversations.
-Persistent Agents observe the same durable Room activity and independently choose whether
-to `respond`, `handoff`, `propose`, `defer`, or `noop`. Infrastructure owns
+Its Room Collaboration Protocol lets persistent Agents observe the same durable Room
+activity and independently choose whether to `respond`, `handoff`, `propose`, `defer`, or
+`noop`. Infrastructure owns
 delivery, identity, causality, attempts, safety, and recovery; it never speaks as an Agent.
 
 ## Current product loop
@@ -84,7 +85,10 @@ optional source-backed memory
   `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
 The default product has no platform runner, central speaker queue, fixed role sequence,
-Dashboard, broad MCP root, self-evolution control plane, MemoryOS sidecar, or A2A runtime.
+Dashboard, broad MCP root, self-evolution control plane, MemoryOS sidecar, or Google A2A
+transport. The Room Collaboration Protocol is xmuse's own durable collaboration model, not
+an implementation of Google A2A; a future Google A2A adapter could only be an opt-in remote
+participant transport.
 MemoryOS is an explicit `--memory` archive-only option; it does not expand the Room Agent's
 single MCP tool or filesystem/network permissions. Retired implementations live only in Git
 history.

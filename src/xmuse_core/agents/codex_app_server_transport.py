@@ -349,23 +349,18 @@ class CodexAppServerTransport:
                 },
             )
             if self._resume_thread_id is None:
-                response = await self._request(
-                    "thread/start",
-                    self._thread_start_params(),
-                )
-                thread = response.get("thread") if isinstance(response, dict) else None
-                if not isinstance(thread, dict):
-                    raise RuntimeError("codex app-server thread/start returned no thread")
-                thread_id = _clean_text(thread.get("id"))
-                if thread_id is None:
-                    raise RuntimeError("codex app-server thread/start returned no thread id")
-                self._thread_id = thread_id
-                self._record_thread_settings(response)
+                await self._start_thread()
                 return
-            response = await self._request(
-                "thread/resume",
-                self._thread_resume_params(self._resume_thread_id),
-            )
+            try:
+                response = await self._request(
+                    "thread/resume",
+                    self._thread_resume_params(self._resume_thread_id),
+                )
+            except AppServerConnectionError as exc:
+                if exc.code != "codex_app_server_thread_not_found":
+                    raise
+                await self._start_thread()
+                return
             thread = response.get("thread") if isinstance(response, dict) else None
             thread_id = _clean_text(thread.get("id")) if isinstance(thread, dict) else None
             if thread_id is None:
@@ -380,6 +375,20 @@ class CodexAppServerTransport:
             except BaseException:
                 pass
             raise
+
+    async def _start_thread(self) -> None:
+        response = await self._request(
+            "thread/start",
+            self._thread_start_params(),
+        )
+        thread = response.get("thread") if isinstance(response, dict) else None
+        if not isinstance(thread, dict):
+            raise RuntimeError("codex app-server thread/start returned no thread")
+        thread_id = _clean_text(thread.get("id"))
+        if thread_id is None:
+            raise RuntimeError("codex app-server thread/start returned no thread id")
+        self._thread_id = thread_id
+        self._record_thread_settings(response)
 
     async def send_typed(self, msg_type: str, **kwargs: object) -> None:
         await self.start()
@@ -505,7 +514,13 @@ class CodexAppServerTransport:
         thread = response.get("thread") if isinstance(response, dict) else None
         status = thread.get("status") if isinstance(thread, dict) else None
         status_type = status.get("type") if isinstance(status, dict) else None
-        if status_type == "idle":
+        # App Server keeps a recoverable ``systemError`` marker after a failed
+        # turn until the next turn starts.  It is an inactive thread state,
+        # not evidence that the participant process or thread binding died.
+        # Treating it as unavailable traps Room native reconciliation in a
+        # loop that repeatedly reuses the still-live session without ever
+        # allowing the next native action to clear the marker.
+        if status_type in {"idle", "systemError"}:
             self._native_active_turn_id = None
             self._native_idle.set()
             return
@@ -669,13 +684,14 @@ class CodexAppServerTransport:
             "cwd": str(self._worktree),
             "approvalPolicy": "never",
             "sandboxPolicy": self._sandbox_profile.turn_sandbox_policy(),
-            "summary": "concise",
         }
 
     async def _request(self, method: str, params: dict[str, Any]) -> Any:
         try:
             return await self._ensure_connection().request(method, params)
         except AppServerConnectionError as exc:
+            if exc.code == "codex_app_server_thread_not_found":
+                raise
             raise RuntimeError(f"codex app-server {method} failed: {exc.code}") from exc
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> int:

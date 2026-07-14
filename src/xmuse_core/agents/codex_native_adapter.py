@@ -155,7 +155,7 @@ class CodexNativeAdapter:
             "active_turn": active_turn_id is not None,
             "guards": {
                 "session": session_guard,
-                "goal": _digest(goal),
+                "goal": _digest(_goal_control_material(goal)),
                 "settings": _digest(settings),
                 "turn": _digest({"active": active_turn_id}) if active_turn_id else None,
             },
@@ -255,6 +255,16 @@ def _safe_goal(value: object) -> dict[str, object] | None:
         "token_budget": token_budget,
         "tokens_used": tokens_used,
         "time_used_seconds": time_used,
+    }
+
+
+def _goal_control_material(goal: Mapping[str, object] | None) -> object:
+    if goal is None:
+        return None
+    return {
+        "objective": goal.get("objective"),
+        "status": goal.get("status"),
+        "token_budget": goal.get("token_budget"),
     }
 
 

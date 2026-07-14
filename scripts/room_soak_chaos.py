@@ -17,10 +17,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
 import sqlite3
+import stat
 import statistics
 import subprocess
 import tempfile
@@ -29,6 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -39,8 +42,11 @@ from typing import Any, Protocol
 FRONTEND_URL = "http://127.0.0.1:3000"
 CHAT_API_BASE_URL = "http://127.0.0.1:8201/api/chat"
 LIVE_EVIDENCE_SCHEMA = "room_soak_live_evidence/v1"
+GOAL_MEMORY_PROFILE_ID = "live-goal-memory-soak"
 BROWSER_INPUT_SCHEMA = "room_soak_browser_input/v1"
 BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v1"
+GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
+GOAL_BROWSER_CONSUMER = "g9_live_goal_memory_soak"
 CLI_ERROR_SCHEMA = "room_soak_chaos_cli_error/v1"
 CLI_ERROR_PROOF_BOUNDARY = "cli_failure_before_complete_soak_evidence"
 REQUIRED_SERVICES = ("frontend", "chat_api", "room_runner", "room_mcp")
@@ -48,6 +54,7 @@ MAX_HTTP_RESPONSE_BYTES = 1024 * 1024
 MAX_ACTIVE_PROVIDER_DELIVERIES = 4
 MAX_FIRST_CLAIM_MS = 240_000.0
 MAX_FAULT_RECOVERY_MS = 45_000
+GOAL_PEER_OUTCOME_TIMEOUT_S = 240.0
 CLEANUP_PROVIDER_TIMEOUT_S = 10.0
 RESOURCE_SAMPLE_INTERVAL_MS = 1_000
 
@@ -82,6 +89,16 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         2,
         10,
         None,
+        memory_recovery=True,
+    ),
+    GOAL_MEMORY_PROFILE_ID: LiveProfileSpec(
+        GOAL_MEMORY_PROFILE_ID,
+        4,
+        2,
+        4,
+        4,
+        128,
+        minimum_duration_s=3600.0,
         memory_recovery=True,
     ),
 }
@@ -152,6 +169,7 @@ class BrowserVerificationRequest:
     artifact_dir: Path
     timeout_s: float
     environment: Mapping[str, str]
+    goal_memory: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +185,117 @@ class SoakConfig:
     readiness_timeout_s: float = 120.0
     settle_timeout_s: float = 1200.0
     browser_timeout_s: float = 300.0
+    goal_guard_wall_s: float | None = None
+    goal_guard_idle_s: float | None = None
+
+
+_GOAL_TERMINAL_STATES = frozenset(
+    {"paused", "blocked", "usageLimited", "budgetLimited", "complete"}
+)
+
+
+@dataclass
+class _GoalContinuationObserver:
+    participant_id: str
+    baseline_event_seq: int
+    started_at: float
+    last_progress_at: float
+    latest_event_seq: int
+    turn_started_event_seqs: set[int] = field(default_factory=set)
+    active_goal_update_event_seqs: set[int] = field(default_factory=set)
+    terminal_status: str | None = None
+
+    @classmethod
+    def start(
+        cls,
+        participant_id: str,
+        baseline_event_seq: int,
+        now: float,
+    ) -> _GoalContinuationObserver:
+        return cls(
+            participant_id=participant_id,
+            baseline_event_seq=baseline_event_seq,
+            started_at=now,
+            last_progress_at=now,
+            latest_event_seq=baseline_event_seq,
+        )
+
+    def observe(self, projection: Mapping[str, Any], now: float) -> None:
+        native = projection.get("native_events")
+        items = native.get("items") if isinstance(native, Mapping) else None
+        progressed = False
+        relevant: list[tuple[int, Mapping[str, Any]]] = []
+        for item in _mapping_records(items):
+            event_seq = item.get("event_seq")
+            if (
+                item.get("participant_id") != self.participant_id
+                or not isinstance(event_seq, int)
+                or isinstance(event_seq, bool)
+                or event_seq <= self.baseline_event_seq
+            ):
+                continue
+            relevant.append((event_seq, item))
+        for event_seq, item in sorted(relevant, key=lambda pair: pair[0]):
+            if event_seq > self.latest_event_seq:
+                self.latest_event_seq = event_seq
+                progressed = True
+            if item.get("kind") == "turn_started":
+                self.turn_started_event_seqs.add(event_seq)
+            if item.get("kind") == "goal_updated":
+                status = item.get("status")
+                if status == "active":
+                    self.active_goal_update_event_seqs.add(event_seq)
+                    self.terminal_status = None
+                elif status in _GOAL_TERMINAL_STATES:
+                    self.terminal_status = str(status)
+        if progressed:
+            self.last_progress_at = now
+        participant = _participant_view(projection, self.participant_id)
+        if participant is None:
+            return
+        wrapper = participant.get("native_snapshot")
+        snapshot = wrapper.get("value") if isinstance(wrapper, Mapping) else None
+        if not isinstance(snapshot, Mapping):
+            return
+        goal = snapshot.get("goal")
+        status = goal.get("status") if isinstance(goal, Mapping) else None
+        if status in _GOAL_TERMINAL_STATES:
+            self.terminal_status = str(status)
+
+    @property
+    def turn_started_count(self) -> int:
+        return len(self.turn_started_event_seqs)
+
+    @property
+    def continuation_checkpoint_count(self) -> int:
+        """Count persisted Goal accounting checkpoints after native work starts.
+
+        Setting or resuming an active native Goal automatically starts an idle
+        thread turn. A later ``goal_updated(active)`` notification corroborates
+        that the turn has accounted Goal progress and remains pausable.
+        """
+
+        if not self.turn_started_event_seqs:
+            return 0
+        first_turn = min(self.turn_started_event_seqs)
+        return sum(seq > first_turn for seq in self.active_goal_update_event_seqs)
+
+    def stop_reason(
+        self,
+        now: float,
+        *,
+        wall_s: float | None,
+        idle_s: float | None,
+    ) -> str | None:
+        if self.terminal_status is not None:
+            return "soak_codex_goal_terminal_before_continuation"
+        if self.continuation_checkpoint_count >= 1:
+            return None
+        if wall_s is not None and now - self.started_at >= wall_s:
+            return "soak_goal_guard_wall_limit_reached"
+        if idle_s is not None and now - self.last_progress_at >= idle_s:
+            return "soak_goal_guard_idle_limit_reached"
+        return None
 
 
 def _run_command(
@@ -210,6 +339,21 @@ def _spawn_command(
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _digest_json(value: object) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _canonical_digest_json(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _port_available(host: str, port: int) -> bool:
@@ -354,6 +498,30 @@ def _provider_bindings(runtime_root: Path) -> dict[str, ProcessBinding]:
     return bindings
 
 
+def _registered_god_session_id(
+    runtime_root: Path,
+    *,
+    conversation_id: str,
+    participant_id: str,
+) -> str | None:
+    try:
+        payload = json.loads((runtime_root / "god_sessions.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    sessions = payload.get("sessions") if isinstance(payload, Mapping) else None
+    if not isinstance(sessions, list):
+        return None
+    matches = [
+        str(item["god_session_id"])
+        for item in sessions
+        if isinstance(item, Mapping)
+        and item.get("conversation_id") == conversation_id
+        and item.get("participant_id") == participant_id
+        and _safe_id(item.get("god_session_id"))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _runtime_provider_pids(runtime_root: Path) -> tuple[int, ...]:
     from xmuse_core.runtime.processes import discover_xmuse_runtime_processes
 
@@ -493,24 +661,41 @@ def _default_get_profile(profile_id: str) -> Any:
 
 
 def _default_build_result(**kwargs: Any) -> dict[str, Any]:
+    if "manifest" in kwargs:
+        from xmuse_core.chat.room_goal_memory_soak import build_goal_memory_soak_result
+
+        return build_goal_memory_soak_result(**kwargs)
     from xmuse_core.chat.room_soak_chaos import build_soak_result
 
     return build_soak_result(**kwargs)
 
 
 def _default_validate_result(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if payload.get("schema_version") == "room_goal_memory_soak_result/v1":
+        from xmuse_core.chat.room_goal_memory_soak import validate_goal_memory_soak_result
+
+        return validate_goal_memory_soak_result(payload)
     from xmuse_core.chat.room_soak_chaos import validate_soak_result
 
     return validate_soak_result(payload)
 
 
 def _default_evaluate_result(payload: Mapping[str, Any]) -> tuple[bool, tuple[str, ...]]:
+    if payload.get("schema_version") == "room_goal_memory_soak_result/v1":
+        from xmuse_core.chat.room_goal_memory_soak import evaluate_goal_memory_soak_result
+
+        return evaluate_goal_memory_soak_result(payload)
     from xmuse_core.chat.room_soak_chaos import evaluate_soak_result
 
     return evaluate_soak_result(payload)
 
 
 def _default_write_result(path: Path, payload: Mapping[str, Any]) -> None:
+    if payload.get("schema_version") == "room_goal_memory_soak_result/v1":
+        from xmuse_core.chat.room_goal_memory_soak import write_goal_memory_soak_result
+
+        write_goal_memory_soak_result(path, payload)
+        return
     from xmuse_core.chat.room_soak_chaos import write_soak_result
 
     write_soak_result(path, payload)
@@ -577,6 +762,23 @@ class _PendingChaosEvent:
     mcp_count: int
 
 
+@dataclass(frozen=True)
+class _ProviderFaultTarget:
+    attempt_id: str
+    god_session_id: str
+    conversation_id: str
+    participant_id: str
+    binding: ProcessBinding
+
+
+@dataclass(frozen=True)
+class _ProviderRecoveryProof:
+    conversation_id: str
+    participant_id: str
+    god_session_id: str
+    session_guard_before: str
+
+
 @dataclass
 class _MemoryFaultProof:
     binding: ProcessBinding
@@ -608,9 +810,1042 @@ class _LiveState:
     host_delivery_evidence_seen: bool = False
     memory_fault_proof: _MemoryFaultProof | None = None
     verified_memory_evidence: dict[str, int | bool] | None = None
+    provider_recovery_proof: _ProviderRecoveryProof | None = None
+    goal_memory_evidence: dict[str, Any] = field(default_factory=dict)
     browser: dict[str, int] = field(
         default_factory=lambda: {"refreshes": 0, "console_errors": 0, "page_errors": 0}
     )
+
+
+def _mapping_records(value: object) -> list[Mapping[str, Any]]:
+    return [item for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
+
+
+def _codex_projection(deps: SoakDependencies, conversation_id: str) -> dict[str, Any]:
+    response = deps.http_json(
+        "GET",
+        f"{CHAT_API_BASE_URL}/conversations/{conversation_id}/codex-agents?limit=100",
+        None,
+        timeout_s=20.0,
+    )
+    if (
+        response.status != 200
+        or not isinstance(response.payload, Mapping)
+        or response.payload.get("schema_version") != "room_codex_projection/v1"
+    ):
+        raise SoakError("soak_codex_projection_unavailable")
+    return dict(response.payload)
+
+
+def _room_projection(deps: SoakDependencies, conversation_id: str) -> dict[str, Any]:
+    response = deps.http_json(
+        "GET",
+        f"{CHAT_API_BASE_URL}/conversations/{conversation_id}/room-projection?limit=100",
+        None,
+        timeout_s=20.0,
+    )
+    if (
+        response.status != 200
+        or not isinstance(response.payload, Mapping)
+        or response.payload.get("schema_version") != "room_chat_projection/v3"
+    ):
+        raise SoakError("soak_room_projection_unavailable")
+    return dict(response.payload)
+
+
+def _goal_turn_started_count(
+    projection: Mapping[str, Any], participant_id: str, baseline_event_seq: int
+) -> int:
+    native = projection.get("native_events")
+    items = native.get("items") if isinstance(native, Mapping) else None
+    return sum(
+        item.get("kind") == "turn_started"
+        and item.get("participant_id") == participant_id
+        and isinstance(item.get("event_seq"), int)
+        and int(item["event_seq"]) > baseline_event_seq
+        for item in _mapping_records(items)
+    )
+
+
+def _wait_goal_continuation(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    conversation_id: str,
+    participant_id: str,
+    baseline_event_seq: int,
+) -> int:
+    observer = _GoalContinuationObserver.start(
+        participant_id,
+        baseline_event_seq,
+        deps.monotonic(),
+    )
+    while True:
+        projection = _codex_projection(deps, conversation_id)
+        now = deps.monotonic()
+        observer.observe(projection, now)
+        reason = observer.stop_reason(
+            now,
+            wall_s=config.goal_guard_wall_s,
+            idle_s=config.goal_guard_idle_s,
+        )
+        if reason is None and observer.continuation_checkpoint_count >= 1:
+            return 1
+        if reason is not None:
+            if reason.startswith("soak_goal_guard_"):
+                pause_applied = False
+                try:
+                    action_projection = _invoke_native_action(
+                        config,
+                        deps,
+                        conversation_id,
+                        participant_id,
+                        "goal_pause",
+                        {},
+                        timeout_s=60.0,
+                    )
+                    pause_applied = True
+                    observer.observe(action_projection, deps.monotonic())
+                except SoakError:
+                    try:
+                        projection = _codex_projection(deps, conversation_id)
+                        observer.observe(projection, deps.monotonic())
+                    except SoakError:
+                        pass
+                pause_deadline = deps.monotonic() + 30.0
+                while True:
+                    if observer.terminal_status == "paused" and pause_applied:
+                        raise SoakError(reason)
+                    if observer.terminal_status is not None:
+                        raise SoakError("soak_codex_goal_terminal_before_continuation")
+                    if observer.continuation_checkpoint_count >= 1:
+                        return 1
+                    if not pause_applied or deps.monotonic() >= pause_deadline:
+                        raise SoakError("soak_goal_guard_pause_unconfirmed")
+                    projection = _codex_projection(deps, conversation_id)
+                    observer.observe(projection, deps.monotonic())
+                    deps.sleep(0.25)
+            raise SoakError(reason)
+        deps.sleep(0.25)
+
+
+def _goal_hold_projection_count(
+    projection: Mapping[str, Any],
+    *,
+    root_activity_ids: Sequence[str],
+    goal_participant_id: str,
+) -> int:
+    roots = set(root_activity_ids)
+    proven = 0
+    for turn in _mapping_records(projection.get("turns")):
+        if turn.get("root_activity_id") not in roots or turn.get("status") != "active":
+            continue
+        members = _mapping_records(turn.get("participants"))
+        goal = next(
+            (item for item in members if item.get("participant_id") == goal_participant_id),
+            None,
+        )
+        peers = [item for item in members if item.get("participant_id") != goal_participant_id]
+        frontier = goal.get("frontier") if isinstance(goal, Mapping) else None
+        if (
+            isinstance(goal, Mapping)
+            and goal.get("state") == "pending"
+            and isinstance(frontier, Mapping)
+            and frontier.get("phase") == "root"
+            and frontier.get("attempt_count") == 0
+            and any(isinstance(peer.get("latest_outcome"), Mapping) for peer in peers)
+        ):
+            proven += 1
+    return proven
+
+
+def _wait_goal_hold_projection(
+    deps: SoakDependencies,
+    conversation_id: str,
+    *,
+    root_activity_ids: Sequence[str],
+    goal_participant_id: str,
+    deadline: float,
+) -> int:
+    """Wait for the projection to catch up with a durable peer delivery.
+
+    Runner fencing can briefly leave the peer attempt expired while the Goal
+    participant remains pending.  The durable database check establishes that
+    the hold is real; this bounded poll lets the derived Room projection expose
+    the corresponding peer outcome after recovery instead of sampling the
+    pre-reconcile snapshot once.
+    """
+    while deps.monotonic() < deadline:
+        count = _goal_hold_projection_count(
+            _room_projection(deps, conversation_id),
+            root_activity_ids=root_activity_ids,
+            goal_participant_id=goal_participant_id,
+        )
+        if count >= 1:
+            return count
+        deps.sleep(0.25)
+    return 0
+
+
+def _participant_view(
+    projection: Mapping[str, Any], participant_id: str
+) -> Mapping[str, Any] | None:
+    for item in _mapping_records(projection.get("participants")):
+        participant = item.get("participant")
+        if isinstance(participant, Mapping) and participant.get("participant_id") == participant_id:
+            return item
+    return None
+
+
+def _action_descriptor(
+    participant: Mapping[str, Any], capability_id: str
+) -> Mapping[str, Any] | None:
+    capabilities = participant.get("capabilities")
+    actions = capabilities.get("actions") if isinstance(capabilities, Mapping) else None
+    for item in _mapping_records(actions):
+        if item.get("capability_id") == capability_id:
+            return item
+    return None
+
+
+def _invoke_native_action(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    conversation_id: str,
+    participant_id: str,
+    capability_id: str,
+    request: Mapping[str, Any],
+    *,
+    timeout_s: float = 60.0,
+) -> dict[str, Any]:
+    deadline = deps.monotonic() + timeout_s
+    client_action_id = f"soak_codex_{uuid.uuid4().hex}"
+    action_id: object = None
+    while deps.monotonic() < deadline:
+        projection = _codex_projection(deps, conversation_id)
+        participant = _participant_view(projection, participant_id)
+        descriptor = _action_descriptor(participant, capability_id) if participant else None
+        if descriptor is None or descriptor.get("available") is not True:
+            deps.sleep(0.25)
+            continue
+        payload = {
+            "client_action_id": client_action_id,
+            "capability_id": capability_id,
+            "request": dict(request),
+            "expected_session_guard": descriptor.get("expected_session_guard"),
+            "expected_goal_guard": descriptor.get("expected_goal_guard"),
+            "expected_settings_guard": descriptor.get("expected_settings_guard"),
+            "expected_turn_guard": descriptor.get("expected_turn_guard"),
+            "confirmed_pending_observations": descriptor.get("confirmation_required") is True,
+        }
+        response = deps.http_json(
+            "POST",
+            f"{FRONTEND_URL}/api/room-participants/{participant_id}/codex-actions",
+            payload,
+            timeout_s=30.0,
+        )
+        if response.status == 409:
+            # A prior action can be durably applied before its best-effort snapshot
+            # reconcile reaches the projection. Refresh every guard while keeping
+            # the logical request id stable; a guard rejection creates no action.
+            deps.sleep(0.25)
+            continue
+        action_id = response.payload.get("action_id") if response.payload else None
+        if response.status not in {200, 201, 202} or not _safe_id(action_id):
+            raise SoakError(f"soak_codex_{capability_id}_request_failed")
+        break
+    if not _safe_id(action_id):
+        raise SoakError(f"soak_codex_{capability_id}_unavailable")
+    while deps.monotonic() < deadline:
+        projection = _codex_projection(deps, conversation_id)
+        participant = _participant_view(projection, participant_id)
+        bridge = participant.get("room_bridge") if participant else None
+        actions = bridge.get("actions") if isinstance(bridge, Mapping) else None
+        for item in _mapping_records(actions):
+            if item.get("action_id") != action_id:
+                continue
+            status_value = item.get("status")
+            if status_value == "applied":
+                return projection
+            if status_value in {"failed", "rejected"}:
+                raise SoakError(f"soak_codex_{capability_id}_not_applied")
+        deps.sleep(0.25)
+    raise SoakError(f"soak_codex_{capability_id}_timeout")
+
+
+def _wait_native_state(
+    deps: SoakDependencies,
+    conversation_id: str,
+    participant_id: str,
+    predicate: Callable[[Mapping[str, Any]], bool],
+    *,
+    timeout_s: float,
+    code: str,
+) -> Mapping[str, Any]:
+    deadline = deps.monotonic() + timeout_s
+    while deps.monotonic() < deadline:
+        projection = _codex_projection(deps, conversation_id)
+        participant = _participant_view(projection, participant_id)
+        if participant is not None and predicate(participant):
+            return participant
+        deps.sleep(0.25)
+    raise SoakError(code)
+
+
+def _native_snapshot(participant: Mapping[str, Any]) -> Mapping[str, Any]:
+    wrapper = participant.get("native_snapshot")
+    value = wrapper.get("value") if isinstance(wrapper, Mapping) else None
+    if not isinstance(value, Mapping):
+        raise SoakError("soak_codex_native_snapshot_unavailable")
+    return value
+
+
+def _goal_console_turn_request(text: str) -> dict[str, str]:
+    return {"text": text, "mode": "default"}
+
+
+def _goal_native_request() -> dict[str, str | int]:
+    return {
+        "objective": (
+            "Audit the Room runtime and source-backed memory recovery evidence without editing "
+            "files. Establish a bounded plan and at least one automatic Goal continuation "
+            "checkpoint, but keep the Goal active so the external pause/resume and Room delivery "
+            "hold can be verified before completion."
+        ),
+        "token_budget": 100000,
+    }
+
+
+def _pause_native_goal(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    conversation_id: str,
+    participant_id: str,
+) -> None:
+    _invoke_native_action(
+        config,
+        deps,
+        conversation_id,
+        participant_id,
+        "goal_pause",
+        {},
+        timeout_s=60.0,
+    )
+    paused = _wait_native_state(
+        deps,
+        conversation_id,
+        participant_id,
+        lambda item: (
+            isinstance(_native_snapshot(item).get("goal"), Mapping)
+            and _native_snapshot(item)["goal"].get("status") == "paused"
+        ),
+        timeout_s=30.0,
+        code="soak_codex_goal_pause_unproven",
+    )
+    if _native_snapshot(paused).get("active_turn") is True:
+        # Goal pause fences the next continuation but deliberately does not
+        # cancel the turn that is already running.  Interrupt that exact guarded
+        # turn so a bounded acceptance Goal cannot consume its entire budget
+        # before the later resume/hold proof.
+        _invoke_native_action(
+            config,
+            deps,
+            conversation_id,
+            participant_id,
+            "turn_interrupt",
+            {},
+            timeout_s=60.0,
+        )
+    _wait_native_state(
+        deps,
+        conversation_id,
+        participant_id,
+        lambda item: (
+            isinstance(_native_snapshot(item).get("goal"), Mapping)
+            and _native_snapshot(item)["goal"].get("status") == "paused"
+            and _native_snapshot(item).get("active_turn") is False
+        ),
+        timeout_s=max(30.0, config.goal_guard_idle_s or config.settle_timeout_s),
+        code="soak_codex_goal_pause_idle_unproven",
+    )
+
+
+def _resume_native_goal(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    conversation_id: str,
+    participant_id: str,
+) -> None:
+    _invoke_native_action(
+        config,
+        deps,
+        conversation_id,
+        participant_id,
+        "goal_resume",
+        {},
+        timeout_s=60.0,
+    )
+    _wait_native_state(
+        deps,
+        conversation_id,
+        participant_id,
+        lambda item: (
+            isinstance(_native_snapshot(item).get("goal"), Mapping)
+            and _native_snapshot(item)["goal"].get("status") == "active"
+        ),
+        timeout_s=30.0,
+        code="soak_codex_goal_resume_unproven",
+    )
+
+
+def _prove_provider_recovery_identity(
+    runtime_root: Path,
+    proof: _ProviderRecoveryProof,
+    participants: Sequence[tuple[str, str, Mapping[str, Any]]],
+) -> tuple[tuple[str, str, Mapping[str, Any]], dict[str, int]]:
+    target = next(
+        (
+            item
+            for item in participants
+            if item[0] == proof.conversation_id and item[1] == proof.participant_id
+        ),
+        None,
+    )
+    if target is None:
+        raise SoakError("soak_provider_recovery_participant_missing")
+    registered = _registered_god_session_id(
+        runtime_root,
+        conversation_id=proof.conversation_id,
+        participant_id=proof.participant_id,
+    )
+    snapshot = _native_snapshot(target[2])
+    guards = snapshot.get("guards")
+    session_guard = guards.get("session") if isinstance(guards, Mapping) else None
+    if registered != proof.god_session_id:
+        raise SoakError("soak_provider_recovery_god_identity_changed")
+    if (
+        not isinstance(session_guard, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", session_guard) is None
+        or session_guard == proof.session_guard_before
+    ):
+        raise SoakError("soak_provider_recovery_session_guard_unchanged")
+    return target, {"god_identity_unchanged": 1, "session_guard_changed": 1}
+
+
+def _provider_recovery_action_counts(
+    database: Path,
+    proof: _ProviderRecoveryProof,
+) -> dict[str, int]:
+    capabilities = ("settings_update", "console_turn_start")
+    with _connect_readonly(database) as conn:
+        rows = conn.execute(
+            """select capability_id, status, count(*) count
+               from room_codex_bridge_actions
+               where conversation_id = ? and participant_id = ?
+                 and capability_id in (?, ?)
+               group by capability_id, status""",
+            (
+                proof.conversation_id,
+                proof.participant_id,
+                *capabilities,
+            ),
+        ).fetchall()
+    by_capability = {
+        capability: {
+            str(row["status"]): int(row["count"])
+            for row in rows
+            if row["capability_id"] == capability
+        }
+        for capability in capabilities
+    }
+    if any(statuses != {"applied": 1} for statuses in by_capability.values()):
+        raise SoakError("soak_provider_recovery_native_action_evidence_invalid")
+    return {capability: statuses["applied"] for capability, statuses in by_capability.items()}
+
+
+def _prepare_goal_native_capabilities(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+) -> None:
+    participants: list[tuple[str, str, Mapping[str, Any]]] = []
+    capability_material: list[object] = []
+    for conversation_id in state.room_ids:
+        projection = _codex_projection(deps, conversation_id)
+        for item in _mapping_records(projection.get("participants")):
+            participant = item.get("participant")
+            capabilities = item.get("capabilities")
+            capability_value = (
+                capabilities.get("value") if isinstance(capabilities, Mapping) else None
+            )
+            participant_id = (
+                participant.get("participant_id") if isinstance(participant, Mapping) else None
+            )
+            if not _safe_id(participant_id) or not isinstance(capability_value, Mapping):
+                raise SoakError("soak_codex_capability_incomplete")
+            participants.append((conversation_id, str(participant_id), item))
+            capability_material.append(capability_value)
+    if len(participants) != 8:
+        raise SoakError("soak_codex_participant_count_invalid")
+    recovery_proof = state.provider_recovery_proof
+    if recovery_proof is None:
+        raise SoakError("soak_provider_recovery_proof_incomplete")
+    recovery_target, recovery_identity = _prove_provider_recovery_identity(
+        runtime_root,
+        recovery_proof,
+        participants,
+    )
+    combinations: list[tuple[str, str, str]] = []
+    first_capabilities = participants[0][2].get("capabilities")
+    first_value = (
+        first_capabilities.get("value") if isinstance(first_capabilities, Mapping) else None
+    )
+    models = _mapping_records(
+        first_value.get("models") if isinstance(first_value, Mapping) else None
+    )
+    for model in models:
+        model_id = model.get("id")
+        model_name = model.get("model")
+        efforts = model.get("efforts")
+        if (
+            not isinstance(model_id, str)
+            or not isinstance(model_name, str)
+            or not isinstance(efforts, list)
+        ):
+            continue
+        combinations.extend(
+            (model_id, model_name, effort)
+            for effort in efforts
+            if isinstance(effort, str) and effort
+        )
+    combinations = sorted(set(combinations), key=lambda item: (item[2] != "max", item))
+    if len(combinations) < 2 or not any(effort == "max" for _, _, effort in combinations):
+        raise SoakError("soak_codex_settings_coverage_unavailable", blocked=True)
+    assignments: list[dict[str, str]] = []
+    for index, (conversation_id, participant_id, _item) in enumerate(participants):
+        model_id, model_name, effort = combinations[index % len(combinations)]
+        _invoke_native_action(
+            config,
+            deps,
+            conversation_id,
+            participant_id,
+            "settings_update",
+            {"model": model_id, "effort": effort},
+        )
+
+        def settings_observed(
+            item: Mapping[str, Any],
+            *,
+            expected_models: frozenset[str] = frozenset({model_id, model_name}),
+            expected_effort: str = effort,
+        ) -> bool:
+            settings = _native_snapshot(item).get("settings")
+            return (
+                isinstance(settings, Mapping)
+                and settings.get("model") in expected_models
+                and settings.get("effort") == expected_effort
+            )
+
+        _wait_native_state(
+            deps,
+            conversation_id,
+            participant_id,
+            settings_observed,
+            timeout_s=60.0,
+            code="soak_codex_settings_not_observed",
+        )
+        assignments.append(
+            {
+                "participant": _digest_json(participant_id),
+                "model": _digest_json(model_id),
+                "effort": effort,
+            }
+        )
+    other_participants = [item for item in participants if item[:2] != recovery_target[:2]]
+    if len(other_participants) < 2:
+        raise SoakError("soak_codex_participant_count_invalid")
+    review_room, review_participant, _ = other_participants[0]
+    _invoke_native_action(
+        config,
+        deps,
+        review_room,
+        review_participant,
+        "review_start",
+        {"target": "uncommitted"},
+        timeout_s=180.0,
+    )
+    recovery_room, recovery_participant, _ = recovery_target
+    _invoke_native_action(
+        config,
+        deps,
+        recovery_room,
+        recovery_participant,
+        "console_turn_start",
+        _goal_console_turn_request(
+            "Inspect the current repository boundary and produce a concise verification plan."
+        ),
+        timeout_s=180.0,
+    )
+    _wait_native_state(
+        deps,
+        recovery_room,
+        recovery_participant,
+        lambda item: _native_snapshot(item).get("active_turn") is False,
+        timeout_s=300.0,
+        code="soak_codex_recovered_console_turn_not_terminal",
+    )
+    recovery_actions = _provider_recovery_action_counts(
+        runtime_root / "chat.db",
+        recovery_proof,
+    )
+    steer_room, steer_participant, _ = other_participants[1]
+    _invoke_native_action(
+        config,
+        deps,
+        steer_room,
+        steer_participant,
+        "console_turn_start",
+        _goal_console_turn_request(
+            "Inspect the current repository boundary and produce a concise verification plan."
+        ),
+        timeout_s=180.0,
+    )
+    _invoke_native_action(
+        config,
+        deps,
+        steer_room,
+        steer_participant,
+        "turn_steer",
+        {"text": "Focus the verification on source-backed memory and runtime recovery guards."},
+        timeout_s=180.0,
+    )
+    _wait_native_state(
+        deps,
+        steer_room,
+        steer_participant,
+        lambda item: _native_snapshot(item).get("active_turn") is False,
+        timeout_s=300.0,
+        code="soak_codex_steer_turn_not_terminal",
+    )
+    goal_room, goal_participant, _ = other_participants[2]
+    goal_before = _codex_projection(deps, goal_room)
+    before_native = goal_before.get("native_events")
+    baseline_event_seq = (
+        before_native.get("latest_event_seq") if isinstance(before_native, Mapping) else 0
+    )
+    if not isinstance(baseline_event_seq, int):
+        baseline_event_seq = 0
+    _invoke_native_action(
+        config,
+        deps,
+        goal_room,
+        goal_participant,
+        "goal_set",
+        _goal_native_request(),
+        timeout_s=180.0,
+    )
+    goal_auto_continuations = _wait_goal_continuation(
+        config,
+        deps,
+        goal_room,
+        goal_participant,
+        baseline_event_seq,
+    )
+    _pause_native_goal(
+        config,
+        deps,
+        goal_room,
+        goal_participant,
+    )
+    state.goal_memory_evidence.update(
+        {
+            "participants": [(room, participant) for room, participant, _ in participants],
+            "goal_room": goal_room,
+            "goal_participant": goal_participant,
+            "settings_assignment_digest": _digest_json(
+                {
+                    "assignments": assignments,
+                    "provider_recovery": recovery_identity | recovery_actions,
+                }
+            ),
+            "distinct_settings_combinations": len(
+                set(combinations[index % len(combinations)] for index in range(8))
+            ),
+            "max_effort_observed": sum(
+                combinations[index % len(combinations)][2] == "max" for index in range(8)
+            ),
+            "capability_descriptor_digest": _digest_json(capability_material),
+            "steer_actions": 1,
+            "review_actions": 1,
+            "goal_initial_continuation_checkpoint": goal_auto_continuations,
+        }
+    )
+
+
+def _goal_observation_state(
+    database: Path,
+    activity_ids: Sequence[str],
+    participant_id: str,
+) -> tuple[int, int]:
+    if not activity_ids:
+        return 0, 0
+    placeholders = ",".join("?" for _ in activity_ids)
+    with _connect_readonly(database) as conn:
+        row = conn.execute(
+            f"""select count(distinct o.observation_id) as observation_count,
+                       count(distinct t.attempt_id) as attempt_count
+                  from room_observations o
+                  left join room_observation_attempts t
+                    on t.observation_id = o.observation_id
+                 where o.activity_id in ({placeholders}) and o.participant_id = ?""",
+            (*activity_ids, participant_id),
+        ).fetchone()
+    return int(row["observation_count"] or 0), int(row["attempt_count"] or 0)
+
+
+def _other_completed_goal_attempt_count(
+    database: Path,
+    activity_ids: Sequence[str],
+    participant_id: str,
+) -> int:
+    if not activity_ids:
+        return 0
+    placeholders = ",".join("?" for _ in activity_ids)
+    with _connect_readonly(database) as conn:
+        row = conn.execute(
+            f"""select count(distinct t.attempt_id)
+                   from room_observation_attempts t
+                   join room_observations o on o.observation_id = t.observation_id
+                  where o.activity_id in ({placeholders})
+                    and o.participant_id <> ? and t.state = 'completed'""",
+            (*activity_ids, participant_id),
+        ).fetchone()
+    return int(row[0] or 0)
+
+
+def _resume_goal_for_hold(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+) -> None:
+    goal_room = state.goal_memory_evidence.get("goal_room")
+    goal_participant = state.goal_memory_evidence.get("goal_participant")
+    if not isinstance(goal_room, str) or not isinstance(goal_participant, str):
+        raise SoakError("soak_codex_goal_evidence_missing")
+    before = _codex_projection(deps, goal_room)
+    native = before.get("native_events")
+    baseline_event_seq = native.get("latest_event_seq") if isinstance(native, Mapping) else 0
+    if not isinstance(baseline_event_seq, int):
+        baseline_event_seq = 0
+    _resume_native_goal(config, deps, goal_room, goal_participant)
+    state.goal_memory_evidence["goal_auto_continuations"] = _wait_goal_continuation(
+        config,
+        deps,
+        goal_room,
+        goal_participant,
+        baseline_event_seq,
+    )
+
+
+def _prove_goal_hold_and_release(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    correlations: Sequence[_Correlation],
+) -> None:
+    goal_room = state.goal_memory_evidence.get("goal_room")
+    goal_participant = state.goal_memory_evidence.get("goal_participant")
+    if not isinstance(goal_room, str) or not isinstance(goal_participant, str):
+        raise SoakError("soak_codex_goal_evidence_missing")
+    activity_ids = [item.activity_id for item in correlations if item.conversation_id == goal_room]
+    if not activity_ids:
+        raise SoakError("soak_codex_goal_hold_observation_missing")
+    database = runtime_root / "chat.db"
+    # A started peer attempt is not yet a visible peer response.  In a real
+    # provider run (especially immediately after Runner recovery), completion
+    # can legitimately outlive the old 30-second sampling window.  Keep proving
+    # that the Goal participant has zero attempts while waiting for a durable
+    # peer outcome, bounded by the product's existing 240-second first-claim
+    # gate rather than weakening any result threshold.
+    deadline = deps.monotonic() + min(GOAL_PEER_OUTCOME_TIMEOUT_S, config.settle_timeout_s)
+    other_delivered = False
+    while deps.monotonic() < deadline:
+        observations, attempts = _goal_observation_state(
+            database,
+            activity_ids,
+            goal_participant,
+        )
+        if attempts != 0:
+            raise SoakError("soak_codex_goal_hold_claim_violation")
+        other_delivered = (
+            _other_completed_goal_attempt_count(database, activity_ids, goal_participant) > 0
+        )
+        if observations > 0 and other_delivered:
+            break
+        deps.sleep(0.25)
+    else:
+        raise SoakError("soak_codex_goal_hold_proof_timeout")
+    projection_deadline = deps.monotonic() + 15.0
+    peer_wait_projections = _wait_goal_hold_projection(
+        deps,
+        goal_room,
+        root_activity_ids=activity_ids,
+        goal_participant_id=goal_participant,
+        deadline=projection_deadline,
+    )
+    if peer_wait_projections < 1:
+        raise SoakError("soak_codex_goal_peer_wait_unproven")
+    _pause_native_goal(config, deps, goal_room, goal_participant)
+    terminal_state = "paused"
+    released_at = deps.monotonic()
+    while deps.monotonic() - released_at <= 30.0:
+        _observations, attempts = _goal_observation_state(
+            database,
+            activity_ids,
+            goal_participant,
+        )
+        if attempts > 0:
+            state.goal_memory_evidence.update(
+                {
+                    "goal_hold_claim_violations": 0,
+                    "goal_resume_count": 1,
+                    "goal_resume_max_ms": round((deps.monotonic() - released_at) * 1000),
+                    "other_agent_root_deliveries": int(other_delivered),
+                    "peer_wait_projections": peer_wait_projections,
+                    "goal_terminal_state": terminal_state,
+                }
+            )
+            return
+        deps.sleep(0.25)
+    raise SoakError("soak_codex_goal_release_claim_timeout")
+
+
+def _goal_manifest(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    before: RepositorySnapshot,
+    *,
+    started_at: str,
+    finished_at: str,
+) -> dict[str, Any]:
+    executable = config.memoryos_executable
+    if executable is None:
+        raise SoakError("soak_memoryos_executable_required", blocked=True)
+    clean_env = _clean_environment()
+    top = _checked(
+        deps,
+        ("git", "-C", str(executable.parent), "rev-parse", "--show-toplevel"),
+        cwd=config.repo_root,
+        env=clean_env,
+        timeout_s=20.0,
+        code="soak_memoryos_repository_unavailable",
+        blocked=True,
+    ).stdout.strip()
+    if not top:
+        raise SoakError("soak_memoryos_repository_unavailable", blocked=True)
+    memory_head = _checked(
+        deps,
+        ("git", "-C", top, "rev-parse", "HEAD"),
+        cwd=config.repo_root,
+        env=clean_env,
+        timeout_s=20.0,
+        code="soak_memoryos_repository_unavailable",
+        blocked=True,
+    ).stdout.strip()
+    memory_status = _checked(
+        deps,
+        ("git", "-C", top, "status", "--porcelain=v1"),
+        cwd=config.repo_root,
+        env=clean_env,
+        timeout_s=20.0,
+        code="soak_memoryos_repository_unavailable",
+        blocked=True,
+    ).stdout
+    if memory_head != "1b9d5dad7e3ba944fb668d8d87e364a06e0b20ef":
+        raise SoakError("soak_memoryos_revision_mismatch", blocked=True)
+    if memory_status.strip():
+        raise SoakError("soak_memoryos_worktree_dirty", blocked=True)
+    codex_version_output = _checked(
+        deps,
+        ("codex", "--version"),
+        cwd=config.repo_root,
+        env=clean_env,
+        timeout_s=20.0,
+        code="soak_preflight_codex_version_unavailable",
+        blocked=True,
+    ).stdout.strip()
+    version_match = re.search(
+        r"([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)",
+        codex_version_output,
+    )
+    if version_match is None:
+        raise SoakError("soak_preflight_codex_version_unavailable", blocked=True)
+    capability_digest = state.goal_memory_evidence.get("capability_descriptor_digest")
+    if not isinstance(capability_digest, str):
+        raise SoakError("soak_codex_capability_incomplete")
+    return {
+        "schema_version": "room_goal_memory_soak_manifest/v1",
+        "profile_id": GOAL_MEMORY_PROFILE_ID,
+        "seed": 9,
+        "xmuse_sha": before.head,
+        "memoryos_sha": memory_head,
+        "codex_version": version_match.group(1),
+        "native_capability_descriptor_digest": capability_digest,
+        # This digest identifies the actual G9 workload and native actions.  It does not
+        # claim authorship for the already accepted G7/G8P product changes.
+        "task_manifest_digest": _digest_json(
+            {
+                "profile": GOAL_MEMORY_PROFILE_ID,
+                "rooms": 4,
+                "agents": 2,
+                "waves": 4,
+                "faults": [
+                    "codex_app_server_sigkill",
+                    "runner_sigkill",
+                    "memoryos_sigkill",
+                    "codex_projection_cache_deleted",
+                ],
+                "native_actions": {
+                    "review": "uncommitted",
+                    "steer": "source-backed-memory-and-runtime-recovery-guards",
+                    "goal": "bounded-runtime-and-memory-recovery-audit",
+                },
+            }
+        ),
+        "started_at": started_at,
+        "finished_at": finished_at,
+    }
+
+
+def _goal_numeric_usage(deps: SoakDependencies, room_ids: Sequence[str]) -> dict[str, int]:
+    totals = {
+        "input_tokens": 0,
+        "cached_input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+    latest_by_participant: dict[str, tuple[int, Mapping[str, Any]]] = {}
+    for conversation_id in room_ids:
+        projection = _codex_projection(deps, conversation_id)
+        native_events = projection.get("native_events")
+        events = native_events.get("items") if isinstance(native_events, Mapping) else None
+        for event in _mapping_records(events):
+            if event.get("kind") != "token_usage_updated":
+                continue
+            participant_id = event.get("participant_id")
+            event_seq = event.get("event_seq")
+            usage = event.get("usage")
+            total = usage.get("total") if isinstance(usage, Mapping) else None
+            if (
+                not isinstance(participant_id, str)
+                or not isinstance(event_seq, int)
+                or not isinstance(total, Mapping)
+            ):
+                continue
+            prior = latest_by_participant.get(participant_id)
+            if prior is None or event_seq > prior[0]:
+                latest_by_participant[participant_id] = (event_seq, total)
+    for _seq, usage in latest_by_participant.values():
+        for key in totals:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                totals[key] += value
+    return totals
+
+
+def _goal_memory_contract_evidence(
+    database: Path,
+    room_ids: Sequence[str],
+    *,
+    state: _LiveState,
+) -> dict[str, int]:
+    proof = state.memory_fault_proof
+    if proof is None:
+        raise SoakError("soak_memory_recovery_proof_incomplete")
+    base = _memory_evidence(
+        database,
+        room_ids,
+        enabled=True,
+        restart_count=state.memory_restart_count,
+        proof=proof,
+    )
+    from xmuse.memoryos_adapter import (
+        _MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
+        _MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES,
+    )
+    from xmuse_core.chat.room_memory_runtime import ROOM_MEMORY_MAX_RESPONSE_BYTES
+
+    # _memory_evidence above re-proves every successful source against chat.db and raises
+    # on cross-Room or unbound evidence.  These are the production enforcement ceilings,
+    # deliberately reported as upper bounds rather than fabricated observed byte counts.
+    return {
+        "compact_response_upper_bound_bytes": _MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES,
+        "raw_response_upper_bound_bytes": _MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
+        "accepted_evidence_upper_bound_bytes": ROOM_MEMORY_MAX_RESPONSE_BYTES,
+        "source_ref_count": int(base["recall_source_refs"]),
+        "source_proof_failures": 0,
+        "restart_count": int(base["restart_count"]),
+        "outbox_pending": int(base["outbox_pending"]),
+        "outbox_conflict": int(base["outbox_conflict"]),
+        "room_readiness_degraded": 0,
+        "settlement_blocked": 0,
+    }
+
+
+def _map_goal_counts(base: Mapping[str, Any], state: _LiveState) -> dict[str, int]:
+    counts = base["counts"]
+    violations = base["violations"]
+    residual = base["residual"]
+    return {
+        "correlations": int(counts["correlations"]),
+        "settled_correlations": int(counts["settled_correlations"]),
+        "attempts": int(counts["attempts"]),
+        "outcomes": int(counts["outcomes"]),
+        "duplicate_outcomes": int(violations["duplicate_outcome"]),
+        "cross_room_identity": int(violations["cross_room_identity"]),
+        "cross_room_causality": int(violations["cross_room_causality"]),
+        "cross_room_source": 0,
+        "provider_orphans": int(violations["provider_orphans"]),
+        "live_leases": int(residual["live_leases"]),
+        "cleanup_pending": int(residual["cleanup_pending"]),
+        "recovery_pending": int(residual["recovery_pending"]),
+        "exhausted": int(residual["exhausted"]),
+        "max_active_deliveries": state.max_active_deliveries,
+    }
+
+
+def _map_goal_faults(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    expected = [
+        ("codex_app_server_sigkill", "codex_app_server_cleanup_confirmed", False),
+        ("runner_sigkill", "runner_reconciled", True),
+        ("memoryos_sigkill", "memoryos_reconciled", True),
+        ("codex_projection_cache_delete", "codex_projection_cache_rebuilt", True),
+    ]
+    if len(events) != len(expected):
+        raise SoakError("soak_fault_sequence_incomplete")
+    result: list[dict[str, Any]] = []
+    for seq, (event, (kind, reason, managed)) in enumerate(zip(events, expected, strict=True), 1):
+        if (
+            event.get("kind") != kind
+            or event.get("reason_code") != reason
+            or event.get("managed_reconcile") is not managed
+            or event.get("recovery_wave_settled") is not True
+        ):
+            raise SoakError("soak_fault_sequence_invalid")
+        result.append(
+            {
+                "seq": seq,
+                "kind": "codex_projection_cache_deleted" if seq == 4 else kind,
+                "reason_code": reason,
+                "recovery_ms": int(event["recovery_ms"]),
+                "active_delivery_count": int(event.get("active_delivery_count") or 0),
+                "runner_count": int(event["runner_count"]),
+                "mcp_count": int(event["mcp_count"]),
+            }
+        )
+    return result
 
 
 def _clean_environment() -> dict[str, str]:
@@ -786,9 +2021,12 @@ def _preflight(
     runtime_root: Path,
     result_path: Path,
 ) -> RepositorySnapshot:
-    if config.profile_id == "live-soak" and not config.confirm_provider_cost:
+    if (
+        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID}
+        and not config.confirm_provider_cost
+    ):
         raise SoakError("soak_provider_cost_confirmation_required", blocked=True)
-    if config.profile_id == "memory-recovery":
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
         executable = config.memoryos_executable
         if (
             executable is None
@@ -796,6 +2034,18 @@ def _preflight(
             or not os.access(executable.expanduser().resolve(), os.X_OK)
         ):
             raise SoakError("soak_memoryos_executable_required", blocked=True)
+        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+            assert executable is not None
+            try:
+                executable_stat = executable.expanduser().lstat()
+            except OSError as exc:
+                raise SoakError("soak_memoryos_executable_required", blocked=True) from exc
+            if (
+                stat.S_ISLNK(executable_stat.st_mode)
+                or not stat.S_ISREG(executable_stat.st_mode)
+                or executable_stat.st_nlink != 1
+            ):
+                raise SoakError("soak_memoryos_executable_unsafe", blocked=True)
     if _is_relative_to(result_path, config.repo_root):
         raise SoakError("soak_result_path_inside_workspace", blocked=True)
     if runtime_root.exists() and any(runtime_root.iterdir()):
@@ -808,10 +2058,18 @@ def _preflight(
     if not snapshot.clean:
         raise SoakError("soak_preflight_worktree_dirty", blocked=True)
     if config.profile_id != "ci-sim":
-        for host, port, name in (
+        ports = [
             ("127.0.0.1", 3000, "frontend"),
             ("127.0.0.1", 8201, "chat_api"),
-        ):
+        ]
+        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+            ports.extend(
+                [
+                    ("127.0.0.1", 8100, "room_mcp"),
+                    ("127.0.0.1", 8301, "memoryos"),
+                ]
+            )
+        for host, port, name in ports:
             if not deps.port_available(host, port):
                 raise SoakError(f"soak_preflight_{name}_port_in_use", blocked=True)
         _checked(
@@ -861,7 +2119,7 @@ def _start_workroom(
         "--readiness-timeout-s",
         str(config.readiness_timeout_s),
     ]
-    if config.profile_id == "memory-recovery":
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
         assert config.memoryos_executable is not None
         command.extend(("--memory", "--memoryos-executable", str(config.memoryos_executable)))
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -909,7 +2167,7 @@ def _post_wave(
     *,
     wave: int,
 ) -> list[_Correlation]:
-    if spec.memory_recovery:
+    if spec.profile_id == "memory-recovery":
         # A two-turn Room cannot prove archival recall: the Host already carries its
         # last eight activities in the causal envelope and correctly excludes them
         # from memory.  The first recovery phase therefore creates nine production
@@ -948,13 +2206,25 @@ def _post_wave(
                 "preserve the source-backed durable fact cobalt-orchid-17 for this "
                 f"Room (sample {index + 1}); submit one concise outcome."
             )
-            if spec.memory_recovery and wave == 0
+            if spec.profile_id == "memory-recovery" and wave == 0
             else (
                 "Memory recovery phase 2: use source-backed archival evidence to recall "
                 "XMUSE_MEMORY_RECOVERY_ANCHOR_V1 and cobalt-orchid-17 for this Room; "
                 "submit one concise outcome."
             )
-            if spec.memory_recovery
+            if spec.profile_id == "memory-recovery"
+            else (
+                "Goal Memory soak wave 1: preserve the source-backed fact "
+                "G9_COBALT_ORCHID_17 for this Room, independently inspect the runtime "
+                "boundary, and submit one concise outcome without editing files."
+            )
+            if spec.profile_id == GOAL_MEMORY_PROFILE_ID and wave == 0
+            else (
+                f"Goal Memory soak wave {wave + 1}: use only re-provable Room or archival "
+                "sources when relevant, verify runtime recovery state, and submit one "
+                "concise outcome without editing files."
+            )
+            if spec.profile_id == GOAL_MEMORY_PROFILE_ID
             else (
                 f"Soak wave {wave + 1}, item {index + 1}: independently inspect the "
                 "durable Room state and submit one concise outcome; do not edit files."
@@ -1037,12 +2307,13 @@ def _active_provider_binding(
     *,
     preferred_conversation_id: str | None = None,
     require_pending_followup: bool = False,
-) -> tuple[str, str, ProcessBinding] | None:
+) -> _ProviderFaultTarget | None:
     if not bindings:
         return None
     with _connect_readonly(database) as conn:
         rows = conn.execute(
             """select t.attempt_id, t.god_session_id, t.conversation_id,
+                      t.participant_id,
                       exists(
                           select 1 from room_observations followup
                           where followup.participant_id = t.participant_id
@@ -1069,7 +2340,13 @@ def _active_provider_binding(
         god_session_id = str(row["god_session_id"])
         binding = bindings.get(god_session_id)
         if binding is not None:
-            return str(row["attempt_id"]), god_session_id, binding
+            return _ProviderFaultTarget(
+                attempt_id=str(row["attempt_id"]),
+                god_session_id=god_session_id,
+                conversation_id=str(row["conversation_id"]),
+                participant_id=str(row["participant_id"]),
+                binding=binding,
+            )
     return None
 
 
@@ -1336,7 +2613,7 @@ def _kill_one_provider(
     registry_binding: ProcessBinding | None = None
     signal_target: ProcessBinding | None = None
     target_attempt_id: str | None = None
-    target_binding: str | None = None
+    recovery_proof: _ProviderRecoveryProof | None = None
     while deps.monotonic() < deadline:
         bindings = deps.provider_bindings(runtime_root)
         selected = _active_provider_binding(
@@ -1346,23 +2623,42 @@ def _kill_one_provider(
             require_pending_followup=bool(state.room_ids),
         )
         owned_codex = set(deps.runtime_provider_pids(runtime_root))
-        if selected is not None and selected[2].pid in owned_codex:
+        if selected is not None and selected.binding.pid in owned_codex:
             candidate_target = _provider_signal_target(
-                selected[2],
+                selected.binding,
                 tuple(owned_codex),
                 read_identity=deps.process_start_identity,
             )
             if candidate_target is not None:
-                target_attempt_id, target_binding, registry_binding = selected
+                target_attempt_id = selected.attempt_id
+                registry_binding = selected.binding
                 signal_target = candidate_target
+                if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+                    registered = _registered_god_session_id(
+                        runtime_root,
+                        conversation_id=selected.conversation_id,
+                        participant_id=selected.participant_id,
+                    )
+                    projection = _codex_projection(deps, selected.conversation_id)
+                    participant = _participant_view(projection, selected.participant_id)
+                    snapshot = _native_snapshot(participant) if participant is not None else None
+                    guards = snapshot.get("guards") if isinstance(snapshot, Mapping) else None
+                    session_guard = guards.get("session") if isinstance(guards, Mapping) else None
+                    if (
+                        registered != selected.god_session_id
+                        or not isinstance(session_guard, str)
+                        or re.fullmatch(r"sha256:[0-9a-f]{64}", session_guard) is None
+                    ):
+                        raise SoakError("soak_provider_fault_identity_unavailable")
+                    recovery_proof = _ProviderRecoveryProof(
+                        conversation_id=selected.conversation_id,
+                        participant_id=selected.participant_id,
+                        god_session_id=selected.god_session_id,
+                        session_guard_before=session_guard,
+                    )
                 break
         deps.sleep(0.1)
-    if (
-        registry_binding is None
-        or signal_target is None
-        or target_attempt_id is None
-        or target_binding is None
-    ):
+    if registry_binding is None or signal_target is None or target_attempt_id is None:
         raise SoakError("soak_provider_fault_target_unavailable")
     started = deps.monotonic()
     _signal_provider_process_tree(
@@ -1396,6 +2692,10 @@ def _kill_one_provider(
         deps.sleep(0.1)
     if recovered is None or recovered_counts is None:
         raise SoakError("soak_provider_recovery_timeout")
+    if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+        if recovery_proof is None:
+            raise SoakError("soak_provider_recovery_proof_incomplete")
+        state.provider_recovery_proof = recovery_proof
     return _PendingChaosEvent(
         kind="codex_app_server_sigkill",
         reason_code="codex_app_server_cleanup_confirmed",
@@ -1459,6 +2759,154 @@ def _kill_runner_and_wait_recovery(
         recovery_ms=recovery_ms,
         status=recovered,
         active_delivery_count=_active_deliveries(status),
+        managed_reconcile=True,
+        runner_count=int(recovered_counts["room_runner"]),
+        mcp_count=int(recovered_counts["room_mcp"]),
+    )
+
+
+def _safe_projection_cache_leaf(runtime_root: Path, candidate: Path) -> None:
+    expected = runtime_root / "runtime" / "room-codex-projection.sqlite3"
+    if candidate != expected:
+        raise SoakError("soak_projection_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        parent_stat = candidate.parent.lstat()
+        leaf_stat = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_projection_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(parent_stat.st_mode)
+        or not stat.S_ISDIR(parent_stat.st_mode)
+        or candidate.parent.resolve() != expected.parent
+        or stat.S_ISLNK(leaf_stat.st_mode)
+        or not stat.S_ISREG(leaf_stat.st_mode)
+        or leaf_stat.st_nlink != 1
+        or leaf_stat.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_projection_cache_unsafe")
+
+
+def _unlink_projection_cache_leaf(runtime_root: Path) -> None:
+    cache = runtime_root / "runtime" / "room-codex-projection.sqlite3"
+    _safe_projection_cache_leaf(runtime_root, cache)
+    candidates = (
+        cache,
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    )
+    for candidate in candidates:
+        if candidate != cache and not candidate.exists():
+            continue
+        if candidate == cache:
+            _safe_projection_cache_leaf(runtime_root, candidate)
+        else:
+            _safe_cache_sidecar(runtime_root, candidate)
+        candidate.unlink()
+
+
+def _safe_cache_sidecar(runtime_root: Path, candidate: Path) -> None:
+    cache = runtime_root / "runtime" / "room-codex-projection.sqlite3"
+    if candidate not in {
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    }:
+        raise SoakError("soak_projection_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        item = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_projection_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(item.st_mode)
+        or not stat.S_ISREG(item.st_mode)
+        or item.st_nlink != 1
+        or item.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_projection_cache_unsafe")
+
+
+def _reset_projection_cache_and_wait_recovery(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    env: Mapping[str, str],
+    *,
+    run_started_at: float,
+) -> _PendingChaosEvent:
+    from xmuse.chat_api_runtime import (
+        _locked_workroom_runtime_start,
+        _stop_workroom_room_runtime_locked,
+        _workroom_room_runtime_config,
+    )
+
+    status = _workroom_status(config, deps, runtime_root, env)
+    runner = _service(status, "room_runner")
+    binding = deps.runner_process_binding(runtime_root)
+    boot = runner.get("boot_id")
+    if (
+        binding is None
+        or runner.get("pid") != binding.pid
+        or not _safe_id(boot)
+        or _active_deliveries(status) != 0
+        or deps.process_start_identity(binding.pid) != binding.start_identity
+    ):
+        raise SoakError("soak_projection_cache_fault_identity_unavailable")
+    started = deps.monotonic()
+    with _locked_workroom_runtime_start(runtime_root):
+        current_status = _workroom_status(config, deps, runtime_root, env)
+        current_runner = _service(current_status, "room_runner")
+        current_binding = deps.runner_process_binding(runtime_root)
+        if (
+            current_binding != binding
+            or current_runner.get("boot_id") != boot
+            or current_runner.get("pid") != binding.pid
+            or _active_deliveries(current_status) != 0
+            or deps.process_start_identity(binding.pid) != binding.start_identity
+        ):
+            raise SoakError("soak_projection_cache_fault_identity_lost")
+        runtime_config = _workroom_room_runtime_config(
+            runtime_root,
+            config.repo_root,
+        )
+        stopped = _stop_workroom_room_runtime_locked(
+            runtime_root,
+            generation=runtime_config.generation,
+        )
+        if stopped.get("state") != "stopped":
+            raise SoakError("soak_projection_cache_runner_stop_failed")
+        _unlink_projection_cache_leaf(runtime_root)
+    # The managed Chat API owns the Room Runner environment, including the optional
+    # server-only MemoryOS binding.  Let its reconcile loop rebuild the stopped runtime;
+    # starting a child from this unprivileged soak process would silently drop those
+    # capabilities and would not exercise the production recovery path.
+    deadline = started + MAX_FAULT_RECOVERY_MS / 1000
+    recovered: dict[str, Any] | None = None
+    recovered_counts: Mapping[str, int] | None = None
+    while deps.monotonic() < deadline:
+        try:
+            candidate = _workroom_status(config, deps, runtime_root, env)
+            current = _service(candidate, "room_runner")
+            owned_counts = deps.runtime_service_counts(runtime_root)
+            if _required_runtime_ready(candidate, owned_counts) and current.get("boot_id") != boot:
+                recovered = candidate
+                recovered_counts = owned_counts
+                break
+        except SoakError:
+            pass
+        _sample_runtime(config, deps, state, runtime_root, env)
+        deps.sleep(0.25)
+    if recovered is None or recovered_counts is None:
+        raise SoakError("soak_projection_cache_recovery_timeout")
+    return _PendingChaosEvent(
+        kind="codex_projection_cache_delete",
+        reason_code="codex_projection_cache_rebuilt",
+        started_at=started,
+        run_started_at=run_started_at,
+        recovery_ms=round((deps.monotonic() - started) * 1000),
+        status=recovered,
+        active_delivery_count=0,
         managed_reconcile=True,
         runner_count=int(recovered_counts["room_runner"]),
         mcp_count=int(recovered_counts["room_mcp"]),
@@ -1653,6 +3101,9 @@ def _default_browser_verify(
         "XMUSE_SOAK_BROWSER_EVIDENCE_PATH": str(evidence_path),
         "XMUSE_SOAK_BROWSER_OUTPUT_DIR": str(request.artifact_dir / "playwright"),
     }
+    if request.goal_memory:
+        browser_env["XMUSE_SOAK_GOAL_MEMORY"] = "1"
+        browser_env["XMUSE_SOAK_HEADED"] = "1"
     result = deps.run(
         ("npm", "run", "test:e2e:real", "--", "room-soak-real.spec.ts"),
         cwd=request.repo_root / "frontend",
@@ -1711,6 +3162,113 @@ def _verify_browser(
         for key, value in counts.items()
         if isinstance(value, int) and not isinstance(value, bool)
     }
+
+
+def _verify_goal_browser(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    artifact_dir: Path,
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    request = BrowserVerificationRequest(
+        repo_root=config.repo_root,
+        frontend_url=FRONTEND_URL,
+        room_ids=tuple(state.room_ids),
+        artifact_dir=artifact_dir,
+        timeout_s=config.browser_timeout_s,
+        environment=env,
+        goal_memory=True,
+    )
+    payload = (
+        deps.browser_verifier(request)
+        if deps.browser_verifier is not None
+        else _default_browser_verify(request, deps)
+    )
+    expected = {"schema_version", "consumer", "headed", "viewports", "digest"}
+    if (
+        set(payload) != expected
+        or payload.get("schema_version") != GOAL_BROWSER_EVIDENCE_SCHEMA
+        or payload.get("consumer") != GOAL_BROWSER_CONSUMER
+        or payload.get("headed") is not True
+        or not isinstance(payload.get("viewports"), Mapping)
+    ):
+        raise SoakError("soak_browser_evidence_invalid")
+    viewports = payload["viewports"]
+    expected_viewports = {
+        "640x900": (640, 900),
+        "1280x720": (1280, 720),
+        "1440x900": (1440, 900),
+    }
+    if set(viewports) != set(expected_viewports):
+        raise SoakError("soak_browser_evidence_invalid")
+    expected_item_keys = {
+        "width",
+        "height",
+        "room_count",
+        "refresh_count",
+        "console_error_count",
+        "page_error_count",
+        "http_5xx_count",
+        "native_snapshot_count",
+        "native_capabilities_count",
+        "history_partial_count",
+        "digest",
+    }
+    mapped: list[dict[str, int]] = []
+    for key, dimensions in expected_viewports.items():
+        item = viewports.get(key)
+        if not isinstance(item, Mapping) or set(item) != expected_item_keys:
+            raise SoakError("soak_browser_evidence_invalid")
+        numeric = {name: item.get(name) for name in expected_item_keys - {"digest"}}
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in numeric.values()
+        ):
+            raise SoakError("soak_browser_evidence_invalid")
+        digest = item.get("digest")
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+            or digest != _canonical_digest_json(numeric)
+        ):
+            raise SoakError("soak_browser_evidence_invalid")
+        if (
+            (numeric["width"], numeric["height"]) != dimensions
+            or numeric["room_count"] != len(state.room_ids)
+            or numeric["refresh_count"] != len(state.room_ids)
+            or numeric["console_error_count"] != 0
+            or numeric["page_error_count"] != 0
+            or numeric["http_5xx_count"] != 0
+            or numeric["native_snapshot_count"] != len(state.room_ids) * 2
+            or numeric["native_capabilities_count"] != len(state.room_ids) * 2
+            or numeric["history_partial_count"] != len(state.room_ids) * 2
+        ):
+            raise SoakError("soak_browser_evidence_invalid")
+        mapped.append(
+            {
+                "width": dimensions[0],
+                "height": dimensions[1],
+                "refreshes": numeric["refresh_count"],
+                "console_errors": numeric["console_error_count"],
+                "page_errors": numeric["page_error_count"],
+                "current_state_available": min(
+                    numeric["native_snapshot_count"],
+                    numeric["native_capabilities_count"],
+                ),
+                "history_fabricated": 0,
+            }
+        )
+    top_digest = _canonical_digest_json(
+        {
+            "consumer": GOAL_BROWSER_CONSUMER,
+            "headed": True,
+            "viewports": viewports,
+        }
+    )
+    if payload.get("digest") != top_digest:
+        raise SoakError("soak_browser_evidence_invalid")
+    return {"headed": True, "viewports": mapped}
 
 
 def _parse_stamp(value: object) -> datetime | None:
@@ -2526,6 +4084,238 @@ def _run_live(
     return evidence
 
 
+def _run_goal_memory_live(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    spec: LiveProfileSpec,
+    runtime_root: Path,
+    artifact_dir: Path,
+    env: Mapping[str, str],
+    before: RepositorySnapshot,
+    state: _LiveState,
+) -> Mapping[str, Any]:
+    started = deps.monotonic()
+    state.run_started_monotonic = started
+    _start_workroom(config, deps, state, runtime_root, env)
+    _create_rooms(spec, deps, state)
+    offsets = [0.0, 0.0, spec.minimum_duration_s / 2, spec.minimum_duration_s]
+    for wave, offset in enumerate(offsets):
+        _wait_for_wave_offset(
+            config,
+            deps,
+            state,
+            runtime_root,
+            env,
+            run_started_at=started,
+            offset_s=offset,
+        )
+        if wave == 3:
+            cache_event = _reset_projection_cache_and_wait_recovery(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
+            _record_chaos(state, event=cache_event, recovery_wave_settled=True)
+        if wave == 2:
+            state.memory_fault_proof = _begin_memoryos_fault(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
+            paused_runner = _pause_runner(config, deps, runtime_root, env)
+            try:
+                _assert_memory_fault_active(
+                    config,
+                    deps,
+                    runtime_root,
+                    env,
+                    state.memory_fault_proof,
+                )
+                correlations = _post_wave(spec, deps, state, wave=wave)
+                _record_memory_fault_backlog(
+                    runtime_root / "chat.db",
+                    state.memory_fault_proof,
+                    correlations,
+                )
+                memory_event = _wait_memoryos_recovery(
+                    config,
+                    deps,
+                    state,
+                    runtime_root,
+                    env,
+                    state.memory_fault_proof,
+                )
+            finally:
+                _resume_runner(deps, paused_runner)
+            _wait_wave_settled(config, deps, state, runtime_root, env, correlations)
+            _record_chaos(state, event=memory_event, recovery_wave_settled=True)
+        else:
+            if wave == 1:
+                _resume_goal_for_hold(config, deps, state)
+            correlations = _post_wave(spec, deps, state, wave=wave)
+            if wave == 0:
+                event = _kill_one_provider(
+                    config,
+                    deps,
+                    state,
+                    runtime_root,
+                    env,
+                    run_started_at=started,
+                )
+            elif wave == 1:
+                event = _kill_runner_and_wait_recovery(
+                    config,
+                    deps,
+                    state,
+                    runtime_root,
+                    env,
+                    run_started_at=started,
+                )
+                _prove_goal_hold_and_release(
+                    config,
+                    deps,
+                    state,
+                    runtime_root,
+                    correlations,
+                )
+            else:
+                event = None
+            _wait_wave_settled(config, deps, state, runtime_root, env, correlations)
+            if event is not None:
+                _record_chaos(state, event=event, recovery_wave_settled=True)
+        if wave == 0:
+            _sample_runtime(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                force_resource=True,
+            )
+            if not state.process_samples:
+                raise SoakError("soak_resource_warmup_marker_missing")
+            state.warmup_cutoff_ms = state.process_samples[-1].offset_ms
+            _prepare_goal_native_capabilities(config, deps, state, runtime_root)
+    if deps.monotonic() - started < spec.minimum_duration_s:
+        _wait_for_wave_offset(
+            config,
+            deps,
+            state,
+            runtime_root,
+            env,
+            run_started_at=started,
+            offset_s=spec.minimum_duration_s,
+        )
+    _wait_for_memory_evidence(config, deps, state, runtime_root, env)
+    browser = _verify_goal_browser(config, deps, state, artifact_dir, env)
+    _sample_runtime(config, deps, state, runtime_root, env, force_resource=True)
+    if not state.host_delivery_evidence_seen:
+        raise SoakError("soak_host_active_delivery_evidence_missing")
+    state.max_active_deliveries = max(
+        state.max_active_deliveries,
+        _attempt_concurrency_peak(runtime_root / "chat.db", state.room_ids),
+    )
+    after = deps.repository_snapshot(config.repo_root)
+    base = _database_evidence(
+        runtime_root / "chat.db",
+        state.room_ids,
+        state=state,
+        provider_orphans=_provider_orphan_count(
+            runtime_root,
+            state.room_ids,
+            deps.runtime_provider_pids,
+        ),
+    )
+    if (
+        after.head != before.head
+        or not after.clean
+        or after.content_digest != before.content_digest
+        or after.worktree_inventory_digest != before.worktree_inventory_digest
+    ):
+        raise SoakError("soak_worktree_changed")
+    database = runtime_root / "chat.db"
+    resource = _resource_evidence(
+        state.process_samples,
+        warmup_cutoff_ms=state.warmup_cutoff_ms,
+    )
+    native = state.goal_memory_evidence
+    participants = native.get("participants")
+    if not isinstance(participants, list):
+        raise SoakError("soak_codex_native_evidence_missing")
+    with _connect_readonly(database) as conn:
+        action_rows = conn.execute(
+            """select capability_id, status from room_codex_bridge_actions
+                 where conversation_id in (?,?,?,?)""",
+            tuple(state.room_ids),
+        ).fetchall()
+    applied = Counter(
+        str(row["capability_id"]) for row in action_rows if row["status"] == "applied"
+    )
+    if (
+        applied["settings_update"] != 8
+        or applied["console_turn_start"] != 2
+        or applied["turn_steer"] < 1
+        or applied["review_start"] < 1
+    ):
+        raise SoakError("soak_codex_native_action_evidence_incomplete")
+    evidence_native = {
+        "participant_count": len(participants),
+        "settings_participants_covered": applied["settings_update"],
+        "settings_assignment_digest": native["settings_assignment_digest"],
+        "distinct_settings_combinations": native["distinct_settings_combinations"],
+        "max_effort_observed": native["max_effort_observed"],
+        "goal_auto_continuations": native["goal_auto_continuations"],
+        "goal_terminal_state": native["goal_terminal_state"],
+        "goal_hold_claim_violations": native["goal_hold_claim_violations"],
+        "goal_resume_count": native["goal_resume_count"],
+        "goal_resume_max_ms": native["goal_resume_max_ms"],
+        "other_agent_root_deliveries": native["other_agent_root_deliveries"],
+        "peer_wait_projections": native["peer_wait_projections"],
+        "steer_actions": applied["turn_steer"],
+        "review_actions": applied["review_start"],
+    }
+    snapshot = _snapshot_digest(before)
+    after_snapshot = _snapshot_digest(after)
+    return {
+        "schema_version": "room_goal_memory_soak_evidence/v1",
+        "monotonic_elapsed_ms": max(0, round((deps.monotonic() - started) * 1000)),
+        "counts": _map_goal_counts(base, state),
+        "latency_samples_ms": {
+            key: [int(item["latency_ms"]) for item in base["latency_samples_ms"][key]]
+            for key in ("post_to_claim", "post_to_outcome", "post_to_settled")
+        },
+        "native": evidence_native,
+        "numeric_usage": _goal_numeric_usage(deps, state.room_ids),
+        "memory": _goal_memory_contract_evidence(database, state.room_ids, state=state),
+        "faults": _map_goal_faults(state.chaos_events),
+        "browser": browser,
+        "resources": {
+            **resource,
+            "database_bytes": int(base["storage"]["database_bytes"]),
+            "wal_bytes": int(base["storage"]["wal_bytes"]),
+            "sqlite_integrity": base["storage"]["sqlite_integrity"],
+        },
+        "worktree": {
+            "sentinel_before_digest": snapshot,
+            "sentinel_after_digest": after_snapshot,
+            "repository_before_digest": snapshot,
+            "repository_after_digest": after_snapshot,
+            "git_status_before_digest": _digest_json(
+                {"clean": before.clean, "inventory": before.worktree_inventory_digest}
+            ),
+            "git_status_after_digest": _digest_json(
+                {"clean": after.clean, "inventory": after.worktree_inventory_digest}
+            ),
+        },
+    }
+
+
 def _snapshot_digest(snapshot: RepositorySnapshot) -> str:
     canonical = "\0".join(
         (
@@ -2629,14 +4419,23 @@ def _write_cli_error(path: Path, payload: Mapping[str, Any]) -> None:
 
 def _safe_result_strings(payload: object, forbidden: Sequence[str]) -> bool:
     if isinstance(payload, Mapping):
-        return all(
-            isinstance(key, str)
-            and "token" not in key.lower()
-            and "path" not in key.lower()
-            and key.lower() != "pid"
-            and _safe_result_strings(value, forbidden)
-            for key, value in payload.items()
-        )
+        for key, value in payload.items():
+            if not isinstance(key, str) or "path" in key.lower() or key.lower() == "pid":
+                return False
+            if "token" in key.lower():
+                if key not in {
+                    "input_tokens",
+                    "cached_input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                }:
+                    return False
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    return False
+                continue
+            if not _safe_result_strings(value, forbidden):
+                return False
+        return True
     if isinstance(payload, list | tuple):
         return all(_safe_result_strings(item, forbidden) for item in payload)
     if isinstance(payload, str):
@@ -2673,7 +4472,16 @@ def run_soak(
     cleanup_required = False
     cleanup_ok = True
     try:
-        profile = deps.get_profile(config.profile_id)
+        if any(
+            value is not None and value <= 0
+            for value in (config.goal_guard_wall_s, config.goal_guard_idle_s)
+        ):
+            raise SoakError("soak_goal_guard_invalid", blocked=True)
+        profile = (
+            LIVE_PROFILES[GOAL_MEMORY_PROFILE_ID]
+            if config.profile_id == GOAL_MEMORY_PROFILE_ID
+            else deps.get_profile(config.profile_id)
+        )
         before = _preflight(config, deps, runtime_root, result_path)
         if config.profile_id == "ci-sim":
             runtime_root.mkdir(parents=True, exist_ok=True)
@@ -2685,16 +4493,10 @@ def run_soak(
             cleanup_required = True
             # _run_live owns a private state.  The manager is recovered for cleanup
             # from the manifest by xmuse-workroom stop even if an exception escapes.
-            evidence = _run_live(
-                config,
-                deps,
-                spec,
-                runtime_root,
-                artifact_dir,
-                env,
-                before,
-                state,
+            run = (
+                _run_goal_memory_live if config.profile_id == GOAL_MEMORY_PROFILE_ID else _run_live
             )
+            evidence = run(config, deps, spec, runtime_root, artifact_dir, env, before, state)
     except KeyboardInterrupt:
         error = ("soak_interrupted", False)
     except SoakError as exc:
@@ -2719,12 +4521,23 @@ def run_soak(
         return result
     finished_at = deps.now()
     try:
-        result = deps.build_result(
-            profile=profile,
-            evidence=evidence,
-            started_at=started_at,
-            finished_at=finished_at,
-        )
+        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+            manifest = _goal_manifest(
+                config,
+                deps,
+                state,
+                before,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            result = deps.build_result(manifest=manifest, evidence=evidence)
+        else:
+            result = deps.build_result(
+                profile=profile,
+                evidence=evidence,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
         result = deps.validate_result(result)
         deps.evaluate_result(result)
     except Exception:
@@ -2755,7 +4568,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "profile",
-        choices=("ci-sim", "live-short", "live-soak", "memory-recovery"),
+        choices=(
+            "ci-sim",
+            "live-short",
+            "live-soak",
+            "memory-recovery",
+            GOAL_MEMORY_PROFILE_ID,
+        ),
     )
     parser.add_argument(
         "--repo-root",
@@ -2771,6 +4590,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--readiness-timeout-s", type=float, default=120.0)
     parser.add_argument("--settle-timeout-s", type=float, default=1200.0)
     parser.add_argument("--browser-timeout-s", type=float, default=300.0)
+    parser.add_argument(
+        "--goal-guard-wall-s",
+        type=float,
+        help="optional outer soak wall guard for native Goal observation",
+    )
+    parser.add_argument(
+        "--goal-guard-idle-s",
+        type=float,
+        help="optional outer soak idle guard reset by native progress events",
+    )
     return parser
 
 
@@ -2779,6 +4608,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if min(args.readiness_timeout_s, args.settle_timeout_s, args.browser_timeout_s) <= 0:
         parser.error("timeouts must be positive")
+    if any(
+        value is not None and value <= 0
+        for value in (args.goal_guard_wall_s, args.goal_guard_idle_s)
+    ):
+        parser.error("Goal guard limits must be positive")
     result = run_soak(
         SoakConfig(
             repo_root=args.repo_root,
@@ -2792,6 +4626,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             readiness_timeout_s=args.readiness_timeout_s,
             settle_timeout_s=args.settle_timeout_s,
             browser_timeout_s=args.browser_timeout_s,
+            goal_guard_wall_s=args.goal_guard_wall_s,
+            goal_guard_idle_s=args.goal_guard_idle_s,
         )
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True), flush=True)

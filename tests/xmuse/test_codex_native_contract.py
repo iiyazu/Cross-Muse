@@ -79,7 +79,6 @@ def test_console_plan_turn_preserves_read_only_policy_and_native_mode() -> None:
         "input": [{"type": "text", "text": "Create a plan"}],
         "approvalPolicy": "never",
         "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
-        "summary": "concise",
         "collaborationMode": {
             "mode": "plan",
             "settings": {

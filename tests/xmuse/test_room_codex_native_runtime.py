@@ -6,12 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
+import xmuse_core.chat.room_codex_native_runtime as native_runtime_module
 from tests.xmuse.room_fixtures import (
     RoomTestStore,
 )
 from tests.xmuse.room_fixtures import (
     TestConversation as RoomFixtureConversation,
 )
+from xmuse_core.agents.codex_native_adapter import NativeInvokeResult
+from xmuse_core.agents.codex_native_contract import NativeInvocation
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_codex_bridge import (
     RoomCodexBridgeError,
@@ -183,14 +186,22 @@ class _QueueEventStream(_NeverEventStream):
 
 
 class _FailingNativeSessionLayer:
-    def __init__(self, snapshot: dict[str, object]) -> None:
+    def __init__(self, snapshot: dict[str, object], *, replace_on_force: bool = True) -> None:
         self.snapshot = snapshot
         self.stream = _NeverEventStream()
+        self.ensure_force_rebind: list[bool] = []
+        self.incarnation = 1
+        self.replace_on_force = replace_on_force
 
     def prompt_fingerprint_for_resume(self, **kwargs: object) -> str:
         return str(kwargs["proposed_fingerprint"])
 
-    async def ensure_conversation_session(self, **_kwargs: object) -> object:
+    async def ensure_conversation_session(self, **kwargs: object) -> object:
+        force_rebind = kwargs.get("force_rebind") is True
+        self.ensure_force_rebind.append(force_rebind)
+        if force_rebind and self.replace_on_force:
+            self.incarnation += 1
+            self.stream = _NeverEventStream()
         return object()
 
     def require_live_provider_session_binding(self, **_kwargs: object) -> object:
@@ -205,8 +216,268 @@ class _FailingNativeSessionLayer:
     def subscribe_native_events(self, _god_session_id: str) -> object:
         return self.stream
 
+    def native_session_incarnation(self, _god_session_id: str) -> int:
+        return self.incarnation
+
     async def invoke_native(self, *_args: object, **_kwargs: object) -> object:
         raise RoomCodexBridgeError("codex_native_runtime_test_failure")
+
+
+class _SuccessfulNativeSessionLayer(_FailingNativeSessionLayer):
+    def __init__(self, snapshot: dict[str, object]) -> None:
+        super().__init__(snapshot)
+        self.invoke_count = 0
+        self.fail_next_snapshot = False
+        self.fail_post_invoke_snapshot = False
+
+    async def native_snapshot(self, god_session_id: str) -> dict[str, object]:
+        if self.fail_next_snapshot:
+            self.fail_next_snapshot = False
+            raise RuntimeError("private provider session ended")
+        if self.fail_post_invoke_snapshot and self.invoke_count > 0:
+            raise RuntimeError("private post snapshot failure")
+        return await super().native_snapshot(god_session_id)
+
+    async def invoke_native(self, *_args: object, **_kwargs: object) -> object:
+        self.invoke_count += 1
+        return NativeInvokeResult(
+            NativeInvocation("goal_get", "thread/goal/read", {}),
+            {"acknowledged": True},
+        )
+
+
+class _BlockingNativeSessionLayer(_FailingNativeSessionLayer):
+    def __init__(self, snapshot: dict[str, object]) -> None:
+        super().__init__(snapshot)
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
+        self.ensure_count = 0
+        self.active_ensures = 0
+        self.max_active_ensures = 0
+        self.cancelled_ensures = 0
+
+    async def ensure_conversation_session(self, **kwargs: object) -> object:
+        self.ensure_force_rebind.append(kwargs.get("force_rebind") is True)
+        self.ensure_count += 1
+        self.active_ensures += 1
+        self.max_active_ensures = max(self.max_active_ensures, self.active_ensures)
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled_ensures += 1
+            raise
+        finally:
+            self.active_ensures -= 1
+        return object()
+
+
+class _DeadRecoverySessionLayer(_FailingNativeSessionLayer):
+    async def ensure_conversation_session(self, **kwargs: object) -> object:
+        result = await super().ensure_conversation_session(**kwargs)
+        if kwargs.get("force_rebind") is True:
+            raise RuntimeError("private dead session could not be replaced")
+        return result
+
+
+def _accepting_snapshot(session: str | None = None) -> dict[str, object]:
+    return {
+        "goal": None,
+        "settings": {"model": "gpt-test", "effort": "medium"},
+        "active_turn": False,
+        "guards": {
+            "session": session or opaque_guard("session"),
+            "goal": opaque_guard("goal"),
+            "settings": opaque_guard("settings"),
+            "turn": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_reconcile_observation_timeout_keeps_participant_singleflight_alive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "chat.db"
+    _conversation, participant = _room(path)
+    layer = _BlockingNativeSessionLayer(_accepting_snapshot())
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    monkeypatch.setattr(native_runtime_module, "_RECONCILE_TIMEOUT_S", 0.01)
+    try:
+        await runtime.reconcile_all()
+        task = runtime._reconcile_tasks[participant.participant_id]
+        assert task.done() is False
+        assert layer.cancelled_ensures == 0
+
+        await runtime.reconcile_all()
+
+        assert runtime._reconcile_tasks[participant.participant_id] is task
+        assert layer.ensure_count == 1
+        assert layer.cancelled_ensures == 0
+        layer.release.set()
+        await asyncio.wait_for(task, timeout=1)
+    finally:
+        layer.release.set()
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_uses_one_persistent_four_slot_semaphore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, _participant = _room(path)
+    participants = ParticipantStore(path)
+    for index in range(4):
+        participants.add(
+            conversation_id=conversation.id,
+            role=f"specialist-{index}",
+            display_name=f"Specialist {index}",
+            cli_kind="codex",
+            model="gpt-test",
+        )
+    layer = _BlockingNativeSessionLayer(_accepting_snapshot())
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    monkeypatch.setattr(native_runtime_module, "_RECONCILE_TIMEOUT_S", 0.01)
+    try:
+        await runtime.reconcile_all()
+        assert layer.ensure_count == 4
+        assert layer.max_active_ensures == 4
+
+        await runtime.reconcile_all()
+        assert layer.ensure_count == 4
+        assert layer.max_active_ensures == 4
+
+        layer.release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*runtime._reconcile_tasks.values()),
+            timeout=1,
+        )
+        assert layer.ensure_count == 5
+        assert layer.max_active_ensures == 4
+    finally:
+        layer.release.set()
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_native_unavailable_backoff_skips_dead_session_ensure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, participant = _room(path)
+    session = opaque_guard("session")
+    layer = _DeadRecoverySessionLayer(_accepting_snapshot(session))
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    bridge = RoomCodexBridgeStore(path)
+    try:
+        await runtime.reconcile_all()
+        bridge.begin_reconcile(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            session_guard=session,
+            reason_code="codex_native_unavailable",
+        )
+        bridge.apply_native_snapshot(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            expected_session_guard=session,
+            state="native_unavailable",
+            goal_guard=None,
+            settings_guard=None,
+            active_turn_guard=None,
+            reason_code="codex_native_unavailable",
+        )
+
+        await runtime.reconcile_all()
+        assert layer.ensure_force_rebind == [False, True]
+
+        await runtime.reconcile_all()
+        assert layer.ensure_force_rebind == [False, True]
+        hold = bridge.get_hold(participant.participant_id)
+        assert hold is not None and hold["state"] == "native_unavailable"
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stopped_participant_reconcile_and_watcher_are_retired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "chat.db"
+    _conversation, participant = _room(path)
+    layer = _BlockingNativeSessionLayer(_accepting_snapshot())
+    layer.release.set()
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    monkeypatch.setattr(native_runtime_module, "_RECONCILE_TIMEOUT_S", 0.01)
+    try:
+        await runtime.reconcile_all()
+        prior_stream = layer.stream
+        layer.release.clear()
+        await runtime.reconcile_all()
+        task = runtime._reconcile_tasks[participant.participant_id]
+        assert task.done() is False
+
+        ParticipantStore(path).update_status(participant.participant_id, "stopped")
+        await runtime.reconcile_all()
+
+        assert task.cancelled() is True
+        assert layer.cancelled_ensures == 1
+        assert prior_stream.closed is True
+        assert participant.participant_id not in runtime._reconcile_tasks
+        assert participant.participant_id not in runtime._watchers
+    finally:
+        layer.release.set()
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_joins_background_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "chat.db"
+    _conversation, participant = _room(path)
+    layer = _BlockingNativeSessionLayer(_accepting_snapshot())
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    monkeypatch.setattr(native_runtime_module, "_RECONCILE_TIMEOUT_S", 0.01)
+    await runtime.reconcile_all()
+    task = runtime._reconcile_tasks[participant.participant_id]
+
+    await runtime.shutdown()
+
+    assert task.cancelled() is True
+    assert layer.cancelled_ensures == 1
+    assert runtime._reconcile_tasks == {}
+    assert runtime._watchers == {}
 
 
 @pytest.mark.asyncio
@@ -255,13 +526,255 @@ async def test_failed_native_action_restores_hold_from_observed_snapshot(tmp_pat
         assert hold is not None and hold["state"] == "accepting"
         with RoomDatabase(path).connect(readonly=True) as conn:
             row = conn.execute(
-                "select status, reason_code from room_codex_bridge_actions where action_id = ?",
+                """select status, reason_code, execution_stage, failure_stage
+                   from room_codex_bridge_actions where action_id = ?""",
                 (action["action_id"],),
             ).fetchone()
-        assert tuple(row) == ("failed", "codex_native_runtime_test_failure")
+        assert tuple(row) == (
+            "failed",
+            "codex_native_action_result_unknown",
+            "completed",
+            "dispatching",
+        )
     finally:
         await runtime.shutdown()
     assert layer.stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_action_rebinds_once_before_dispatch_and_invokes_provider_exactly_once(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, participant = _room(path)
+    session = opaque_guard("session")
+    goal = opaque_guard("goal")
+    settings = opaque_guard("settings")
+    layer = _SuccessfulNativeSessionLayer(
+        {
+            "goal": None,
+            "settings": {"model": "gpt-test", "effort": "medium"},
+            "active_turn": False,
+            "guards": {
+                "session": session,
+                "goal": goal,
+                "settings": settings,
+                "turn": None,
+            },
+        }
+    )
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    bridge = RoomCodexBridgeStore(path)
+    try:
+        await runtime.reconcile_all()
+        action, _created = bridge.request_action(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            capability_id="goal_get",
+            safe_request={},
+            client_action_id="action-rebind",
+            expected_session_guard=session,
+            expected_goal_guard=goal,
+            expected_settings_guard=settings,
+        )
+        layer.fail_next_snapshot = True
+
+        assert await runtime.pump_action_once() is True
+
+        with RoomDatabase(path).connect(readonly=True) as conn:
+            row = conn.execute(
+                """select status, execution_stage, failure_stage
+                   from room_codex_bridge_actions where action_id = ?""",
+                (action["action_id"],),
+            ).fetchone()
+        assert tuple(row) == ("applied", "completed", None)
+        assert layer.ensure_force_rebind[-2:] == [False, True]
+        assert layer.invoke_count == 1
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_provider_ack_is_durable_before_best_effort_post_snapshot(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, participant = _room(path)
+    session = opaque_guard("session")
+    goal = opaque_guard("goal")
+    settings = opaque_guard("settings")
+    layer = _SuccessfulNativeSessionLayer(
+        {
+            "goal": None,
+            "settings": {"model": "gpt-test", "effort": "medium"},
+            "active_turn": False,
+            "guards": {
+                "session": session,
+                "goal": goal,
+                "settings": settings,
+                "turn": None,
+            },
+        }
+    )
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    bridge = RoomCodexBridgeStore(path)
+    try:
+        await runtime.reconcile_all()
+        action, _created = bridge.request_action(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            capability_id="goal_get",
+            safe_request={},
+            client_action_id="action-post-snapshot",
+            expected_session_guard=session,
+            expected_goal_guard=goal,
+            expected_settings_guard=settings,
+        )
+        layer.fail_post_invoke_snapshot = True
+
+        assert await runtime.pump_action_once() is True
+
+        with RoomDatabase(path).connect(readonly=True) as conn:
+            row = conn.execute(
+                """select status, execution_stage, reason_code, ack_summary_json
+                   from room_codex_bridge_actions where action_id = ?""",
+                (action["action_id"],),
+            ).fetchone()
+        assert tuple(row) == (
+            "applied",
+            "completed",
+            None,
+            '{"acknowledged":true}',
+        )
+        assert layer.invoke_count == 1
+        hold = bridge.get_hold(participant.participant_id)
+        assert hold is not None and hold["state"] == "native_unavailable"
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_native_unavailable_rebinds_dead_session_and_replaces_watcher(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, participant = _room(path)
+    session = opaque_guard("session")
+    layer = _FailingNativeSessionLayer(
+        {
+            "goal": None,
+            "settings": {"model": "gpt-test", "effort": "medium"},
+            "active_turn": False,
+            "guards": {
+                "session": session,
+                "goal": opaque_guard("goal"),
+                "settings": opaque_guard("settings"),
+                "turn": None,
+            },
+        }
+    )
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    bridge = RoomCodexBridgeStore(path)
+    try:
+        await runtime.reconcile_all()
+        prior_stream = layer.stream
+        bridge.begin_reconcile(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            session_guard=session,
+            reason_code="codex_native_unavailable",
+        )
+        bridge.apply_native_snapshot(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            expected_session_guard=session,
+            state="native_unavailable",
+            goal_guard=None,
+            settings_guard=None,
+            active_turn_guard=None,
+            reason_code="codex_native_unavailable",
+        )
+
+        await runtime.reconcile_all()
+
+        hold = bridge.get_hold(participant.participant_id)
+        assert hold is not None and hold["state"] == "accepting"
+        assert layer.ensure_force_rebind == [False, True]
+        assert prior_stream.closed is True
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_late_rebind_does_not_replace_watcher_for_same_incarnation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    conversation, participant = _room(path)
+    session = opaque_guard("session")
+    layer = _FailingNativeSessionLayer(
+        {
+            "goal": None,
+            "settings": {"model": "gpt-test", "effort": "medium"},
+            "active_turn": False,
+            "guards": {
+                "session": session,
+                "goal": opaque_guard("goal"),
+                "settings": opaque_guard("settings"),
+                "turn": None,
+            },
+        },
+        replace_on_force=False,
+    )
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-1",
+    )
+    bridge = RoomCodexBridgeStore(path)
+    try:
+        await runtime.reconcile_all()
+        prior_stream = layer.stream
+        bridge.begin_reconcile(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            session_guard=session,
+            reason_code="codex_native_unavailable",
+        )
+        bridge.apply_native_snapshot(
+            conversation_id=conversation.id,
+            participant_id=participant.participant_id,
+            expected_session_guard=session,
+            state="native_unavailable",
+            goal_guard=None,
+            settings_guard=None,
+            active_turn_guard=None,
+            reason_code="codex_native_unavailable",
+        )
+
+        await runtime.reconcile_all()
+
+        assert layer.ensure_force_rebind == [False, True]
+        assert prior_stream.closed is False
+        assert runtime._watchers[participant.participant_id][1] is prior_stream
+    finally:
+        await runtime.shutdown()
 
 
 @pytest.mark.asyncio
