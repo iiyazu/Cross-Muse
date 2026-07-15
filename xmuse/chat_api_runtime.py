@@ -163,10 +163,25 @@ def ensure_workroom_room_runtime(
     base_dir: Path,
     execution_root: Path,
 ) -> dict[str, object]:
-    """Single-flight entrypoint for the default Room-only runtime."""
+    """Return a ready Room runtime or single-flight the recovery path.
+
+    Human speech is durable before this helper runs.  A healthy managed
+    runtime is therefore a read-mostly fast path: serializing every concurrent
+    Room POST behind the process-start lock can exceed the fixed Next deadline
+    even though no recovery is needed.  Degraded/stopped callers still enter
+    the root-scoped lock and re-inspect there before the one allowed ensure.
+    """
+
+    config = _workroom_room_runtime_config(base_dir, execution_root)
+    current = inspect_room_runtime(config)
+    if current.get("state") == "ready" and current.get("ready") is True:
+        return current
 
     with _locked_workroom_runtime_start(base_dir):
         config = _workroom_room_runtime_config(base_dir, execution_root)
+        current = inspect_room_runtime(config)
+        if current.get("state") == "ready" and current.get("ready") is True:
+            return current
         try:
             return ensure_room_runtime(config)
         except RoomRuntimeStartError as exc:
