@@ -194,11 +194,14 @@ class FakeStore:
         }
 
     def resolve_recall_message_source(self, **kwargs: Any) -> dict[str, Any]:
-        if self.reject_source or kwargs["item_text"] != self.expected_text:
+        if self.reject_source or (
+            not kwargs.get("derived", False) and kwargs["item_text"] != self.expected_text
+        ):
             raise _StoreError("room_memory_recall_source_rejected")
         assert kwargs["session_id"] == "memory-session-1"
         assert kwargs["source_message_ids"] == ("message-1",)
-        assert kwargs["content_sha256"] == _sha(self.expected_text)
+        assert kwargs["content_sha256"] == _sha(kwargs["item_text"])
+        assert kwargs["derived"] is True
         return {
             "source_type": "room_message",
             "document_id": "xmuse-room-activity-activity-prior",
@@ -370,6 +373,21 @@ def test_full_local_v2_message_source_is_reproved_to_room_activity() -> None:
     assert evidence.status == "ok"
     assert evidence.schema_version == "memoryos_source_evidence/v2"
     assert evidence.items[0].document_id == "xmuse-room-activity-activity-prior"
+    assert evidence.items[0].source_activity_ids == ("activity-prior",)
+
+
+def test_full_local_v2_derived_message_text_uses_complete_source_refs_not_excerpt() -> None:
+    store = FakeStore()
+    item = _v2_message_item()
+    item["text"] = "derived episode summary that is not a source excerpt"
+    item["content_sha256"] = _sha(item["text"])
+    adapter = FakeAdapter(_v2_payload(item))
+    adapter.profile = "full-local"
+
+    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert evidence.items[0].derived is True
     assert evidence.items[0].source_activity_ids == ("activity-prior",)
 
 

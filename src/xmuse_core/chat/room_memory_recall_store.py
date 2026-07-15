@@ -180,6 +180,7 @@ def resolve_recall_message_source_conn(
     source_message_ids: Sequence[str],
     content_sha256: str,
     item_text: str,
+    derived: bool = False,
 ) -> dict[str, Any]:
     """Resolve MemoryOS message refs back to Room activities.
 
@@ -197,6 +198,7 @@ def resolve_recall_message_source_conn(
         or not session_id
         or not isinstance(item_text, str)
         or not item_text
+        or not isinstance(derived, bool)
     ):
         raise RoomMemoryStoreError("room_memory_recall_source_rejected")
     ids = tuple(source_message_ids)
@@ -230,7 +232,11 @@ def resolve_recall_message_source_conn(
         )
         for row in rows
     ]
-    if not any(item_text in str(source["content"]) for source in activities):
+    # Exact message evidence must remain a byte-provable excerpt. Recall/page
+    # evidence is explicitly derived and untrusted: its text cannot be an
+    # excerpt by definition, so authority is limited to proving every complete
+    # source ref through the Room delivery ledger.
+    if not derived and not any(item_text in str(source["content"]) for source in activities):
         raise RoomMemoryStoreError("room_memory_recall_source_rejected")
     if sha256_text(item_text) != content_sha256:
         raise RoomMemoryStoreError("room_memory_recall_source_rejected")
@@ -317,6 +323,7 @@ class RoomMemoryRecallStore:
         source_message_ids: Sequence[str],
         content_sha256: str,
         item_text: str,
+        derived: bool = False,
     ) -> dict[str, Any]:
         with self._database.connect(readonly=True) as conn:
             return resolve_recall_message_source_conn(
@@ -326,6 +333,7 @@ class RoomMemoryRecallStore:
                 source_message_ids=source_message_ids,
                 content_sha256=content_sha256,
                 item_text=item_text,
+                derived=derived,
             )
 
     def build_recall_request(

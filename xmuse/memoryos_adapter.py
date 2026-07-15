@@ -245,6 +245,7 @@ class RoomMemoryRecallStoreProtocol(Protocol):
         source_message_ids: Sequence[str],
         content_sha256: str,
         item_text: str,
+        derived: bool = False,
     ) -> dict[str, Any]: ...
 
     def record_attempt_memory_receipt(
@@ -1219,6 +1220,7 @@ class ArchiveOnlyRoomMemoryRuntime:
                     source_message_ids=wire.source_ids,
                     content_sha256=wire.content_sha256,
                     item_text=wire.text,
+                    derived=wire.derived,
                 )
             else:
                 if wire.document_id is None:

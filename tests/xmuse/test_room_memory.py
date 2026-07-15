@@ -315,6 +315,57 @@ def test_message_outbox_is_atomic_and_excludes_infrastructure_activity(tmp_path:
     assert delivery.count_message_outbox_by_state(conversation_id)["delivered"] == 1
 
 
+def test_derived_message_recall_proves_ledger_sources_without_claiming_exact_text(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "chat.db"
+    conversation_id = RoomTestStore(db).create_conversation("derived message memory").id
+    root = RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="authoritative source text",
+        client_request_id="derived-message-root",
+    )
+    delivery = RoomMemoryDeliveryStore(db)
+    _setup_memory_session(delivery, conversation_id)
+    claim = delivery.claim_next_message_outbox(worker_id="message-worker")
+    assert claim is not None
+    session_id = f"session-{conversation_id}"
+    delivery.complete_message_delivery(
+        message_outbox_id=claim["outbox"]["message_outbox_id"],
+        delivery_id=claim["delivery"]["delivery_id"],
+        lease_token=claim["delivery"]["lease_token"],
+        status="delivered",
+        request_digest=claim["delivery"]["request_digest"],
+        response_digest=DIGEST,
+        memoryos_message_id="memoryos-message-1",
+        memoryos_session_id=session_id,
+    )
+    recall = RoomMemoryRecallStore(db)
+    derived = "derived episode summary"
+
+    proof = recall.resolve_recall_message_source(
+        conversation_id=conversation_id,
+        session_id=session_id,
+        source_message_ids=("memoryos-message-1",),
+        content_sha256=_sha(derived),
+        item_text=derived,
+        derived=True,
+    )
+
+    assert proof["source_activities"][0]["activity_id"] == root["activity"]["activity_id"]
+    with pytest.raises(RoomMemoryStoreError) as exact:
+        recall.resolve_recall_message_source(
+            conversation_id=conversation_id,
+            session_id=session_id,
+            source_message_ids=("memoryos-message-1",),
+            content_sha256=_sha(derived),
+            item_text=derived,
+            derived=False,
+        )
+    assert exact.value.code == "room_memory_recall_source_rejected"
+
+
 def test_candidate_authority_source_guards_approval_and_no_content_spread(
     tmp_path: Path,
 ) -> None:
