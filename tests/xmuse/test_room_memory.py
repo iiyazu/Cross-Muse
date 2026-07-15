@@ -250,6 +250,71 @@ def test_visible_activity_outbox_trigger_backfill_and_idempotency(tmp_path: Path
     ]
 
 
+def test_message_outbox_is_atomic_and_excludes_infrastructure_activity(tmp_path: Path) -> None:
+    db = tmp_path / "chat.db"
+    conversation_id = RoomTestStore(db).create_conversation("message memory").id
+    root = RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="durable human speech",
+        client_request_id="message-root",
+    )
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        message_rows = conn.execute(
+            """select activity_id, external_id, state
+               from room_memory_message_outbox where conversation_id = ?""",
+            (conversation_id,),
+        ).fetchall()
+        assert [(row["activity_id"], row["external_id"], row["state"]) for row in message_rows] == [
+            (
+                root["activity"]["activity_id"],
+                f"xmuse-room-message-{root['activity']['activity_id']}",
+                "pending",
+            )
+        ]
+        conn.execute(
+            """insert into room_activities
+               (activity_id, conversation_id, seq, activity_type, actor_kind,
+                actor_identity, causation_id, correlation_id, visibility,
+                audience_json, payload_json, delivery_mode, created_at)
+               values ('infra-message-shadow', ?, 2, 'provider.final', 'infrastructure',
+                       'provider', ?, ?, 'room', '{}', '{}', 'active', ?)""",
+            (
+                conversation_id,
+                root["activity"]["activity_id"],
+                root["activity"]["correlation_id"],
+                root["activity"]["created_at"],
+            ),
+        )
+        assert (
+            conn.execute(
+                "select count(*) from room_memory_message_outbox where conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+    # The message ledger is independently leasable and does not alter the
+    # archive document outbox created by the existing trigger.
+    delivery = RoomMemoryDeliveryStore(db)
+    _setup_memory_session(delivery, conversation_id)
+    claim = delivery.claim_next_message_outbox(worker_id="message-worker")
+    assert claim is not None
+    assert claim["message_request"]["role"] == "user"
+    assert claim["message_request"]["content"] == "durable human speech"
+    assert claim["message_request"]["external_id"].startswith("xmuse-room-message-")
+    delivery.complete_message_delivery(
+        message_outbox_id=claim["outbox"]["message_outbox_id"],
+        delivery_id=claim["delivery"]["delivery_id"],
+        lease_token=claim["delivery"]["lease_token"],
+        status="delivered",
+        request_digest=claim["delivery"]["request_digest"],
+        response_digest=DIGEST,
+    )
+    assert delivery.count_message_outbox_by_state(conversation_id)["delivered"] == 1
+
+
 def test_candidate_authority_source_guards_approval_and_no_content_spread(
     tmp_path: Path,
 ) -> None:
@@ -459,6 +524,97 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
         context_payload_sha256="sha256:" + "2" * 64,
     )
     assert bound["context_submitted_at"] is not None
+
+
+def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    db, registry, conversation_id, records, first_root, first_claims = root_and_claims(tmp_path)
+    for participant, session in records:
+        submit(
+            db,
+            registry,
+            conversation_id,
+            participant,
+            session,
+            first_claims[participant.participant_id],
+            f"settle-{participant.participant_id}",
+            outcome_type="noop",
+            outcome_payload={},
+        )
+    second_root = RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="recall the earlier decision",
+        client_request_id="second-root",
+    )
+    author, session = records[0]
+    claim = RoomKernelStore(db).claim_next_observation(
+        conversation_id=conversation_id,
+        participant_id=author.participant_id,
+        lease_owner="advisory-worker",
+    )
+    assert claim is not None
+    advisory = {
+        "advisory_id": "adv-historical-1",
+        "fingerprint": "a" * 64,
+        "proposal_type": "archive_write",
+        "content": "Earlier decision remains the Room fact.",
+        "source_refs": [
+            {
+                "source_type": "document",
+                "source_id": f"xmuse-room-activity-{first_root['activity']['activity_id']}",
+            }
+        ],
+    }
+    recall_store = RoomMemoryRecallStore(db)
+    first = recall_store.record_external_advisories(
+        conversation_id=conversation_id,
+        attempt_id=claim["attempt"]["attempt_id"],
+        advisories=[advisory],
+    )
+    assert first and first[0]["kind"] == "room_fact"
+    assert (
+        recall_store.record_external_advisories(
+            conversation_id=conversation_id,
+            attempt_id=claim["attempt"]["attempt_id"],
+            advisories=[advisory],
+        )
+        == []
+    )
+    receipts = recall_store.list_external_advisory_receipts(conversation_id)
+    assert receipts[0]["status"] == "accepted"
+    assert receipts[0]["reason_code"] == "room_memory_advisory_accepted"
+    assert receipts[0]["source_activity_ids"] == [first_root["activity"]["activity_id"]]
+    assert second_root["activity"]["activity_id"] not in receipts[0]["source_activity_ids"]
+
+
+def test_external_advisory_bridge_failure_leaves_durable_receipt(tmp_path: Path) -> None:
+    db, registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
+    recall_store = RoomMemoryRecallStore(db)
+    attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    recall_store.record_external_advisory_failure(
+        conversation_id=conversation_id,
+        attempt_id=attempt_id,
+        reason_code="memoryos_advisory_contract_invalid",
+    )
+    receipts = recall_store.list_external_advisory_receipts(conversation_id)
+    assert receipts == [
+        {
+            "schema_version": "room_memory_advisory_receipt/v1",
+            "receipt_id": receipts[0]["receipt_id"],
+            "conversation_id": conversation_id,
+            "attempt_id": attempt_id,
+            "advisory_id": "__bridge__",
+            "status": "rejected",
+            "reason_code": "memoryos_advisory_contract_invalid",
+            "candidate_digest": None,
+            "source_activity_ids": [],
+            "created_at": receipts[0]["created_at"],
+            "updated_at": receipts[0]["updated_at"],
+        }
+    ]
+    assert root["activity"]["activity_id"]
 
 
 def test_outbox_claim_uses_real_archive_contract_and_ack_replays(tmp_path: Path) -> None:

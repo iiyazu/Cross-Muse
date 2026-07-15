@@ -62,6 +62,14 @@ def test_bundled_selector_applies_role_trigger_not_for_and_none_contract():
     assert excluded.decision == "none"
     assert excluded.skill_id is None
 
+    implementation = catalog.select(
+        participant_role="execute",
+        source_text="请依据当前工作区修复代码并提交可审核候选",
+    )
+    assert implementation.decision == "selected"
+    assert implementation.skill_id == "execution-patch-authoring"
+    assert implementation.matched_terms == ("修复代码",)
+
 
 def test_explicit_marker_is_exact_first_nonempty_ascii_line_and_does_not_count_as_trigger():
     catalog = SkillCatalog.load_bundled()

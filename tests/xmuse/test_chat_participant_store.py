@@ -113,7 +113,7 @@ class TestParticipantStore:
         assert p.provider_id == "codex"
         assert p.profile_id == "god"
         assert p.cli_kind == "codex"
-        assert p.model == "gpt-5.4"
+        assert p.model == "gpt-5.6-luna"
         assert p.role_template_id is None
         assert p.status == "active"
         assert p.last_seen_at is None
@@ -456,4 +456,4 @@ class TestParticipantStore:
         participant = ParticipantStore(db_path).get("part_legacy_codex_gpt55")
 
         assert participant.cli_kind == "codex"
-        assert participant.model == "gpt-5.4"
+        assert participant.model == "gpt-5.6-luna"

@@ -23,7 +23,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from xmuse.memoryos_adapter import (
     ArchiveOnlyRoomMemoryRuntime,
@@ -33,6 +33,10 @@ from xmuse.memoryos_adapter import (
 from xmuse_core.agents.codex_app_server_transport import CODEX_ROOM_READ_ONLY_SANDBOX
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.room_codex_launcher import build_room_launchers
+from xmuse_core.chat.room_agent_stream import (
+    RoomAgentStreamCache,
+    RoomAgentStreamProjector,
+)
 from xmuse_core.chat.room_codex_native_runtime import (
     RoomCodexNativeRuntime,
     run_room_codex_native_loop,
@@ -92,6 +96,7 @@ class RoomRuntimeComposition:
     host: RoomParticipantHost
     session_layer: GodSessionLayer
     native_runtime: RoomCodexNativeRuntime
+    stream_projector: RoomAgentStreamProjector
     memory_runtime: RoomMemoryRuntime
     memory_enabled: bool
 
@@ -265,6 +270,8 @@ async def run_room_runner(
                 )
             except Exception as exc:
                 raise RoomRunnerError("room_runner_host_composition_failed") from exc
+            with suppress(Exception):
+                await composition.stream_projector.start()
             try:
                 composition.host.fence_prior_runner_attempts()
             except Exception as exc:
@@ -467,6 +474,8 @@ async def run_room_runner(
                 await asyncio.gather(host_task, return_exceptions=True)
             if composition is not None:
                 with suppress(Exception):
+                    await composition.stream_projector.shutdown()
+                with suppress(Exception):
                     await composition.native_runtime.shutdown()
                 with suppress(Exception):
                     await composition.host.shutdown()
@@ -507,6 +516,7 @@ def _compose_runtime(
         runner_generation=runner_generation,
         projection_cache=RoomCodexProjectionCache(root),
     )
+    stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
     host = RoomParticipantHost(
         root / "chat.db",
         CodexRoomObservationTransport(
@@ -516,6 +526,7 @@ def _compose_runtime(
             skill_decision_store=skill_decisions,
             execution_store=execution_store,
             memory_runtime=memory,
+            stream_projector=stream_projector,
         ),
         policy=RoomHostPolicy(
             delivery_timeout_s=delivery_timeout_s,
@@ -536,6 +547,7 @@ def _compose_runtime(
         host=host,
         session_layer=session_layer,
         native_runtime=native_runtime,
+        stream_projector=stream_projector,
         memory_runtime=memory,
         memory_enabled=memory_enabled,
     )
@@ -549,13 +561,18 @@ def _memory_runtime_from_environment(
 ) -> tuple[RoomMemoryRuntime, bool]:
     url = os.environ.get("XMUSE_MEMORYOS_URL")
     api_key = os.environ.get("XMUSE_MEMORYOS_API_KEY")
+    profile = os.environ.get("XMUSE_MEMORYOS_PROFILE", "archive-only")
     if url and api_key:
         try:
             return (
                 ArchiveOnlyRoomMemoryRuntime(
                     delivery_store,
                     recall_store,
-                    MemoryOSArchiveAdapter(base_url=url, api_key=api_key),
+                    MemoryOSArchiveAdapter(
+                        base_url=url,
+                        api_key=api_key,
+                        profile=cast(Literal["archive-only", "full-local"], profile),
+                    ),
                     worker_id=worker_id,
                 ),
                 True,

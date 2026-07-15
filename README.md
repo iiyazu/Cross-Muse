@@ -71,6 +71,14 @@ optional source-backed memory
   `room_codex_projection/v1` used by the per-participant Agent Console. Console controls are
   rendered only from native capability descriptors; their slash aliases do not add xmuse
   semantics or enter the shared Room composer.
+- While a Room turn is active, `room_agent_stream_projection/v1` may expose a sanitized,
+  disposable provider preview over SSE. The wire value remains bounded plain text; the browser
+  renders only closed Markdown blocks and keeps the unfinished tail lightweight. It is stored
+  outside `chat.db`, fenced to
+  the exact attempt, and disappears when the durable Room outcome is projected; it is never
+  speech, memory, execution evidence, or a fallback outcome. Visible outcomes emit the answer
+  itself before the MCP commit so the preview advances with native Codex deltas; noop/defer
+  decisions submit directly without manufacturing preview text.
 - Provider context uses `room_context_envelope/v2`: the Human root, primary source, causal
   ancestry, batch members, bounded recent burst, active roster, and frozen role persona are
   retained under a 64 KiB limit. A peer follow-up may create visible speech once; its tail is
@@ -84,11 +92,19 @@ optional source-backed memory
 - This remains a loopback-only, single-user application. Managed writes use a server-only
   `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
-The default product has no platform runner, central speaker queue, fixed role sequence,
-Dashboard, broad MCP root, self-evolution control plane, MemoryOS sidecar, or Google A2A
-transport. The Room Collaboration Protocol is xmuse's own durable collaboration model, not
-an implementation of Google A2A; a future Google A2A adapter could only be an opt-in remote
-participant transport.
+## v0.1.0 release baseline
+
+The `v0.1.0` release closed the fixed production soak with 16/16 correlations settled across
+four Rooms and eight persistent Agents. It recorded 69 provider attempts, 64 durable outcomes,
+zero duplicate outcomes, cross-Room identity/causality leaks, provider orphans, recovery
+residue, or browser-console errors. The run exercised Codex, Runner, MemoryOS, and projection
+cache failures while preserving the workspace and restoring a single runtime topology.
+
+The default startup has no platform runner, central speaker queue, fixed role sequence,
+Dashboard, broad MCP root, self-evolution control plane, enabled MemoryOS sidecar, or Google
+A2A transport. The Room Collaboration Protocol is xmuse's own durable collaboration model,
+not an implementation of Google A2A; a future Google A2A adapter could only be an opt-in
+remote participant transport.
 MemoryOS is an explicit `--memory` archive-only option; it does not expand the Room Agent's
 single MCP tool or filesystem/network permissions. Retired implementations live only in Git
 history.
@@ -177,10 +193,11 @@ rebuild.
 ## Verify
 
 ```bash
-TMPDIR=/tmp uv run pytest -q
+PYTHONWARNINGS=error TMPDIR=/tmp uv run pytest -q
 uv run ruff check .
-uv run mypy --explicit-package-bases xmuse src/xmuse_core \
-  scripts/room_first_real_acceptance.py scripts/room_soak_chaos.py
+uv run ruff format --check .
+uv run mypy --explicit-package-bases xmuse src/xmuse_core scripts
+uv build
 cd frontend
 npm ci && npm run typecheck && npm test && npm run lint && npm run build && npm run test:e2e
 ```
@@ -208,6 +225,16 @@ so a passing receipt proves archival MemoryOS evidence instead of duplicating Ro
 flag is mandatory. Results use `room_soak_chaos_result/v1` and contain only aggregate
 counts, percentiles, stable reason codes, resource totals, and digests. Room/provider text,
 tokens, process identities, bindings, and local paths are rejected by the result contract.
+
+Release maintainers additionally use the fixed `live-goal-memory-soak` profile. Its
+`room_goal_memory_soak_result/v1` evidence combines multi-Room provider recovery, MemoryOS
+recall, guarded native Codex actions, three browser viewports, and workspace-integrity proof;
+it is intentionally not part of ordinary CI.
+
+Release maintainers additionally use the fixed `live-goal-memory-soak` profile. Its
+`room_goal_memory_soak_result/v1` evidence combines multi-Room provider recovery, MemoryOS
+recall, guarded native Codex actions, three browser viewports, and workspace-integrity proof;
+it is intentionally not part of ordinary CI.
 
 Implementation and fresh tests are evidence. See [QUICKSTART.md](QUICKSTART.md) and the
 [implementation map](docs/xmuse/README.md).

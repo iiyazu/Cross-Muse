@@ -16,6 +16,27 @@ export type ConversationSummary = {
   [key: string]: unknown;
 };
 
+export type RoomSetupOptionParticipant = {
+  role_id: string;
+  role: string;
+  display_name: string;
+  description: string;
+  collaboration_focus: string;
+};
+
+export type RoomSetupOption = {
+  template_id: string;
+  display_name: string;
+  description: string;
+  participants: RoomSetupOptionParticipant[];
+};
+
+export type RoomSetupOptions = {
+  schema_version: "room_setup_options/v1";
+  default_roster_template_id: string;
+  roster_templates: RoomSetupOption[];
+};
+
 export type FrontendEvent = {
   sequence?: number;
   type?: string;
@@ -132,6 +153,38 @@ export type RoomTimelineItem = {
   proof_boundary?: string | null;
   source_refs?: string[];
   context_only_tail?: boolean;
+};
+
+export type RoomAgentStreamState =
+  | "streaming"
+  | "committing"
+  | "resolved"
+  | "invalidated";
+
+export type RoomAgentStream = {
+  stream_id: string;
+  participant_id: string;
+  observation_id: string;
+  state: RoomAgentStreamState;
+  content: string;
+  truncated: boolean;
+  started_at: string;
+  updated_at: string;
+  resolution?: {
+    outcome_type: string;
+    produced_activity_id?: string | null;
+  } | null;
+};
+
+export type RoomAgentStreamProjection = {
+  schema_version: "room_agent_stream_projection/v1";
+  proof_boundary: "provider_preview_not_room_or_codex_authority";
+  projection_available: boolean;
+  reason_code?: string | null;
+  conversation_id: string;
+  epoch?: string | null;
+  stream_seq: number;
+  streams: RoomAgentStream[];
 };
 
 export type RoomBatchActivityRef = {
@@ -910,13 +963,20 @@ export type RoomMemoryRecall = {
 };
 
 export type RoomMemoryProjection = {
-  schema_version: "room_memory_projection/v1";
+  schema_version: "room_memory_projection/v1" | "room_memory_projection/v2";
   projection_only: true;
   proof_boundary: string;
   generated_at: string;
   conversation_id: string;
   enabled: boolean;
   degraded: boolean;
+  /** Optional v2 capability proof; absent on legacy archive-only projections. */
+  profile?: "archive-only" | "full-local" | null;
+  capabilities?: {
+    hybrid: boolean;
+    message_ingest: boolean;
+    agentic_advisory: boolean;
+  } | null;
   runtime: {
     enabled: boolean;
     degraded: boolean;
@@ -942,6 +1002,15 @@ export type RoomMemoryProjection = {
     failed: number;
     conflict: number;
     delivered: number;
+    /** Message ingest backlog is only present in the v2 projection. */
+    messages?: {
+      backlog: number;
+      pending: number;
+      processing: number;
+      failed: number;
+      conflict: number;
+      delivered: number;
+    };
   };
   recent_recalls: RoomMemoryRecall[];
   pending_candidate_total: number;

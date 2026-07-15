@@ -6,10 +6,60 @@ import {
   normalizeRoomMemoryProjection,
   normalizeRoomOperationsProjection,
   normalizeRoomProjection,
+  roomAgentWorkStateLabel,
   roomParticipantStateLabel
 } from "./room-view";
 
 describe("Room projection view", () => {
+  it("labels Agent work only from native turns and durable Room evidence", () => {
+    const participant = {
+      participant: {
+        participant_id: "part-builder",
+        role: "execute",
+        display_name: "Builder",
+        status: "active" as const
+      },
+      native_snapshot: {
+        source: "codex_app_server_projection_cache" as const,
+        observed_at: null,
+        available: true,
+        value: null
+      },
+      capabilities: {
+        source: "codex_app_server_projection_cache" as const,
+        observed_at: null,
+        available: false,
+        value: null,
+        actions: []
+      },
+      room_bridge: {
+        source: "chat.db:room_codex_bridge" as const,
+        observed_at: null,
+        hold: null,
+        queue: { unresolved_count: 0, active_attempt_count: 0, root_blocking: false },
+        actions: []
+      },
+      history_partial: false,
+      omitted_event_count: 0
+    };
+
+    expect(roomAgentWorkStateLabel(participant)).toBe("无进行中任务");
+    expect(roomAgentWorkStateLabel({
+      ...participant,
+      room_bridge: {
+        ...participant.room_bridge,
+        queue: { unresolved_count: 1, active_attempt_count: 0, root_blocking: true }
+      }
+    })).toBe("Room 待处理");
+    expect(roomAgentWorkStateLabel({
+      ...participant,
+      room_bridge: {
+        ...participant.room_bridge,
+        queue: { unresolved_count: 1, active_attempt_count: 1, root_blocking: true }
+      }
+    })).toBe("Room 正在处理");
+  });
+
   it("normalizes only the safe bounded Operations projection", () => {
     const result = normalizeRoomOperationsProjection({
       schema_version: "room_operations_projection/v2",
@@ -193,6 +243,56 @@ describe("Room projection view", () => {
     }
     expect(() => normalizeRoomMemoryProjection({ schema_version: "future/v9" }))
       .toThrow("room_memory_projection_invalid");
+  });
+
+  it("accepts the v2 full-local capability projection without exposing sidecar internals", () => {
+    const result = normalizeRoomMemoryProjection({
+      schema_version: "room_memory_projection/v2",
+      projection_only: true,
+      proof_boundary: "memory_projection_not_room_or_memory_index_authority",
+      generated_at: "2026-07-14T18:48:09Z",
+      conversation_id: "conv-1",
+      enabled: true,
+      degraded: false,
+      profile: "full-local",
+      capabilities: { hybrid: true, message_ingest: true, agentic_advisory: true },
+      runtime: {
+        enabled: true,
+        degraded: false,
+        state: "ready",
+        code: "ready",
+        consecutive_restart_count: 1,
+        next_retry_at: null,
+        last_healthy_at: "2026-07-14T18:48:08Z",
+        started_at: "2026-07-14T18:42:20Z",
+        updated_at: "2026-07-14T18:48:08Z",
+        pid: 42,
+        api_key: "secret-key"
+      },
+      binding: { present: true, session_state: "bound", attachment_state: "attached", revision: 4, session_id: "secret-session" },
+      sync: {
+        backlog: 3,
+        pending: 1,
+        processing: 0,
+        failed: 0,
+        conflict: 0,
+        delivered: 23,
+        messages: { backlog: 2, pending: 1, processing: 0, failed: 0, conflict: 0, delivered: 12 }
+      },
+      recent_recalls: [],
+      pending_candidate_total: 0,
+      pending_candidates: [],
+      data_dir: "/secret/path"
+    });
+
+    expect(result.schema_version).toBe("room_memory_projection/v2");
+    expect(result.profile).toBe("full-local");
+    expect(result.capabilities).toEqual({ hybrid: true, message_ingest: true, agentic_advisory: true });
+    expect(result.sync.messages).toEqual({ backlog: 2, pending: 1, processing: 0, failed: 0, conflict: 0, delivered: 12 });
+    const serialized = JSON.stringify(result);
+    for (const secret of ["secret-key", "secret-session", "/secret/path", "pid"]) {
+      expect(serialized).not.toContain(secret);
+    }
   });
 
   it("normalizes the durable Room contract without legacy worklist state", () => {

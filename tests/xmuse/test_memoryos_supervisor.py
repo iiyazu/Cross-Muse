@@ -68,6 +68,26 @@ def test_sidecar_environment_is_fixed_offline_and_drops_ambient_secrets(
         assert forbidden not in environment
 
 
+def test_full_local_sidecar_selects_offline_hybrid_and_external_governance(
+    tmp_path: Path,
+) -> None:
+    environment = memoryos_child_environment(
+        {},
+        xmuse_root=tmp_path,
+        generation="generation-full-local",
+        api_key="memory-server-key",
+        profile="full-local",
+    )
+
+    assert environment["MEMORYOS_AGENT_KERNEL"] == "external"
+    assert environment["MEMORYOS_ITEM_EXTRACTION"] == "true"
+    assert environment["MEMORYOS_PAGING_MODE"] == "heuristic"
+    assert environment["MEMORYOS_EMBEDDING_PROVIDER"] == "fastembed"
+    assert environment["MEMORYOS_FASTEMBED_OFFLINE"] == "1"
+    assert environment["HF_HUB_OFFLINE"] == "1"
+    assert environment["TRANSFORMERS_OFFLINE"] == "1"
+
+
 def test_executable_and_command_are_fixed_loopback_without_api_key(
     tmp_path: Path,
 ) -> None:

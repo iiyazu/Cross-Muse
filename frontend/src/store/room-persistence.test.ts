@@ -20,7 +20,10 @@ describe("room UI persistence", () => {
       scrollAnchors: {},
       theme: "dark",
       sidebarOpen: true,
-      inspectorOpen: false
+      inspectorOpen: false,
+      dockTab: "room",
+      pinnedRoomIds: [],
+      selectedParticipants: {}
     });
     localStorage.setItem(LOCAL_STATE_KEY, "not-json");
     expect(readRoomUiState(localStorage).readCursors).toEqual({});
@@ -38,7 +41,10 @@ describe("room UI persistence", () => {
       scrollAnchors,
       theme: "light",
       sidebarOpen: false,
-      inspectorOpen: true
+      inspectorOpen: true,
+      dockTab: "room",
+      pinnedRoomIds: ["room-54"],
+      selectedParticipants: { "room-54": "participant-1" }
     });
 
     const raw = JSON.parse(localStorage.getItem(LOCAL_STATE_KEY) ?? "{}");
@@ -50,7 +56,8 @@ describe("room UI persistence", () => {
     expect(readRoomUiState(localStorage)).toMatchObject({
       theme: "light",
       sidebarOpen: false,
-      inspectorOpen: true
+      inspectorOpen: true,
+      dockTab: "room",
     });
   });
 

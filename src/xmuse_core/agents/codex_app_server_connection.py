@@ -135,12 +135,24 @@ class CodexAppServerConnection:
     def terminal_code(self) -> str | None:
         return self._terminal.code if self._terminal is not None else None
 
-    async def request(self, method: str, params: Mapping[str, object]) -> object:
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
         pending = await self.start_request(method, params)
         return await pending.response
 
-    async def start_request(self, method: str, params: Mapping[str, object]) -> AppServerRequest:
-        if not isinstance(method, str) or not method or not isinstance(params, Mapping):
+    async def start_request(
+        self,
+        method: str,
+        params: Mapping[str, object] | None = None,
+    ) -> AppServerRequest:
+        if (
+            not isinstance(method, str)
+            or not method
+            or (params is not None and not isinstance(params, Mapping))
+        ):
             raise ValueError("invalid app-server request")
         self._raise_if_terminal()
         loop = asyncio.get_running_loop()
@@ -150,7 +162,7 @@ class CodexAppServerConnection:
             request_id = self._next_request_id
             self._next_request_id += 1
             requested_thread_id = None
-            if method == "thread/resume":
+            if method == "thread/resume" and params is not None:
                 raw_thread_id = params.get("threadId")
                 if isinstance(raw_thread_id, str) and raw_thread_id:
                     requested_thread_id = raw_thread_id
@@ -160,7 +172,10 @@ class CodexAppServerConnection:
                 requested_thread_id=requested_thread_id,
             )
             try:
-                await self._write_json({"id": request_id, "method": method, "params": dict(params)})
+                payload: dict[str, object] = {"id": request_id, "method": method}
+                if params is not None:
+                    payload["params"] = dict(params)
+                await self._write_json(payload)
             except BaseException:
                 self._pending.pop(request_id, None)
                 if not future.done():

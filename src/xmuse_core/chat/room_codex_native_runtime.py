@@ -12,6 +12,7 @@ from typing import Literal, TypedDict
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.agents.room_codex_scopes import ROOM_NATIVE_SESSION_SCOPE
 from xmuse_core.chat.participant_session_identity import (
     participant_session_prompt_fingerprint,
 )
@@ -28,7 +29,6 @@ from xmuse_core.chat.room_codex_projection_cache import (
 )
 from xmuse_core.chat.room_database import RoomDatabase
 
-_ROOM_SESSION_SCOPE = "room_v1"
 _PROVIDER_SESSION_KIND = "codex_app_server_thread"
 _NATIVE_STATE_METHODS = frozenset(
     {
@@ -118,25 +118,33 @@ class RoomCodexNativeRuntime:
     ) -> dict[str, object]:
         if not force and self._bridge.participant_has_unfinished_action(participant.participant_id):
             raise RoomCodexBridgeError("codex_native_action_pending")
-        hold = self._bridge.get_hold(participant.participant_id)
-        force_rebind = self._rebind_due(participant.participant_id, hold)
+        prior_hold = self._bridge.get_hold(participant.participant_id)
+        force_rebind = self._rebind_due(participant.participant_id, prior_hold)
         record = await self._ensure_session(participant, force_rebind=force_rebind)
         self._ensure_watcher(participant, record)
         snapshot = await self._sessions.native_snapshot(record.god_session_id)
         guards = _snapshot_guards(snapshot)
         session_guard = guards["session"]
-        hold = self._bridge.get_hold(participant.participant_id)
-        if hold is None or hold.get("session_guard") != session_guard:
+        if prior_hold is None or prior_hold.get("session_guard") != session_guard:
             self._bridge.begin_reconcile(
                 conversation_id=participant.conversation_id,
                 participant_id=participant.participant_id,
                 session_guard=session_guard,
             )
+        snapshot = await self._recover_goal_after_session_replacement(
+            participant,
+            record,
+            prior_hold=prior_hold,
+            snapshot=snapshot,
+        )
+        guards = _snapshot_guards(snapshot)
+        session_guard = guards["session"]
         if self._capability_session_guards.get(participant.participant_id) != session_guard:
             capabilities = await self._sessions.discover_native_capabilities(record.god_session_id)
             self._capabilities[participant.participant_id] = capabilities
             self._capability_session_guards[participant.participant_id] = session_guard
         self._apply_snapshot(participant, snapshot)
+        self._observe_goal_snapshot(participant, snapshot)
         if force_rebind:
             self._rebind_attempts.pop(participant.participant_id, None)
             self._next_rebind_at.pop(participant.participant_id, None)
@@ -146,6 +154,171 @@ class RoomCodexNativeRuntime:
             capabilities=self._capabilities[participant.participant_id],
         )
         return snapshot
+
+    async def _recover_goal_after_session_replacement(
+        self,
+        participant: Participant,
+        record: GodSessionRecord,
+        *,
+        prior_hold: Mapping[str, object] | None,
+        snapshot: dict[str, object],
+    ) -> dict[str, object]:
+        """Re-prove one durable Goal intent after a provider thread replacement.
+
+        Native app-server threads are not guaranteed to survive a Runner crash.  The
+        recovery ledger fences each RPC against the intent revision and replacement
+        session guard.  A dispatch whose result cannot be proved is never replayed.
+        """
+
+        guards = _snapshot_guards(snapshot)
+        old_guard = prior_hold.get("session_guard") if prior_hold is not None else None
+        if old_guard == guards["session"]:
+            return snapshot
+        intent = self._bridge.get_goal_intent(participant.participant_id)
+        prior_expected_goal = prior_hold is not None and prior_hold.get("state") == "goal_active"
+        paused_expected = (
+            intent is not None
+            and intent.get("desired_state") == "paused"
+            and intent.get("observed_status") == "paused"
+            and intent.get("recoverable") is True
+        )
+        current_goal = snapshot.get("goal")
+        if isinstance(current_goal, Mapping):
+            return snapshot
+        if not prior_expected_goal and not paused_expected:
+            return snapshot
+        if (
+            intent is None
+            or intent.get("recoverable") is not True
+            or intent.get("desired_state") not in {"active", "paused"}
+            or not isinstance(intent.get("objective"), str)
+            or not str(intent["objective"]).strip()
+            or isinstance(intent.get("token_budget"), bool)
+            or not isinstance(intent.get("token_budget"), int)
+        ):
+            raise RoomCodexBridgeError("codex_native_goal_recovery_authority_missing")
+        intent_revision = intent.get("revision")
+        token_budget = intent.get("token_budget")
+        objective = intent.get("objective")
+        if (
+            isinstance(intent_revision, bool)
+            or not isinstance(intent_revision, int)
+            or isinstance(token_budget, bool)
+            or not isinstance(token_budget, int)
+            or not isinstance(objective, str)
+        ):
+            raise RoomCodexBridgeError("codex_native_goal_recovery_authority_missing")
+        recovery = self._bridge.begin_goal_recovery(
+            conversation_id=participant.conversation_id,
+            participant_id=participant.participant_id,
+            intent_revision=intent_revision,
+            target_session_guard=guards["session"],
+            reason_code="codex_native_goal_session_replaced",
+        )
+        phase = str(recovery["phase"])
+        desired = str(intent["desired_state"])
+        if phase in {"applied", "result_unknown"}:
+            if phase == "result_unknown":
+                raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown")
+            return snapshot
+        if phase == "goal_dispatching":
+            if not _snapshot_matches_goal_intent(snapshot, intent, allow_paused=True):
+                self._bridge.complete_goal_recovery(
+                    recovery_id=str(recovery["recovery_id"]),
+                    applied=False,
+                    reason_code="codex_native_goal_recovery_result_unknown",
+                )
+                raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown")
+        elif phase == "pause_dispatching":
+            if not _snapshot_matches_goal_intent(snapshot, intent, required_status="paused"):
+                self._bridge.complete_goal_recovery(
+                    recovery_id=str(recovery["recovery_id"]),
+                    applied=False,
+                    reason_code="codex_native_goal_pause_result_unknown",
+                )
+                raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown")
+        else:
+            self._bridge.advance_goal_recovery(
+                recovery_id=str(recovery["recovery_id"]),
+                phase="goal_dispatching",
+            )
+            try:
+                await self._sessions.invoke_native(
+                    record.god_session_id,
+                    "goal_set",
+                    {
+                        "objective": objective,
+                        "token_budget": token_budget,
+                    },
+                )
+                snapshot = await self._sessions.native_snapshot(record.god_session_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                try:
+                    snapshot = await self._sessions.native_snapshot(record.god_session_id)
+                except Exception:
+                    raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown") from exc
+                if not _snapshot_matches_goal_intent(snapshot, intent, allow_paused=True):
+                    self._bridge.complete_goal_recovery(
+                        recovery_id=str(recovery["recovery_id"]),
+                        applied=False,
+                        reason_code="codex_native_goal_recovery_result_unknown",
+                    )
+                    raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown") from exc
+        if desired == "paused" and not _snapshot_matches_goal_intent(
+            snapshot, intent, required_status="paused"
+        ):
+            self._bridge.advance_goal_recovery(
+                recovery_id=str(recovery["recovery_id"]),
+                phase="pause_dispatching",
+            )
+            try:
+                await self._sessions.invoke_native(record.god_session_id, "goal_pause", {})
+                snapshot = await self._sessions.native_snapshot(record.god_session_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                try:
+                    snapshot = await self._sessions.native_snapshot(record.god_session_id)
+                except Exception:
+                    raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown") from exc
+            if not _snapshot_matches_goal_intent(snapshot, intent, required_status="paused"):
+                self._bridge.complete_goal_recovery(
+                    recovery_id=str(recovery["recovery_id"]),
+                    applied=False,
+                    reason_code="codex_native_goal_pause_result_unknown",
+                )
+                raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown")
+        elif desired == "active" and not _snapshot_matches_goal_intent(
+            snapshot, intent, required_status="active"
+        ):
+            self._bridge.complete_goal_recovery(
+                recovery_id=str(recovery["recovery_id"]),
+                applied=False,
+                reason_code="codex_native_goal_recovery_proof_failed",
+            )
+            raise RoomCodexBridgeError("codex_native_goal_recovery_result_unknown")
+        self._bridge.complete_goal_recovery(
+            recovery_id=str(recovery["recovery_id"]),
+            applied=True,
+            reason_code="codex_native_goal_recovered",
+        )
+        return snapshot
+
+    def _observe_goal_snapshot(
+        self, participant: Participant, snapshot: Mapping[str, object]
+    ) -> None:
+        goal = snapshot.get("goal")
+        status = goal.get("status") if isinstance(goal, Mapping) else "none"
+        if not isinstance(status, str):
+            status = "none"
+        self._bridge.observe_goal_snapshot(
+            conversation_id=participant.conversation_id,
+            participant_id=participant.participant_id,
+            session_guard=_snapshot_guards(snapshot)["session"],
+            status=status,  # type: ignore[arg-type]
+        )
 
     async def pump_action_once(self) -> bool:
         action = self._bridge.claim_next_action(runner_generation=self._runner_generation)
@@ -304,7 +477,7 @@ class RoomCodexNativeRuntime:
         fingerprint = self._sessions.prompt_fingerprint_for_resume(
             conversation_id=participant.conversation_id,
             participant_id=participant.participant_id,
-            feature_scope_id=_ROOM_SESSION_SCOPE,
+            feature_scope_id=ROOM_NATIVE_SESSION_SCOPE,
             proposed_fingerprint=proposed,
         )
         await self._sessions.ensure_conversation_session(
@@ -319,7 +492,7 @@ class RoomCodexNativeRuntime:
             worktree=self._worktree,
             model=participant.model,
             prompt_fingerprint=fingerprint,
-            feature_scope_id=_ROOM_SESSION_SCOPE,
+            feature_scope_id=ROOM_NATIVE_SESSION_SCOPE,
             force_rebind=force_rebind,
         )
         return self._sessions.require_live_provider_session_binding(
@@ -327,7 +500,7 @@ class RoomCodexNativeRuntime:
             participant_id=participant.participant_id,
             runtime=AgentRuntime.CODEX,
             provider_session_kind=_PROVIDER_SESSION_KIND,
-            feature_scope_id=_ROOM_SESSION_SCOPE,
+            feature_scope_id=ROOM_NATIVE_SESSION_SCOPE,
         )
 
     def _apply_snapshot(self, participant: Participant, snapshot: Mapping[str, object]) -> None:
@@ -631,6 +804,27 @@ def _snapshot_guards(snapshot: Mapping[str, object]) -> _SnapshotGuards:
         "settings": values["settings"],
         "turn": values["turn"],
     }
+
+
+def _snapshot_matches_goal_intent(
+    snapshot: Mapping[str, object],
+    intent: Mapping[str, object],
+    *,
+    required_status: str | None = None,
+    allow_paused: bool = False,
+) -> bool:
+    goal = snapshot.get("goal")
+    if not isinstance(goal, Mapping):
+        return False
+    status = goal.get("status")
+    allowed_statuses = {required_status} if required_status is not None else {"active"}
+    if allow_paused:
+        allowed_statuses.add("paused")
+    return (
+        status in allowed_statuses
+        and goal.get("objective") == intent.get("objective")
+        and goal.get("token_budget") == intent.get("token_budget")
+    )
 
 
 def _assert_action_guards(action: Mapping[str, object], snapshot: Mapping[str, object]) -> None:

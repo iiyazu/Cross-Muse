@@ -3,6 +3,7 @@ import type {
   RoomActor,
   RoomAttemptRecovery,
   RoomChatProjection,
+  RoomCodexParticipantProjection,
   RoomControlActionDescriptor,
   RoomListProjection,
   RoomMemoryCandidate,
@@ -355,8 +356,12 @@ function normalizeMemoryCandidate(
 
 export function normalizeRoomMemoryProjection(payload: unknown): RoomMemoryProjection {
   const source = record(payload);
+  const schemaVersion = source.schema_version === "room_memory_projection/v1" ||
+    source.schema_version === "room_memory_projection/v2"
+    ? source.schema_version
+    : null;
   if (
-    source.schema_version !== "room_memory_projection/v1" ||
+    !schemaVersion ||
     source.projection_only !== true ||
     source.proof_boundary !== "memory_projection_not_room_or_memory_index_authority" ||
     typeof source.enabled !== "boolean" ||
@@ -384,18 +389,45 @@ export function normalizeRoomMemoryProjection(payload: unknown): RoomMemoryProje
   }
   const binding = record(source.binding);
   const sync = record(source.sync);
+  const profile = source.profile === "archive-only" || source.profile === "full-local"
+    ? source.profile
+    : null;
+  const capabilitiesSource = record(source.capabilities);
+  const capabilities = typeof capabilitiesSource.hybrid === "boolean" &&
+    typeof capabilitiesSource.message_ingest === "boolean" &&
+    typeof capabilitiesSource.agentic_advisory === "boolean"
+    ? {
+      hybrid: capabilitiesSource.hybrid,
+      message_ingest: capabilitiesSource.message_ingest,
+      agentic_advisory: capabilitiesSource.agentic_advisory
+    }
+    : null;
+  const messagesSource = record(sync.messages);
+  const messages = Object.keys(messagesSource).length &&
+    Object.values(messagesSource).every((value) => typeof value === "number" && Number.isFinite(value))
+    ? {
+      backlog: nonnegativeInteger(messagesSource.backlog),
+      pending: nonnegativeInteger(messagesSource.pending),
+      processing: nonnegativeInteger(messagesSource.processing),
+      failed: nonnegativeInteger(messagesSource.failed),
+      conflict: nonnegativeInteger(messagesSource.conflict),
+      delivered: nonnegativeInteger(messagesSource.delivered)
+    }
+    : undefined;
   const pendingCandidates = list(source.pending_candidates).slice(0, 20).flatMap((item) => {
     const candidate = normalizeMemoryCandidate(item, conversationId);
     return candidate ? [candidate] : [];
   });
   return {
-    schema_version: "room_memory_projection/v1",
+    schema_version: schemaVersion,
     projection_only: true,
     proof_boundary: "memory_projection_not_room_or_memory_index_authority",
     generated_at: generatedAt,
     conversation_id: conversationId,
     enabled: source.enabled,
     degraded: source.degraded,
+    profile,
+    capabilities,
     runtime: {
       enabled: runtime.enabled,
       degraded: runtime.degraded,
@@ -420,7 +452,8 @@ export function normalizeRoomMemoryProjection(payload: unknown): RoomMemoryProje
       processing: nonnegativeInteger(sync.processing),
       failed: nonnegativeInteger(sync.failed),
       conflict: nonnegativeInteger(sync.conflict),
-      delivered: nonnegativeInteger(sync.delivered)
+      delivered: nonnegativeInteger(sync.delivered),
+      ...(messages ? { messages } : {})
     },
     recent_recalls: list(source.recent_recalls).slice(0, 8).flatMap((item) => {
       const recall = normalizeMemoryRecall(item);
@@ -859,6 +892,16 @@ export function roomParticipantStateLabel(state: RoomParticipantState): string {
     stopped: "已停止"
   };
   return labels[state] ?? state;
+}
+
+export function roomAgentWorkStateLabel(
+  participant: RoomCodexParticipantProjection
+): string {
+  if (participant.participant.status === "stopped") return "已停止";
+  if (participant.native_snapshot.value?.active_turn) return "Codex turn 进行中";
+  if (participant.room_bridge.queue.active_attempt_count > 0) return "Room 正在处理";
+  if (participant.room_bridge.queue.unresolved_count > 0) return "Room 待处理";
+  return "无进行中任务";
 }
 
 export function roomStateLabel(state: RoomState): string {

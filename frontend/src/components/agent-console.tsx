@@ -18,7 +18,8 @@ import type {
   RoomCodexActionInput,
   RoomCodexCapabilityId,
   RoomCodexNativeEvent,
-  RoomCodexParticipantProjection
+  RoomCodexParticipantProjection,
+  RoomSkillDecision
 } from "@/lib/types";
 
 type ConsoleRequest = RoomCodexActionInput["request"];
@@ -26,6 +27,8 @@ type ConsoleRequest = RoomCodexActionInput["request"];
 export type AgentConsoleProps = {
   participant: RoomCodexParticipantProjection;
   nativeEvents: RoomCodexNativeEvent[];
+  /** Durable bundled Skill decisions from the Room projection. Never inferred from provider text. */
+  skillDecisions?: RoomSkillDecision[];
   pending: boolean;
   error: string | null;
   localMode: CodexConsoleMode;
@@ -66,6 +69,17 @@ const ACTION_LABELS: Partial<Record<RoomCodexCapabilityId, string>> = {
   compact_start: "压缩上下文",
   review_start: "审查未提交改动"
 };
+
+const CONSOLE_COMMANDS = [
+  ["/goal", "查看或设置 Goal"],
+  ["/model", "查看或切换 Model"],
+  ["/effort", "调整 Effort"],
+  ["/plan", "以 Plan 模式发送"],
+  ["/steer", "引导当前 turn"],
+  ["/interrupt", "打断当前 turn"],
+  ["/compact", "压缩上下文"],
+  ["/review", "启动代码审查"]
+] as const;
 
 function formatNumber(value: number | null | undefined) {
   return typeof value === "number" ? new Intl.NumberFormat("zh-CN").format(value) : "—";
@@ -129,6 +143,32 @@ function eventSummary(event: RoomCodexNativeEvent) {
   }
 }
 
+const SAFE_TOOL_TYPES: Record<string, string> = {
+  commandExecution: "命令执行",
+  fileChange: "文件变更",
+  mcpToolCall: "MCP 工具",
+  dynamicToolCall: "动态工具",
+  enteredReviewMode: "进入审查模式",
+  exitedReviewMode: "退出审查模式"
+};
+
+function toolLabel(itemType: string | null | undefined) {
+  return (itemType && SAFE_TOOL_TYPES[itemType]) || "工具活动";
+}
+
+function planCounts(steps: Array<{ step: string; status: string }>) {
+  return steps.reduce(
+    (counts, step) => {
+      const status = step.status.toLowerCase();
+      if (status === "completed" || status === "complete" || status === "done") counts.completed += 1;
+      else if (status === "in_progress" || status === "in-progress" || status === "active") counts.active += 1;
+      else counts.pending += 1;
+      return counts;
+    },
+    { completed: 0, active: 0, pending: 0 }
+  );
+}
+
 function confirmationCopy(confirmation: Confirmation, hasPendingObservations: boolean) {
   if (confirmation.capabilityId === "turn_interrupt") {
     return {
@@ -184,6 +224,7 @@ function handleDialogKeyDown(
 function ParticipantAgentConsole({
   participant,
   nativeEvents,
+  skillDecisions = [],
   pending,
   error,
   localMode,
@@ -195,6 +236,9 @@ function ParticipantAgentConsole({
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [detailEvent, setDetailEvent] = useState<RoomCodexNativeEvent | null>(null);
+  const [goalEditorOpen, setGoalEditorOpen] = useState(false);
+  const [goalObjective, setGoalObjective] = useState("");
+  const [goalBudget, setGoalBudget] = useState("100000");
   const composingRef = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
@@ -217,6 +261,22 @@ function ParticipantAgentConsole({
   const logEvents = participantEvents
     .filter((event) => event.kind !== "token_usage_updated")
     .slice(-40);
+  const latestPlan = [...participantEvents]
+    .reverse()
+    .find((event) => event.kind === "plan_updated" && event.steps?.length);
+  const planSteps = latestPlan?.steps ?? [];
+  const planSummary = planCounts(planSteps);
+  const toolEvents = participantEvents
+    .filter((event) =>
+      (event.kind === "item_started" || event.kind === "item_completed") &&
+      Boolean(event.item_type && SAFE_TOOL_TYPES[event.item_type])
+    )
+    .slice(-12)
+    .reverse();
+  const activityEvents = participantEvents
+    .filter((event) => ["goal_updated", "goal_cleared", "context_compacted", "turn_started", "turn_completed"].includes(event.kind ?? ""))
+    .slice(-8)
+    .reverse();
 
   useEffect(() => {
     if (!confirmation) return;
@@ -287,6 +347,21 @@ function ParticipantAgentConsole({
 
   function closeConfirmation() {
     if (!pending) setConfirmation(null);
+  }
+
+  function submitGoal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const objective = goalObjective.trim();
+    const tokenBudget = Number(goalBudget);
+    if (!objective || !Number.isSafeInteger(tokenBudget) || tokenBudget < 10_000 || tokenBudget > 1_000_000) {
+      setLocalError("Goal 需要明确目标，token 预算应在 10,000–1,000,000 之间");
+      return;
+    }
+    void invoke(
+      "goal_set",
+      { objective, token_budget: tokenBudget },
+      event.currentTarget.querySelector<HTMLButtonElement>("button[type='submit']")
+    );
   }
 
   const goalStatusLabel = unknownGoalStatus
@@ -373,13 +448,19 @@ function ParticipantAgentConsole({
                 const disabled = pending || !descriptor?.available || (unknownGoalStatus && capabilityId.startsWith("goal_"));
                 return (
                   <button
+                    className={`agent-console__action action-${capabilityId} ${capabilityId === "turn_interrupt" && snapshot?.active_turn ? "is-prominent" : ""}`}
                     key={capabilityId}
                     type="button"
                     disabled={disabled}
                     title={disabled ? disabledExplanation(participant, capabilityId) : undefined}
                     onClick={(event) => {
-                      if (capabilityId === "goal_set" || capabilityId === "turn_steer") {
-                        setDraft(capabilityId === "goal_set" ? "/goal " : "/steer ");
+                      if (capabilityId === "goal_set") {
+                        setGoalEditorOpen(true);
+                        setLocalError(null);
+                        return;
+                      }
+                      if (capabilityId === "turn_steer") {
+                        setDraft("/steer ");
                         requestAnimationFrame(() => composerRef.current?.focus());
                         return;
                       }
@@ -391,6 +472,40 @@ function ParticipantAgentConsole({
                 );
               })}
             </div>
+            {goalEditorOpen ? (
+              <form className="agent-console__goal-editor" onSubmit={submitGoal}>
+                <div className="agent-console__section-heading">
+                  <strong>新建 Codex Goal</strong>
+                  <button onClick={() => setGoalEditorOpen(false)} type="button">取消</button>
+                </div>
+                <label>
+                  Objective
+                  <textarea
+                    aria-label="Goal objective"
+                    autoFocus
+                    disabled={pending}
+                    maxLength={4_000}
+                    onChange={(event) => setGoalObjective(event.target.value)}
+                    rows={3}
+                    value={goalObjective}
+                  />
+                </label>
+                <label>
+                  Token 预算
+                  <input
+                    aria-label="Goal token 预算"
+                    disabled={pending}
+                    max={1_000_000}
+                    min={10_000}
+                    onChange={(event) => setGoalBudget(event.target.value)}
+                    step={1_000}
+                    type="number"
+                    value={goalBudget}
+                  />
+                </label>
+                <button className="room-primary-button" disabled={pending || !goalObjective.trim()} type="submit">继续确认</button>
+              </form>
+            ) : null}
             {capabilities?.capabilities.some((item) => item.availability !== "available") ? (
               <ul className="agent-console__availability" aria-label="不可用的 Codex 原生能力">
                 {capabilities.capabilities.filter((item) => item.availability !== "available").map((item) => (
@@ -411,6 +526,91 @@ function ParticipantAgentConsole({
               <div><dt>输出</dt><dd>{formatNumber(latestUsage?.total.output_tokens)}</dd></div>
               <div><dt>上下文窗口</dt><dd>{formatNumber(latestUsage?.model_context_window)}</dd></div>
             </dl>
+
+            <section className="agent-console__work-activity" aria-labelledby="agent-work-activity-title">
+              <div className="agent-console__section-heading">
+                <h4 id="agent-work-activity-title">工作活动</h4>
+                <span className="agent-console__source-badge">Codex 派生事件</span>
+              </div>
+
+              <section className="agent-console__activity-card" aria-labelledby="agent-plan-title">
+                <div className="agent-console__activity-heading">
+                  <h5 id="agent-plan-title">Plan / Todo</h5>
+                  {planSteps.length ? (
+                    <span>{planSummary.completed}/{planSteps.length} 完成{planSummary.active ? ` · ${planSummary.active} 进行中` : ""}</span>
+                  ) : <span>暂无计划</span>}
+                </div>
+                {planSteps.length ? (
+                  <ol className="agent-console__plan-list">
+                    {planSteps.map((step, index) => {
+                      const status = step.status.toLowerCase();
+                      const completed = status === "completed" || status === "complete" || status === "done";
+                      const active = status === "in_progress" || status === "in-progress" || status === "active";
+                      return (
+                        <li className={completed ? "is-complete" : active ? "is-active" : ""} key={`${index}-${step.step}`}>
+                          <span aria-hidden="true">{completed ? "✓" : active ? "•" : "○"}</span>
+                          <span>{step.step}</span>
+                          <small>{completed ? "完成" : active ? "进行中" : "待处理"}</small>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : <p className="agent-console__empty">Codex 尚未报告 Plan。</p>}
+              </section>
+
+              <section className="agent-console__activity-card" aria-labelledby="agent-tools-title">
+                <div className="agent-console__activity-heading">
+                  <h5 id="agent-tools-title">工具活动</h5>
+                  <span>{toolEvents.length ? `${toolEvents.length} 项安全摘要` : "暂无活动"}</span>
+                </div>
+                {toolEvents.length ? (
+                  <ul className="agent-console__tool-list">
+                    {toolEvents.map((event) => (
+                      <li key={`${event.participant_seq}-${event.event_seq}`}>
+                        <span className="agent-console__tool-icon" aria-hidden="true">{event.kind === "item_completed" ? "✓" : "…"}</span>
+                        <span>
+                          <strong>{toolLabel(event.item_type)}</strong>
+                          <small>{event.kind === "item_completed" ? "已完成" : "进行中"}{typeof event.duration_ms === "number" ? ` · ${event.duration_ms} ms` : ""}{typeof event.exit_code === "number" ? ` · exit ${event.exit_code}` : ""}</small>
+                        </span>
+                        {event.item_type === "fileChange" && typeof event.file_count === "number" ? <small>{event.file_count} 文件</small> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="agent-console__empty">当前没有可显示的工具活动。</p>}
+                <p className="agent-console__proof">仅显示安全类别与摘要；命令、参数、输出和路径不会进入浏览器。</p>
+              </section>
+
+              <section className="agent-console__activity-card" aria-labelledby="agent-skills-title">
+                <div className="agent-console__activity-heading">
+                  <h5 id="agent-skills-title">Skills</h5>
+                  <span>{skillDecisions.length ? `${skillDecisions.length} 项 durable decision` : "本轮暂无"}</span>
+                </div>
+                {skillDecisions.length ? (
+                  <ul className="agent-console__skill-list">
+                    {skillDecisions.map((decision) => (
+                      <li key={`${decision.skill_id}:${decision.version}:${decision.context_status}`}>
+                        <strong>{decision.skill_id}</strong>
+                        <span>v{decision.version} · {decision.context_status === "submitted" ? "已提交上下文" : "已选择"}</span>
+                        <small>{decision.selection_reason}</small>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="agent-console__empty">没有可展示的 bundled Skill decision。</p>}
+                <p className="agent-console__proof">Skills 来自 Room durable projection，不由 provider 文本推断。</p>
+              </section>
+
+              <section className="agent-console__activity-card" aria-labelledby="agent-activity-title">
+                <div className="agent-console__activity-heading">
+                  <h5 id="agent-activity-title">Goal / Turn / Context</h5>
+                  <span>{activityEvents.length ? `${activityEvents.length} 条摘要` : "暂无"}</span>
+                </div>
+                {activityEvents.length ? (
+                  <ul className="agent-console__activity-list">
+                    {activityEvents.map((event) => <li key={`${event.participant_seq}-${event.event_seq}`}><span>{eventSummary(event)}</span><small>{event.observed_at ?? "时间未知"}</small></li>)}
+                  </ul>
+                ) : <p className="agent-console__empty">暂无 Goal、turn 或上下文活动。</p>}
+              </section>
+            </section>
           </>
         )}
 
@@ -419,6 +619,7 @@ function ParticipantAgentConsole({
             <article className="agent-console__event" key={`${nativeEvent.participant_seq}-${nativeEvent.event_seq}`}>
               <button
                 type="button"
+                aria-label={`${eventSummary(nativeEvent)} · 事件 ${nativeEvent.event_seq}`}
                 onClick={(event) => {
                   detailTriggerRef.current = event.currentTarget;
                   setDetailEvent(nativeEvent);
@@ -433,6 +634,8 @@ function ParticipantAgentConsole({
         </div>
       </section>
 
+      <details className="agent-console__bridge-disclosure">
+        <summary>Room observation 与高级证据</summary>
       <section className="agent-console__source" aria-labelledby="room-bridge-title">
         <div className="agent-console__section-heading">
           <h4 id="room-bridge-title">xmuse Room Bridge</h4>
@@ -458,9 +661,10 @@ function ParticipantAgentConsole({
         </ol>
         <p className="agent-console__proof">Bridge 的 applied 仅证明动作账本已应用，不替代 Codex 原生 Goal 或 settings snapshot。</p>
       </section>
+      </details>
 
       <form className="agent-console__composer" onSubmit={submit}>
-        <label htmlFor={`agent-console-input-${participant.participant.participant_id}`}>给 {participant.participant.display_name} 的 Console 输入</label>
+        <label htmlFor={`agent-console-input-${participant.participant.participant_id}`}>发送给 {participant.participant.display_name} 的单 Agent Codex Console</label>
         <label className="agent-console__mode">
           本次普通文本模式
           <select
@@ -476,6 +680,7 @@ function ParticipantAgentConsole({
         <textarea
           ref={composerRef}
           id={`agent-console-input-${participant.participant.participant_id}`}
+          aria-label={`给 ${participant.participant.display_name} 的 Console 输入`}
           value={draft}
           disabled={pending}
           rows={3}
@@ -485,8 +690,15 @@ function ParticipantAgentConsole({
           onCompositionEnd={() => { composingRef.current = false; }}
           onKeyDown={handleComposerKeyDown}
         />
+        {draft.trimStart().startsWith("/") ? (
+          <div className="agent-console__command-menu" role="listbox" aria-label="可用 Codex 命令">
+            {CONSOLE_COMMANDS.filter(([command]) => command.startsWith(draft.trim().split(/\s/, 1)[0])).map(([command, description]) => (
+              <button aria-selected="false" key={command} onClick={() => { setDraft(`${command} `); requestAnimationFrame(() => composerRef.current?.focus()); }} role="option" type="button"><strong>{command}</strong><span>{description}</span></button>
+            ))}
+          </div>
+        ) : null}
         <div className="agent-console__composer-footer">
-          <span>Enter 发送 · Shift+Enter 换行 · 当前 {localMode}</span>
+          <span>不会作为 Room 发言 · Enter 发送 · 当前 {localMode}</span>
           <button type="submit" disabled={pending || !draft.trim()}>{pending ? "处理中…" : "发送"}</button>
         </div>
         <p className="agent-console__aliases">可用别名：/goal /model /effort /plan /default /steer /interrupt /compact /review /status</p>

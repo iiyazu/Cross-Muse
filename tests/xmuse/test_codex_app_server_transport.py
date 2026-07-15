@@ -127,6 +127,24 @@ def test_app_server_room_mcp_command_uses_only_room_capability(
     } == {"CODEX_HOME": str(isolated_home.resolve())}
 
 
+def test_native_workbench_command_explicitly_removes_room_mcp(tmp_path: Path) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god-native",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        enable_mcp=False,
+        codex_home=tmp_path / "isolated-codex",
+    )
+
+    command = transport._command()
+
+    assert "mcp_servers={}" in command
+    assert not any("xmuse-room" in item for item in command)
+    assert "cannot commit a Room outcome" in transport._base_instructions()
+
+
 def test_app_server_start_passes_isolated_codex_home_to_subprocess(
     tmp_path: Path,
     monkeypatch,
@@ -287,6 +305,57 @@ async def test_app_server_resume_accepts_exact_returned_thread_identity(
     assert transport.get_info()["thread_id"] == "thread-existing"
 
 
+async def test_app_server_resume_rebinds_room_mcp_before_publishing_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        returncode = None
+        pid = 5151
+
+    async def create_subprocess_exec(*_command, **_kwargs):
+        return Process()
+
+    calls: list[str] = []
+
+    async def request(method: str, _params: dict | None):
+        calls.append(method)
+        if method == "thread/resume":
+            return {"thread": {"id": "thread-existing"}}
+        if method == "config/mcpServer/reload":
+            transport._apply_native_event(
+                {
+                    "method": "mcpServer/startupStatus/updated",
+                    "params": {"name": "xmuse-room", "status": "ready"},
+                }
+            )
+            return {}
+        if method == "mcpServerStatus/list":
+            return {"data": [{"name": "xmuse-room", "tools": {"chat_room_submit_outcome": {}}}]}
+        return {}
+
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._native_state_task = asyncio.current_task()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    monkeypatch.setattr(transport, "_request", request)
+
+    await transport.start()
+
+    assert calls == [
+        "initialize",
+        "thread/resume",
+        "config/mcpServer/reload",
+        "mcpServerStatus/list",
+    ]
+
+
 async def test_app_server_missing_resume_starts_one_replacement_thread_in_same_process(
     tmp_path: Path,
     monkeypatch,
@@ -329,6 +398,49 @@ async def test_app_server_missing_resume_starts_one_replacement_thread_in_same_p
     assert spawn_count == 1
     assert transport.get_info()["thread_id"] == "thread-replacement"
     assert transport.get_info()["resume_thread_id"] == "thread-missing"
+
+
+async def test_native_app_server_missing_resume_does_not_wait_for_room_mcp(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        returncode = None
+        pid = 5152
+
+    calls: list[str] = []
+
+    async def create_subprocess_exec(*_command, **_kwargs):
+        return Process()
+
+    async def request(method: str, _params: dict):
+        calls.append(method)
+        if method == "thread/resume":
+            raise AppServerConnectionError("codex_app_server_thread_not_found")
+        if method == "thread/start":
+            return {"thread": {"id": "native-thread-replacement"}}
+        return {}
+
+    async def fail_if_waited() -> None:
+        raise AssertionError("native workbench session must not wait for Room MCP")
+
+    transport = CodexAppServerTransport(
+        god_id="god-native",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+        resume_thread_id="native-thread-missing",
+        enable_mcp=False,
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    monkeypatch.setattr(transport, "_request", request)
+    monkeypatch.setattr(transport, "_wait_for_room_mcp", fail_if_waited)
+
+    await transport.start()
+
+    assert calls == ["initialize", "thread/resume", "thread/start"]
+    assert transport.get_info()["thread_id"] == "native-thread-replacement"
 
 
 @pytest.mark.parametrize(
@@ -672,6 +784,134 @@ def test_app_server_accumulator_records_summary_and_plan_latency_stages() -> Non
         "turn_plan_updated": {"at": 15.0},
         "first_stream_delta": {"at": 16.0},
     }
+
+
+async def test_room_mcp_startup_must_be_ready_before_session_delivery(tmp_path: Path) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god-architect",
+        role="architect",
+        display_name="Architect",
+        model="gpt-5.6-sol",
+        worktree=tmp_path,
+    )
+    # A real connection installs this observer task during _ensure_connection.
+    # Mark the current task as the observer in this focused protocol test.
+    transport._native_state_task = asyncio.current_task()
+    transport._apply_native_event(
+        {
+            "method": "mcpServer/startupStatus/updated",
+            "params": {"name": "xmuse-room", "status": "starting"},
+        }
+    )
+    transport._apply_native_event(
+        {
+            "method": "mcpServer/startupStatus/updated",
+            "params": {"name": "xmuse-room", "status": "ready"},
+        }
+    )
+
+    await transport._wait_for_room_mcp()
+    assert transport._mcp_ready is True
+
+
+async def test_room_mcp_startup_failure_is_stable_and_non_authoritative(tmp_path: Path) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god-review",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.6-sol",
+        worktree=tmp_path,
+    )
+    transport._native_state_task = asyncio.current_task()
+    transport._apply_native_event(
+        {
+            "method": "mcpServer/startupStatus/updated",
+            "params": {"name": "xmuse-room", "status": "failed"},
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="codex_app_server_mcp_startup_failed"):
+        await transport._wait_for_room_mcp()
+    assert transport._mcp_ready is False
+
+
+async def test_resumed_room_thread_reloads_and_proves_sole_mcp_tool(tmp_path: Path) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god-review",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.6-sol",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._thread_id = "thread-existing"
+    transport._native_state_task = asyncio.current_task()
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def request(method: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((method, params))
+        if method == "config/mcpServer/reload":
+            transport._apply_native_event(
+                {
+                    "method": "mcpServer/startupStatus/updated",
+                    "params": {"name": "xmuse-room", "status": "ready"},
+                }
+            )
+            return {}
+        if method == "mcpServerStatus/list":
+            return {"data": [{"name": "xmuse-room", "tools": {"chat_room_submit_outcome": {}}}]}
+        raise AssertionError(method)
+
+    transport._request = request  # type: ignore[method-assign]
+    await transport._reload_and_prove_room_mcp_after_resume()
+
+    assert [method for method, _ in calls] == [
+        "config/mcpServer/reload",
+        "mcpServerStatus/list",
+    ]
+    assert calls[1][1] == {
+        "threadId": "thread-existing",
+        "detail": "toolsAndAuthOnly",
+        "limit": 16,
+    }
+
+
+@pytest.mark.parametrize(
+    "status_response",
+    [
+        {"data": []},
+        {"data": [{"name": "xmuse-room", "tools": {"other": {}}}]},
+    ],
+)
+async def test_resumed_room_thread_fails_closed_without_exact_mcp_tool(
+    tmp_path: Path, status_response: dict[str, object]
+) -> None:
+    transport = CodexAppServerTransport(
+        god_id="god-review",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.6-sol",
+        worktree=tmp_path,
+        resume_thread_id="thread-existing",
+    )
+    transport._thread_id = "thread-existing"
+    transport._native_state_task = asyncio.current_task()
+
+    async def request(method: str, _params: dict[str, object]) -> dict[str, object]:
+        if method == "config/mcpServer/reload":
+            transport._apply_native_event(
+                {
+                    "method": "mcpServer/startupStatus/updated",
+                    "params": {"name": "xmuse-room", "status": "ready"},
+                }
+            )
+            return {}
+        assert method == "mcpServerStatus/list"
+        return status_response
+
+    transport._request = request  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="codex_app_server_mcp_tool_missing"):
+        await transport._reload_and_prove_room_mcp_after_resume()
 
 
 def test_app_server_turn_start_omits_model_optional_reasoning_summary(tmp_path: Path) -> None:

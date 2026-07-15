@@ -1,7 +1,8 @@
 # xmuse Room-first browser API
 
-Verified against `frontend/src/` on 2026-07-12. This is a navigation contract, not runtime
-authority; TypeScript source, backend implementation, and fresh tests take precedence.
+Verified against `v0.1.0` and `frontend/src/` on 2026-07-14. This is a navigation contract,
+not runtime authority; TypeScript source, backend implementation, and fresh tests take
+precedence.
 
 ## Local boundary and configuration
 
@@ -17,15 +18,18 @@ loopback, single-user Workroom; the proxy described below is CSRF/secret hygiene
 user authentication.
 
 The default Room UI does not hold an operator-token WebSocket. It uses durable event polling
-plus bounded Room projection refreshes.
+plus bounded Room projection refreshes. A separate SSE connection carries only disposable,
+non-authoritative Agent response previews for the currently selected Room.
 
 ## Default browser calls
 
 | Use | Request |
 | --- | --- |
 | List room summaries | `GET /api/chat/rooms` |
+| List safe Room setup choices | `GET /api/chat/room-setup-options` |
 | Create a room | `POST /api/rooms` on the Next origin → fixed backend `POST /api/chat/conversations` |
 | Read bounded Room state | `GET /api/chat/conversations/{id}/room-projection` |
+| Preview active Room Agents | `GET /api/chat/conversations/{id}/agent-streams` (SSE) |
 | Catch up invalidations | `GET /api/chat/conversations/{id}/events?after_seq=&limit=` |
 | Send human speech | `POST /api/rooms/{id}/messages` on the Next origin → fixed backend `POST /api/chat/threads/{id}/messages` |
 | Cancel one Agent attempt | `POST /api/room-observations/{observation_id}/cancel` on the Next origin |
@@ -40,6 +44,7 @@ plus bounded Room projection refreshes.
 | Cancel an execution run | `POST /api/room-execution-runs/{id}/cancel` on the Next origin |
 | Inspect source-backed memory | `GET /api/chat/conversations/{id}/memory` |
 | Resolve a memory candidate | `POST /api/room-memory-candidates/{id}/resolve` on the Next origin |
+| Invoke a guarded Codex capability | `POST /api/room-participants/{id}/codex-actions` on the Next origin |
 
 Room creation accepts `title`, a `client_request_id`, and either `roster_template_id` or a
 bounded `initial_participants` list. The backend atomically writes the Room, roster, and
@@ -51,6 +56,15 @@ Custom participant identity fields are bounded at the API boundary (role 64 char
 display name 120, model and role-template reference 200); a Room title is capped at 200.
 These are identity metadata, not free-form persona prompts. Bundled templates alone freeze a
 server-authored `persona_snapshot/v1` of at most 2 KiB into each participant identity.
+New participants are Codex-only. Historical `a2a` or `opencode` rows remain readable for
+offline compatibility, but cannot be activated, claimed, or used to start a transport.
+
+`GET /api/chat/room-setup-options` returns `room_setup_options/v1`. It places the default
+template first, then sorts at most nineteen other valid templates by display name. Each
+template contains at most eight safe Codex role summaries: role ID, role, display name,
+description, and collaboration focus. Invalid custom templates are omitted without hiding the
+builtin fallback. Provider profiles, model bindings, persona prompts, paths, tokens, and
+internal identities do not cross this boundary.
 
 ## Room list projection
 
@@ -85,6 +99,33 @@ Room sequence and frontend event sequence are different domains and must never b
 The store drains event pages first, then performs one incremental Room projection refresh; a
 15-second safety refresh covers lease expiry, which does not create an event.
 
+## Disposable Agent preview SSE
+
+`GET /api/chat/conversations/{id}/agent-streams` returns
+`room_agent_stream_projection/v1` events. The first event is a complete snapshot; reconnects
+use the opaque epoch and stream cursor only to choose `projection` or `reset`. The browser
+keeps one EventSource for the selected Room and may skip intermediate snapshots.
+
+Preview content is sanitized bounded plain text with the proof boundary
+`provider_preview_not_room_or_codex_authority`. It lives in the private Runner-owned
+`runtime/room-agent-streams.sqlite3`, not `chat.db`, and never changes Room sequence, unread
+state, memory, Harness evidence, peer observations, or summaries. `streaming` becomes
+`committing` when the durable outcome tool starts. The API batch-reproves the exact current
+attempt before publishing; a completed Room outcome resolves the preview by produced activity
+ID, while cancellation, expiry, recovery, or a newer attempt invalidates it. Cache failure
+only disables previews and does not affect durable Room polling.
+
+The browser incrementally renders closed Markdown blocks with the same safe renderer used by
+durable messages. The unfinished block remains a lightweight streaming tail until it reaches a
+stable boundary; this avoids reparsing the complete growing answer or committing incomplete
+fences/tables to the DOM. High-frequency stream snapshots subscribe only the timeline subtree,
+not the sidebar, composer, Inspector, or other Workspace controls.
+
+For `respond`, `handoff`, and `propose`, the Room delivery asks Codex to emit the answer itself
+once before invoking the durable outcome tool; preambles and post-tool repetition are forbidden.
+`noop` and `defer` invoke the tool without a draft. This preserves native delta timing without
+client-side typewriter animation or promotion of preview bytes into Room authority.
+
 ## Human messages
 
 ```http
@@ -112,9 +153,9 @@ can render and navigate durable `reply_to` and handoff targets.
 ## Fixed managed-write proxies
 
 The browser never calls a managed backend write directly and never receives the operator
-token. Ten fixed same-origin Next routes cover Room creation, human messages, observation
+token. Eleven fixed same-origin Next routes cover Room creation, human messages, observation
 cancel/retry, Runtime recovery, MemoryOS index rebuild, execution policy, candidate decision,
-run cancellation, and memory-candidate resolution.
+run cancellation, memory-candidate resolution, and guarded Codex capability actions.
 They enforce loopback-only configured upstreams, matching Origin/Host, JSON type, exact fixed
 paths, `no-store`, no redirects, bounded responses, and distinct client abort versus server
 deadline handling.
@@ -154,7 +195,7 @@ cleanup is pending and reopens only the same durable observation after `cancelle
 ## Exact-patch execution
 
 An execution proposal stores one immutable `room_execution_patch/v1` candidate. The list
-projection never contains raw diff bytes; the Inspector loads them only from the bounded
+projection never contains raw diff bytes; the Room Workbench loads them only from the bounded
 candidate-detail endpoint. The browser may reject or manually execute an open candidate,
 switch the Room between `manual` and `consensus`, inspect frozen votes and gate progress, or
 cancel a pre-promotion run. It cannot submit a patch, command, path, gate, PID, or proxy URL.
@@ -168,8 +209,9 @@ The list and candidate projections expose only the safe
 `room_execution_gate_profile/v1` reference: fixed profile ID/revision, ordered gate IDs, and
 `ready|blocked` with a stable reason code. They never expose the workspace path, repository
 or toolchain digest, dependency path, command output, or process identity. Missing or blocked
-profile evidence disables both manual and consensus execution in the Inspector; the backend
-re-proves the complete configured profile before authorization and again before promotion.
+profile evidence disables both manual and consensus execution in the Room Workbench; the
+backend re-proves the complete configured profile before authorization and again before
+promotion.
 The currently supported profiles are `docs/v1`, `python-uv/v1`, and
 `xmuse-monorepo/v2`. Only the explicit docs profile may select diff-check alone.
 
@@ -189,14 +231,16 @@ and revision through the fixed Next route. The action body contains only
 8 KiB maximum, `no-store`, same-origin guarded, non-redirecting, and has a 30-second server
 deadline. A `404` or `409` refreshes evidence instead of displaying success.
 
-The Inspector polls memory about every five seconds while open and visible, otherwise about
-every fifteen seconds, with single-flight requests, abort-on-room-switch, jittered backoff,
-and focus refresh. A MemoryOS read failure preserves both the Room projection and the last
+The Room tab polls memory and execution evidence about every five seconds while selected and
+visible. The Runtime tab polls Operations at the same cadence. Unselected tabs, a closed
+Workbench, and a hidden page use an approximately fifteen-second safety cadence. All loops
+remain single-flight, abort on Room switch, use jittered backoff, and refresh only the current
+visible tab on focus. A MemoryOS read failure preserves both the Room projection and the last
 memory evidence; it is never reported as a Room Runtime failure.
 
 `GET /api/chat/runtime/operations` returns `room_operations_projection/v2`, including a
 strictly safe MemoryOS component, at most one guarded rebuild descriptor, and durable action
-phase/status. For crash-loop or explicit derived-cache/schema blockers, the Inspector may
+phase/status. For crash-loop or explicit derived-cache/schema blockers, the Runtime tab may
 confirm `POST /api/room-memory/rebuild` with only `client_action_id` and
 `expected_incident_id`. The fixed proxy uses the same Origin/Host, JSON, 8 KiB, no-redirect,
 `no-store`, and server-token boundary and reconstructs both success and error payloads from
@@ -204,11 +248,19 @@ an allowlist. Pending phases survive browser reloads; `409` refreshes Operations
 memory instead of claiming success. Process identity, generation, API key, endpoint, cache
 path, Room content, session bindings, and MemoryOS trace never enter this projection.
 
-## Per-participant Codex Agent Console
+## Layered Workbench and per-participant Codex Console
+
+The 400-pixel desktop Workbench has three fixed tabs: `Agent`, `Room`, and `Runtime`. Below
+1180 CSS pixels it overlays the conversation; at 640 pixels it becomes a full-width sheet.
+The Agent tab is participant-specific, the Room tab contains shared turn, execution, memory,
+and advanced causal evidence, and Runtime contains only global health, impact, and actions the
+backend proves usable. An incident marker opens Runtime directly. These views do not merge
+Codex Goal state with a Room turn or process health.
 
 `GET /api/chat/conversations/{id}/codex-agents` returns
 `room_codex_projection/v1`. It keeps Codex native snapshot/events separate from the durable
-Room Bridge hold, queue, and action ledger. The projection is bounded and non-authoritative;
+Room Bridge hold, observation-frontier summary, and action ledger. The projection is bounded
+and non-authoritative;
 native identifiers, raw reasoning, prompts, tool arguments/results, credentials, absolute
 paths, and provider output are excluded.
 
@@ -221,17 +273,32 @@ RPC parameters. `/goal`, `/model`, `/effort`, `/plan`, `/default`, `/steer`, `/i
 composer does not parse them. Parameterless Plan/Default choices are versioned local UX
 preferences and do not change `chat.db` or Codex thread settings.
 
-The Console refreshes single-flight with room/generation guards, aborts stale room requests,
-uses a roughly two-second visible and fifteen-second hidden cadence with backoff and jitter,
-and refreshes on focus. Read or action errors preserve Room projections. Conflict or runtime
+Native actions use durable internal stages: pre-dispatch work may reconcile a dead session
+and re-prove its guards, while `dispatching` is fenced as result-unknown and is never
+automatically replayed after a crash. A successful provider acknowledgement is persisted
+before best-effort post-action snapshot refresh. These stages are recovery evidence, not
+Agent speech or additional browser commands.
+
+The Console refreshes single-flight with room/generation guards and aborts stale Room
+requests. While the Agent tab is visible it uses about two seconds for an active native turn
+and five seconds while idle; otherwise it falls back to about fifteen seconds. Focus refreshes
+only the visible tab. Read or action errors preserve Room projections. Conflict or runtime
 unavailability triggers a fresh projection instead of optimistic success.
 
 ## Browser state and authority
 
-The URL is `/rooms/{conversation_id}`. The store keeps at most eight recent Room projections
-unless pending sends protect additional rooms from eviction. Drafts use `sessionStorage`;
-versioned read cursors, stable message anchors, theme, and rail state use `localStorage` for
-up to 50 rooms. Async responses are scoped by room and request generation.
+The URL is `/rooms/{conversation_id}`. The in-memory cache keeps a bounded set of recent Room
+projections; the current Room, pinned Rooms, and Rooms with pending sends are protected from
+eviction. Drafts use `sessionStorage`. `xmuse.room-ui/v2` stores sidebar and Workbench state,
+the selected tab, pinned Room IDs, per-Room selected participant, versioned read cursors,
+stable message anchors, and theme in `localStorage` for up to 50 Rooms. A v1 open Inspector
+migrates to an open Workbench on the Room tab. Async responses are scoped by Room and request
+generation.
+
+`Ctrl/Cmd+K` opens a navigation-only command palette for Room creation/switching, participant
+selection, Workbench tabs, and theme. It cannot invoke provider or operator actions. The Room
+composer keeps its durable Mention, IME, optimistic-send, retry, and scroll semantics and
+never interprets Codex slash commands.
 
 Browser state, optimistic bubbles, events, telemetry, screenshots, provider final text, and
 HTTP success text are not room authority. Only accepted `chat.db` transitions establish

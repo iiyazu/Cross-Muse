@@ -23,10 +23,12 @@ from typing import Any
 from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_session_identity import (
     participant_session_prompt_fingerprint,
 )
 from xmuse_core.chat.participant_store import Participant
+from xmuse_core.chat.room_agent_stream import RoomAgentStreamProjector
 from xmuse_core.chat.room_controls import RoomControlError, RoomObservationControlStore
 from xmuse_core.chat.room_execution_store import RoomExecutionStore, RoomExecutionStoreError
 from xmuse_core.chat.room_host import (
@@ -42,7 +44,6 @@ from xmuse_core.chat.room_skill_decisions import (
 from xmuse_core.providers.models import ProviderId
 
 _PROVIDER_SESSION_KIND = "codex_app_server_thread"
-_ROOM_SESSION_SCOPE = "room_v1"
 _DIAGNOSTIC_LIMIT = 16_000
 _MAX_XMUSE_CONTEXT_BYTES = 64 * 1024
 
@@ -59,6 +60,7 @@ class CodexRoomObservationTransport:
         skill_decision_store: RoomAttemptSkillDecisionStore | None = None,
         execution_store: RoomExecutionStore | None = None,
         memory_runtime: RoomMemoryRuntime | None = None,
+        stream_projector: RoomAgentStreamProjector | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._god_session_layer = god_session_layer
@@ -67,6 +69,7 @@ class CodexRoomObservationTransport:
         self._skill_decisions = skill_decision_store
         self._execution_store = execution_store
         self._memory_runtime = memory_runtime
+        self._stream_projector = stream_projector
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def deliver(
@@ -114,7 +117,7 @@ class CodexRoomObservationTransport:
                 self._god_session_layer,
                 conversation_id=delivery.conversation_id,
                 participant_id=participant.participant_id,
-                feature_scope_id=_ROOM_SESSION_SCOPE,
+                feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
                 proposed_fingerprint=participant_session_prompt_fingerprint(participant),
             )
             ensured = await self._god_session_layer.ensure_conversation_session(
@@ -129,7 +132,7 @@ class CodexRoomObservationTransport:
                 worktree=self._worktree,
                 model=participant.model,
                 prompt_fingerprint=prompt_fingerprint,
-                feature_scope_id=_ROOM_SESSION_SCOPE,
+                feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
             )
         except Exception as exc:
             return _failed("room_codex_session_ensure_failed", exc)
@@ -139,7 +142,7 @@ class CodexRoomObservationTransport:
                 participant_id=participant.participant_id,
                 runtime=AgentRuntime.CODEX,
                 provider_session_kind=_PROVIDER_SESSION_KIND,
-                feature_scope_id=_ROOM_SESSION_SCOPE,
+                feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
             )
         except Exception as exc:
             return _failed("room_codex_binding_unavailable", exc)
@@ -148,8 +151,8 @@ class CodexRoomObservationTransport:
             or record.participant_id != participant.participant_id
             or record.role != participant.role
             or record.runtime != AgentRuntime.CODEX.value
-            or record.feature_scope_id != _ROOM_SESSION_SCOPE
-            or ensured.feature_scope_id != _ROOM_SESSION_SCOPE
+            or record.feature_scope_id != ROOM_DELIVERY_SESSION_SCOPE
+            or ensured.feature_scope_id != ROOM_DELIVERY_SESSION_SCOPE
             or ensured.god_session_id != record.god_session_id
         ):
             return RoomTransportResult("failed", "room_codex_binding_identity_mismatch")
@@ -214,6 +217,20 @@ class CodexRoomObservationTransport:
             "follow-up for this Human turn; its downstream tail is context-only and must not "
             "be treated as another reply invitation. Use the bounded causal ancestry, recent "
             "Room burst, roster, and persona snapshots to add distinct collaboration value. "
+            "A plain-text assignment is only a suggestion: it does not create or prove work "
+            "for another participant. When recommending one concrete next action to a peer, "
+            "use a handoff outcome with an exact active target participant ID. Handoff raises "
+            "attention only; it never requires execution or reopens a spent response budget. "
+            "Never claim another participant is executing unless the delivered Room evidence "
+            "contains a durable attempt or outcome proving it. "
+            "When a durable handoff in this batch targets you, treat it as a directed baton. "
+            "If the requested work fits your read-only capability and respond is allowed, do "
+            "the bounded investigation in this turn and report concrete evidence. Otherwise "
+            "defer or noop with the specific blocker; do not merely promise future work. "
+            "Before a visible peer follow-up, compare it with your own visible action and the "
+            "recent Room burst for this correlation. Submit noop when it would only repeat the "
+            "same conclusion. A handoff author must not echo the recipient's completion; speak "
+            "again only for a new correction, blocker, decision, or evidence. "
             "Only proposals listed in durable_outcome.proposal_assessments have complete "
             "execution review material in this exact context. You may include an assessment "
             "for those proposal_id/candidate_digest pairs only; never vote from an activity "
@@ -224,8 +241,54 @@ class CodexRoomObservationTransport:
             "infrastructure never summarizes conversation into long-term memory. Room facts "
             "and decisions with valid sources are auto-approved for this Room, while user "
             "preferences and project rules require operator approval before cross-Room recall. "
-            "A final assistant message is diagnostic only and is not a room reply."
+            "When your decision is respond, handoff, or propose, first emit exactly one plain "
+            "assistant draft containing the user-visible answer itself. It must be the answer, "
+            "not a preamble, progress note, or promise. Then call chat_room_submit_outcome with "
+            "the same decision and content. The assistant draft is only a non-authoritative "
+            "live preview; never mention that preview mechanism to the Room. After a successful "
+            "tool submission, do not repeat or rephrase the answer. For noop or defer, emit no "
+            "assistant draft and call the tool directly. Any assistant text after the outcome "
+            "tool is diagnostic only and is not a Room reply. If this 5.6 provider exposes "
+            "MCP through a code-mode-only surface instead of a direct tool, use exactly one "
+            "code-mode exec call whose sole operation invokes "
+            "tools.mcp__xmuse_room__chat_room_submit_outcome with exactly these JSON fields: "
+            "conversation_id, participant_id, god_session_id, observation_id, "
+            "observation_batch_id, lease_token, client_request_id, outcome_type, and "
+            "outcome_payload (an object whose content is the visible text). Use the exact "
+            "names outcome_payload and outcome_type; never substitute content, message, "
+            "response_text, or response_content. Do not inspect files, use the network, "
+            "enumerate unrelated tools, or invoke any other tool; this is only the transport "
+            "spelling of the one durable Room outcome."
         )
+        preview_stream: object | None = None
+        preview_task: asyncio.Task[None] | None = None
+        preview_id: str | None = None
+        preview_finalized = False
+        if self._stream_projector is not None and delivery.attempt_id is not None:
+            subscribe = getattr(self._god_session_layer, "subscribe_native_events", None)
+            if callable(subscribe):
+                try:
+                    preview_stream = subscribe(record.god_session_id)
+                    preview_id = await self._stream_projector.open_stream(
+                        conversation_id=delivery.conversation_id,
+                        participant_id=participant.participant_id,
+                        observation_id=str(delivery.observation["observation_id"]),
+                        attempt_id=delivery.attempt_id,
+                    )
+                    if preview_id is not None:
+                        preview_task = asyncio.create_task(
+                            _pump_room_preview(
+                                preview_stream,
+                                projector=self._stream_projector,
+                                stream_id=preview_id,
+                            ),
+                            name=f"room-agent-preview:{participant.participant_id}",
+                        )
+                except Exception:
+                    _close_event_stream(preview_stream)
+                    preview_stream = None
+                    preview_id = None
+
         try:
             async with asyncio.timeout(float(timeout_s)):
                 await self._god_session_layer.send_message(
@@ -288,6 +351,14 @@ class CodexRoomObservationTransport:
                         delivery,
                         reason_code=terminal.reason or "room_codex_terminal_failed",
                     )
+                await _finalize_room_preview(
+                    preview_task,
+                    preview_stream,
+                    projector=self._stream_projector,
+                    stream_id=preview_id,
+                    provider_succeeded=terminal.status == "finished",
+                )
+                preview_finalized = True
                 return terminal
         except TimeoutError as exc:
             await self._abort_delivery_session(
@@ -310,6 +381,15 @@ class CodexRoomObservationTransport:
                 reason_code="room_codex_transport_error",
             )
             return _failed("room_codex_transport_error", exc)
+        finally:
+            if not preview_finalized:
+                await _finalize_room_preview(
+                    preview_task,
+                    preview_stream,
+                    projector=self._stream_projector,
+                    stream_id=preview_id,
+                    provider_succeeded=False,
+                )
 
     def _bind_execution_review_receipts(
         self,
@@ -371,6 +451,32 @@ class CodexRoomObservationTransport:
                 _text(attempt.get("provider_cleanup_reason"))
                 or "room_codex_cancel_cleanup_already_succeeded",
             )
+        binding_state = getattr(
+            self._god_session_layer,
+            "provider_binding_process_state",
+            None,
+        )
+        if callable(binding_state) and expected_god_session_id and expected_provider_session_id:
+            state = binding_state(
+                god_session_id=expected_god_session_id,
+                provider_session_id=expected_provider_session_id,
+            )
+            if state == "confirmed_dead":
+                return RoomCancelReconcileResult(
+                    "settled", "runner_reconciled_provider_process_dead"
+                )
+            if state == "superseded":
+                return RoomCancelReconcileResult(
+                    "settled", "room_codex_cancel_binding_superseded_and_fenced"
+                )
+            if state == "live_owned":
+                try:
+                    async with asyncio.timeout(float(timeout_s)):
+                        await self._god_session_layer.abort_session(expected_god_session_id)
+                except Exception:
+                    return RoomCancelReconcileResult("pending", "room_codex_cancel_abort_failed")
+                return RoomCancelReconcileResult("settled", "runner_reconciled_provider_abort")
+            return RoomCancelReconcileResult("pending", "room_codex_cancel_binding_process_unknown")
         try:
             async with asyncio.timeout(float(timeout_s)):
                 ensured = await self._god_session_layer.ensure_conversation_session(
@@ -388,17 +494,17 @@ class CodexRoomObservationTransport:
                         self._god_session_layer,
                         conversation_id=conversation_id,
                         participant_id=participant.participant_id,
-                        feature_scope_id=_ROOM_SESSION_SCOPE,
+                        feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
                         proposed_fingerprint=participant_session_prompt_fingerprint(participant),
                     ),
-                    feature_scope_id=_ROOM_SESSION_SCOPE,
+                    feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
                 )
                 if (
                     ensured.conversation_id != conversation_id
                     or ensured.participant_id != participant.participant_id
                     or ensured.role != participant.role
                     or ensured.runtime != AgentRuntime.CODEX.value
-                    or ensured.feature_scope_id != _ROOM_SESSION_SCOPE
+                    or ensured.feature_scope_id != ROOM_DELIVERY_SESSION_SCOPE
                 ):
                     return RoomCancelReconcileResult(
                         "pending", "room_codex_cancel_binding_identity_mismatch"
@@ -502,6 +608,120 @@ class CodexRoomObservationTransport:
                     "room_codex_turn_failed",
                     _message_diagnostic(message),
                 )
+
+
+async def _pump_room_preview(
+    event_stream: object,
+    *,
+    projector: RoomAgentStreamProjector,
+    stream_id: str,
+) -> None:
+    receive = getattr(event_stream, "receive", None)
+    if not callable(receive):
+        await projector.invalidate(stream_id)
+        return
+    turn_id: str | None = None
+    outcome_started = False
+    try:
+        while True:
+            event = await receive()
+            if not isinstance(event, dict):
+                continue
+            method = event.get("method")
+            params = event.get("params")
+            if not isinstance(method, str) or not isinstance(params, dict):
+                continue
+            event_turn_id = _preview_turn_id(params)
+            if method == "turn/started":
+                turn_id = event_turn_id
+                continue
+            if turn_id is None or (event_turn_id is not None and event_turn_id != turn_id):
+                continue
+            if method == "item/agentMessage/delta" and not outcome_started:
+                delta = params.get("delta")
+                if isinstance(delta, str) and delta:
+                    projector.feed_delta(stream_id, delta)
+                continue
+            if method == "item/started" and _preview_tool_name(params) == (
+                "chat_room_submit_outcome"
+            ):
+                outcome_started = True
+                await projector.committing(stream_id)
+                continue
+            if method == "item/completed" and _preview_tool_name(params) == (
+                "chat_room_submit_outcome"
+            ):
+                # The tool has returned after its Room transaction. Advance the
+                # disposable cursor so the SSE reader batch-reproves authority.
+                await projector.committing(stream_id)
+                continue
+            if method == "turn/completed":
+                if outcome_started:
+                    await projector.resolve(stream_id)
+                else:
+                    await projector.invalidate(stream_id)
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        await projector.invalidate(stream_id)
+
+
+async def _finalize_room_preview(
+    task: asyncio.Task[None] | None,
+    event_stream: object | None,
+    *,
+    projector: RoomAgentStreamProjector | None,
+    stream_id: str | None,
+    provider_succeeded: bool,
+) -> None:
+    if task is not None and provider_succeeded:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+        except Exception:
+            pass
+    _close_event_stream(event_stream)
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    if not provider_succeeded and projector is not None:
+        with suppress(Exception):
+            await projector.invalidate(stream_id)
+
+
+def _close_event_stream(event_stream: object | None) -> None:
+    close = getattr(event_stream, "close", None)
+    if callable(close):
+        with suppress(Exception):
+            close()
+
+
+def _preview_turn_id(params: Mapping[str, Any]) -> str | None:
+    direct = _text(params.get("turnId"))
+    if direct is not None:
+        return direct
+    turn = params.get("turn")
+    return _text(turn.get("id")) if isinstance(turn, Mapping) else None
+
+
+def _preview_tool_name(params: Mapping[str, Any]) -> str | None:
+    item = params.get("item")
+    if not isinstance(item, Mapping):
+        return None
+    direct = _text(item.get("toolName")) or _text(item.get("tool_name")) or _text(item.get("name"))
+    if direct is not None:
+        return direct
+    tool = item.get("tool")
+    if isinstance(tool, str):
+        return _text(tool)
+    if isinstance(tool, Mapping):
+        return _text(tool.get("name"))
+    call = item.get("call")
+    if isinstance(call, Mapping):
+        return (
+            _text(call.get("toolName")) or _text(call.get("tool_name")) or _text(call.get("name"))
+        )
+    return None
 
 
 def _delivery_validation_error(delivery: RoomObservationDelivery) -> str | None:

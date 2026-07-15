@@ -15,6 +15,7 @@ from tests.xmuse.room_fixtures import (
 )
 from xmuse_core.agents.codex_native_adapter import NativeInvokeResult
 from xmuse_core.agents.codex_native_contract import NativeInvocation
+from xmuse_core.agents.room_codex_scopes import ROOM_NATIVE_SESSION_SCOPE
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_codex_bridge import (
     RoomCodexBridgeError,
@@ -190,6 +191,7 @@ class _FailingNativeSessionLayer:
         self.snapshot = snapshot
         self.stream = _NeverEventStream()
         self.ensure_force_rebind: list[bool] = []
+        self.ensure_scopes: list[object] = []
         self.incarnation = 1
         self.replace_on_force = replace_on_force
 
@@ -199,6 +201,7 @@ class _FailingNativeSessionLayer:
     async def ensure_conversation_session(self, **kwargs: object) -> object:
         force_rebind = kwargs.get("force_rebind") is True
         self.ensure_force_rebind.append(force_rebind)
+        self.ensure_scopes.append(kwargs.get("feature_scope_id"))
         if force_rebind and self.replace_on_force:
             self.incarnation += 1
             self.stream = _NeverEventStream()
@@ -246,6 +249,42 @@ class _SuccessfulNativeSessionLayer(_FailingNativeSessionLayer):
         )
 
 
+class _GoalRecoverySessionLayer(_FailingNativeSessionLayer):
+    def __init__(self, snapshot: dict[str, object]) -> None:
+        super().__init__(snapshot)
+        self.invocations: list[tuple[str, dict[str, object]]] = []
+
+    async def invoke_native(
+        self,
+        _god_session_id: str,
+        capability_id: str,
+        safe_request: dict[str, object],
+        **_kwargs: object,
+    ) -> NativeInvokeResult:
+        self.invocations.append((capability_id, dict(safe_request)))
+        if capability_id == "goal_set":
+            self.snapshot["goal"] = {
+                "objective": safe_request["objective"],
+                "status": "active",
+                "token_budget": safe_request["token_budget"],
+                "tokens_used": 0,
+                "time_used_seconds": 0,
+            }
+        elif capability_id == "goal_pause":
+            goal = self.snapshot.get("goal")
+            assert isinstance(goal, dict)
+            goal["status"] = "paused"
+        else:
+            raise AssertionError(f"unexpected recovery capability: {capability_id}")
+        guards = self.snapshot["guards"]
+        assert isinstance(guards, dict)
+        guards["goal"] = opaque_guard("recovered-goal", str(len(self.invocations)), capability_id)
+        return NativeInvokeResult(
+            NativeInvocation(capability_id, "thread/goal/set", {}),
+            {"acknowledged": True},
+        )
+
+
 class _BlockingNativeSessionLayer(_FailingNativeSessionLayer):
     def __init__(self, snapshot: dict[str, object]) -> None:
         super().__init__(snapshot)
@@ -258,6 +297,7 @@ class _BlockingNativeSessionLayer(_FailingNativeSessionLayer):
 
     async def ensure_conversation_session(self, **kwargs: object) -> object:
         self.ensure_force_rebind.append(kwargs.get("force_rebind") is True)
+        self.ensure_scopes.append(kwargs.get("feature_scope_id"))
         self.ensure_count += 1
         self.active_ensures += 1
         self.max_active_ensures = max(self.max_active_ensures, self.active_ensures)
@@ -292,6 +332,175 @@ def _accepting_snapshot(session: str | None = None) -> dict[str, object]:
             "turn": None,
         },
     }
+
+
+def _seed_applied_goal_intent(
+    path: Path,
+    participant: Participant,
+    *,
+    desired_state: str = "active",
+) -> tuple[RoomCodexBridgeStore, str]:
+    bridge = RoomCodexBridgeStore(path)
+    old_session = opaque_guard("old-native-session")
+    goal_guard = opaque_guard("old-native-goal")
+    settings_guard = opaque_guard("old-native-settings")
+    bridge.begin_reconcile(
+        conversation_id=participant.conversation_id,
+        participant_id=participant.participant_id,
+        session_guard=old_session,
+    )
+    bridge.apply_native_snapshot(
+        conversation_id=participant.conversation_id,
+        participant_id=participant.participant_id,
+        expected_session_guard=old_session,
+        state="accepting",
+        goal_guard=goal_guard,
+        settings_guard=settings_guard,
+        active_turn_guard=None,
+    )
+    action, _ = bridge.request_action(
+        conversation_id=participant.conversation_id,
+        participant_id=participant.participant_id,
+        capability_id="goal_set",
+        safe_request={"objective": "Continue the durable work", "token_budget": 20_000},
+        client_action_id="goal-set-authority",
+        expected_session_guard=old_session,
+        expected_goal_guard=goal_guard,
+        expected_settings_guard=settings_guard,
+    )
+    claimed = bridge.claim_next_action(runner_generation="runner-old")
+    assert claimed is not None and claimed["action_id"] == action["action_id"]
+    bridge.complete_action(
+        action_id=str(action["action_id"]),
+        runner_generation="runner-old",
+        status="applied",
+        reason_code=None,
+        ack_summary={"native_method": "thread/goal/set", "acknowledged": True},
+    )
+    bridge.apply_native_snapshot(
+        conversation_id=participant.conversation_id,
+        participant_id=participant.participant_id,
+        expected_session_guard=old_session,
+        state="goal_active",
+        goal_guard=goal_guard,
+        settings_guard=settings_guard,
+        active_turn_guard=None,
+    )
+    if desired_state == "paused":
+        pause, _ = bridge.request_action(
+            conversation_id=participant.conversation_id,
+            participant_id=participant.participant_id,
+            capability_id="goal_pause",
+            safe_request={},
+            client_action_id="goal-pause-authority",
+            expected_session_guard=old_session,
+            expected_goal_guard=goal_guard,
+        )
+        claimed_pause = bridge.claim_next_action(runner_generation="runner-old")
+        assert claimed_pause is not None and claimed_pause["action_id"] == pause["action_id"]
+        bridge.complete_action(
+            action_id=str(pause["action_id"]),
+            runner_generation="runner-old",
+            status="applied",
+            reason_code=None,
+            ack_summary={"native_method": "thread/goal/set", "acknowledged": True},
+        )
+        bridge.apply_native_snapshot(
+            conversation_id=participant.conversation_id,
+            participant_id=participant.participant_id,
+            expected_session_guard=old_session,
+            state="accepting",
+            goal_guard=goal_guard,
+            settings_guard=settings_guard,
+            active_turn_guard=None,
+        )
+        bridge.observe_goal_snapshot(
+            conversation_id=participant.conversation_id,
+            participant_id=participant.participant_id,
+            session_guard=old_session,
+            status="paused",
+        )
+    return bridge, old_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("desired_state", "expected_capabilities", "expected_status"),
+    [
+        ("active", ["goal_set"], "active"),
+        ("paused", ["goal_set", "goal_pause"], "paused"),
+    ],
+)
+async def test_reconcile_restores_durable_goal_intent_on_replacement_session(
+    tmp_path: Path,
+    desired_state: str,
+    expected_capabilities: list[str],
+    expected_status: str,
+) -> None:
+    path = tmp_path / "chat.db"
+    _conversation, participant = _room(path)
+    bridge, _old_session = _seed_applied_goal_intent(path, participant, desired_state=desired_state)
+    new_session = opaque_guard("replacement-native-session")
+    layer = _GoalRecoverySessionLayer(_accepting_snapshot(new_session))
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-new",
+    )
+    try:
+        snapshot = await runtime.reconcile_participant(participant)
+        goal = snapshot.get("goal")
+        assert isinstance(goal, dict) and goal["status"] == expected_status
+        assert [item[0] for item in layer.invocations] == expected_capabilities
+        recovery = bridge.list_goal_recoveries(participant.participant_id)
+        assert len(recovery) == 1 and recovery[0]["phase"] == "applied"
+        intent = bridge.get_goal_intent(participant.participant_id)
+        assert intent is not None and intent["observed_status"] == expected_status
+
+        await runtime.reconcile_participant(participant)
+        assert [item[0] for item in layer.invocations] == expected_capabilities
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_never_replays_unknown_goal_recovery_dispatch(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    _conversation, participant = _room(path)
+    bridge, _old_session = _seed_applied_goal_intent(path, participant)
+    intent = bridge.get_goal_intent(participant.participant_id)
+    assert intent is not None
+    new_session = opaque_guard("replacement-native-session")
+    recovery = bridge.begin_goal_recovery(
+        conversation_id=participant.conversation_id,
+        participant_id=participant.participant_id,
+        intent_revision=int(intent["revision"]),
+        target_session_guard=new_session,
+    )
+    bridge.advance_goal_recovery(
+        recovery_id=str(recovery["recovery_id"]),
+        phase="goal_dispatching",
+    )
+    layer = _GoalRecoverySessionLayer(_accepting_snapshot(new_session))
+    runtime = RoomCodexNativeRuntime(
+        path,
+        layer,  # type: ignore[arg-type]
+        worktree=tmp_path,
+        runner_generation="runner-new",
+    )
+    try:
+        with pytest.raises(RoomCodexBridgeError) as error:
+            await runtime.reconcile_participant(participant)
+        assert error.value.code == "codex_native_goal_recovery_result_unknown"
+        assert layer.invocations == []
+        assert bridge.list_goal_recoveries(participant.participant_id)[0]["phase"] == (
+            "result_unknown"
+        )
+    finally:
+        await runtime.shutdown()
 
 
 @pytest.mark.asyncio
@@ -408,6 +617,7 @@ async def test_native_unavailable_backoff_skips_dead_session_ensure(
 
         await runtime.reconcile_all()
         assert layer.ensure_force_rebind == [False, True]
+        assert set(layer.ensure_scopes) == {ROOM_NATIVE_SESSION_SCOPE}
 
         await runtime.reconcile_all()
         assert layer.ensure_force_rebind == [False, True]

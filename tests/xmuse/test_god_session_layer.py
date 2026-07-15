@@ -9,6 +9,10 @@ from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage, parse_stdout_line
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime, SessionConfig
+from xmuse_core.agents.room_codex_scopes import (
+    ROOM_DELIVERY_SESSION_SCOPE,
+    ROOM_NATIVE_SESSION_SCOPE,
+)
 
 
 class FakeSession:
@@ -120,17 +124,152 @@ class NativeSessionLauncher(FakeLauncher):
         model: str | None = None,
         provider_session_id: str | None = None,
         db_path: Path | None = None,
+        feature_scope_id: str | None = None,
     ) -> FakeSession:
-        self.spawn_persistent_session_calls.append(
-            {
-                "role": role,
-                "worktree": worktree,
-                "model": model,
-                "provider_session_id": provider_session_id,
-                "db_path": db_path,
-            }
-        )
+        call: dict[str, object] = {
+            "role": role,
+            "worktree": worktree,
+            "model": model,
+            "provider_session_id": provider_session_id,
+            "db_path": db_path,
+        }
+        if feature_scope_id is not None:
+            call["feature_scope_id"] = feature_scope_id
+        self.spawn_persistent_session_calls.append(call)
         return FakeSession(pid=4242)
+
+
+@pytest.mark.asyncio
+async def test_room_delivery_and_native_scopes_own_distinct_participant_sessions(tmp_path):
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=tmp_path / "sessions.json",
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+    common = {
+        "conversation_id": "conv_scoped",
+        "participant_id": "part_scoped",
+        "role": "review",
+        "agent": agent,
+        "worktree": tmp_path,
+    }
+
+    delivery, native = await asyncio.gather(
+        layer.ensure_conversation_session(
+            **common,
+            feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
+        ),
+        layer.ensure_conversation_session(
+            **common,
+            feature_scope_id=ROOM_NATIVE_SESSION_SCOPE,
+        ),
+    )
+
+    assert delivery.god_session_id != native.god_session_id
+    assert delivery.session_address != native.session_address
+    assert delivery.session_inbox_id != native.session_inbox_id
+    assert delivery.feature_scope_id == ROOM_DELIVERY_SESSION_SCOPE
+    assert native.feature_scope_id == ROOM_NATIVE_SESSION_SCOPE
+    assert len(launcher.spawn_persistent_session_calls) == 2
+    assert {item["feature_scope_id"] for item in launcher.spawn_persistent_session_calls} == {
+        ROOM_DELIVERY_SESSION_SCOPE,
+        ROOM_NATIVE_SESSION_SCOPE,
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_combined_room_scope_is_not_reused_for_split_sessions(tmp_path):
+    registry_path = tmp_path / "sessions.json"
+    registry = GodSessionRegistry(registry_path)
+    legacy = registry.create(
+        role="review",
+        agent_name="room-codex",
+        runtime="codex",
+        session_address="@legacy-room",
+        session_inbox_id="inbox-legacy-room",
+        conversation_id="conv_legacy_scope",
+        participant_id="part_legacy_scope",
+        feature_scope_id="room_v1",
+    )
+    launcher = NativeSessionLauncher()
+    layer = GodSessionLayer(
+        registry_path=registry_path,
+        launchers={AgentRuntime.CODEX: launcher},
+    )
+    agent = AgentDescriptor(
+        runtime=AgentRuntime.CODEX,
+        name="room-codex",
+        capabilities=["review"],
+    )
+
+    for scope in (ROOM_DELIVERY_SESSION_SCOPE, ROOM_NATIVE_SESSION_SCOPE):
+        await layer.ensure_conversation_session(
+            conversation_id="conv_legacy_scope",
+            participant_id="part_legacy_scope",
+            role="review",
+            agent=agent,
+            worktree=tmp_path,
+            feature_scope_id=scope,
+        )
+
+    records = GodSessionRegistry(registry_path).list()
+    assert {item.feature_scope_id for item in records} == {
+        "room_v1",
+        ROOM_DELIVERY_SESSION_SCOPE,
+        ROOM_NATIVE_SESSION_SCOPE,
+    }
+    assert GodSessionRegistry(registry_path).get(legacy.god_session_id) == legacy
+
+
+def test_provider_binding_process_state_fails_closed_and_proves_dead_pid(tmp_path):
+    registry_path = tmp_path / "sessions.json"
+    registry = GodSessionRegistry(registry_path)
+    record = registry.create(
+        role="review",
+        agent_name="room-codex",
+        runtime="codex",
+        session_address="@delivery",
+        session_inbox_id="inbox-delivery",
+        conversation_id="conv_binding_state",
+        participant_id="part_binding_state",
+        feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
+    )
+    record = registry.update_provider_binding(
+        record.god_session_id,
+        provider_session_id="thread-old",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+        provider_binding_failure_reason=None,
+    )
+    registry.promote_running(record.god_session_id, pid=2**30)
+    layer = GodSessionLayer(registry_path=registry_path, launchers={})
+
+    assert (
+        layer.provider_binding_process_state(
+            god_session_id=record.god_session_id,
+            provider_session_id="thread-old",
+        )
+        == "confirmed_dead"
+    )
+    assert (
+        layer.provider_binding_process_state(
+            god_session_id=record.god_session_id,
+            provider_session_id="thread-new",
+        )
+        == "superseded"
+    )
+    assert (
+        layer.provider_binding_process_state(
+            god_session_id="god-missing",
+            provider_session_id="thread-old",
+        )
+        == "unknown"
+    )
 
 
 @pytest.mark.asyncio

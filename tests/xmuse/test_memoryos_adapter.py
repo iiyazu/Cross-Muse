@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -72,6 +73,64 @@ def _v3_payload(item: Mapping[str, Any]) -> dict[str, Any]:
     return _compact_payload(item)
 
 
+def _v2_message_item(*, text: str = "prior durable fact") -> dict[str, Any]:
+    return {
+        "item_id": "memory-v2-item-1",
+        "layer": "recall",
+        "text": text,
+        "estimated_tokens": 4,
+        "content_sha256": _sha(text),
+        "source_refs": [
+            {
+                "source_type": "message",
+                "source_id": "message-1",
+                "session_id": "memory-session-1",
+            }
+        ],
+        "derived": True,
+        "source_complete": True,
+        "score": 0.8,
+        "rank": 1,
+        "truncated": False,
+    }
+
+
+def _v2_archival_candidate_item() -> dict[str, Any]:
+    text = "approved project rule"
+    return {
+        "item_id": "archival-passage-1",
+        "layer": "archival",
+        "document_id": "xmuse-room-memory-candidate-candidate-1",
+        "text": text,
+        "estimated_tokens": 3,
+        "content_sha256": _sha(text),
+        "source_refs": [
+            {
+                "source_type": "document",
+                "source_id": "activity-source-1",
+                "session_id": "source-room-session",
+            }
+        ],
+        "derived": False,
+        "source_complete": True,
+        "score": 0.9,
+        "rank": 1,
+        "truncated": False,
+    }
+
+
+def _v2_payload(*items: Mapping[str, Any], omitted_count: int = 0) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "memoryos_source_evidence/v2",
+        "items": [dict(item) for item in items],
+        "omitted_count": omitted_count,
+        "estimated_tokens": sum(int(item["estimated_tokens"]) for item in items),
+        "truncated": omitted_count > 0,
+    }
+    payload["diagnostics_digest"] = _canonical_digest(payload)
+    return payload
+
+
 def _resign(payload: dict[str, Any]) -> dict[str, Any]:
     signed = {
         key: payload[key]
@@ -125,6 +184,24 @@ class FakeStore:
         return {
             "source_type": "room_activity",
             "authority_content": f"prefix {self.expected_text} suffix",
+            "source_activities": [
+                {
+                    "activity_id": "activity-prior",
+                    "conversation_id": "conversation-1",
+                    "correlation_id": self.source_correlation,
+                }
+            ],
+        }
+
+    def resolve_recall_message_source(self, **kwargs: Any) -> dict[str, Any]:
+        if self.reject_source or kwargs["item_text"] != self.expected_text:
+            raise _StoreError("room_memory_recall_source_rejected")
+        assert kwargs["session_id"] == "memory-session-1"
+        assert kwargs["source_message_ids"] == ("message-1",)
+        assert kwargs["content_sha256"] == _sha(self.expected_text)
+        return {
+            "source_type": "room_message",
+            "document_id": "xmuse-room-activity-activity-prior",
             "source_activities": [
                 {
                     "activity_id": "activity-prior",
@@ -190,6 +267,8 @@ class FakeAdapter:
         self.health_calls = 0
         self.attach_calls: list[dict[str, Any]] = []
         self.ingest_error: MemoryOSAdapterError | None = None
+        self.profile = "archive-only"
+        self.message_calls: list[dict[str, Any]] = []
 
     def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
         return self.payload
@@ -210,6 +289,13 @@ class FakeAdapter:
         if self.ingest_error is not None:
             raise self.ingest_error
         return {"document_id": request["document_id"], "passage_ids": ["passage-1"]}
+
+    def ingest_message(self, **kwargs: Any) -> dict[str, Any]:
+        self.message_calls.append(kwargs)
+        return {
+            "message": {"id": "message-1", "external_id": kwargs["external_id"]},
+            "replayed": False,
+        }
 
 
 def _runtime(store: FakeStore, adapter: FakeAdapter) -> ArchiveOnlyRoomMemoryRuntime:
@@ -257,6 +343,98 @@ def test_v3_archival_recall_is_source_resolved_and_receipt_is_two_stage() -> Non
         context_payload_sha256="sha256:" + "a" * 64,
     )
     assert store.binds[0]["evidence_sha256"] == evidence.evidence_sha256
+
+
+def test_recall_timeout_is_bounded_and_returns_degraded_empty_evidence() -> None:
+    class SlowAdapter(FakeAdapter):
+        def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
+            time.sleep(1.0)
+            return self.payload
+
+    store = FakeStore()
+    evidence = asyncio.run(_runtime(store, SlowAdapter(_v3_payload(_v3_item()))).recall(_request()))
+
+    assert evidence.status == "timeout"
+    assert evidence.reason_code == "room_memory_timeout"
+    assert evidence.items == ()
+    assert evidence.latency_ms < 950
+
+
+def test_full_local_v2_message_source_is_reproved_to_room_activity() -> None:
+    store = FakeStore()
+    adapter = FakeAdapter(_v2_payload(_v2_message_item()))
+    adapter.profile = "full-local"
+
+    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert evidence.schema_version == "memoryos_source_evidence/v2"
+    assert evidence.items[0].document_id == "xmuse-room-activity-activity-prior"
+    assert evidence.items[0].source_activity_ids == ("activity-prior",)
+
+
+def test_full_local_v2_archival_candidate_uses_explicit_document_identity() -> None:
+    store = FakeStore()
+    store.expected_text = "approved project rule"
+
+    def resolve_candidate(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["document_id"] == "xmuse-room-memory-candidate-candidate-1"
+        assert kwargs["source_activity_ids"] == ("activity-source-1",)
+        assert kwargs["content_sha256"] == _sha("approved project rule")
+        return {
+            "source_type": "room_memory_candidate",
+            "document_id": "xmuse-room-memory-candidate-candidate-1",
+            "source_activities": [
+                {
+                    "activity_id": "activity-source-1",
+                    "conversation_id": "conversation-1",
+                    "correlation_id": "correlation-old",
+                }
+            ],
+        }
+
+    store.resolve_recall_source = resolve_candidate  # type: ignore[method-assign]
+    adapter = FakeAdapter(_v2_payload(_v2_archival_candidate_item()))
+    adapter.profile = "full-local"
+
+    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert evidence.items[0].source_activity_ids == ("activity-source-1",)
+    assert evidence.items[0].document_id == "xmuse-room-memory-candidate-candidate-1"
+
+
+def test_full_local_v2_archival_requires_explicit_document_identity() -> None:
+    item = _v2_archival_candidate_item()
+    del item["document_id"]
+    adapter = FakeAdapter(_v2_payload(item))
+    adapter.profile = "full-local"
+
+    evidence = asyncio.run(_runtime(FakeStore(), adapter).recall(_request()))
+
+    assert evidence.status == "source_rejected"
+    assert evidence.reason_code == "room_memory_source_rejected"
+
+
+def test_full_local_v2_message_source_rejects_missing_session_scope() -> None:
+    item = _v2_message_item()
+    item["source_refs"] = [{"source_type": "message", "source_id": "message-1"}]
+    adapter = FakeAdapter(_v2_payload(item))
+    adapter.profile = "full-local"
+
+    evidence = asyncio.run(_runtime(FakeStore(), adapter).recall(_request()))
+
+    assert evidence.status == "unavailable"
+    assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
+
+
+def test_full_local_v2_rejects_unknown_envelope_fields() -> None:
+    payload = _v2_payload(_v2_message_item())
+    payload["unexpected"] = "must fail closed"
+    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+
+    assert evidence.status == "unavailable"
+    assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
 
 
 @pytest.mark.parametrize(
@@ -484,6 +662,45 @@ def test_transient_ingest_failure_stays_failed_until_health_gated_durable_reopen
     assert adapter.health_calls == 2
 
 
+def test_full_local_pump_delivers_message_ledger_before_archive_ledger() -> None:
+    store = FakeStore()
+    store.claim_message: dict[str, Any] | None = {
+        "outbox": {"message_outbox_id": "message-outbox-1"},
+        "delivery": {
+            "delivery_id": "message-delivery-1",
+            "lease_token": "message-lease-1",
+            "attempt_number": 1,
+            "request_digest": _sha("request"),
+        },
+        "message_request": {
+            "session_id": "session-1",
+            "external_id": "xmuse-room-message-activity-1",
+            "role": "assistant",
+            "content": "durable reply",
+            "metadata": {"activity_id": "activity-1"},
+        },
+    }
+
+    def claim_message(**_kwargs: Any) -> dict[str, Any] | None:
+        value = store.claim_message
+        store.claim_message = None
+        return value
+
+    def complete_message(**kwargs: Any) -> dict[str, Any]:
+        store.completions.append(kwargs)
+        return kwargs
+
+    store.claim_next_message_outbox = claim_message  # type: ignore[attr-defined]
+    store.complete_message_delivery = complete_message  # type: ignore[attr-defined]
+    store.requeue_retryable_failed_message_outbox = lambda **_kwargs: []  # type: ignore[attr-defined]
+    adapter = FakeAdapter(_compact_payload())
+    adapter.profile = "full-local"
+
+    assert asyncio.run(_runtime(store, adapter).pump_once()) is True
+    assert adapter.message_calls[0]["external_id"] == "xmuse-room-message-activity-1"
+    assert store.completions[-1]["status"] == "delivered"
+
+
 class _HttpResponse:
     status = 200
 
@@ -626,6 +843,23 @@ def test_http_adapter_requires_advertised_compact_profile_without_full_fallback(
         assert body["response_profile"] == "source_evidence/v1"
 
 
+def test_full_local_requires_v2_source_evidence_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xmuse.memoryos_adapter import MemoryOSArchiveAdapter
+
+    health = json.dumps(
+        {"status": "ok", "capabilities": {"build_context_profiles": ["source_evidence/v1"]}}
+    ).encode("utf-8")
+    opener = _HttpOpener([_HttpResponse(health)])
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: opener)
+    adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key", profile="full-local")
+    with pytest.raises(MemoryOSAdapterError) as exc_info:
+        adapter.build_context(session_id="session-1", task="task", retrieval_query=None)
+    assert exc_info.value.code == "memoryos_source_evidence_unsupported"
+    assert len(opener.requests) == 1
+
+
 def test_archive_ingest_accepts_replay_and_reports_content_conflict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -653,6 +887,48 @@ def test_archive_ingest_accepts_replay_and_reports_content_conflict(
     with pytest.raises(MemoryOSAdapterError) as exc_info:
         adapter.ingest_document({**request, "content": "different content"})
     assert exc_info.value.code == "memoryos_document_conflict"
+
+
+def test_message_ingest_uses_public_nested_message_response_and_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xmuse.memoryos_adapter import MemoryOSArchiveAdapter
+
+    response = json.dumps(
+        {
+            "message": {
+                "id": "message-1",
+                "external_id": "xmuse-room-message-activity-1",
+                "role": "assistant",
+                "content": "durable reply",
+            },
+            "replayed": False,
+        }
+    ).encode("utf-8")
+    conflict = urllib.error.HTTPError(
+        "http://127.0.0.1:8301/sessions/session-1/ingest",
+        409,
+        "conflict",
+        hdrs=None,
+        fp=None,
+    )
+    opener = _HttpOpener([_HttpResponse(response), conflict])
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: opener)
+    adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
+    request = {
+        "session_id": "session-1",
+        "external_id": "xmuse-room-message-activity-1",
+        "role": "assistant",
+        "content": "durable reply",
+        "metadata": {"activity_id": "activity-1"},
+    }
+
+    assert adapter.ingest_message(**request)["message"]["id"] == "message-1"
+    with pytest.raises(MemoryOSAdapterError) as exc_info:
+        adapter.ingest_message(**{**request, "content": "changed"})
+    assert exc_info.value.code == "memoryos_message_conflict"
+    assert opener.requests[0].full_url.endswith("/sessions/session-1/ingest")
+    assert "server-key" not in opener.requests[0].full_url
 
 
 def test_final_memory_evidence_stays_within_eight_kib_and_oversize_fails_closed() -> None:

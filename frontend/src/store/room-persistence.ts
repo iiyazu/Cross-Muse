@@ -1,6 +1,9 @@
 export const MAX_LOCAL_ROOMS = 50;
-export const LOCAL_STATE_KEY = "xmuse.room-ui/v1";
+export const LOCAL_STATE_KEY = "xmuse.room-ui/v2";
+export const LEGACY_LOCAL_STATE_KEY = "xmuse.room-ui/v1";
 export const DRAFT_KEY_PREFIX = "xmuse.room-draft/v1:";
+
+export type WorkspaceDockTab = "agent" | "room" | "runtime";
 
 export type ScrollAnchor = {
   messageId: string;
@@ -13,6 +16,9 @@ export type PersistedRoomUiState = {
   theme: "dark" | "light";
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  dockTab: WorkspaceDockTab;
+  pinnedRoomIds: string[];
+  selectedParticipants: Record<string, string>;
 };
 
 export function defaultRoomUiState(): PersistedRoomUiState {
@@ -21,7 +27,10 @@ export function defaultRoomUiState(): PersistedRoomUiState {
     scrollAnchors: {},
     theme: "dark",
     sidebarOpen: true,
-    inspectorOpen: false
+    inspectorOpen: false,
+    dockTab: "room",
+    pinnedRoomIds: [],
+    selectedParticipants: {}
   };
 }
 
@@ -29,7 +38,12 @@ export function readRoomUiState(storage: Storage | null): PersistedRoomUiState {
   const fallback = defaultRoomUiState();
   if (!storage) return fallback;
   try {
-    const parsed = JSON.parse(storage.getItem(LOCAL_STATE_KEY) ?? "{}") as Record<string, unknown>;
+    const parsed = JSON.parse(
+      storage.getItem(LOCAL_STATE_KEY) ?? storage.getItem(LEGACY_LOCAL_STATE_KEY) ?? "{}"
+    ) as Record<string, unknown>;
+    const dockTab = ["agent", "room", "runtime"].includes(String(parsed.dockTab))
+      ? parsed.dockTab as WorkspaceDockTab
+      : parsed.inspectorOpen === true ? "room" : "agent";
     return {
       readCursors: parsed.readCursors && typeof parsed.readCursors === "object"
         ? parsed.readCursors as Record<string, number>
@@ -39,7 +53,18 @@ export function readRoomUiState(storage: Storage | null): PersistedRoomUiState {
         : {},
       theme: parsed.theme === "light" ? "light" : "dark",
       sidebarOpen: parsed.sidebarOpen !== false,
-      inspectorOpen: parsed.inspectorOpen === true
+      inspectorOpen: parsed.dockOpen === true || parsed.inspectorOpen === true,
+      dockTab,
+      pinnedRoomIds: Array.isArray(parsed.pinnedRoomIds)
+        ? parsed.pinnedRoomIds.filter((value): value is string => typeof value === "string").slice(0, MAX_LOCAL_ROOMS)
+        : [],
+      selectedParticipants: parsed.selectedParticipants && typeof parsed.selectedParticipants === "object"
+        ? Object.fromEntries(
+            Object.entries(parsed.selectedParticipants as Record<string, unknown>)
+              .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+              .slice(0, MAX_LOCAL_ROOMS)
+          )
+        : {}
     };
   } catch {
     return fallback;
@@ -52,20 +77,33 @@ export function persistRoomUiState(
   maximum = MAX_LOCAL_ROOMS
 ): void {
   if (!storage) return;
+  const pinned = state.pinnedRoomIds.slice(0, maximum);
   const recentIds = Object.keys(state.readCursors)
     .sort((left, right) => (state.readCursors[right] ?? 0) - (state.readCursors[left] ?? 0))
-    .slice(0, maximum);
-  const readCursors = Object.fromEntries(recentIds.map((id) => [id, state.readCursors[id]]));
+    .filter((id) => !pinned.includes(id))
+    .slice(0, Math.max(0, maximum - pinned.length));
+  const retainedIds = [...pinned, ...recentIds];
+  const readCursors = Object.fromEntries(retainedIds.flatMap((id) =>
+    state.readCursors[id] === undefined ? [] : [[id, state.readCursors[id]]]
+  ));
   const scrollAnchors = Object.fromEntries(
-    recentIds.flatMap((id) => state.scrollAnchors[id] ? [[id, state.scrollAnchors[id]]] : [])
+    retainedIds.flatMap((id) => state.scrollAnchors[id] ? [[id, state.scrollAnchors[id]]] : [])
+  );
+  const selectedParticipants = Object.fromEntries(
+    retainedIds.flatMap((id) => state.selectedParticipants[id]
+      ? [[id, state.selectedParticipants[id]]]
+      : [])
   );
   storage.setItem(LOCAL_STATE_KEY, JSON.stringify({
-    version: 1,
+    version: 2,
     readCursors,
     scrollAnchors,
     theme: state.theme,
     sidebarOpen: state.sidebarOpen,
-    inspectorOpen: state.inspectorOpen
+    dockOpen: state.inspectorOpen,
+    dockTab: state.dockTab,
+    pinnedRoomIds: pinned,
+    selectedParticipants
   }));
 }
 

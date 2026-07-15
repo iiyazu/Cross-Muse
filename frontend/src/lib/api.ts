@@ -27,6 +27,7 @@ import type {
   RoomOperationsProjection,
   RoomRuntimeRecoverDescriptor,
   RoomRuntimeRecoverResult,
+  RoomSetupOptions,
   XmuseApiErrorShape
 } from "./types";
 
@@ -72,6 +73,15 @@ function fetcherFrom(options: ApiClientOptions): Fetcher {
 
 export function chatApiBaseUrl(options: ApiClientOptions = {}): string {
   return trimSlash(options.chatApiBaseUrl ?? DEFAULT_CHAT_API_BASE_URL);
+}
+
+export function roomAgentStreamsUrl(
+  conversationId: string,
+  options: ApiClientOptions = {}
+): string {
+  return `${chatApiBaseUrl(options)}/conversations/${encodeURIComponent(
+    conversationId
+  )}/agent-streams`;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -615,6 +625,25 @@ export async function createConversation(
     },
     { ...options, timeoutMs: options.timeoutMs ?? 14_000 }
   );
+}
+
+export async function fetchRoomSetupOptions(
+  options: ApiClientOptions = {}
+): Promise<RoomSetupOptions> {
+  const payload = await fetchJson<RoomSetupOptions>(
+    `${chatApiBaseUrl(options)}/room-setup-options`,
+    { method: "GET", cache: "no-store" },
+    options
+  );
+  if (payload.schema_version !== "room_setup_options/v1") {
+    throw new XmuseApiError({
+      code: "room_setup_options_schema_unsupported",
+      message: "Room setup options use an unsupported schema",
+      retryable: false,
+      status: 422
+    });
+  }
+  return payload;
 }
 
 export async function fetchEvents(

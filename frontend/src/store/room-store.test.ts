@@ -24,6 +24,7 @@ const apiMocks = vi.hoisted(() => ({
   sendThreadMessage: vi.fn(),
   rebuildRoomMemoryIndex: vi.fn(),
   recoverRoomRuntime: vi.fn(),
+  roomAgentStreamsUrl: vi.fn((roomId: string) => `http://localhost/streams/${roomId}`),
   resolveRoomMemoryCandidate: vi.fn(),
   submitRoomObservationControl: vi.fn(),
   submitRoomCodexAction: vi.fn(),
@@ -34,6 +35,31 @@ vi.mock("@/lib/api", () => apiMocks);
 
 const { useRoomStore } = await import("./room-store");
 const originalStartSync = useRoomStore.getState().startSync;
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  listeners = new Map<string, EventListener>();
+  onerror: ((event: Event) => void) | null = null;
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    this.listeners.set(type, listener);
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(type: "projection" | "reset", payload: unknown) {
+    this.listeners.get(type)?.(
+      new MessageEvent(type, { data: JSON.stringify(payload) }) as unknown as Event
+    );
+  }
+}
 
 function operations(
   overall: "healthy" | "attention" | "blocked" = "healthy",
@@ -359,6 +385,8 @@ function projection(sequence = 0, content = "") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  FakeEventSource.instances = [];
+  vi.unstubAllGlobals();
   useRoomStore.getState().stopSync();
   localStorage.clear();
   sessionStorage.clear();
@@ -470,6 +498,17 @@ describe("Room store", () => {
     useRoomStore.getState().stopSync();
   });
 
+  it("opens the current Room Agent stream as part of normal Room sync", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    await useRoomStore.getState().selectRoom("conv-1");
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0].url).toBe("http://localhost/streams/conv-1");
+    useRoomStore.getState().stopSync();
+    expect(FakeEventSource.instances[0].closed).toBe(true);
+  });
+
   it("starts Operations polling even when bootstrap has no Room", async () => {
     apiMocks.fetchRooms.mockResolvedValueOnce({ schema_version: "room_list_projection/v1", rooms: [] });
 
@@ -490,13 +529,14 @@ describe("Room store", () => {
     expect(useRoomStore.getState().operationsError?.message).toBe("browser offline");
   });
 
-  it("polls Operations at five seconds only while the visible Inspector is open", async () => {
+  it("polls Operations at five seconds only while the visible Runtime tab is open", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     try {
       useRoomStore.setState({
         operations: operations(),
         inspectorOpen: true,
+        dockTab: "runtime",
         operationsConsecutiveFailures: 0
       });
       useRoomStore.getState().startOperationsSync();
@@ -540,13 +580,14 @@ describe("Room store", () => {
     expect(useRoomStore.getState().roomsById["conv-1"].projection).toBe(roomProjection);
   });
 
-  it("polls execution evidence at five seconds only while the visible Inspector is open", async () => {
+  it("polls execution evidence at five seconds only while the visible Room tab is open", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     try {
       useRoomStore.setState({
         selectedRoomId: "conv-1",
         inspectorOpen: true,
+        dockTab: "room",
         executionsByRoom: {
           "conv-1": { ...useRoomStore.getState().executionsByRoom["conv-1"],
             list: executionList(),
@@ -630,13 +671,14 @@ describe("Room store", () => {
       .toBe("conv-1");
   });
 
-  it("polls memory at five seconds only for a visible open Inspector", async () => {
+  it("polls memory at five seconds only for a visible open Room tab", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     try {
       useRoomStore.setState({
         selectedRoomId: "conv-1",
         inspectorOpen: true,
+        dockTab: "room",
         memoryByRoom: {
           "conv-1": {
             projection: memoryProjection(),
@@ -974,7 +1016,7 @@ describe("Room store", () => {
     useRoomStore.getState().markRead("conv-1", 18);
 
     expect(sessionStorage.getItem("xmuse.room-draft/v1:conv-1")).toBe("未发送草稿");
-    const local = JSON.parse(localStorage.getItem("xmuse.room-ui/v1") ?? "{}");
+    const local = JSON.parse(localStorage.getItem("xmuse.room-ui/v2") ?? "{}");
     expect(local.readCursors["conv-1"]).toBe(18);
     expect(local).not.toHaveProperty("drafts");
   });
@@ -1327,12 +1369,75 @@ describe("Room store", () => {
     expect(useRoomStore.getState().codexPreferenceRevision).toBe(revision + 1);
   });
 
-  it("polls visible Codex state at two seconds and refreshes immediately on focus", async () => {
+  it("accepts current-room SSE snapshots and fences a replaced connection", async () => {
+    await useRoomStore.getState().bootstrap("conv-1");
+    useRoomStore.getState().stopSync();
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    useRoomStore.getState().startAgentStream();
+    const first = FakeEventSource.instances[0];
+    expect(first.url).toBe("http://localhost/streams/conv-1");
+    first.emit("projection", {
+      schema_version: "room_agent_stream_projection/v1",
+      proof_boundary: "provider_preview_not_room_or_codex_authority",
+      projection_available: true,
+      conversation_id: "conv-1",
+      epoch: "opaque-1",
+      stream_seq: 2,
+      streams: [{
+        stream_id: "stream-1",
+        participant_id: "participant-1",
+        observation_id: "observation-1",
+        state: "streaming",
+        content: "draft ",
+        truncated: false,
+        started_at: "2026-07-14T10:00:00Z",
+        updated_at: "2026-07-14T10:00:01Z",
+        resolution: null
+      }]
+    });
+
+    expect(useRoomStore.getState().roomsById["conv-1"]).toMatchObject({
+      agentStreamAvailable: true,
+      agentStreamEpoch: "opaque-1",
+      agentStreamSeq: 2,
+      agentStreams: [{ stream_id: "stream-1", content: "draft " }]
+    });
+
+    useRoomStore.getState().startAgentStream();
+    const second = FakeEventSource.instances[1];
+    expect(first.closed).toBe(true);
+    first.emit("reset", {
+      schema_version: "room_agent_stream_projection/v1",
+      proof_boundary: "provider_preview_not_room_or_codex_authority",
+      projection_available: true,
+      conversation_id: "conv-1",
+      epoch: "stale",
+      stream_seq: 99,
+      streams: []
+    });
+    expect(useRoomStore.getState().roomsById["conv-1"].agentStreamEpoch).toBeNull();
+    second.emit("reset", {
+      schema_version: "room_agent_stream_projection/v1",
+      proof_boundary: "provider_preview_not_room_or_codex_authority",
+      projection_available: true,
+      conversation_id: "conv-1",
+      epoch: "opaque-2",
+      stream_seq: 1,
+      streams: []
+    });
+    expect(useRoomStore.getState().roomsById["conv-1"].agentStreamEpoch).toBe("opaque-2");
+    useRoomStore.getState().stopSync();
+    expect(second.closed).toBe(true);
+  });
+
+  it("polls visible idle Codex state at five seconds and refreshes immediately on focus", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0);
     useRoomStore.setState({
       selectedRoomId: "conv-1",
       inspectorOpen: true,
+      dockTab: "agent",
       codexByRoom: {
         "conv-1": {
           projection: codexProjection(),
@@ -1349,10 +1454,14 @@ describe("Room store", () => {
     });
     useRoomStore.getState().startCodexSync();
     expect(apiMocks.fetchRoomCodexAgents).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1_999);
+    await vi.advanceTimersByTimeAsync(4_999);
     expect(apiMocks.fetchRoomCodexAgents).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new Event("focus"));
+    await Promise.resolve();
+    expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(2);
+    useRoomStore.setState({ dockTab: "room" });
     window.dispatchEvent(new Event("focus"));
     await Promise.resolve();
     expect(apiMocks.fetchRoomCodexAgents).toHaveBeenCalledTimes(2);

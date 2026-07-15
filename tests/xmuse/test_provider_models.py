@@ -52,8 +52,10 @@ def test_default_registry_contains_only_codex_room_profiles() -> None:
         "codex.god",
         "codex.final_quality",
     ]
-    assert registry.get("codex.default").model_id == "gpt-5.4"
-    assert registry.get("codex.worker").model_id == "gpt-5.4-mini"
+    assert registry.get("codex.default").model_id == "gpt-5.6-luna"
+    assert registry.get("codex.worker").model_id == "gpt-5.6-luna"
+    assert registry.get("codex.review").model_id == "gpt-5.6-sol"
+    assert registry.get("codex.god").model_id == "gpt-5.6-sol"
     assert registry.get("codex.final_quality").model_id == "gpt-5.5"
     with pytest.raises(KeyError, match="a2a.remote"):
         registry.get("a2a.remote")
