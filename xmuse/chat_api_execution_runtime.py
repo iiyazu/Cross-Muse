@@ -36,12 +36,12 @@ from xmuse_core.chat.room_execution_profiles import (
     gate_ids_for_profile_paths,
     get_execution_gate_profile,
 )
+from xmuse_core.chat.room_execution_runtime_store import RoomExecutionRuntimeStore
 from xmuse_core.chat.room_execution_sandbox import (
     RoomExecutionSandboxError,
     build_repository_manifest_digest,
     build_toolchain_capability_digest,
 )
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_execution_supervisor import (
     ExecutionControllerSupervisorConfig,
     StartedExecutionController,
@@ -85,7 +85,7 @@ class RoomExecutionRuntime:
             or os.environ.get("XMUSE_WORKROOM_GENERATION", "").strip()
             or f"direct-{os.getpid()}"
         )
-        self.store = RoomExecutionStore(self.root / "chat.db")
+        self.store = RoomExecutionRuntimeStore(self.root / "chat.db")
         self.supervisor = ExecutionControllerSupervisorConfig(
             repo_root=self.launcher_root,
             xmuse_root=self.root,

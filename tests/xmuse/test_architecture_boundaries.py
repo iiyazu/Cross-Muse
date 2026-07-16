@@ -166,6 +166,13 @@ def test_execution_controller_entrypoint_uses_controller_capability_store() -> N
     assert not _imports_prefix(entrypoint, "xmuse_core.chat.room_execution_store")
 
 
+def test_execution_runtime_uses_reconciler_capability_store() -> None:
+    runtime = APP_ROOT / "chat_api_execution_runtime.py"
+
+    assert _imports_prefix(runtime, "xmuse_core.chat.room_execution_runtime_store")
+    assert not _imports_prefix(runtime, "xmuse_core.chat.room_execution_store")
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))

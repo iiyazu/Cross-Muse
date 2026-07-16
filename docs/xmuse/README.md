@@ -82,6 +82,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_execution_read_store.py` | Read-only candidate/run projection source without command capabilities. |
 | `src/xmuse_core/chat/room_execution_operator_store.py` | Fixed policy, candidate-decision, and cancel capability adapter for operator routes. |
 | `src/xmuse_core/chat/room_execution_controller_store.py` | One-shot controller claim, gate, promotion, and finalization capability adapter. |
+| `src/xmuse_core/chat/room_execution_runtime_store.py` | Long-lived consensus discovery and controller-recovery capability adapter. |
 | `src/xmuse_core/chat/room_execution_review_store.py` | Least-authority review material and receipt store used by Room delivery. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
@@ -161,6 +162,10 @@ The one-shot Harness process receives a distinct `RoomExecutionControllerStore`.
 recover its authorized run and record fixed gate/promotion evidence, but cannot change Room
 policy, authorize candidates, reconcile consensus, request operator cancellation, or bind
 Room delivery review receipts.
+
+The long-lived Chat API reconciler uses `RoomExecutionRuntimeStore`: it may discover endorsed
+candidates, reconcile consensus authorization, and recover controller bindings, but it does
+not receive operator commands or the controller's gate/promotion/finalization surface.
 
 Core continues to have no dependency on the application namespace or `memoryos_lite`.
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and

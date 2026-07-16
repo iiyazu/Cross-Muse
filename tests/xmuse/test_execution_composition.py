@@ -14,6 +14,7 @@ from xmuse_core.chat.room_execution_contracts import (
     ExecutionRiskEvaluation,
     ExecutionWorkspaceGuard,
 )
+from xmuse_core.chat.room_execution_runtime_store import RoomExecutionRuntimeStore
 from xmuse_core.runtime.processes import build_process_inventory
 
 DIGEST = "sha256:" + "a" * 64
@@ -26,6 +27,20 @@ def _runtime(tmp_path: Path) -> execution_runtime.RoomExecutionRuntime:
         launcher_root=tmp_path,
         generation="generation-one",
     )
+
+
+def test_runtime_store_withholds_operator_controller_and_room_capabilities(
+    tmp_path: Path,
+) -> None:
+    store = RoomExecutionRuntimeStore(tmp_path / "chat.db")
+
+    assert not hasattr(store, "set_policy")
+    assert not hasattr(store, "apply_operator_decision")
+    assert not hasattr(store, "request_cancel")
+    assert not hasattr(store, "claim_requested_run")
+    assert not hasattr(store, "record_gate_evidence")
+    assert not hasattr(store, "finalize_run")
+    assert not hasattr(store, "bind_review_material_receipt")
 
 
 def test_consensus_kill_switch_is_frozen_and_new_run_starts_only_once_per_pass(
