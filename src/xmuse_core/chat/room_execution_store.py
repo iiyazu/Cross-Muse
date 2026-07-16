@@ -27,13 +27,15 @@ from xmuse_core.chat.room_execution_actions import (
 from xmuse_core.chat.room_execution_candidates import (
     _ensure_policy_conn,
     _participant_fingerprint,
-    _policy_view,
     _refresh_consensus_state_conn,
     patch_from_candidate,
     workspace_guard_digest,
 )
 from xmuse_core.chat.room_execution_candidates import (
     insert_execution_candidate_conn as insert_execution_candidate_conn,
+)
+from xmuse_core.chat.room_execution_candidates import (
+    policy_view as _policy_view,
 )
 from xmuse_core.chat.room_execution_candidates import (
     prepare_execution_candidate_conn as prepare_execution_candidate_conn,
@@ -83,6 +85,7 @@ from xmuse_core.chat.room_execution_promotion import (
     prepare_promotion_journal_conn,
     resolve_promotion_journal_conn,
 )
+from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_execution_runs import (
     advance_run_conn,
@@ -109,44 +112,11 @@ from xmuse_core.chat.room_execution_views import (
 from xmuse_core.chat.room_execution_views import run_view_conn as _run_view_conn
 
 
-class RoomExecutionStore(RoomExecutionReviewStore):
+class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
     """Privileged/read-model facade over the durable execution ledger."""
 
     def __init__(self, db_path: Path | str) -> None:
         self._database = RoomDatabase(db_path)
-
-    def get_policy(self, conversation_id: str) -> dict[str, Any] | None:
-        with self._database.connect(readonly=True) as conn:
-            row = conn.execute(
-                "select * from room_execution_policies where conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()
-        return _policy_view(row) if row is not None else None
-
-    def get_candidate(
-        self, candidate_id: str, *, include_patch: bool = False
-    ) -> dict[str, Any] | None:
-        with self._database.connect(readonly=True) as conn:
-            row = conn.execute(
-                "select * from room_execution_candidates where candidate_id = ?", (candidate_id,)
-            ).fetchone()
-            return (
-                _candidate_view_conn(conn, row, include_patch=include_patch)
-                if row is not None
-                else None
-            )
-
-    def list_conversation_candidates(
-        self, conversation_id: str, *, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        clean_limit = max(1, min(int(limit), 100))
-        with self._database.connect(readonly=True) as conn:
-            rows = conn.execute(
-                "select * from room_execution_candidates where conversation_id = ? "
-                "order by created_at desc, candidate_id desc limit ?",
-                (conversation_id, clean_limit),
-            ).fetchall()
-            return [_candidate_view_conn(conn, row, include_patch=False) for row in rows]
 
     def list_endorsed_candidate_ids(self, *, limit: int = 20) -> list[str]:
         clean_limit = max(1, min(int(limit), 100))
@@ -158,25 +128,6 @@ class RoomExecutionStore(RoomExecutionReviewStore):
                 (clean_limit,),
             ).fetchall()
         return [str(row["candidate_id"]) for row in rows]
-
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
-        with self._database.connect(readonly=True) as conn:
-            row = conn.execute(
-                "select * from room_execution_runs where run_id = ?", (run_id,)
-            ).fetchone()
-            return _run_view_conn(conn, row) if row is not None else None
-
-    def list_conversation_runs(
-        self, conversation_id: str, *, limit: int = 50
-    ) -> list[dict[str, Any]]:
-        clean_limit = max(1, min(int(limit), 100))
-        with self._database.connect(readonly=True) as conn:
-            rows = conn.execute(
-                "select * from room_execution_runs where conversation_id = ? "
-                "order by requested_at desc, run_id desc limit ?",
-                (conversation_id, clean_limit),
-            ).fetchall()
-            return [_run_view_conn(conn, row) for row in rows]
 
     @staticmethod
     def _reserve_action_conn(

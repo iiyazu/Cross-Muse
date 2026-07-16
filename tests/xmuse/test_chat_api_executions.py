@@ -260,6 +260,26 @@ def test_execution_reads_are_bounded_no_store_and_candidate_detail_is_explicit()
     assert client.get("/api/chat/conversations/conv-1/executions?limit=51").status_code == 422
 
 
+def test_execution_get_routes_do_not_construct_the_command_store() -> None:
+    read_store = _ExecutionStore()
+    app = FastAPI()
+
+    def command_store_forbidden(_path: Path):
+        raise AssertionError("GET projection acquired the command store")
+
+    register_room_execution_routes(
+        app,
+        root=Path("/tmp/xmuse-execution-read-api-test"),
+        store_factory=command_store_forbidden,
+        read_store_factory=lambda _path: read_store,
+        conversation_exists=lambda conversation_id: conversation_id == "conv-1",
+    )
+    client = TestClient(app)
+
+    assert client.get("/api/chat/conversations/conv-1/executions").status_code == 200
+    assert client.get("/api/chat/execution-candidates/candidate-1").status_code == 200
+
+
 def test_operator_routes_require_token_and_reject_extra_or_invalid_guards() -> None:
     store = _ExecutionStore()
     client = _client(store)

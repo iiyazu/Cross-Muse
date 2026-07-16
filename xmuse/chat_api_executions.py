@@ -82,6 +82,7 @@ class RoomExecutionCommandStore(RoomExecutionReadStore, Protocol):
 
 
 RoomExecutionStoreFactory = Callable[[Path], RoomExecutionCommandStore]
+RoomExecutionReadStoreFactory = Callable[[Path], RoomExecutionReadStore]
 ExecutionRunStarter = Callable[[str], None]
 ExecutionDecisionContextProvider = Callable[
     [str],
@@ -190,6 +191,7 @@ def register_room_execution_routes(
     *,
     root: Path,
     store_factory: RoomExecutionStoreFactory,
+    read_store_factory: RoomExecutionReadStoreFactory | None = None,
     operator_token: str | None = None,
     decision_context_provider: ExecutionDecisionContextProvider | None = None,
     run_starter: ExecutionRunStarter | None = None,
@@ -199,6 +201,11 @@ def register_room_execution_routes(
 ) -> None:
     def store() -> RoomExecutionCommandStore:
         return store_factory(root / "chat.db")
+
+    def read_store() -> RoomExecutionReadStore:
+        if read_store_factory is None:
+            return store()
+        return read_store_factory(root / "chat.db")
 
     def execution_profile() -> Mapping[str, Any] | None:
         if execution_profile_provider is None:
@@ -231,7 +238,7 @@ def register_room_execution_routes(
         try:
             require_conversation(conversation_id)
             return build_room_execution_list_projection(
-                store(),
+                read_store(),
                 conversation_id,
                 limit=limit,
                 cursor=cursor,
@@ -251,7 +258,7 @@ def register_room_execution_routes(
         response.headers["Cache-Control"] = "no-store"
         try:
             return build_room_execution_candidate_projection(
-                store(),
+                read_store(),
                 candidate_id,
                 consensus_kill_switch_enabled=consensus_kill_switch_enabled,
                 execution_profile=execution_profile(),

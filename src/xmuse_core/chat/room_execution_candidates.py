@@ -382,7 +382,7 @@ def record_proposal_assessments_conn(
     return recorded
 
 
-def _policy_view(row: sqlite3.Row) -> dict[str, Any]:
+def policy_view(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "schema_version": "room_execution_policy/v1",
         "conversation_id": row["conversation_id"],

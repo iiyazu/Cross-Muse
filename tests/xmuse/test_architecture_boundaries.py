@@ -133,6 +133,24 @@ def test_execution_ledger_views_do_not_own_transactions_or_actions() -> None:
     assert transaction_calls == set()
 
 
+def test_execution_ledger_reader_does_not_own_commands() -> None:
+    reader = CORE_ROOT / "chat" / "room_execution_read_store.py"
+    forbidden = (
+        "xmuse_core.chat.room_execution_actions",
+        "xmuse_core.chat.room_execution_promotion",
+        "xmuse_core.chat.room_execution_review_store",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(reader, prefix)] == []
+    tree = ast.parse(reader.read_text(encoding="utf-8"), filename=str(reader))
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+        for node in ast.walk(tree)
+    )
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))
