@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,10 +15,41 @@ from xmuse_core.chat.room_execution_contracts import (
     ExecutionRiskEvaluation,
     ExecutionWorkspaceGuard,
 )
+from xmuse_core.chat.room_execution_controller_store import RoomExecutionControllerStore
 from xmuse_core.chat.room_execution_runtime_store import RoomExecutionRuntimeStore
 from xmuse_core.runtime.processes import build_process_inventory
 
 DIGEST = "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    ("adapter", "method_names"),
+    (
+        (
+            RoomExecutionControllerStore,
+            (
+                "claim_requested_run",
+                "reclaim_run_controller",
+                "get_controller_material",
+                "advance_run",
+                "record_gate_evidence",
+                "prepare_promotion",
+                "mark_promotion_applying",
+                "resolve_promotion",
+                "acknowledge_cancel",
+                "finalize_run",
+            ),
+        ),
+        (RoomExecutionRuntimeStore, ("reconcile_consensus_candidate",)),
+    ),
+)
+def test_execution_capability_adapters_reject_uncontracted_keywords(
+    adapter: type[object], method_names: tuple[str, ...]
+) -> None:
+    for method_name in method_names:
+        parameters = inspect.signature(getattr(adapter, method_name)).parameters.values()
+
+        assert all(parameter.kind is not inspect.Parameter.VAR_KEYWORD for parameter in parameters)
 
 
 def _runtime(tmp_path: Path) -> execution_runtime.RoomExecutionRuntime:
