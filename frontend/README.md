@@ -54,12 +54,21 @@ Origin/Host, JSON type and size, fixed
 upstream paths, timeouts, response bounds, and redirect behavior before adding the token
 server-side.
 
-The Inspector's per-participant Agent Console presents capabilities discovered from each
-participant-bound Codex App Server session: Goal lifecycle, model/effort, one-turn Plan mode,
-steer, interrupt, compact, review, bounded native events, and Room Bridge queue evidence.
+The right-side Workbench separates three evidence domains instead of combining them in one
+Inspector: `Agent` presents one participant-bound Codex App Server session, `Room` presents
+shared turn/execution/memory evidence, and `Runtime` presents process-level health and guarded
+recovery. The Agent tab exposes discovered Goal lifecycle, model/effort, one-turn Plan mode,
+steer, interrupt, compact, review, bounded native events, and Room observation-frontier
+evidence. Sending from its Console is not Room speech, although actions such as Goal and
+interrupt can still affect that participant's runtime state.
 `/goal`, `/plan`, and the other listed aliases are shortcuts for those descriptors, not a raw
 CLI or RPC surface. Shared Room messages never parse slash commands, and native progress never
 becomes Agent speech in the Room timeline.
+
+New Room setup choices come from the bounded, read-only
+`GET /api/chat/room-setup-options` projection. The browser displays server-authored roster
+names and collaboration roles; it does not hard-code provider bindings or expose free-form
+persona and permission editing.
 
 This is a loopback-only, single-user local application. Native Windows and macOS lifecycle
 support is not yet provided; Windows users should run it inside WSL.

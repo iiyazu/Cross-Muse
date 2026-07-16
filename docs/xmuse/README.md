@@ -35,6 +35,7 @@ optional MemoryOS
 | `xmuse/chat_api_room_setup.py` | Atomic Room and roster creation. |
 | `xmuse/chat_api_room_messages.py` | Human speech write path. |
 | `xmuse/chat_api_room_projection.py` | Bounded Room list, timeline, and events. |
+| `xmuse/chat_api_agent_streams.py` | Disposable, authority-reproved Room Agent preview SSE. |
 | `xmuse/chat_api_room_controls.py` | Observation-local cancel/retry. |
 | `xmuse/chat_api_operations.py` | Safe incidents plus guarded Room Runtime and Memory index recovery. |
 | `xmuse/chat_api_executions.py` | Bounded execution projections and guarded operator actions. |
@@ -52,6 +53,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_controls.py` | Attempts, fencing, cleanup, and retry. |
 | `src/xmuse_core/chat/room_host.py` | Fair participant delivery and recovery. |
 | `src/xmuse_core/chat/room_projection.py` | `room_chat_projection/v3`. |
+| `src/xmuse_core/chat/room_agent_stream.py` | Single-writer preview cache and safe projection. |
 | `src/xmuse_core/chat/room_operations.py` | Operational projection and action ledger. |
 | `src/xmuse_core/chat/room_execution_contracts.py` | Strict unified-diff and assessment contracts. |
 | `src/xmuse_core/chat/room_execution_store.py` | Candidate, vote, authorization, run, gate, and promotion authority. |
@@ -71,6 +73,10 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_soak_chaos.py` | Fixed soak profiles, strict aggregate evidence, and `room_soak_chaos_result/v1` gates. |
 | `src/xmuse_core/chat/room_soak_ci.py` | Deterministic 12-Room production Kernel/Host CI simulation. |
 | `src/xmuse_core/agents/room_codex_launcher.py` | Isolated persistent Codex launcher. |
+| `src/xmuse_core/chat/room_codex_schema.py` | Durable native-action stages and safe migration/backfill rules. |
+| `src/xmuse_core/chat/room_codex_bridge.py` | Guarded native capability and action ledger boundary. |
+| `src/xmuse_core/chat/room_codex_native_runtime.py` | Participant session singleflight, recovery, and dispatch fencing. |
+| `src/xmuse_core/chat/room_goal_memory_soak.py` | Fixed v0.1 release profile and `room_goal_memory_soak_result/v1` contract. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
 | `frontend/src/` | Room-first browser and fixed write proxies. |
@@ -95,6 +101,19 @@ explicit cache/schema rebuilds through a guarded Inspector action. Rebuild stops
 child before fixed-cache deletion, resets only derived bindings/outbox in one transaction,
 then waits for replay evidence; it never changes Room Runtime readiness or manufactures Room
 activity.
+
+Participant Codex session creation, ordinary reuse, and forced recovery share one
+participant-scoped singleflight. A late recovery task cannot abort a newer incarnation.
+Native actions record internal preparation, proof, dispatch, and completion stages:
+pre-dispatch work can be safely reconciled and re-proved after a restart, but a crash after
+dispatch is fenced as result-unknown and never automatically replays a provider mutation.
+A provider acknowledgement is durable before the best-effort post-action snapshot refresh.
+
+The `v0.1.0` release boundary is the fixed `live-goal-memory-soak` profile: four Rooms, two
+Agents per Room, four waves, at least 60 minutes, and injected provider, Runner, MemoryOS,
+and projection-cache faults. Its safe result combines settled Room facts, native-action and
+memory evidence, browser verification, process cleanup, and workspace integrity without
+persisting conversation or provider content.
 
 `xmuse-data` has a narrow offline verifier for old `xmuse.chat_db/v1` databases. There
 is no executable compatibility API, MCP, runner, UI projection, or ChatStore runtime.

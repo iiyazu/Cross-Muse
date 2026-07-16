@@ -12,6 +12,10 @@ from typing import Literal, Protocol
 
 ROOM_MEMORY_EVIDENCE_SCHEMA = "room_memory_evidence/v1"
 ROOM_MEMORY_RECALL_TIMEOUT_S = 0.75
+# Full-local performs an on-device lexical+FastEmbed+RRF pass.  Keep the
+# default archive-only path fail-fast, while allowing the explicitly opted-in
+# profile enough bounded time to return useful evidence on a cold CPU cache.
+ROOM_MEMORY_FULL_LOCAL_RECALL_TIMEOUT_S = 5.0
 ROOM_MEMORY_MAX_ITEMS = 8
 ROOM_MEMORY_MAX_TOKENS = 800
 ROOM_MEMORY_MAX_RESPONSE_BYTES = 8 * 1024
@@ -46,6 +50,8 @@ class RoomMemoryEvidenceItem:
     estimated_tokens: int
     source_activity_ids: tuple[str, ...]
     content_sha256: str
+    layer: Literal["recall", "page", "core", "archival"] = "archival"
+    derived: bool = False
 
     def context_payload(self) -> dict[str, object]:
         return {
@@ -53,6 +59,8 @@ class RoomMemoryEvidenceItem:
             "text": self.text,
             "estimated_tokens": self.estimated_tokens,
             "source_activity_ids": list(self.source_activity_ids),
+            "layer": self.layer,
+            "derived": self.derived,
             "proof_boundary": "untrusted_memory_evidence",
         }
 
@@ -83,6 +91,9 @@ class RoomMemoryEvidence:
 
 
 class RoomMemoryRuntime(Protocol):
+    @property
+    def recall_timeout_s(self) -> float: ...
+
     async def recall(self, request: RoomMemoryRecallInput) -> RoomMemoryEvidence: ...
 
     def record_recall_receipt(

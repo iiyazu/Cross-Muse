@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 ROOM_MEMORY_PROJECTION_SCHEMA = "room_memory_projection/v1"
+ROOM_MEMORY_PROJECTION_V2_SCHEMA = "room_memory_projection/v2"
 ROOM_MEMORY_PROOF_BOUNDARY = "memory_projection_not_room_or_memory_index_authority"
 _CANDIDATE_KINDS = {"room_fact", "room_decision", "user_preference", "project_rule"}
 _APPROVAL_STATES = {"pending", "approved", "rejected"}
@@ -61,6 +62,10 @@ class RoomMemoryDeliveryReadStore(Protocol):
 
 class RoomMemoryRecallReadStore(Protocol):
     def list_attempt_receipts(self, *, conversation_id: str, limit: int = 20) -> object: ...
+
+    def list_external_advisory_receipts(
+        self, conversation_id: str, *, limit: int = 20
+    ) -> object: ...
 
 
 def _generated_at() -> str:
@@ -243,6 +248,29 @@ def _safe_candidate(value: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _safe_advisory_receipt(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    receipt_id = _identifier(value.get("receipt_id"))
+    attempt_id = _identifier(value.get("attempt_id"))
+    advisory_id = _identifier(value.get("advisory_id"))
+    status = _identifier(value.get("status"))
+    reason_code = _identifier(value.get("reason_code"))
+    if None in {receipt_id, attempt_id, advisory_id, status, reason_code}:
+        return None
+    if status not in {"accepted", "duplicate", "rejected"}:
+        return None
+    return {
+        "receipt_id": receipt_id,
+        "attempt_id": attempt_id,
+        "advisory_id": advisory_id,
+        "status": status,
+        "reason_code": reason_code,
+        "candidate_digest": _identifier(value.get("candidate_digest")),
+        "source_activity_ids": _identifiers(value.get("source_activity_ids"), limit=8),
+        "created_at": _text(value.get("created_at"), maximum=100),
+        "updated_at": _text(value.get("updated_at"), maximum=100),
+    }
+
+
 def _outbox_counts(value: Mapping[str, int]) -> dict[str, int]:
     pending = _integer(value.get("pending"))
     claimed = _integer(value.get("claimed"))
@@ -268,6 +296,7 @@ def build_room_memory_projection(
     recall_store: RoomMemoryRecallReadStore,
     runtime_status: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
+    schema_version: str = ROOM_MEMORY_PROJECTION_SCHEMA,
 ) -> dict[str, Any]:
     if _identifier(conversation_id) is None:
         raise ValueError("room_memory_conversation_id_invalid")
@@ -280,6 +309,10 @@ def build_room_memory_projection(
     )
     outbox_counts = delivery_store.count_outbox_by_state(conversation_id=conversation_id)
     raw_receipts = recall_store.list_attempt_receipts(conversation_id=conversation_id, limit=8)
+    advisory_reader = getattr(recall_store, "list_external_advisory_receipts", None)
+    raw_advisory_receipts = (
+        advisory_reader(conversation_id, limit=8) if callable(advisory_reader) else []
+    )
     candidates = [
         candidate
         for item in _records(raw_candidates, "candidates", "items")[:20]
@@ -292,11 +325,16 @@ def build_room_memory_projection(
         for item in _records(raw_receipts, "receipts", "items")[:8]
         if (receipt := _safe_receipt(item)) is not None
     ]
+    advisory_receipts = [
+        receipt
+        for item in _records(raw_advisory_receipts, "receipts", "items")[:8]
+        if (receipt := _safe_advisory_receipt(item)) is not None
+    ]
     runtime = _safe_runtime_status(runtime_status)
     binding_present = isinstance(binding, Mapping)
     binding_source: Mapping[str, Any] = binding if isinstance(binding, Mapping) else {}
-    return {
-        "schema_version": ROOM_MEMORY_PROJECTION_SCHEMA,
+    projection = {
+        "schema_version": schema_version,
         "projection_only": True,
         "proof_boundary": ROOM_MEMORY_PROOF_BOUNDARY,
         "generated_at": generated_at or _generated_at(),
@@ -315,6 +353,48 @@ def build_room_memory_projection(
         },
         "sync": _outbox_counts(outbox_counts),
         "recent_recalls": receipts,
+        "advisory_receipts": advisory_receipts,
         "pending_candidate_total": pending_candidate_total,
         "pending_candidates": candidates,
     }
+    if schema_version == ROOM_MEMORY_PROJECTION_V2_SCHEMA:
+        profile = _identifier((runtime_status or {}).get("profile"))
+        if profile not in {"full-local", "archive-only"}:
+            profile = "archive-only"
+        message_counter = getattr(delivery_store, "count_message_outbox_by_state", None)
+        raw_message_counts = (
+            message_counter(conversation_id=conversation_id) if callable(message_counter) else {}
+        )
+        message_counts = raw_message_counts if isinstance(raw_message_counts, Mapping) else {}
+        projection["profile"] = profile
+        projection["capabilities"] = {
+            "hybrid": profile == "full-local" and runtime["state"] == "ready",
+            "message_ingest": profile == "full-local" and runtime["state"] == "ready",
+            "agentic_advisory": profile == "full-local" and runtime["state"] == "ready",
+        }
+        projection["sync"]["messages"] = _outbox_counts(message_counts)
+    return projection
+
+
+def build_room_memory_projection_v2(
+    conversation_id: str,
+    *,
+    binding_store: RoomMemoryBindingReadStore,
+    governance_store: RoomMemoryGovernanceReadStore,
+    delivery_store: RoomMemoryDeliveryReadStore,
+    recall_store: RoomMemoryRecallReadStore,
+    runtime_status: Mapping[str, Any] | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build the v2 capability-aware projection without changing v1 callers."""
+
+    return build_room_memory_projection(
+        conversation_id,
+        binding_store=binding_store,
+        governance_store=governance_store,
+        delivery_store=delivery_store,
+        recall_store=recall_store,
+        runtime_status=runtime_status,
+        generated_at=generated_at,
+        schema_version=ROOM_MEMORY_PROJECTION_V2_SCHEMA,
+    )

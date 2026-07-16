@@ -9,13 +9,16 @@ import {
   type KeyboardEvent,
   type ReactNode
 } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import {
+  roomAgentWorkStateLabel,
   roomParticipantStateLabel,
   roomStateLabel
 } from "@/lib/room-view";
 import type {
   RoomParticipant,
+  RoomAgentStream,
   RoomControlActionDescriptor,
   RoomExecutionCancelDescriptor,
   RoomExecutionDecisionDescriptor,
@@ -49,10 +52,62 @@ import {
   RoomHeader
 } from "./room-header";
 import { RoomMessage, RoomPendingBubble } from "./room-message";
+import { RoomAgentPreview } from "./room-agent-preview";
 import { RoomInspector as RoomInspectorShell } from "./room-inspector";
 import { RoomSidebar } from "./room-sidebar";
 import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
 import { AgentConsole } from "./agent-console";
+import { CommandPalette, type CommandPaletteAction } from "./command-palette";
+import { useBrowserOnline, WorkspaceStatusRegion } from "./workspace-status-region";
+
+type StreamAnnouncementSnapshot = {
+  state: RoomAgentStream["state"];
+  name: string;
+};
+
+const EMPTY_AGENT_STREAMS: RoomAgentStream[] = [];
+type RoomWorkspaceCache = Pick<
+  RoomCache,
+  | "projection"
+  | "timelineItems"
+  | "pendingMessages"
+  | "loading"
+  | "loadingOlder"
+  | "syncState"
+  | "error"
+  | "controlPending"
+  | "controlError"
+>;
+
+export function roomAgentStreamAnnouncement(
+  previous: ReadonlyMap<string, StreamAnnouncementSnapshot>,
+  streams: ReadonlyArray<Pick<RoomAgentStream, "stream_id" | "participant_id" | "state">>,
+  participantNames: ReadonlyMap<string, string>
+) {
+  const current = new Map<string, StreamAnnouncementSnapshot>();
+  const announcements: string[] = [];
+  for (const stream of streams) {
+    const name = participantNames.get(stream.participant_id) ?? "Agent";
+    current.set(stream.stream_id, { state: stream.state, name });
+    const prior = previous.get(stream.stream_id)?.state;
+    if (prior === undefined && stream.state === "streaming") {
+      announcements.push(`${name} 开始生成`);
+    } else if (prior !== "committing" && stream.state === "committing") {
+      announcements.push(`${name} 正在提交`);
+    } else if (
+      prior !== undefined &&
+      prior !== "resolved" &&
+      prior !== "invalidated" &&
+      (stream.state === "resolved" || stream.state === "invalidated")
+    ) {
+      announcements.push(`${name} 结束生成`);
+    }
+  }
+  for (const [streamId, prior] of previous) {
+    if (!current.has(streamId)) announcements.push(`${prior.name} 结束生成`);
+  }
+  return { current, announcement: announcements.join("；") };
+}
 
 type RoomWorkspaceProps = {
   onNavigateRoom: (roomId: string) => void;
@@ -161,18 +216,53 @@ export function shouldInitializeTimeline(
   return !loading && initializedRoomId !== roomId;
 }
 
-function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
+function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomWorkspaceCache }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRoomRef = useRef<string | null>(null);
   const wasAtBottomRef = useRef(true);
   const previousCountRef = useRef(0);
   const historyLoadRef = useRef(false);
   const [newCount, setNewCount] = useState(0);
+  const [streamNoticeCount, setStreamNoticeCount] = useState(0);
+  const [streamAnnouncement, setStreamAnnouncement] = useState("");
+  const previousStreamIdsRef = useRef<Set<string>>(new Set());
+  const previousStreamStatesRef = useRef<Map<string, StreamAnnouncementSnapshot>>(new Map());
   const markRead = useRoomStore((state) => state.markRead);
   const saveScrollAnchor = useRoomStore((state) => state.saveScrollAnchor);
   const anchor = useRoomStore((state) => state.scrollAnchors[roomId]);
   const loadOlder = useRoomStore((state) => state.loadOlder);
   const retryMessage = useRoomStore((state) => state.retryMessage);
+  const agentStreams = useRoomStore(
+    (state) => state.roomsById[roomId]?.agentStreams ?? EMPTY_AGENT_STREAMS
+  );
+  const durableActivityIds = useMemo(
+    () => new Set(cache.timelineItems.map((item) => item.activity_id).filter(Boolean)),
+    [cache.timelineItems]
+  );
+  const visibleStreams = useMemo(
+    () => agentStreams.filter((stream) => {
+      if (stream.state === "invalidated") return false;
+      if (stream.state !== "resolved") return true;
+      const activityId = stream.resolution?.produced_activity_id;
+      return Boolean(activityId && !durableActivityIds.has(activityId));
+    }),
+    [agentStreams, durableActivityIds]
+  );
+  const participantNames = useMemo(
+    () => new Map(
+      (cache.projection?.participants ?? []).map((participant) => [
+        participant.participant_id,
+        participant.display_name
+      ])
+    ),
+    [cache.projection?.participants]
+  );
+  const streamPresenceKey = visibleStreams
+    .map((stream) => `${stream.stream_id}:${stream.state}`)
+    .join("|");
+  const streamContentKey = visibleStreams
+    .map((stream) => `${stream.stream_id}:${stream.content.length}`)
+    .join("|");
 
   const visibleSeq = cache.projection?.latest_visible_room_seq ?? cache.timelineItems.at(-1)?.room_seq ?? 0;
 
@@ -216,6 +306,41 @@ function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
     }
     previousCountRef.current = count;
   }, [cache.pendingMessages.length, cache.timelineItems.length, markRead, roomId, visibleSeq]);
+
+  useEffect(() => {
+    const currentIds = new Set(
+      streamPresenceKey
+        ? streamPresenceKey.split("|").map((item) => item.slice(0, item.lastIndexOf(":")))
+        : []
+    );
+    const started = [...currentIds].filter((streamId) => !previousStreamIdsRef.current.has(streamId));
+    previousStreamIdsRef.current = currentIds;
+    const nextCount = !currentIds.size || wasAtBottomRef.current
+      ? 0
+      : started.length ? currentIds.size : null;
+    if (nextCount === null) return;
+    const frame = requestAnimationFrame(() => setStreamNoticeCount(nextCount));
+    return () => cancelAnimationFrame(frame);
+  }, [streamPresenceKey]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !streamContentKey || !wasAtBottomRef.current) return;
+    const frame = requestAnimationFrame(() => snapTimelineToBottom(container));
+    return () => cancelAnimationFrame(frame);
+  }, [streamContentKey]);
+
+  useEffect(() => {
+    const { current, announcement } = roomAgentStreamAnnouncement(
+      previousStreamStatesRef.current,
+      agentStreams,
+      participantNames
+    );
+    previousStreamStatesRef.current = current;
+    if (!announcement) return;
+    const timer = window.setTimeout(() => setStreamAnnouncement(announcement), 0);
+    return () => window.clearTimeout(timer);
+  }, [agentStreams, participantNames]);
 
   function handleScroll() {
     const container = containerRef.current;
@@ -287,7 +412,6 @@ function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
     <div className="room-timeline-wrap">
       <div
         aria-label="房间消息"
-        aria-live="polite"
         className="room-timeline"
         onScroll={handleScroll}
         ref={containerRef}
@@ -298,14 +422,18 @@ function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
             {cache.loadingOlder ? "正在加载…" : "加载更早消息"}
           </button>
         ) : null}
-        {cache.timelineItems.map((item) => (
+        {cache.timelineItems.map((item, index) => (
+          <Fragment key={item.id}>
+          {new Date(item.created_at ?? 0).toDateString() !== new Date(cache.timelineItems[index - 1]?.created_at ?? 0).toDateString() ? (
+            <div className="room-date-separator" role="separator"><span>{formatTime(item.created_at)}</span></div>
+          ) : null}
           <RoomMessage
             item={item}
-            key={item.id}
             onJumpToReference={(messageId, activityId) => {
               void handleJumpToReference(messageId, activityId);
             }}
           />
+          </Fragment>
         ))}
         {cache.pendingMessages.map((pending) => (
           <RoomPendingBubble
@@ -314,12 +442,26 @@ function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
             pending={pending}
           />
         ))}
+        {visibleStreams.length ? (
+          <div aria-label="Agent 正在生成" className="room-agent-streams">
+            {visibleStreams.map((stream) => (
+              <RoomAgentPreview
+                displayName={participantNames.get(stream.participant_id) ?? "Agent"}
+                key={stream.stream_id}
+                stream={stream}
+              />
+            ))}
+          </div>
+        ) : null}
         {!cache.loading && !cache.timelineItems.length && !cache.pendingMessages.length ? (
           <div className="room-empty-timeline">
             <strong>开始自然群聊</strong>
             <span>每位活跃 Agent 都会观察共享房间，并独立决定是否回应。</span>
           </div>
         ) : null}
+      </div>
+      <div aria-live="polite" className="sr-only" role="status">
+        {streamAnnouncement}
       </div>
       {newCount > 0 ? (
         <button
@@ -332,6 +474,19 @@ function RoomTimeline({ roomId, cache }: { roomId: string; cache: RoomCache }) {
           type="button"
         >
           有 {newCount} 条新消息
+        </button>
+      ) : null}
+      {streamNoticeCount > 0 ? (
+        <button
+          className="room-new-messages room-stream-notice"
+          onClick={() => {
+            const container = containerRef.current;
+            if (container) snapTimelineToBottom(container);
+            setStreamNoticeCount(0);
+          }}
+          type="button"
+        >
+          有 {streamNoticeCount} 个 Agent 正在生成
         </button>
       ) : null}
     </div>
@@ -831,9 +986,38 @@ function RoomMemoryInspector({
       {projection ? (
         <>
           <div className="room-memory-summary" aria-label="记忆同步状态">
-            <span><strong>{projection.sync.backlog}</strong>待同步</span>
+            <span><strong>{projection.sync.backlog}</strong>待同步（档案）</span>
+            {projection.sync.messages ? (
+              <span><strong>{projection.sync.messages.backlog}</strong>消息待同步</span>
+            ) : null}
             <span><strong>{projection.recent_recalls.length}</strong>最近召回</span>
             <span><strong>{projection.pending_candidate_total}</strong>待审批</span>
+          </div>
+          {projection.profile || projection.capabilities ? (
+            <div className="room-memory-summary" aria-label="MemoryOS 能力证明">
+              {projection.profile ? (
+                <span>
+                  <strong>{projection.profile === "full-local" ? "Full-local" : "Archive-only"}</strong>
+                  运行模式
+                </span>
+              ) : null}
+              {projection.capabilities ? (
+                <span>
+                  <strong>{projection.capabilities.hybrid ? "Hybrid 就绪" : "Hybrid 不可用"}</strong>
+                  检索能力
+                </span>
+              ) : null}
+              {projection.capabilities?.message_ingest ? (
+                <span><strong>消息接入就绪</strong>消息链路</span>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="room-memory-summary" aria-label="MemoryOS 运行健康">
+            <span><strong>{projection.runtime.consecutive_restart_count}</strong>连续重启</span>
+            <span>
+              <strong>{projection.runtime.last_healthy_at ? formatTime(projection.runtime.last_healthy_at) : "未记录"}</strong>
+              最近健康
+            </span>
           </div>
           {projection.degraded ? (
             <p className="room-operations-warning" role="status">
@@ -964,6 +1148,8 @@ function memoryKindLabel(kind: RoomMemoryCandidate["kind"]): string {
 }
 
 function RoomInspector({
+  activeTab,
+  onTabChange,
   agentConsoleSection,
   executionCache,
   executionActionPending,
@@ -999,6 +1185,8 @@ function RoomInspector({
   onResolveMemoryCandidate,
   onRebuildMemoryIndex
 }: {
+  activeTab: "agent" | "room" | "runtime";
+  onTabChange: (tab: "agent" | "room" | "runtime") => void;
   agentConsoleSection: ReactNode;
   executionCache: RoomExecutionCache | null;
   executionActionPending: boolean;
@@ -1060,6 +1248,7 @@ function RoomInspector({
 
   return (
     <RoomInspectorShell
+      activeTab={activeTab}
       agentConsoleSection={agentConsoleSection}
       executionSection={<RoomExecutionInspector
         actionError={executionActionError}
@@ -1082,6 +1271,7 @@ function RoomInspector({
       />}
       modal={modal}
       onClose={onClose}
+      onTabChange={onTabChange}
       onTargetMissing={onTargetMissing}
       onTargetResolved={() => onTargetResolved(null)}
       operationsSection={<>
@@ -1415,7 +1605,7 @@ function MemoryRebuildDialog({
   );
 }
 
-function syncLabel(cache: RoomCache | null): string {
+function syncLabel(cache: RoomWorkspaceCache | null): string {
   if (!cache) return "未选择房间";
   const labels = {
     idle: "等待同步",
@@ -1432,7 +1622,7 @@ function useCompactLayout() {
   const [compact, setCompact] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
-    const query = window.matchMedia("(max-width: 1099px)");
+    const query = window.matchMedia("(max-width: 1179px)");
     const update = () => setCompact(query.matches);
     update();
     query.addEventListener?.("change", update);
@@ -1442,7 +1632,11 @@ function useCompactLayout() {
 }
 
 export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspaceProps) {
-  const store = useRoomStore();
+  const store = useRoomStore(useShallow((state) => {
+    const { roomsById, ...workspaceState } = state;
+    void roomsById;
+    return workspaceState;
+  }));
   const compactLayout = useCompactLayout();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
@@ -1452,9 +1646,26 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
   const [recoverTarget, setRecoverTarget] = useState<RoomRuntimeRecoverDescriptor | null>(null);
   const [memoryRebuildTarget, setMemoryRebuildTarget] = useState<RoomMemoryRebuildDescriptor | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
+  const browserOnline = useBrowserOnline();
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const selectedRoom = store.rooms.find((room) => room.conversation_id === store.selectedRoomId) ?? null;
-  const cache = store.selectedRoomId ? store.roomsById[store.selectedRoomId] ?? null : null;
+  const cache = useRoomStore(useShallow((state): RoomWorkspaceCache | null => {
+    const roomId = state.selectedRoomId;
+    const room = roomId ? state.roomsById[roomId] : null;
+    if (!room) return null;
+    return {
+      projection: room.projection,
+      timelineItems: room.timelineItems,
+      pendingMessages: room.pendingMessages,
+      loading: room.loading,
+      loadingOlder: room.loadingOlder,
+      syncState: room.syncState,
+      error: room.error,
+      controlPending: room.controlPending,
+      controlError: room.controlError
+    };
+  }));
   const executionCache = store.selectedRoomId
     ? store.executionsByRoom[store.selectedRoomId] ?? null
     : null;
@@ -1464,12 +1675,33 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   const codexCache = store.selectedRoomId
     ? store.codexByRoom[store.selectedRoomId] ?? null
     : null;
-  const codexParticipants = codexCache?.projection?.participants ?? [];
+  const codexParticipants = useMemo(
+    () => codexCache?.projection?.participants ?? [],
+    [codexCache?.projection?.participants]
+  );
   const selectedCodexParticipant = codexParticipants.find(
     (item) => item.participant.participant_id === codexCache?.selectedParticipantId
   ) ?? codexParticipants[0] ?? null;
   const projection = cache?.projection ?? null;
   const participants = projection?.participants ?? selectedRoom?.members ?? [];
+  const selectedRoomParticipant = participants.find(
+    (item) => item.participant_id === selectedCodexParticipant?.participant.participant_id
+  );
+  const selectedParticipantId = selectedCodexParticipant?.participant.participant_id;
+  const selectedSkillDecisions = useMemo(() => {
+    const decisions = [
+      selectedRoomParticipant?.frontier?.current_attempt?.skill_decision,
+      selectedRoomParticipant?.last_completed_outcome?.skill_decision,
+      ...(projection?.turns.flatMap((turn) => turn.participants
+        .filter((item) => item.participant_id === selectedParticipantId)
+        .flatMap((item) => [item.root_skill_decision, item.frontier?.current_attempt?.skill_decision, item.latest_outcome?.skill_decision])) ?? [])
+    ].filter((item): item is RoomSkillDecision => Boolean(item));
+    const unique = new Map<string, RoomSkillDecision>();
+    for (const decision of decisions) {
+      unique.set(`${decision.skill_id}:${decision.version}:${decision.context_status}`, decision);
+    }
+    return [...unique.values()].slice(-8);
+  }, [projection?.turns, selectedParticipantId, selectedRoomParticipant]);
   const activeTurns = projection?.turns.filter((turn) => turn.state !== "settled") ?? [];
   const currentTurn = activeTurns.at(-1) ?? projection?.turns.at(-1) ?? null;
   const title = projection?.conversation.title ?? selectedRoom?.title ?? "选择一个房间";
@@ -1481,17 +1713,53 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
       : memoryCache?.projection?.degraded || memoryCache?.projection?.pending_candidate_total
         ? { className: "has-attention", label: "长期记忆需要关注", glyph: "·" }
         : null;
+  const commandActions = useMemo<CommandPaletteAction[]>(() => [
+    {
+      id: "new-room",
+      label: "新建 Room",
+      detail: "选择 roster 并创建协作空间",
+      run: () => { setCreatingRoom(true); if (compactLayout) setMobileSidebarOpen(true); }
+    },
+    ...store.rooms.slice(0, 8).map((room) => ({
+      id: `room:${room.conversation_id}`,
+      label: room.title,
+      detail: "切换 Room",
+      run: () => onNavigateRoom(room.conversation_id)
+    })),
+    ...codexParticipants.map((participant) => ({
+      id: `agent:${participant.participant.participant_id}`,
+      label: participant.participant.display_name,
+      detail: "打开单 Agent Codex 工作台",
+      run: () => {
+        store.selectCodexParticipant(participant.participant.participant_id);
+        store.setDockTab("agent");
+      }
+    })),
+    { id: "dock-room", label: "Room 控制面", detail: "执行、记忆与因果证据", run: () => store.setDockTab("room") },
+    { id: "dock-runtime", label: "Runtime 状态", detail: "运行事件与恢复", run: () => store.setDockTab("runtime") },
+    { id: "theme", label: "切换主题", detail: store.theme === "dark" ? "切换到浅色" : "切换到深色", run: () => store.setTheme(store.theme === "dark" ? "light" : "dark") }
+  ], [codexParticipants, compactLayout, onNavigateRoom, store]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = store.theme;
   }, [store.theme]);
 
   useEffect(() => {
+    if (!workspaceNotice) return;
+    const timer = window.setTimeout(() => setWorkspaceNotice(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [workspaceNotice]);
+
+  useEffect(() => {
     const refresh = () => {
       void store.loadRooms();
-      void store.refreshOperations();
-      void store.refreshExecutions();
-      void store.refreshMemory();
+      const current = useRoomStore.getState();
+      if (!current.inspectorOpen) return;
+      if (current.dockTab === "runtime") void current.refreshOperations();
+      else if (current.dockTab === "room") {
+        void current.refreshExecutions();
+        void current.refreshMemory();
+      } else void current.refreshCodexAgents();
     };
     const visibility = () => {
       store.startOperationsSync();
@@ -1546,7 +1814,8 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
 
   async function confirmRecover() {
     if (!recoverTarget) return;
-    await store.recoverRuntime(recoverTarget);
+    const applied = await store.recoverRuntime(recoverTarget);
+    setWorkspaceNotice(applied ? "Room Runtime 恢复请求已应用；状态将由耐久投影确认。" : "恢复请求未完成，已刷新最新状态。");
     closeRecoverDialog();
   }
 
@@ -1560,7 +1829,8 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
 
   async function confirmMemoryRebuild() {
     if (!memoryRebuildTarget) return;
-    await store.rebuildMemoryIndex(memoryRebuildTarget);
+    const applied = await store.rebuildMemoryIndex(memoryRebuildTarget);
+    setWorkspaceNotice(applied ? "MemoryOS 重建请求已应用；请等待耐久投影更新。" : "重建请求未完成，已刷新最新状态。");
     closeMemoryRebuildDialog();
   }
 
@@ -1586,6 +1856,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
       return;
     }
     if (!incident.conversation_id) return;
+    store.setDockTab("room");
     store.setInspectorTarget({
       roomId: incident.conversation_id,
       observationId: incident.observation_id,
@@ -1620,9 +1891,9 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             loading={store.roomsLoading}
             loaded={store.roomsLoaded}
             onClose={() => setMobileSidebarOpen(false)}
-            onCreate={async (name, clientRequestId) => {
+            onCreate={async (name, clientRequestId, rosterTemplateId) => {
               setRoomCreateRequestId(clientRequestId);
-              const id = await store.createRoom(name, clientRequestId);
+              const id = await store.createRoom(name, clientRequestId, rosterTemplateId);
               if (id) {
                 setRoomTitle("");
                 setRoomCreateRequestId(null);
@@ -1642,6 +1913,8 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
               setRoomCreateRequestId(null);
             }}
             query={sidebarQuery}
+            pinnedRoomIds={store.pinnedRoomIds}
+            onTogglePinned={store.togglePinnedRoom}
             readCursors={store.readCursors}
             rooms={store.rooms}
             selectedRoomId={store.selectedRoomId}
@@ -1685,6 +1958,10 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             <RoomTurnStatus
               controlPending={cache.controlPending}
               hiddenCount={Math.max(0, (projection?.active_turn_count ?? activeTurns.length) - 1)}
+              onSelectAgent={(participantId) => {
+                store.selectCodexParticipant(participantId);
+                store.setDockTab("agent");
+              }}
               onCancel={(target) => {
                 returnFocusRef.current = document.activeElement as HTMLElement | null;
                 setCancelTarget(target);
@@ -1718,7 +1995,11 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
               draft={draft}
               key={store.selectedRoomId}
               onDraftChange={(value) => store.setDraft(store.selectedRoomId!, value)}
-              onSend={(content) => store.sendMessage(content)}
+              onSend={async (content) => {
+                const result = await store.sendMessage(content);
+                setWorkspaceNotice(result ? "消息已提交到 Room。" : "消息发送未完成，可在失败消息上重试。");
+                return result;
+              }}
               participants={participants}
               roomId={store.selectedRoomId}
             />
@@ -1749,17 +2030,22 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             />
           ) : null}
           <RoomInspector
+            activeTab={store.dockTab}
             agentConsoleSection={(
               <section className="room-agent-console-section" aria-label="Codex Agent Console">
                 <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
                   {codexParticipants.map((item) => (
                     <button
+                      aria-label={item.participant.display_name}
                       aria-selected={item.participant.participant_id === selectedCodexParticipant?.participant.participant_id}
                       key={item.participant.participant_id}
                       onClick={() => store.selectCodexParticipant(item.participant.participant_id)}
                       role="tab"
                       type="button"
-                    >{item.participant.display_name}</button>
+                    >
+                      <strong>{item.participant.display_name}</strong>
+                      <small>{item.participant.role} · {roomAgentWorkStateLabel(item)}</small>
+                    </button>
                   ))}
                 </div>
                 {selectedCodexParticipant && codexCache?.projection ? (
@@ -1770,14 +2056,17 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
                     key={selectedCodexParticipant.participant.participant_id}
                     localMode={store.getCodexConsolePreference(selectedCodexParticipant.participant.participant_id)}
                     nativeEvents={codexCache.projection.native_events.items}
-                    onAction={(capabilityId, safeRequest, descriptor, confirmed) =>
-                      store.submitCodexAction(
+                    onAction={async (capabilityId, safeRequest, descriptor, confirmed) => {
+                      const result = await store.submitCodexAction(
                         selectedCodexParticipant.participant.participant_id,
                         capabilityId,
                         safeRequest,
                         descriptor,
                         confirmed
-                      )}
+                      );
+                      setWorkspaceNotice(result ? "单 Agent Codex 操作已提交；不会生成 Room 发言。" : "Codex 操作未完成，已保留最新投影。");
+                      return result;
+                    }}
                     onPreferenceChange={(mode) => {
                       store.setCodexConsolePreference(
                         selectedCodexParticipant.participant.participant_id,
@@ -1786,6 +2075,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
                     }}
                     onRefresh={() => void store.refreshCodexAgents()}
                     participant={selectedCodexParticipant}
+                    skillDecisions={selectedSkillDecisions}
                     pending={Boolean(codexCache.actionPending[selectedCodexParticipant.participant.participant_id])}
                   />
                 ) : (
@@ -1816,6 +2106,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
               setCancelTarget(target);
             }}
             onClose={() => store.setInspectorOpen(false)}
+            onTabChange={store.setDockTab}
             onIncidentAction={handleOperationIncident}
             onCancelExecutionRun={store.cancelExecutionRun}
             onDecideExecutionCandidate={store.decideExecutionCandidate}
@@ -1844,6 +2135,13 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           />
         </>
       ) : null}
+      <WorkspaceStatusRegion
+        message={!browserOnline
+          ? "浏览器离线；Room 与 Runtime 状态暂不更新。"
+          : cache?.controlError?.status === 409 || store.executionActionError?.status === 409 || store.memoryActionError?.status === 409
+            ? "状态已经变化，已刷新耐久投影。"
+            : workspaceNotice}
+      />
       {cancelTarget ? (
         <CancelObservationDialog
           onClose={closeCancelDialog}
@@ -1866,6 +2164,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           pending={store.memoryRebuildPending}
         />
       ) : null}
+      <CommandPalette actions={commandActions} />
     </div>
   );
 }

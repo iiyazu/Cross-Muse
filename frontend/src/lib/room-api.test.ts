@@ -4,6 +4,7 @@ import {
   createConversation,
   fetchRoomOperations,
   fetchRoomProjection,
+  fetchRoomSetupOptions,
   fetchRooms,
   recoverRoomRuntime,
   sendThreadMessage,
@@ -61,6 +62,26 @@ describe("Room API client", () => {
       "http://localhost:8201/api/chat/rooms",
       expect.objectContaining({ method: "GET", cache: "no-store" })
     );
+  });
+
+  it("reads roster setup options and rejects a future schema", async () => {
+    const payload = {
+      schema_version: "room_setup_options/v1",
+      default_roster_template_id: "builtin.development",
+      roster_templates: []
+    };
+    const fetcher = vi.fn(async () => Response.json(payload));
+    await expect(fetchRoomSetupOptions({ fetcher, chatApiBaseUrl: "http://localhost:8201/api/chat" }))
+      .resolves.toEqual(payload);
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:8201/api/chat/room-setup-options",
+      expect.objectContaining({ method: "GET", cache: "no-store" })
+    );
+
+    fetcher.mockResolvedValueOnce(Response.json({ ...payload, schema_version: "room_setup_options/v2" }));
+    await expect(fetchRoomSetupOptions({ fetcher })).rejects.toMatchObject({
+      code: "room_setup_options_schema_unsupported"
+    });
   });
 
   it("encodes exactly one Room pagination direction and caps the limit", async () => {

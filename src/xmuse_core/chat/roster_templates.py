@@ -153,6 +153,37 @@ class WorkroomRosterTemplateStore:
             )
         return list(by_id.values())
 
+    def list_valid(
+        self,
+        *,
+        catalog: WorkroomCatalog | None = None,
+    ) -> list[RosterTemplate]:
+        """Return builtin plus individually valid custom templates for safe discovery UIs."""
+
+        catalog = catalog or builtin_workroom_catalog()
+        by_id = dict(catalog.roster_templates)
+        if not self._path.exists():
+            return list(by_id.values())
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return list(by_id.values())
+        templates = payload.get("roster_templates", []) if isinstance(payload, dict) else []
+        if not isinstance(templates, list):
+            return list(by_id.values())
+        for value in templates:
+            if not isinstance(value, dict):
+                continue
+            try:
+                template = validate_roster_template(
+                    RosterTemplate.model_validate(value),
+                    catalog=catalog,
+                )
+            except (ValueError, TypeError):
+                continue
+            by_id[template.template_id] = template
+        return list(by_id.values())
+
     def get(
         self,
         template_id: str,
@@ -232,7 +263,9 @@ def _builtin_role_profiles() -> dict[str, RoleProfile]:
             description="Turns agreed direction into concrete, bounded implementation work.",
             collaboration_focus=(
                 "Contribute implementation-specific evidence, feasibility, and exact changes; "
-                "surface blockers instead of restating the plan."
+                "when a durable handoff targets you, perform the bounded read-only work now "
+                "and report evidence or an exact-patch candidate; surface blockers instead "
+                "of restating the plan or promising future work."
             ),
             default_provider_profile_ref="codex.worker",
         ),

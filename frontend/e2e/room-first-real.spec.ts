@@ -506,7 +506,7 @@ async function openRoom(page: Page, state: BrowserState): Promise<void> {
 
 async function recoverRuntime(page: Page, state: BrowserState): Promise<void> {
   await openRoom(page, state);
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.getByRole("complementary", { name: "房间检查器" });
   await expect(inspector.getByRole("region", { name: "运行与恢复" })).toBeVisible();
   const recover = inspector.getByRole("button", { name: /恢复 Room Runtime|启动 Room Runtime/ });

@@ -27,6 +27,7 @@ MEMORYOS_PORT = 8301
 MEMORYOS_HEARTBEAT_TTL_S = 20.0
 
 MEMORYOS_RESTART_BACKOFF_S = (1, 2, 4, 8, 16, 30)
+MEMORYOS_PROFILES = ("archive-only", "full-local")
 
 MemoryOSRuntimeState = Literal[
     "disabled",
@@ -121,11 +122,14 @@ def memoryos_child_environment(
     xmuse_root: Path,
     generation: str,
     api_key: str,
+    profile: str = "archive-only",
 ) -> dict[str, str]:
     """Return a strict allow-list environment with all network providers disabled."""
 
     if not api_key or not generation:
         raise MemoryOSSupervisorError("memoryos_runtime_configuration_invalid")
+    if profile not in MEMORYOS_PROFILES:
+        raise MemoryOSSupervisorError("memoryos_profile_invalid")
     environment = {
         key: value
         for key, value in ambient.items()
@@ -134,15 +138,26 @@ def memoryos_child_environment(
     environment.update(
         {
             "DATA_DIR": str(memoryos_derived_dir(xmuse_root)),
-            "MEMORYOS_AGENT_KERNEL": "off",
+            # FastEmbed deletes temporary caches after unpacking; pin the
+            # managed model cache to the Workroom runtime so offline startup
+            # can prove the preloaded model without using a global temp path.
+            "FASTEMBED_CACHE_PATH": str(xmuse_root / "runtime" / "fastembed-cache"),
+            "MEMORYOS_AGENT_KERNEL": "external" if profile == "full-local" else "off",
             "MEMORYOS_API_KEY": api_key,
             "MEMORYOS_ARCHIVAL_VECTOR_ENABLED": "false",
             "MEMORYOS_CORS_ORIGINS": "[]",
-            "MEMORYOS_ITEM_EXTRACTION": "false",
+            "MEMORYOS_ITEM_EXTRACTION": "true" if profile == "full-local" else "false",
             "MEMORYOS_MEMORY_ARCH": "v3",
-            "MEMORYOS_PAGING_MODE": "off",
+            "MEMORYOS_PAGING_MODE": "heuristic" if profile == "full-local" else "off",
             "MEMORYOS_RECALL_CACHE_ENABLED": "false",
             "MEMORYOS_RECALL_PIPELINE": "v2",
+            "MEMORYOS_EMBEDDING_PROVIDER": "fastembed" if profile == "full-local" else "auto",
+            "MEMORYOS_EMBEDDING_MODEL": (
+                "BAAI/bge-small-en-v1.5" if profile == "full-local" else "text-embedding-3-small"
+            ),
+            "MEMORYOS_FASTEMBED_OFFLINE": "1" if profile == "full-local" else "0",
+            "HF_HUB_OFFLINE": "1" if profile == "full-local" else "0",
+            "TRANSFORMERS_OFFLINE": "1" if profile == "full-local" else "0",
             "MEMORYOS_RERANK_ENABLED": "false",
             "MEMORYOS_REWRITE_ENABLED": "false",
             "PYTHONUNBUFFERED": "1",
@@ -182,9 +197,12 @@ def write_memoryos_status(
     consecutive_restart_count: int = 0,
     next_retry_at: str | None = None,
     last_healthy_at: str | None = None,
+    profile: str = "archive-only",
 ) -> dict[str, Any]:
     if state not in _STATES or _CODE_RE.fullmatch(code) is None:
         raise MemoryOSSupervisorError("memoryos_status_invalid")
+    if profile not in MEMORYOS_PROFILES:
+        raise MemoryOSSupervisorError("memoryos_profile_invalid")
     if enabled != (state != "disabled"):
         raise MemoryOSSupervisorError("memoryos_status_invalid")
     if pid is not None and (isinstance(pid, bool) or pid <= 0):
@@ -211,6 +229,7 @@ def write_memoryos_status(
         "consecutive_restart_count": consecutive_restart_count,
         "next_retry_at": next_retry_at,
         "last_healthy_at": last_healthy_at,
+        "profile": profile,
     }
     if generation is not None:
         payload["generation"] = generation
@@ -257,6 +276,7 @@ def read_memoryos_status(xmuse_root: Path) -> dict[str, Any] | None:
             "consecutive_restart_count": 0,
             "next_retry_at": None,
             "last_healthy_at": None,
+            "profile": "archive-only",
         }
     return payload
 
@@ -286,6 +306,12 @@ def assess_memoryos_status(
         return _safe_status(payload, state="degraded", code="memoryos_process_stopped")
     if _heartbeat_stale(payload.get("heartbeat_at"), now=now):
         return _safe_status(payload, state="degraded", code="memoryos_heartbeat_stale")
+    if payload.get("code") == "memoryos_full_local_capability_missing":
+        return _safe_status(
+            payload,
+            state="degraded",
+            code="memoryos_full_local_capability_missing",
+        )
     if ready_probe:
         return _safe_status(payload, state="ready", code="ready")
     return _safe_status(payload, state="degraded", code="memoryos_health_unavailable")
@@ -345,6 +371,11 @@ def _safe_status(
                 "consecutive_restart_count": int(payload.get("consecutive_restart_count", 0)),
                 "next_retry_at": payload.get("next_retry_at"),
                 "last_healthy_at": payload.get("last_healthy_at"),
+                "profile": (
+                    payload.get("profile")
+                    if payload.get("profile") in MEMORYOS_PROFILES
+                    else "archive-only"
+                ),
             }
         )
     return safe

@@ -101,14 +101,26 @@ class FakeRuntime:
             inspect_process=self.inspect,
             port_available=lambda _host, _port: True,
             http_ready=lambda _url: self.ready,
-            http_json=lambda _url: (
+            http_json=lambda url: (
                 {
                     "status": "ok",
-                    "surface": "room",
-                    "endpoints": {"mcp_room": "/mcp/room"},
+                    "capabilities": {
+                        "hybrid": {"lexical": True, "semantic": True, "rrf": True},
+                        "message_ingest": True,
+                        "agentic_advisory": True,
+                        "paging": True,
+                    },
                 }
-                if self.room_mcp_ready
-                else None
+                if "8301" in url
+                else (
+                    {
+                        "status": "ok",
+                        "surface": "room",
+                        "endpoints": {"mcp_room": "/mcp/room"},
+                    }
+                    if self.room_mcp_ready
+                    else None
+                )
             ),
             which=lambda name: f"/usr/bin/{name}" if name in {"node", "codex"} else None,
             signal_pid=self.send_pid_signal,

@@ -121,6 +121,52 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
             check ((activity_id is not null) <> (candidate_id is not null))
         );
 
+        -- Message delivery is deliberately a separate ledger from the existing
+        -- archival document outbox.  The two MemoryOS APIs have different
+        -- idempotency contracts, and keeping them separate means a failed
+        -- message ingest can never mark an archival source as delivered.
+        create table if not exists room_memory_message_outbox (
+            message_outbox_id text primary key,
+            conversation_id text not null references conversations(id),
+            activity_id text not null unique references room_activities(activity_id),
+            external_id text not null unique,
+            state text not null check (
+                state in ('pending','claimed','delivered','failed','conflict')
+            ),
+            attempt_count integer not null check (attempt_count >= 0),
+            lease_owner text,
+            lease_token text,
+            acquired_at text,
+            expires_at text,
+            current_delivery_id text,
+            reason_code text,
+            next_attempt_at text,
+            created_at text not null,
+            updated_at text not null,
+            delivered_at text
+        );
+
+        create table if not exists room_memory_message_deliveries (
+            delivery_id text primary key,
+            message_outbox_id text not null
+                references room_memory_message_outbox(message_outbox_id),
+            attempt_number integer not null check (attempt_number > 0),
+            worker_id text not null,
+            lease_token_sha256 text not null,
+            state text not null check (state in ('claimed','delivered','failed','conflict')),
+            request_digest text,
+            response_digest text,
+            -- MemoryOS message identity is retained only for source proof.  It
+            -- never crosses the Room/browser projection boundary.
+            memoryos_message_id text,
+            memoryos_session_id text,
+            reason_code text,
+            claimed_at text not null,
+            finished_at text,
+            updated_at text not null,
+            unique(message_outbox_id, attempt_number)
+        );
+
         create table if not exists room_memory_deliveries (
             delivery_id text primary key,
             outbox_id text not null references room_memory_outbox(outbox_id),
@@ -160,6 +206,25 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
             updated_at text not null,
             check ((context_payload_sha256 is null and context_submitted_at is null)
                    or (context_payload_sha256 is not null and context_submitted_at is not null))
+        );
+
+        -- External MemoryOS kernel suggestions are advisory input, not Room
+        -- outcomes.  Keep a bounded receipt even when source proof or
+        -- candidate governance rejects one so recall cannot look healthy
+        -- while silently dropping the governance handoff.
+        create table if not exists room_memory_advisory_receipts (
+            receipt_id text primary key,
+            conversation_id text not null references conversations(id),
+            attempt_id text not null references room_observation_attempts(attempt_id),
+            advisory_id text not null,
+            advisory_fingerprint text not null,
+            status text not null check (status in ('accepted','duplicate','rejected')),
+            reason_code text not null,
+            candidate_digest text,
+            source_activity_ids_json text not null,
+            created_at text not null,
+            updated_at text not null,
+            unique(attempt_id, advisory_id)
         );
 
         create table if not exists room_memory_rebuild_actions (
@@ -210,9 +275,29 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
     outbox_columns = {str(row[1]) for row in conn.execute("pragma table_info(room_memory_outbox)")}
     if "next_attempt_at" not in outbox_columns:
         conn.execute("alter table room_memory_outbox add column next_attempt_at text")
+    message_delivery_columns = {
+        str(row[1]) for row in conn.execute("pragma table_info(room_memory_message_deliveries)")
+    }
+    if "memoryos_message_id" not in message_delivery_columns:
+        conn.execute(
+            "alter table room_memory_message_deliveries add column memoryos_message_id text"
+        )
+    if "memoryos_session_id" not in message_delivery_columns:
+        conn.execute(
+            "alter table room_memory_message_deliveries add column memoryos_session_id text"
+        )
     conn.execute(
         "create index if not exists idx_room_memory_outbox_dispatch "
         "on room_memory_outbox(state, created_at, outbox_id)"
+    )
+    conn.execute(
+        "create index if not exists idx_room_memory_message_outbox_dispatch "
+        "on room_memory_message_outbox(state, created_at, message_outbox_id)"
+    )
+    conn.execute(
+        "create unique index if not exists idx_room_memory_message_source "
+        "on room_memory_message_deliveries(memoryos_session_id, memoryos_message_id) "
+        "where memoryos_session_id is not null and memoryos_message_id is not null"
     )
     conn.execute(
         "create index if not exists idx_room_memory_candidates_projection "
@@ -243,6 +328,42 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
                   null, 'xmuse-room-activity-' || activity_id, 'room', 'pending', 0,
                   created_at, created_at
            from room_activities where visibility = 'room'"""
+    )
+
+    # A message is a visible speech event, not a preview, noop, defer, provider
+    # final or infrastructure diagnostic.  Proposals have no materialized
+    # message but remain durable Agent speech and are represented by their
+    # authoritative proposal content in the delivery adapter.
+    conn.execute(
+        """create trigger if not exists trg_room_memory_message_outbox
+           after insert on room_activities
+           when new.visibility = 'room'
+            and new.delivery_mode = 'active'
+            and ((new.actor_kind = 'human' and new.activity_type = 'message.posted')
+                 or (new.actor_kind = 'participant' and new.activity_type in
+                     ('message.responded','room.handoff','proposal.created')))
+           begin
+             insert or ignore into room_memory_message_outbox
+               (message_outbox_id, conversation_id, activity_id, external_id,
+                state, attempt_count, created_at, updated_at)
+             values ('memory_message_outbox_' || new.activity_id,
+                     new.conversation_id, new.activity_id,
+                     'xmuse-room-message-' || new.activity_id,
+                     'pending', 0, new.created_at, new.created_at);
+           end"""
+    )
+    conn.execute(
+        """insert or ignore into room_memory_message_outbox
+           (message_outbox_id, conversation_id, activity_id, external_id,
+            state, attempt_count, created_at, updated_at)
+           select 'memory_message_outbox_' || activity_id, conversation_id,
+                  activity_id, 'xmuse-room-message-' || activity_id,
+                  'pending', 0, created_at, created_at
+           from room_activities
+           where visibility = 'room' and delivery_mode = 'active'
+             and ((actor_kind = 'human' and activity_type = 'message.posted')
+                  or (actor_kind = 'participant' and activity_type in
+                      ('message.responded','room.handoff','proposal.created')))"""
     )
 
     conversations = conn.execute(

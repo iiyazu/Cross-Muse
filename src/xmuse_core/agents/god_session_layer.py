@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from inspect import Parameter, isawaitable, signature
 from pathlib import Path
-from typing import Never
+from typing import Literal, Never
 
 from xmuse_core.agents.codex_app_server_connection import AppServerEventStream
 from xmuse_core.agents.codex_native_adapter import NativeInvokeResult
@@ -199,6 +199,7 @@ class GodSessionLayer:
                 model=live.record.model,
                 provider_session_id=_active_provider_session_id(live.record),
                 db_path=self._db_path,
+                feature_scope_id=feature_scope_id,
             )
             record = await self._promote_running_record(live.record, session)
             self._live_sessions[live.record.god_session_id] = LiveGodSession(
@@ -295,6 +296,7 @@ class GodSessionLayer:
             model=record.model,
             provider_session_id=_active_provider_session_id(record),
             db_path=self._db_path,
+            feature_scope_id=feature_scope_id,
         )
         record = await self._promote_running_record(record, session)
         self._live_sessions[record.god_session_id] = LiveGodSession(
@@ -580,6 +582,33 @@ class GodSessionLayer:
         incarnation = self._native_session_incarnations.get(god_session_id)
         if incarnation is not None and incarnation[0] is live.session:
             self._native_session_incarnations.pop(god_session_id, None)
+
+    def provider_binding_process_state(
+        self,
+        *,
+        god_session_id: str,
+        provider_session_id: str,
+    ) -> Literal["confirmed_dead", "live_owned", "superseded", "unknown"]:
+        """Classify an exact provider binding without reviving it.
+
+        A missing ``/proc`` entry proves that the old local app-server process is
+        gone. A live PID without a persisted start identity is deliberately only
+        ``unknown`` so PID reuse can never authorize a signal. The in-memory live
+        session is the sole positive ownership proof.
+        """
+
+        try:
+            record = self._registry.get(god_session_id)
+        except KeyError:
+            return "unknown"
+        if _clean_provider_session_id(record.provider_session_id) != provider_session_id:
+            return "superseded"
+        live = self._live_sessions.get(god_session_id)
+        if live is not None:
+            if _live_provider_session_id(live.session) != provider_session_id:
+                return "superseded"
+            return "live_owned" if live.session.is_alive() else "confirmed_dead"
+        return "confirmed_dead" if _pid_confirmed_dead(record.pid) else "unknown"
 
     async def shutdown(self) -> None:
         """Stop pending starts and every transport owned by this process."""
@@ -1051,6 +1080,7 @@ async def _spawn_persistent_session(
     model: str | None = None,
     provider_session_id: str | None = None,
     db_path: Path | None = None,
+    feature_scope_id: str | None = None,
 ) -> AgentSession:
     factory = getattr(launcher, "spawn_persistent_session", None)
     if callable(factory):
@@ -1067,6 +1097,11 @@ async def _spawn_persistent_session(
             kwargs["provider_session_id"] = provider_session_id
         if db_path is not None and _builder_accepts_keyword(factory, "db_path"):
             kwargs["db_path"] = db_path
+        if feature_scope_id is not None and _builder_accepts_keyword(
+            factory,
+            "feature_scope_id",
+        ):
+            kwargs["feature_scope_id"] = feature_scope_id
         session = factory(**kwargs)
         if isawaitable(session):
             session = await session
@@ -1137,6 +1172,22 @@ def _clean_provider_session_id(value: object) -> str | None:
     if not stripped or stripped.lower() in {"last", "--last", "latest", "--latest"}:
         return None
     return stripped
+
+
+def _pid_confirmed_dead(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return False
+    try:
+        raw = (Path("/proc") / str(value) / "stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    command_end = raw.rfind(")")
+    if command_end < 0:
+        return False
+    fields = raw[command_end + 2 :].split()
+    return bool(fields and fields[0] in {"Z", "X", "x"})
 
 
 def _raise_provider_binding(prefix: str) -> Never:

@@ -19,4 +19,9 @@ For the current observation:
 4. Name focused verification for each risky contract and the final acceptance evidence.
 5. Keep non-goals explicit and call out only blockers that materially change the plan.
 
+If the Human explicitly asks you to delegate one concrete next action, submit a durable
+`handoff` naming the intended active participant instead of merely saying that participant
+is executing. A handoff is a directed recommendation, not proof that work started; do not
+claim progress until a durable attempt or outcome is present in the delivered evidence.
+
 Do not author another participant's speech, choose who may observe, or require a Room response.

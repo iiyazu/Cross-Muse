@@ -13,7 +13,9 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage
 from xmuse_core.agents.registry import AgentDescriptor, AgentRuntime
+from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
+from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_execution_store import RoomExecutionStoreError
@@ -134,6 +136,60 @@ class _FailingSendGodLayer(_GodLayer):
         raise OSError("provider send failed")
 
 
+class _PreviewEventStream:
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self.closed = False
+
+    async def receive(self) -> dict[str, object]:
+        return await self.queue.get()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _StreamingGodLayer(_GodLayer):
+    def __init__(self, record: GodSessionRecord, messages: list[StdoutMessage | None]) -> None:
+        super().__init__(record, messages)
+        self.stream = _PreviewEventStream()
+
+    def subscribe_native_events(self, _god_session_id: str) -> _PreviewEventStream:
+        return self.stream
+
+    async def send_message(self, *args, **kwargs) -> None:
+        await super().send_message(*args, **kwargs)
+        for event in (
+            {"method": "turn/started", "params": {"turn": {"id": "turn-1"}}},
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"turnId": "turn-1", "delta": "Visible draft "},
+            },
+            {
+                "method": "item/started",
+                "params": {
+                    "turnId": "turn-1",
+                    "item": {"name": "chat_room_submit_outcome"},
+                },
+            },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"turnId": "turn-1", "delta": "diagnostic"},
+            },
+            {
+                "method": "item/completed",
+                "params": {
+                    "turnId": "turn-1",
+                    "item": {"name": "chat_room_submit_outcome"},
+                },
+            },
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-1", "status": "completed"}},
+            },
+        ):
+            self.stream.queue.put_nowait(event)
+
+
 def _room(tmp_path: Path) -> tuple[Path, Path, str, Participant, GodSessionRecord]:
     db, registry = tmp_path / "chat.db", tmp_path / "god_sessions.json"
     conversation_id = RoomTestStore(db).create_conversation("room").id
@@ -152,7 +208,7 @@ def _room(tmp_path: Path) -> tuple[Path, Path, str, Participant, GodSessionRecor
         "inbox-review",
         conversation_id,
         participant.participant_id,
-        feature_scope_id="room_v1",
+        feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
     )
     return db, registry, conversation_id, participant, record
 
@@ -288,9 +344,10 @@ def test_delivers_exact_live_binding_with_complete_room_context(tmp_path: Path) 
     assert ensured["conversation_id"] == conversation_id
     assert ensured["participant_id"] == participant.participant_id
     assert ensured["role"] == participant.role
+
     assert ensured["worktree"] == tmp_path
     assert ensured["model"] == participant.model
-    assert ensured["feature_scope_id"] == "room_v1"
+    assert ensured["feature_scope_id"] == ROOM_DELIVERY_SESSION_SCOPE
     assert str(ensured["prompt_fingerprint"]).startswith("sha256:")
     agent = ensured["agent"]
     assert agent == AgentDescriptor(
@@ -304,7 +361,7 @@ def test_delivers_exact_live_binding_with_complete_room_context(tmp_path: Path) 
             "participant_id": participant.participant_id,
             "runtime": AgentRuntime.CODEX,
             "provider_session_kind": "codex_app_server_thread",
-            "feature_scope_id": "room_v1",
+            "feature_scope_id": ROOM_DELIVERY_SESSION_SCOPE,
         }
     ]
     assert len(layer.send_calls) == 1
@@ -374,6 +431,46 @@ def test_delivers_exact_live_binding_with_complete_room_context(tmp_path: Path) 
         "proposal_assessments": [],
         "provider_final_text_is_room_truth": False,
     }
+
+
+def test_room_delivery_streams_only_pre_outcome_agent_text(tmp_path: Path) -> None:
+    db, _, conversation_id, participant, record = _room(tmp_path)
+    delivery = replace(
+        _delivery(db, conversation_id, participant),
+        attempt_id="attempt-preview-1",
+    )
+    layer = _StreamingGodLayer(
+        record,
+        [
+            StdoutMessage(
+                type="result",
+                request_id=delivery.transport_request_id,
+                runtime="codex-app-server",
+                status="success",
+                message="provider diagnostic",
+            )
+        ],
+    )
+
+    async def exercise() -> dict[str, object]:
+        cache = RoomAgentStreamCache(tmp_path)
+        projector = RoomAgentStreamProjector(cache, epoch="opaque")
+        result = await CodexRoomObservationTransport(
+            layer,
+            worktree=tmp_path,
+            stream_projector=projector,
+        ).deliver(delivery, timeout_s=3)
+        await projector.shutdown()
+        assert result.status == "finished"
+        return cache.read_raw(conversation_id)
+
+    projection = asyncio.run(exercise())
+    assert layer.stream.closed is True
+    assert len(projection["streams"]) == 1
+    stream = projection["streams"][0]
+    assert stream["state"] == "resolved"
+    assert stream["content"] == "Visible draft "
+    assert "diagnostic" not in stream["content"]
 
 
 def test_memory_context_hash_binds_only_after_provider_submission(tmp_path: Path) -> None:
@@ -632,6 +729,21 @@ def test_batch_context_preserves_root_ancestry_members_and_reply_contract(
     assert "reply_to_activity_id is optional" in str(sent["prompt"])
     assert "including the Human root when absent from that list" in str(sent["prompt"])
     assert "context-only" in str(sent["prompt"])
+    assert "plain-text assignment is only a suggestion" in str(sent["prompt"])
+    assert "use a handoff outcome" in str(sent["prompt"])
+    assert "durable attempt or outcome proving it" in str(sent["prompt"])
+    assert "treat it as a directed baton" in str(sent["prompt"])
+    assert "do the bounded investigation in this turn" in str(sent["prompt"])
+    assert "Submit noop when it would only repeat" in str(sent["prompt"])
+    assert "handoff author must not echo" in str(sent["prompt"])
+    assert "first emit exactly one plain assistant draft" in str(sent["prompt"])
+    assert "It must be the answer, not a preamble" in str(sent["prompt"])
+    assert "call chat_room_submit_outcome with the same decision and content" in str(sent["prompt"])
+    assert "For noop or defer, emit no assistant draft" in str(sent["prompt"])
+    assert "code-mode-only surface" in str(sent["prompt"])
+    assert "tools.mcp__xmuse_room__chat_room_submit_outcome" in str(sent["prompt"])
+    assert "outcome_payload" in str(sent["prompt"])
+    assert "never substitute content, message" in str(sent["prompt"])
 
 
 def test_exact_execution_review_material_is_sent_and_receipted_with_final_context_hash(

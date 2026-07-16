@@ -10,6 +10,7 @@ import pytest
 from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.agents.protocol import StdoutMessage
+from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomControlError, RoomObservationControlStore
@@ -147,7 +148,7 @@ def _bound_delivery(tmp_path):
         participant_id=participant.participant_id,
         status="running",
         model=participant.model,
-        feature_scope_id="room_v1",
+        feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
         provider_session_id="thread-room-review",
         provider_session_kind="codex_app_server_thread",
         provider_binding_status="active",
@@ -312,7 +313,58 @@ def test_restart_aborts_exact_codex_binding_before_marking_cancelled(tmp_path):
         ) == (
             delivery.conversation_id,
             delivery.participant.participant_id,
-            "room_v1",
+            ROOM_DELIVERY_SESSION_SCOPE,
+        )
+
+    asyncio.run(run())
+
+
+def test_restart_fences_confirmed_dead_delivery_without_reviving_provider(tmp_path):
+    async def run():
+        _, _, _, controls, delivery, record = _bound_delivery(tmp_path)
+        controls.bind_provider_session(
+            observation_id=delivery.observation["observation_id"],
+            attempt_id=delivery.attempt_id,
+            delivery_generation=delivery.attempt_id,
+            god_session_id=record.god_session_id,
+            provider_session_id=record.provider_session_id,
+            now=NOW,
+        )
+        controls.request_cancel(
+            observation_id=delivery.observation["observation_id"],
+            client_action_id="cancel-dead-provider",
+            operator_identity="operator:local",
+            expected_state="active",
+            expected_attempt_count=1,
+            expected_control_seq=0,
+            now=NOW + timedelta(seconds=1),
+        )
+        layer = _GodLayer(record)
+        layer.provider_binding_process_state = lambda **_kwargs: "confirmed_dead"  # type: ignore[attr-defined]
+        host = RoomParticipantHost(
+            tmp_path / "chat.db",
+            CodexRoomObservationTransport(
+                layer,
+                worktree=tmp_path,
+                control_store=controls,
+            ),
+            policy=RoomHostPolicy(
+                delivery_timeout_s=2,
+                cleanup_grace_s=0.2,
+                lease_ttl_s=3,
+            ),
+            clock=lambda: NOW + timedelta(seconds=2),
+            control_store=controls,
+        )
+
+        await host.reconcile_controls()
+
+        assert layer.ensure_calls == []
+        assert layer.abort_calls == []
+        state = controls.reconcile_state(delivery.observation["observation_id"])
+        assert state["control_state"] == "cancelled"
+        assert state["reconcile_binding"]["provider_cleanup_reason"] == (
+            "runner_reconciled_provider_process_dead"
         )
 
     asyncio.run(run())

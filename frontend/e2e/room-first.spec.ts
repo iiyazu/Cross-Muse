@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
@@ -43,6 +44,7 @@ async function installRoomFixture(
   let memoryRebuildPending = false;
   let codexGoalStatus: string | null = null;
   let codexActionCount = 0;
+  let streamCommitted = false;
   let roomSeq = 2;
   const codexGuard = `sha256:${"a".repeat(64)}`;
   const configuredGateProfile = {
@@ -147,6 +149,48 @@ async function installRoomFixture(
     const url = new URL(request.url());
     if (request.method() === "OPTIONS") {
       await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    if (url.pathname === "/api/chat/room-setup-options") {
+      await json(route, {
+        schema_version: "room_setup_options/v1",
+        default_roster_template_id: "builtin.development",
+        roster_templates: [{
+          template_id: "builtin.development",
+          display_name: "开发协作组",
+          description: "架构、实现、审查与风险视角",
+          participants: [
+            { role_id: "architect", role: "architect", display_name: "Architect", description: "负责边界与方案", collaboration_focus: "系统结构" },
+            { role_id: "builder", role: "builder", display_name: "Builder", description: "负责实现", collaboration_focus: "交付" },
+            { role_id: "reviewer", role: "reviewer", display_name: "Reviewer", description: "负责核验", collaboration_focus: "质量" },
+            { role_id: "critic", role: "critic", display_name: "Critic", description: "负责反例", collaboration_focus: "风险" }
+          ]
+        }]
+      });
+      return;
+    }
+    if (url.pathname === "/api/chat/conversations/conv-1/fixture-stream-commit") {
+      if (!streamCommitted) {
+        streamCommitted = true;
+        roomSeq += 1;
+        messages.push({
+          kind: "message",
+          room_seq: roomSeq,
+          activity_id: "act-stream-durable",
+          message_id: "msg-stream-durable",
+          correlation_id: "corr-1",
+          actor: {
+            kind: "agent",
+            identity: "participant:part-builder",
+            participant_id: "part-builder",
+            role: "builder",
+            display_name: "Builder"
+          },
+          content: "流式提交后的正式回复",
+          created_at: "2026-07-10T10:00:02Z"
+        });
+      }
+      await json(route, { committed: true });
       return;
     }
     if (url.pathname === "/api/chat/conversations/conv-1/codex-agents") {
@@ -730,13 +774,27 @@ async function installRoomFixture(
       return;
     }
     if (url.pathname.endsWith("/events")) {
+      const afterSeq = Number(url.searchParams.get("after_seq") ?? 0);
+      const streamEvents = streamCommitted && afterSeq < 11
+        ? [{
+            sequence: 11,
+            event_type: "projection.changed",
+            payload: {
+              kind: "room_projection_changed",
+              change: "outcome.completed",
+              activity_id: "act-stream-durable",
+              room_seq: 3,
+              message_id: "msg-stream-durable"
+            }
+          }]
+        : [];
       await json(route, {
         schema_version: "chat_frontend_events/v1",
         conversation_id: "conv-1",
-        after_seq: 10,
-        latest_seq: 10,
+        after_seq: afterSeq,
+        latest_seq: streamCommitted ? 11 : 10,
         has_more: false,
-        events: []
+        events: streamEvents
       });
       return;
     }
@@ -876,6 +934,7 @@ test("deep link, message send, and single-Agent control remain usable", async ({
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.getByText("新增消息")).toBeVisible();
 
+  await page.locator(".room-turn-status details").first().getByText("控制").click();
   await page.getByRole("button", { name: "取消 Builder 当前处理" }).click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("其他 Agent 和后续房间活动不受影响");
@@ -886,6 +945,100 @@ test("deep link, message send, and single-Agent control remain usable", async ({
   await retry.click();
   await expect(page.getByRole("button", { name: "取消 Builder 当前处理" })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("Room Agent preview streams snapshots and yields to one durable message", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Streaming transition is exercised once");
+  await installRoomFixture(page);
+  await page.addInitScript(() => {
+    type Listener = (event: MessageEvent<string>) => void;
+    class FixtureEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readonly url: string;
+      readonly withCredentials = false;
+      readyState = FixtureEventSource.OPEN;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      onopen: ((event: Event) => void) | null = null;
+      private listeners = new Map<string, Listener[]>();
+      private timers: number[] = [];
+
+      constructor(url: string | URL) {
+        this.url = String(url);
+        const snapshot = (streamSeq: number, state: string, content: string) => ({
+          schema_version: "room_agent_stream_projection/v1",
+          proof_boundary: "provider_preview_not_room_or_codex_authority",
+          projection_available: true,
+          conversation_id: "conv-1",
+          epoch: "fixture-epoch",
+          stream_seq: streamSeq,
+          streams: [{
+            stream_id: "stream-fixture",
+            participant_id: "part-builder",
+            observation_id: "obs-1",
+            state,
+            content,
+            truncated: false,
+            started_at: "2026-07-10T10:00:01Z",
+            updated_at: `2026-07-10T10:00:0${streamSeq}Z`,
+            resolution: state === "resolved" ? {
+              outcome_type: "respond",
+              produced_activity_id: "act-stream-durable"
+            } : null
+          }]
+        });
+        const schedule = (delay: number, callback: () => void) => {
+          this.timers.push(window.setTimeout(callback, delay));
+        };
+        schedule(700, () => this.emit("projection", snapshot(1, "streaming", "第一段 ")));
+        schedule(1400, () => this.emit("projection", snapshot(2, "streaming", "第一段 第二段 ")));
+        schedule(2100, () => this.emit("projection", snapshot(3, "streaming", "第一段 第二段 第三段 ")));
+        schedule(2800, () => this.emit("projection", snapshot(4, "committing", "第一段 第二段 第三段 ")));
+        schedule(3500, () => {
+          void fetch("http://localhost:8201/api/chat/conversations/conv-1/fixture-stream-commit")
+            .then(() => this.emit("projection", snapshot(5, "resolved", "第一段 第二段 第三段 ")));
+        });
+      }
+
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject | null) {
+        if (typeof listener !== "function") return;
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener as Listener]);
+      }
+
+      removeEventListener() {}
+
+      dispatchEvent() { return true; }
+
+      close() {
+        this.readyState = FixtureEventSource.CLOSED;
+        this.timers.forEach((timer) => window.clearTimeout(timer));
+      }
+
+      private emit(type: string, payload: object) {
+        if (this.readyState === FixtureEventSource.CLOSED) return;
+        const event = new MessageEvent<string>(type, { data: JSON.stringify(payload) });
+        this.listeners.get(type)?.forEach((listener) => listener(event));
+      }
+    }
+    (window as unknown as { EventSource: typeof EventSource }).EventSource = (
+      FixtureEventSource as unknown as typeof EventSource
+    );
+  });
+
+  await page.goto("/rooms/conv-1");
+  const preview = page.getByLabel("Agent 正在生成");
+  const previewBody = preview.locator(".room-stream-body");
+  await expect(previewBody).toHaveText("第一段");
+  await expect(previewBody).toHaveText("第一段 第二段");
+  await expect(previewBody).toHaveText("第一段 第二段 第三段");
+  await expect(preview).toContainText("正在提交");
+  await expect(preview).toHaveCount(0);
+  const durable = page.getByRole("log", { name: "房间消息" }).getByText(
+    "流式提交后的正式回复"
+  );
+  await expect(durable).toHaveCount(1);
 });
 
 test("the root route enters the most recent Room", async ({ page }) => {
@@ -910,9 +1063,11 @@ test("all active turn frontiers remain discoverable in the inspector", async ({ 
   );
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.getByRole("complementary", { name: "房间检查器" });
+  await inspector.getByRole("tab", { name: "Runtime" }).click();
   await expect(inspector.getByRole("region", { name: "运行与恢复" })).toContainText("Runner正常");
+  await inspector.getByRole("tab", { name: "Room" }).click();
   await expect(inspector).toContainText("进行中轮次 · 2");
   await expect(inspector.getByRole("button", { name: `取消 Reviewer 在轮次 ${longCorrelationId} 的处理` })).toBeEnabled();
   await expect(inspector).toContainText("2 / 4");
@@ -931,8 +1086,9 @@ test("all active turn frontiers remain discoverable in the inspector", async ({ 
 test("Agent Console renders discovered native capabilities and guarded Goal state", async ({ page }) => {
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Agent" }).click();
   const console = inspector.getByRole("region", { name: "Codex Agent Console" });
   await expect(console.getByRole("tab", { name: "Builder" })).toHaveAttribute("aria-selected", "true");
   await expect(console).toContainText("Codex 原生状态");
@@ -962,8 +1118,9 @@ test("Agent Console renders discovered native capabilities and guarded Goal stat
 test("exact-patch Inspector stays guarded and usable across release viewports", async ({ page }) => {
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Room" }).click();
   const execution = inspector.getByRole("region", { name: "执行候选" });
   await expect(execution).toContainText("人工确认");
   await expect(execution).toContainText("xmuse-monorepo/v2");
@@ -1006,8 +1163,9 @@ test("exact-patch Inspector stays guarded and usable across release viewports", 
 test("source-backed Memory Inspector remains guarded across release viewports", async ({ page }) => {
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Room" }).click();
   const memory = inspector.getByRole("region", { name: "长期记忆" });
   await memory.scrollIntoViewIfNeeded();
   await expect(memory).toContainText("2待同步");
@@ -1028,8 +1186,9 @@ test("source-backed Memory Inspector remains guarded across release viewports", 
 test("MemoryOS derived-index rebuild stays guarded and usable across release viewports", async ({ page }) => {
   await installRoomFixture(page, { memoryRebuildable: true });
   await page.goto("/rooms/conv-1");
-  await page.getByRole("button", { name: "成员与状态" }).click();
+  await page.getByRole("button", { name: /工作台/ }).click();
   const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Room" }).click();
   const memory = inspector.getByRole("region", { name: "长期记忆" });
   await memory.scrollIntoViewIfNeeded();
   const trigger = memory.getByRole("button", { name: "重建 MemoryOS 派生索引" });
@@ -1072,14 +1231,15 @@ test("compact inspector is a keyboard-modal sheet", async ({ page }, testInfo) =
   test.skip(testInfo.project.name !== "compact-640", "Compact inspector behavior is covered at 640 CSS px");
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
-  const trigger = page.getByRole("button", { name: "成员与状态" });
+  const trigger = page.getByRole("button", { name: /工作台/ });
   await expect(trigger).toBeVisible();
   await trigger.click();
   const inspector = page.getByRole("dialog", { name: "房间检查器" });
   await expect(inspector).toBeVisible();
   await expect(inspector.getByRole("button", { name: "关闭检查器" })).toBeFocused();
+  await inspector.getByRole("tab", { name: "Room" }).click();
   await expect(inspector.getByRole("region", { name: "Human-root Skill" }).first()).toBeVisible();
-  await expect(inspector.getByRole("region", { name: "运行与恢复" })).toBeVisible();
+  await expect(inspector.getByRole("tab", { name: "Runtime" })).toBeVisible();
   expect(await inspector.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.keyboard.press("Escape");
@@ -1093,6 +1253,39 @@ test("the 200% zoom-equivalent viewport preserves the complete chat path", async
   await page.goto("/rooms/conv-1");
   await expect(page.getByRole("log", { name: "房间消息" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "发送消息" })).toBeVisible();
+  await page.locator(".room-turn-status details").first().getByText("控制").click();
   await expect(page.getByRole("button", { name: "取消 Builder 当前处理" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("workroom landmarks and interactive controls pass automated accessibility checks", async ({ page }, testInfo) => {
+  await installRoomFixture(page);
+  await page.goto("/rooms/conv-1");
+  await expect(page.getByRole("heading", { name: "闭环审计室" })).toBeVisible();
+  await page.getByRole("button", { name: /工作台/ }).click();
+  await page.getByRole("tab", { name: "Agent" }).click();
+
+  const darkResults = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(darkResults.violations).toEqual([]);
+  if (process.env.XMUSE_UI_VISUAL_EVIDENCE === "1") {
+    await page.screenshot({ fullPage: true, path: `/tmp/xmuse-ui-${testInfo.project.name}-dark.png` });
+  }
+
+  if ((page.viewportSize()?.width ?? 1440) < 1180) {
+    await page.getByRole("button", { name: "关闭检查器", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "切换主题" }).click();
+  if (!(await page.locator(".room-inspector").count())) {
+    await page.getByRole("button", { name: /工作台/ }).click();
+    await page.getByRole("tab", { name: "Agent" }).click();
+  }
+  const lightResults = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(lightResults.violations).toEqual([]);
+  if (process.env.XMUSE_UI_VISUAL_EVIDENCE === "1") {
+    await page.screenshot({ fullPage: true, path: `/tmp/xmuse-ui-${testInfo.project.name}-light.png` });
+  }
 });
