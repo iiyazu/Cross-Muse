@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from xmuse import chat_api_execution_runtime as execution_runtime
-from xmuse import data_cli
+from xmuse import data_cli, data_restore, data_runtime_guard
 from xmuse.chat_api_foundation import create_chat_api_foundation
 from xmuse_core.chat.room_execution_contracts import (
     ExecutionRiskEvaluation,
@@ -466,8 +466,8 @@ def test_data_guard_blocks_a_scoped_execution_controller(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        data_cli,
-        "_runtime_probe",
+        data_runtime_guard,
+        "runtime_probe",
         lambda _root: {
             "managed": {"state": "stopped", "manager_live": False, "services": []},
             "inventory": {"services": [{"service": "execution_controller", "pids": [911]}]},
@@ -476,7 +476,10 @@ def test_data_guard_blocks_a_scoped_execution_controller(
     )
 
     with pytest.raises(data_cli.DataError) as raised:
-        data_cli._assert_runtime_stopped(tmp_path)
+        data_runtime_guard.assert_runtime_stopped(
+            tmp_path,
+            probe=data_runtime_guard.runtime_probe,
+        )
 
     assert raised.value.code == "workroom_running"
     assert raised.value.details["pids"] == [911]
@@ -535,7 +538,10 @@ def test_restore_fences_nonterminal_execution_without_replaying_process_action(
             "insert into room_execution_promotion_journal values ('run-promote','applying')"
         )
 
-    result = data_cli._fence_restored_execution_runs(database, operation_id="restore-one")
+    result = data_restore.fence_restored_execution_runs(
+        database,
+        operation_id="restore-one",
+    )
 
     assert result == {"blocked": 2, "promotion_unverifiable": 1}
     with sqlite3.connect(database) as conn:

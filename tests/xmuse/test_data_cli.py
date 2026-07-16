@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from tests.xmuse.room_fixtures import CompatDataTestStore
-from xmuse import data_cli
+from xmuse import data_cli, data_restore, data_runtime_guard
+from xmuse.data_authority import database_evidence, inspect_database
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.memoryos_supervisor import memoryos_derived_dir
 from xmuse_core.chat.participant_store import ParticipantStore
@@ -263,7 +264,7 @@ def test_minimal_room_backup_restore_and_compact_preserve_schema_variant(
     assert data_cli.run_cli(["compact", "--root", str(target)]) == 0
     _json_output(capsys)
 
-    inspection = data_cli._inspect_database(target / data_cli.CHAT_DB_NAME, require_current=True)
+    inspection = inspect_database(target / data_cli.CHAT_DB_NAME, require_current=True)
     assert inspection["schema"]["schema_contract"] == data_cli.ROOM_SCHEMA_CONTRACT
     with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
         markers = dict(conn.execute("select schema_id, version from chat_schema_meta"))
@@ -763,7 +764,7 @@ def test_batch_authority_corruption_is_rejected(
             )
 
     with pytest.raises(data_cli.DataError, match="chat authority invariants failed") as error:
-        data_cli._inspect_database(
+        inspect_database(
             source / data_cli.CHAT_DB_NAME,
             require_current=True,
         )
@@ -803,8 +804,8 @@ def test_restore_and_compact_reject_live_workroom_probe(
     target = tmp_path / "target"
     _build_root(target)
     monkeypatch.setattr(
-        data_cli,
-        "_runtime_probe",
+        data_runtime_guard,
+        "runtime_probe",
         lambda _root: {
             "managed": {
                 "state": "ready",
@@ -837,8 +838,8 @@ def test_restore_rejects_an_unscoped_authority_process(
     _backup(source, backup, capsys)
     target = tmp_path / "target"
     monkeypatch.setattr(
-        data_cli,
-        "_runtime_probe",
+        data_runtime_guard,
+        "runtime_probe",
         lambda _root: {
             "managed": {"state": "stopped", "manager_live": False, "services": []},
             "inventory": {"services": []},
@@ -863,12 +864,12 @@ def test_restore_revalidates_the_database_bytes_copied_after_preflight(
     _backup(source, backup, capsys)
     replacement_root = tmp_path / "replacement"
     _build_root(replacement_root, with_session=False)
-    original_copy = data_cli.shutil.copy2
+    original_copy = data_restore.shutil.copy2
 
     def replace_verified_source(_source: Path, destination: Path) -> Path:
         return original_copy(replacement_root / data_cli.CHAT_DB_NAME, destination)
 
-    monkeypatch.setattr(data_cli.shutil, "copy2", replace_verified_source)
+    monkeypatch.setattr(data_restore.shutil, "copy2", replace_verified_source)
 
     assert data_cli.run_cli(["restore", str(backup), "--root", str(tmp_path / "target")]) == 1
     payload = _json_output(capsys)
@@ -916,14 +917,14 @@ def test_compact_preserves_logical_authority_and_room_high_water(
             "delete from messages where id = ?",
             [(message_id,) for message_id in disposable_ids[::2]],
         )
-    before = data_cli._database_evidence(db_path)
+    before = database_evidence(db_path)
 
     assert data_cli.run_cli(["compact", "--root", str(root)]) == 0
 
     payload = _json_output(capsys)
     assert payload["state"] == "succeeded"
     assert payload["after_size_bytes"] <= payload["before_size_bytes"]
-    assert data_cli._database_evidence(db_path) == before
+    assert database_evidence(db_path) == before
     assert not (root / data_cli.OPERATION_JOURNAL_NAME).exists()
 
 
