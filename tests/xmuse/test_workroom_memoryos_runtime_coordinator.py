@@ -21,7 +21,7 @@ from xmuse_core.chat.memoryos_supervisor import (
     write_memoryos_status,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
 
 
@@ -362,7 +362,7 @@ def test_changed_rebuild_guard_is_rejected_before_cache_or_process_mutation(
     conversation_id = (
         RoomTestStore(fixture.paths.xmuse_root / "chat.db").create_conversation("rebuild").id
     )
-    RoomMemoryDeliveryStore(fixture.paths.xmuse_root / "chat.db").ensure_binding(
+    RoomMemoryBindingStore(fixture.paths.xmuse_root / "chat.db").ensure_binding(
         conversation_id=conversation_id
     )
     RoomKernelStore(fixture.paths.xmuse_root / "chat.db").post_human_activity(
@@ -410,7 +410,7 @@ def test_replaying_rebuild_is_finished_idempotently_after_runtime_recovery(
     conversation_id = (
         RoomTestStore(fixture.paths.xmuse_root / "chat.db").create_conversation("replay").id
     )
-    RoomMemoryDeliveryStore(fixture.paths.xmuse_root / "chat.db").ensure_binding(
+    RoomMemoryBindingStore(fixture.paths.xmuse_root / "chat.db").ensure_binding(
         conversation_id=conversation_id
     )
     RoomKernelStore(fixture.paths.xmuse_root / "chat.db").post_human_activity(

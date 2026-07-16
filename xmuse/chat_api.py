@@ -36,9 +36,12 @@ from xmuse.operator_auth import resolve_operator_token
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_advisory_store import RoomMemoryAdvisoryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
+from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
-from xmuse_core.chat.room_memory_recall_store import RoomMemoryRecallStore
+from xmuse_core.chat.room_memory_message_outbox_store import RoomMemoryMessageOutboxStore
+from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
 from xmuse_core.runtime.paths import default_xmuse_root
 
 DEFAULT_PORT = 8201
@@ -120,10 +123,12 @@ def create_app(
     register_room_memory_routes(
         app,
         root=context.root,
-        binding_store_factory=RoomMemoryDeliveryStore,
+        binding_store_factory=RoomMemoryBindingStore,
         governance_store_factory=RoomMemoryGovernanceStore,
-        delivery_store_factory=RoomMemoryDeliveryStore,
-        recall_store_factory=RoomMemoryRecallStore,
+        delivery_store_factory=RoomMemoryDocumentOutboxStore,
+        message_delivery_store_factory=RoomMemoryMessageOutboxStore,
+        recall_store_factory=RoomMemoryRecallReceiptStore,
+        advisory_store_factory=RoomMemoryAdvisoryStore,
         operator_token=operator_token,
         runtime_status_provider=(
             memory_runtime_status_provider or (lambda: browser_memoryos_status(context.root))

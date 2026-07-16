@@ -13,9 +13,11 @@ from xmuse.operator_auth import require_operator_token
 from xmuse_core.chat.room_api_models import RoomMemoryCandidateResolveRequest
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_memory_projection import (
+    RoomMemoryAdvisoryReadStore,
     RoomMemoryBindingReadStore,
     RoomMemoryDeliveryReadStore,
     RoomMemoryGovernanceReadStore,
+    RoomMemoryMessageDeliveryReadStore,
     RoomMemoryRecallReadStore,
     build_room_memory_projection,
     build_room_memory_projection_v2,
@@ -39,8 +41,10 @@ class RoomMemoryCandidateCommandStore(RoomMemoryGovernanceReadStore, Protocol):
 
 RoomMemoryBindingStoreFactory = Callable[[Path], RoomMemoryBindingReadStore]
 RoomMemoryGovernanceStoreFactory = Callable[[Path], RoomMemoryCandidateCommandStore]
-RoomMemoryDeliveryStoreFactory = Callable[[Path], RoomMemoryDeliveryReadStore]
-RoomMemoryRecallStoreFactory = Callable[[Path], RoomMemoryRecallReadStore]
+RoomMemoryDocumentDeliveryStoreFactory = Callable[[Path], RoomMemoryDeliveryReadStore]
+RoomMemoryMessageDeliveryStoreFactory = Callable[[Path], RoomMemoryMessageDeliveryReadStore]
+RoomMemoryRecallReceiptStoreFactory = Callable[[Path], RoomMemoryRecallReadStore]
+RoomMemoryAdvisoryStoreFactory = Callable[[Path], RoomMemoryAdvisoryReadStore]
 MemoryRuntimeStatusProvider = Callable[[], Mapping[str, Any]]
 ConversationExists = Callable[[str], bool]
 
@@ -114,8 +118,10 @@ def register_room_memory_routes(
     root: Path,
     binding_store_factory: RoomMemoryBindingStoreFactory,
     governance_store_factory: RoomMemoryGovernanceStoreFactory,
-    delivery_store_factory: RoomMemoryDeliveryStoreFactory,
-    recall_store_factory: RoomMemoryRecallStoreFactory,
+    delivery_store_factory: RoomMemoryDocumentDeliveryStoreFactory,
+    message_delivery_store_factory: RoomMemoryMessageDeliveryStoreFactory,
+    recall_store_factory: RoomMemoryRecallReceiptStoreFactory,
+    advisory_store_factory: RoomMemoryAdvisoryStoreFactory,
     operator_token: str | None = None,
     runtime_status_provider: MemoryRuntimeStatusProvider | None = None,
     conversation_exists: ConversationExists | None = None,
@@ -131,6 +137,12 @@ def register_room_memory_routes(
 
     def recall_store() -> RoomMemoryRecallReadStore:
         return recall_store_factory(root / "chat.db")
+
+    def message_delivery_store() -> RoomMemoryMessageDeliveryReadStore:
+        return message_delivery_store_factory(root / "chat.db")
+
+    def advisory_store() -> RoomMemoryAdvisoryReadStore:
+        return advisory_store_factory(root / "chat.db")
 
     def require_conversation(conversation_id: str) -> None:
         if conversation_exists is not None:
@@ -173,6 +185,8 @@ def register_room_memory_routes(
                     governance_store=governance,
                     delivery_store=delivery,
                     recall_store=recall,
+                    advisory_store=advisory_store(),
+                    message_delivery_store=message_delivery_store(),
                     runtime_status=runtime_status,
                 )
             return build_room_memory_projection(
@@ -181,6 +195,7 @@ def register_room_memory_routes(
                 governance_store=governance,
                 delivery_store=delivery,
                 recall_store=recall,
+                advisory_store=advisory_store(),
                 runtime_status=runtime_status,
             )
         except (KeyError, ValueError, RuntimeError) as exc:

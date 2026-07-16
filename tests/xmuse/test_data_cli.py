@@ -20,7 +20,7 @@ from xmuse_core.chat.memoryos_supervisor import memoryos_derived_dir
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_database import ROOM_SCHEMA_ID, RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
 from xmuse_core.chat.room_operations import RoomRuntimeOperatorActionStore
 
@@ -581,7 +581,7 @@ def test_restore_reopens_memory_index_and_clears_only_derived_cache(
         content="A second source-backed activity.",
         client_request_id="memory-restore-second-activity",
     )
-    RoomMemoryDeliveryStore(source / data_cli.CHAT_DB_NAME).ensure_binding(
+    RoomMemoryBindingStore(source / data_cli.CHAT_DB_NAME).ensure_binding(
         conversation_id=conversation_id
     )
     with sqlite3.connect(source / data_cli.CHAT_DB_NAME) as conn:

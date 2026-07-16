@@ -30,7 +30,7 @@ from xmuse_core.chat.room_memory_contracts import (
     require_digest,
     sha256_json,
 )
-from xmuse_core.chat.room_memory_delivery_store import queue_candidate_delivery_conn
+from xmuse_core.chat.room_memory_document_outbox_conn import queue_candidate_delivery_conn
 
 
 def _causal_scope_conn(
