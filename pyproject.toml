@@ -17,6 +17,7 @@ xmuse-mcp-server = "xmuse.room_mcp_server:main"
 xmuse-room-runner = "xmuse.room_runner:main"
 xmuse-workroom = "xmuse.workroom_cli:main"
 xmuse-data = "xmuse.data_cli:main"
+xmuse-setup = "xmuse.setup_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.28.0"]

@@ -32,7 +32,7 @@ execution proposal
 
 optional source-backed memory
   -> visible Room activity / approved Agent candidate memory outbox in chat.db
-  -> archive-only MemoryOS index (rebuildable, loopback, no LLM/vector network)
+  -> full-local MemoryOS hybrid index (rebuildable, loopback, offline BM25 + FastEmbed + RRF)
   -> bounded source-validated memory_evidence in the next Agent context
 ```
 
@@ -105,9 +105,43 @@ Dashboard, broad MCP root, self-evolution control plane, enabled MemoryOS sideca
 A2A transport. The Room Collaboration Protocol is xmuse's own durable collaboration model,
 not an implementation of Google A2A; a future Google A2A adapter could only be an opt-in
 remote participant transport.
-MemoryOS is an explicit `--memory` archive-only option; it does not expand the Room Agent's
+MemoryOS is an explicit `--memory` option; it does not expand the Room Agent's
 single MCP tool or filesystem/network permissions. Retired implementations live only in Git
 history.
+
+## Install a release bundle
+
+Release assets for Linux x86_64 / WSL contain a small standard-library bootstrap, the base
+application bundle, and an optional MemoryOS companion bundle. Use CPython 3.11 matching the
+bundle ABI; installation is offline and verifies every payload digest before activation.
+
+```bash
+python3.11 xmuse-setup.pyz install \
+  --bundle xmuse-0.2.0-linux-x86_64.tar.gz
+python3.11 xmuse-setup.pyz install-memory \
+  --bundle memoryos-0.2.0-linux-x86_64.tar.gz   # optional
+
+export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
+xmuse-setup verify
+xmuse-workroom launch --no-open
+```
+
+`launch` starts the existing Workroom supervisor in a detached process, waits for its real
+readiness receipt, and opens `http://127.0.0.1:3000` unless `--no-open` is supplied. It does
+not introduce a second supervisor. With the companion installed, `launch --memory` discovers
+the bundled executable and stages the verified FastEmbed cache into the private runtime root.
+
+Install a newer base bundle to create and atomically activate a separate version. Roll back
+or remove an inactive version explicitly:
+
+```bash
+xmuse-setup activate 0.2.0
+xmuse-setup uninstall 0.1.0
+```
+
+The active version cannot be uninstalled. Native Windows and macOS bundles are not provided;
+unknown archive members, symlinks, path traversal, digest mismatch, wrong CPU/OS, and wrong
+Python ABI fail closed.
 
 ## Run locally
 
@@ -151,7 +185,9 @@ manual and consensus execution. Python gates are supervised at 2 GiB aggregate R
 processes, and 1 GiB scratch; frontend gates use 4 GiB, 128 processes, and 2 GiB scratch.
 Neither the workspace path nor internal profile/toolchain digests enter browser projections.
 
-To opt into the source-backed archive index, point Workroom at a real MemoryOS executable:
+To opt into source-backed memory from a checkout, point Workroom at a real MemoryOS
+executable. Full-local is the default memory profile; archive-only remains an explicit
+compatibility profile:
 
 ```bash
 uv run xmuse-workroom start --memory \
@@ -159,9 +195,10 @@ uv run xmuse-workroom start --memory \
 ```
 
 Workroom fixes the sidecar to loopback, creates a private derived data directory and random
-server-only API key, and disables its agent kernel, rewrite, rerank, paging, item extraction,
-recall cache, and archival vector network. MemoryOS health is reported separately and never
-changes Room Runtime readiness. A confirmed-dead owned sidecar is restarted with bounded
+server-only API key, and keeps external memory governance in `chat.db`. Full-local enables
+offline BM25, FastEmbed and RRF hybrid retrieval without granting Room Agents network or a
+second memory-writing tool. MemoryOS health is reported separately and never changes Room
+Runtime readiness. A confirmed-dead owned sidecar is restarted with bounded
 `1/2/4/8/16/30s` backoff while the same Workroom generation retains its private endpoint,
 key, and data directory; a live-but-unhealthy, identity-mismatched, or unknown port owner is
 reported as degraded and is never killed speculatively. Crash-loop or explicit derived-cache
@@ -169,8 +206,8 @@ blockers can be rebuilt from the Inspector through a guarded, durable operator a
 manager first proves and stops the sidecar, deletes only the fixed derived directory, resets
 bindings/outbox from `chat.db`, restarts the same capability, and waits for replay evidence.
 
-The five supported commands are `xmuse-chat-api`, `xmuse-mcp-server`,
-`xmuse-room-runner`, `xmuse-workroom`, and `xmuse-data`.
+The six supported commands are `xmuse-chat-api`, `xmuse-mcp-server`,
+`xmuse-room-runner`, `xmuse-workroom`, `xmuse-data`, and `xmuse-setup`.
 
 ## Data maintenance
 

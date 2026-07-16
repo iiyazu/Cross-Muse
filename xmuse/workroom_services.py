@@ -71,16 +71,32 @@ class WorkroomServicesCoordinator:
                 "codex_missing",
                 "Codex CLI is required to run Workroom Room Agents",
             )
+        if not self._paths.repo_root.is_dir():
+            raise WorkroomError(
+                "service_cwd_missing",
+                "the Workroom service directory is unavailable",
+            )
+        self._validate_asset_path(self._paths.frontend_dir, require_directory=True)
         if not self._paths.standalone_server.is_file():
             raise WorkroomError(
                 "standalone_build_missing",
-                "frontend/.next/standalone/server.js is missing; run npm run build in frontend",
+                "the prebuilt Workroom frontend server is missing",
             )
+        self._validate_asset_path(self._paths.standalone_server, require_directory=False)
         if not self._paths.static_source.is_dir():
             raise WorkroomError(
                 "static_assets_missing",
-                "frontend/.next/static is missing; run npm run build in frontend",
+                "the prebuilt Workroom frontend static assets are missing",
             )
+        self._validate_asset_path(self._paths.static_source, require_directory=True)
+        self._validate_asset_path(
+            self._paths.standalone_dir,
+            require_directory=True,
+        )
+        if self._paths.public_source.exists() or self._paths.public_source.is_symlink():
+            self._validate_asset_path(self._paths.public_source, require_directory=True)
+        self._validate_asset_destination(self._paths.static_destination)
+        self._validate_asset_destination(self._paths.public_destination)
         for service, host, port in (
             ("chat_api", CHAT_API_HOST, CHAT_API_PORT),
             ("frontend", FRONTEND_HOST, FRONTEND_PORT),
@@ -427,11 +443,73 @@ class WorkroomServicesCoordinator:
 
     @staticmethod
     def _replace_tree(source: Path, destination: Path) -> None:
+        if destination.is_symlink():
+            raise WorkroomError(
+                "frontend_assets_unsafe",
+                "the Workroom frontend assets contain an unsafe symbolic link",
+            )
         if destination.exists():
             shutil.rmtree(destination)
         if source.is_dir():
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(source, destination)
+
+    def _validate_asset_path(self, path: Path, *, require_directory: bool) -> None:
+        root = self._paths.assets_root
+        try:
+            relative = path.relative_to(root)
+        except ValueError as exc:
+            raise WorkroomError(
+                "frontend_assets_unsafe",
+                "the Workroom frontend assets escape the configured asset root",
+            ) from exc
+
+        current = root
+        if current.is_symlink():
+            raise WorkroomError(
+                "frontend_assets_unsafe",
+                "the Workroom frontend assets contain an unsafe symbolic link",
+            )
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise WorkroomError(
+                    "frontend_assets_unsafe",
+                    "the Workroom frontend assets contain an unsafe symbolic link",
+                )
+        try:
+            resolved = path.resolve(strict=True)
+            resolved.relative_to(root)
+        except (FileNotFoundError, ValueError) as exc:
+            code = (
+                "static_assets_missing"
+                if path == self._paths.static_source
+                else "standalone_build_missing"
+            )
+            raise WorkroomError(code, "the prebuilt Workroom frontend assets are missing") from exc
+        if require_directory and not resolved.is_dir():
+            raise WorkroomError(
+                "frontend_assets_unsafe",
+                "the Workroom frontend asset layout is invalid",
+            )
+
+    def _validate_asset_destination(self, path: Path) -> None:
+        root = self._paths.assets_root
+        try:
+            relative = path.relative_to(root)
+        except ValueError as exc:
+            raise WorkroomError(
+                "frontend_assets_unsafe",
+                "the Workroom frontend assets escape the configured asset root",
+            ) from exc
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                raise WorkroomError(
+                    "frontend_assets_unsafe",
+                    "the Workroom frontend assets contain an unsafe symbolic link",
+                )
 
 
 __all__ = [
