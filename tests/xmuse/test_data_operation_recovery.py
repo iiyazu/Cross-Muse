@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.xmuse.room_fixtures import CompatDataTestStore
-from xmuse import data_cli
+from xmuse import data_cli, data_mutation, data_restore
 
 _TARGET_NAMES = (
     data_cli.CHAT_DB_NAME,
@@ -43,7 +43,7 @@ def test_restore_commit_failure_restores_every_original_target(
     root = tmp_path / "runtime"
     root.mkdir()
     originals = _seed_targets(root, "original")
-    payload, staging, rollback = data_cli._new_operation(
+    payload, staging, rollback = data_mutation.new_operation(
         root,
         kind="restore",
         install_names=(data_cli.CHAT_DB_NAME, data_cli.SESSION_NAME),
@@ -55,10 +55,10 @@ def test_restore_commit_failure_restores_every_original_target(
         assert require_current is True
         raise data_cli.DataError("injected_commit_failure", "injected after install")
 
-    monkeypatch.setattr(data_cli, "_inspect_database", fail_installed_validation)
+    monkeypatch.setattr(data_restore, "inspect_database", fail_installed_validation)
 
     with pytest.raises(data_cli.DataError) as raised:
-        data_cli._commit_restore(root, payload, staging, rollback)
+        data_restore.commit_restore(root, payload, staging, rollback)
 
     assert raised.value.code == "injected_commit_failure"
     _assert_targets(root, originals)
@@ -69,7 +69,7 @@ def test_successful_restore_discards_stale_wal_and_shm_sidecars(tmp_path: Path) 
     root = tmp_path / "runtime"
     root.mkdir()
     _seed_targets(root, "stale")
-    payload, staging, rollback = data_cli._new_operation(
+    payload, staging, rollback = data_mutation.new_operation(
         root,
         kind="restore",
         install_names=(data_cli.CHAT_DB_NAME, data_cli.SESSION_NAME),
@@ -79,7 +79,7 @@ def test_successful_restore_discards_stale_wal_and_shm_sidecars(tmp_path: Path) 
     )
     (staging / data_cli.SESSION_NAME).write_text('{"sessions":[]}\n', encoding="utf-8")
 
-    data_cli._commit_restore(root, payload, staging, rollback)
+    data_restore.commit_restore(root, payload, staging, rollback)
 
     assert not (root / f"{data_cli.CHAT_DB_NAME}-wal").exists()
     assert not (root / f"{data_cli.CHAT_DB_NAME}-shm").exists()
@@ -97,7 +97,7 @@ def test_committed_journal_finalizes_without_restoring_rollback_artifacts(
     root = tmp_path / "runtime"
     root.mkdir()
     installed = _seed_targets(root, "installed")
-    payload, staging, rollback = data_cli._new_operation(
+    payload, staging, rollback = data_mutation.new_operation(
         root,
         kind="restore",
         install_names=(data_cli.CHAT_DB_NAME, data_cli.SESSION_NAME),
@@ -105,9 +105,9 @@ def test_committed_journal_finalizes_without_restoring_rollback_artifacts(
     for name in _TARGET_NAMES:
         (rollback / name).write_bytes(f"prior:{name}".encode())
     (staging / "unfinished").write_text("staging", encoding="utf-8")
-    data_cli._update_operation(root, payload, "committed")
+    data_mutation.update_operation(root, payload, "committed")
 
-    recovered = data_cli._recover_existing_operation(root)
+    recovered = data_mutation.recover_existing_operation(root)
 
     assert recovered == payload["operation_id"]
     _assert_targets(root, installed)
@@ -118,16 +118,16 @@ def test_moving_old_journal_rolls_back_a_partially_moved_target_set(tmp_path: Pa
     root = tmp_path / "runtime"
     root.mkdir()
     originals = _seed_targets(root, "original")
-    payload, _staging, rollback = data_cli._new_operation(
+    payload, _staging, rollback = data_mutation.new_operation(
         root,
         kind="restore",
         install_names=(data_cli.CHAT_DB_NAME, data_cli.SESSION_NAME),
     )
     for name in (data_cli.CHAT_DB_NAME, f"{data_cli.CHAT_DB_NAME}-wal"):
         os.replace(root / name, rollback / name)
-    data_cli._update_operation(root, payload, "moving_old")
+    data_mutation.update_operation(root, payload, "moving_old")
 
-    recovered = data_cli._recover_existing_operation(root)
+    recovered = data_mutation.recover_existing_operation(root)
 
     assert recovered == payload["operation_id"]
     _assert_targets(root, originals)
@@ -140,7 +140,7 @@ def test_installed_journal_removes_new_targets_and_restores_all_old_targets(
     root = tmp_path / "runtime"
     root.mkdir()
     originals = _seed_targets(root, "original")
-    payload, _staging, rollback = data_cli._new_operation(
+    payload, _staging, rollback = data_mutation.new_operation(
         root,
         kind="restore",
         install_names=(data_cli.CHAT_DB_NAME, data_cli.SESSION_NAME),
@@ -149,9 +149,9 @@ def test_installed_journal_removes_new_targets_and_restores_all_old_targets(
         os.replace(root / name, rollback / name)
     (root / data_cli.CHAT_DB_NAME).write_bytes(b"installed database")
     (root / data_cli.SESSION_NAME).write_bytes(b"installed sessions")
-    data_cli._update_operation(root, payload, "installed")
+    data_mutation.update_operation(root, payload, "installed")
 
-    recovered = data_cli._recover_existing_operation(root)
+    recovered = data_mutation.recover_existing_operation(root)
 
     assert recovered == payload["operation_id"]
     _assert_targets(root, originals)
@@ -176,7 +176,7 @@ def test_recovery_rejects_a_journal_operation_id_that_can_escape_the_root(
         "targets": [{"name": data_cli.CHAT_DB_NAME, "had_original": True}],
     }
 
-    with pytest.raises(data_cli.DataError, match="operation ID is invalid"):
-        data_cli._rollback_operation(root, payload)
+    with pytest.raises(data_mutation.DataMutationError, match="operation ID is invalid"):
+        data_mutation.rollback_operation(root, payload)
 
     assert sentinel.read_bytes() == b"outside authority"
