@@ -1331,14 +1331,31 @@ class RoomParticipantHost:
             state: Literal["incomplete", "failed"] = (
                 "incomplete" if transport_status == "finished" else "failed"
             )
+            reopen_immediately = transport_status == "finished"
+            if reopen_immediately:
+                reset = getattr(self._transport, "reset_after_missing_outcome", None)
+                if callable(reset):
+                    try:
+                        async with asyncio.timeout(self._policy.cleanup_grace_s):
+                            reopen_immediately = bool(
+                                await reset(
+                                    delivery,
+                                    timeout_s=self._policy.cleanup_grace_s,
+                                )
+                            )
+                    except Exception:
+                        reopen_immediately = False
             try:
-                self._controls.finish_attempt(
+                finished_attempt = self._controls.finish_attempt(
                     observation_id=current["observation_id"],
                     attempt_id=attempt_id,
                     reason_code=reason or "transport_failed",
                     base_attempt_limit=self._policy.max_attempts_per_observation,
+                    reopen_immediately=reopen_immediately,
                     now=self._clock(),
                 )
+                if reopen_immediately:
+                    retry_at = finished_attempt.get("expires_at")
             except RoomControlError as exc:
                 if exc.code != "room_attempt_generation_lost":
                     raise

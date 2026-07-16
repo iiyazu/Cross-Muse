@@ -257,9 +257,14 @@ class CodexRoomObservationTransport:
             "observation_batch_id, lease_token, client_request_id, outcome_type, and "
             "outcome_payload (an object whose content is the visible text). Use the exact "
             "names outcome_payload and outcome_type; never substitute content, message, "
-            "response_text, or response_content. Do not inspect files, use the network, "
-            "enumerate unrelated tools, or invoke any other tool; this is only the transport "
-            "spelling of the one durable Room outcome."
+            "response_text, or response_content. That exec call is only the transport "
+            "spelling of the one durable Room outcome and must not invoke another tool. "
+            "Before deciding, you may use Codex built-in read-only workspace inspection "
+            "tools when the Room task requires code evidence. Never use the network, modify "
+            "workspace bytes, or treat inspection output as Room authority. Read-only "
+            "inspection does not complete the observation: never end after inspection or an "
+            "assistant draft alone. End only after one successful durable outcome call or a "
+            "structured immutable-authority error that forbids that call."
         )
         preview_stream: object | None = None
         preview_task: asyncio.Task[None] | None = None
@@ -527,6 +532,49 @@ class CodexRoomObservationTransport:
                 )
         except Exception:
             return RoomCancelReconcileResult("pending", "room_codex_cancel_abort_failed")
+
+    async def reset_after_missing_outcome(
+        self,
+        delivery: RoomObservationDelivery,
+        *,
+        timeout_s: float,
+    ) -> bool:
+        """Rotate a completed delivery thread before retrying a missing outcome.
+
+        The attempt ledger is the identity source.  A provider turn which ended
+        without Room truth may have retained a malformed tool call in its thread
+        history; replaying that same thread can deterministically repeat the
+        malformed authority.  Abort only the exact bound generation, while the
+        participant and God identity remain durable for the next fresh thread.
+        """
+
+        if self._controls is None or not delivery.attempt_id:
+            return False
+        try:
+            projection = self._controls.reconcile_state(str(delivery.observation["observation_id"]))
+        except (KeyError, RoomControlError):
+            return False
+        attempt = projection.get("reconcile_binding") or {}
+        if (
+            attempt.get("attempt_id") != delivery.attempt_id
+            or attempt.get("provider_session_generation") != delivery.attempt_id
+            or attempt.get("provider_phase") not in {"bound", "cleanup_succeeded"}
+        ):
+            return False
+        if attempt.get("provider_phase") == "cleanup_succeeded":
+            return True
+        god_session_id = _text(attempt.get("god_session_id"))
+        if god_session_id is None:
+            return False
+        try:
+            async with asyncio.timeout(float(timeout_s)):
+                return await self._abort_delivery_session(
+                    god_session_id,
+                    delivery,
+                    reason_code="room_codex_durable_outcome_missing",
+                )
+        except (TimeoutError, ValueError):
+            return False
 
     async def _abort_delivery_session(
         self,
