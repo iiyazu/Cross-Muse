@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from xmuse import workroom
 from xmuse.data_backup import (
     DataBackupError,
     manifest_file,
@@ -43,6 +42,8 @@ from xmuse.data_mutation import (
     safe_operation_paths,
     vacuum_into,
 )
+from xmuse.workroom import workroom_status
+from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 from xmuse_core.agents.god_session_registry import GodSessionRecord
 from xmuse_core.chat.memoryos_supervisor import (
     MemoryOSSupervisorError,
@@ -1652,10 +1653,10 @@ def doctor_data(root: Path) -> tuple[int, dict[str, Any]]:
 
 
 def _runtime_probe(root: Path) -> dict[str, Any]:
-    paths = workroom.WorkroomPaths.resolve(root, REPO_ROOT)
-    _exit_code, managed = workroom.workroom_status(
+    paths = WorkroomPaths.resolve(root, REPO_ROOT)
+    _exit_code, managed = workroom_status(
         paths,
-        workroom.WorkroomDependencies(repo_root=REPO_ROOT),
+        WorkroomDependencies(repo_root=REPO_ROOT),
         emit=False,
     )
     inventory = discover_xmuse_runtime_processes(xmuse_root=root)
@@ -1911,7 +1912,7 @@ def restore_data(root: Path, backup: Path, *, replace: bool) -> dict[str, Any]:
     manifest, backup_db, _session_payload, records = verify_backup(backup)
     runtime_root = root.expanduser().resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
-    paths = workroom.WorkroomPaths.resolve(runtime_root, REPO_ROOT)
+    paths = WorkroomPaths.resolve(runtime_root, REPO_ROOT)
     with _file_lock(paths.lock):
         with _file_lock(runtime_root / DATA_LOCK_NAME):
             _assert_runtime_stopped(runtime_root)
@@ -2043,7 +2044,7 @@ def _commit_compact(
 def compact_data(root: Path) -> dict[str, Any]:
     runtime_root = root.expanduser().resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
-    paths = workroom.WorkroomPaths.resolve(runtime_root, REPO_ROOT)
+    paths = WorkroomPaths.resolve(runtime_root, REPO_ROOT)
     with _file_lock(paths.lock):
         with _file_lock(runtime_root / DATA_LOCK_NAME):
             _assert_runtime_stopped(runtime_root)

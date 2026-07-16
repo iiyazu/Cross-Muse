@@ -82,6 +82,9 @@ optional MemoryOS
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
 | `xmuse/room_runner_composition.py` | Room-only Host, transport, native runtime, stream, and session wiring. |
 | `xmuse/room_runner_memory.py` | Optional MemoryOS environment, store, adapter, and pump composition. |
+| `xmuse/workroom_contracts.py` | Workroom dependency injection and runtime-root path contracts. |
+| `xmuse/workroom_cli.py` | Public `xmuse-workroom` argument parsing and command dispatch. |
+| `xmuse/workroom.py` | Managed lifecycle, recovery, and manifest coordinator. |
 | `frontend/src/` | Room-first browser and fixed write proxies. |
 
 ## Authority
@@ -137,6 +140,11 @@ Core continues to have no dependency on the application namespace or `memoryos_l
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and
 move one cohesive responsibility at a time; line-count movement without a narrower import or
 authority boundary is not considered an architectural improvement.
+
+The Workroom command surface follows the same rule: `workroom_cli.py` owns parsing and invokes
+the lifecycle API, while `workroom.py` has no CLI parser or public entrypoint. Dependency and
+path seams live in `workroom_contracts.py`, so lifecycle tests can inject process evidence
+without treating the coordinator module as an accidental namespace facade.
 
 ## References
 

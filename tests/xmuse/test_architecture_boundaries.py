@@ -20,7 +20,7 @@ DEFAULT_ENTRYPOINT_IMPORTS = (
     ("xmuse.chat_api", "chat_api"),
     ("xmuse.room_runner", "room_runner"),
     ("xmuse.room_mcp_server", "room_mcp_server"),
-    ("xmuse.workroom", "workroom"),
+    ("xmuse.workroom_cli", "workroom"),
     ("xmuse.data_cli", "data_cli"),
 )
 
@@ -95,6 +95,20 @@ def test_room_runner_lifecycle_does_not_wire_provider_object_graph() -> None:
     )
 
     assert [prefix for prefix in wiring_modules if _imports_prefix(runner, prefix)] == []
+
+
+def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
+    lifecycle = APP_ROOT / "workroom.py"
+    tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))
+    forbidden_functions = {"build_parser", "run_cli", "main"}
+
+    assert not _imports_prefix(lifecycle, "argparse")
+    assert [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in forbidden_functions
+    ] == []
 
 
 def test_surviving_local_imports_resolve() -> None:

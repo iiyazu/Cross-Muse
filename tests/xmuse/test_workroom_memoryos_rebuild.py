@@ -7,6 +7,7 @@ from pathlib import Path
 from tests.xmuse.room_fixtures import RoomTestStore
 from tests.xmuse.test_workroom_cli import FakeRuntime
 from xmuse import workroom
+from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 from xmuse_core.chat.memoryos_supervisor import (
     memoryos_incident_guard,
     read_memoryos_status,
@@ -30,8 +31,8 @@ def _fixture(
     expected_guard: str | None = None,
 ) -> tuple[
     FakeRuntime,
-    workroom.WorkroomDependencies,
-    workroom.WorkroomPaths,
+    WorkroomDependencies,
+    WorkroomPaths,
     dict[str, object],
     workroom.MemoryOSRuntimeControl,
     RoomMemoryRebuildActionStore,
@@ -42,7 +43,7 @@ def _fixture(
     root.mkdir()
     runtime = FakeRuntime(repo)
     dependencies = runtime.dependencies()
-    paths = workroom.WorkroomPaths.resolve(root, repo)
+    paths = WorkroomPaths.resolve(root, repo)
     manifest: dict[str, object] = {
         "schema_version": workroom.SCHEMA_VERSION,
         "generation": "generation-one",
@@ -108,8 +109,8 @@ def _reconcile(
     control: workroom.MemoryOSRuntimeControl,
     *,
     manifest: dict[str, object],
-    paths: workroom.WorkroomPaths,
-    dependencies: workroom.WorkroomDependencies,
+    paths: WorkroomPaths,
+    dependencies: WorkroomDependencies,
     store: RoomMemoryRebuildActionStore,
 ) -> dict[str, object] | None:
     return workroom.reconcile_memoryos_rebuild_action(
