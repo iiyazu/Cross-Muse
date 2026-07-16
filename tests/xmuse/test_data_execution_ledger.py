@@ -11,7 +11,9 @@ from tests.xmuse.test_room_execution_outcomes import (
     make_candidate,
     trusted_gate_plan,
 )
-from xmuse import data_cli
+from xmuse import data_cli, data_restore
+from xmuse.data_authority import authority_invariants
+from xmuse.data_inspection import readonly_connection
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 
 CONTROLLER = {
@@ -101,7 +103,7 @@ def test_restore_fences_nonterminal_execution_authority(
     db, execution, run_id = _authorized_run(tmp_path)
     _move_to(execution, run_id, state)
 
-    result = data_cli._fence_restored_execution_runs(db, operation_id="restore-test")
+    result = data_restore.fence_restored_execution_runs(db, operation_id="restore-test")
 
     assert result == {"blocked": 1, "promotion_unverifiable": promotion_count}
     with sqlite3.connect(db) as conn:
@@ -146,7 +148,7 @@ def test_restore_leaves_terminal_execution_rows_unchanged(tmp_path: Path, state:
             (run_id,),
         ).fetchone()
 
-    assert data_cli._fence_restored_execution_runs(db, operation_id="restore-terminal") == {
+    assert data_restore.fence_restored_execution_runs(db, operation_id="restore-terminal") == {
         "blocked": 0,
         "promotion_unverifiable": 0,
     }
@@ -169,8 +171,8 @@ def test_data_authority_accepts_ledger_and_rejects_broken_authorization_binding(
     tmp_path: Path,
 ) -> None:
     db, _execution, run_id = _authorized_run(tmp_path)
-    with data_cli._readonly_connection(db) as conn:
-        valid = data_cli._authority_invariants(conn)
+    with readonly_connection(db) as conn:
+        valid = authority_invariants(conn)
     assert valid["valid"] is True
     assert valid["execution_binding_mismatch_count"] == 0
     assert valid["execution_run_mismatch_count"] == 0
@@ -183,8 +185,8 @@ def test_data_authority_accepts_ledger_and_rejects_broken_authorization_binding(
                )""",
             (POST_DIGEST, run_id),
         )
-    with data_cli._readonly_connection(db) as conn:
-        broken = data_cli._authority_invariants(conn)
+    with readonly_connection(db) as conn:
+        broken = authority_invariants(conn)
     assert broken["valid"] is False
     assert broken["execution_run_mismatch_count"] == 1
 
