@@ -2006,10 +2006,8 @@ def _goal_memory_contract_evidence(
         restart_count=state.memory_restart_count,
         proof=proof,
     )
-    from xmuse.memoryos_adapter import (
-        _MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
-        _MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES,
-    )
+    from xmuse.memoryos_evidence import _MEMORYOS_CONTEXT_SEMANTIC_MAX_BYTES
+    from xmuse.memoryos_http_client import _MEMORYOS_CONTEXT_HTTP_MAX_BYTES
     from xmuse_core.chat.room_memory_runtime import ROOM_MEMORY_MAX_RESPONSE_BYTES
 
     # _memory_evidence above re-proves every successful source against chat.db and raises

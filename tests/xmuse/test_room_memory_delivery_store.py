@@ -11,17 +11,16 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_memory_binding_conn import ensure_room_memory_bindings_conn
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_common import RoomMemoryStoreError
-from xmuse_core.chat.room_memory_delivery_store import (
-    RoomMemoryDeliveryStore,
-    queue_candidate_delivery_conn,
-)
+from xmuse_core.chat.room_memory_document_outbox_conn import queue_candidate_delivery_conn
+from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
 
 _RESPONSE_DIGEST = "sha256:" + "a" * 64
 
 
 def _bind_session_and_archives(
-    store: RoomMemoryDeliveryStore,
+    store: RoomMemoryBindingStore,
     conversation_id: str,
     *,
     now: datetime,
@@ -118,7 +117,7 @@ def test_session_and_attachment_reservations_replay_and_share_one_session(
 ) -> None:
     db = tmp_path / "chat.db"
     conversation_id = RoomTestStore(db).create_conversation("binding replay").id
-    store = RoomMemoryDeliveryStore(db)
+    store = RoomMemoryBindingStore(db)
     now = datetime(2026, 7, 12, tzinfo=UTC)
     room = store.ensure_binding(conversation_id=conversation_id, now=now)
 
@@ -196,8 +195,9 @@ def test_expired_delivery_is_reclaimed_and_late_ack_is_fenced(tmp_path: Path) ->
     db = tmp_path / "chat.db"
     conversation_id = RoomTestStore(db).create_conversation("delivery fencing").id
     start = datetime(2026, 7, 12, tzinfo=UTC)
-    store = RoomMemoryDeliveryStore(db)
-    _bind_session_and_archives(store, conversation_id, now=start)
+    binding_store = RoomMemoryBindingStore(db)
+    store = RoomMemoryDocumentOutboxStore(db)
+    _bind_session_and_archives(binding_store, conversation_id, now=start)
     root = RoomKernelStore(db).post_human_activity(
         conversation_id=conversation_id,
         human_id="human",

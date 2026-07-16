@@ -14,7 +14,7 @@ from xmuse_core.chat.memoryos_supervisor import (
     write_memoryos_status,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
 
 
@@ -61,7 +61,7 @@ def _fixture(
     )
 
     conversation_id = RoomTestStore(root / "chat.db").create_conversation("rebuild").id
-    RoomMemoryDeliveryStore(root / "chat.db").ensure_binding(conversation_id=conversation_id)
+    RoomMemoryBindingStore(root / "chat.db").ensure_binding(conversation_id=conversation_id)
     RoomKernelStore(root / "chat.db").post_human_activity(
         conversation_id=conversation_id,
         human_id="human",

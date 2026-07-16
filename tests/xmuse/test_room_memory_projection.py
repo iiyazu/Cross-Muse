@@ -90,6 +90,10 @@ class _Store:
             }
         ]
 
+    def list_external_advisory_receipts(self, conversation_id: str, *, limit=20):
+        assert conversation_id == "conv-1" and limit == 8
+        return []
+
 
 def _projection(store: _Store, **kwargs):
     return build_room_memory_projection(
@@ -98,6 +102,7 @@ def _projection(store: _Store, **kwargs):
         governance_store=store,
         delivery_store=store,
         recall_store=store,
+        advisory_store=store,
         **kwargs,
     )
 
@@ -216,6 +221,7 @@ def test_v2_projection_is_capability_gated_and_keeps_v1_compatibility() -> None:
         governance_store=store,
         delivery_store=store,
         recall_store=store,
+        advisory_store=store,
         runtime_status={"enabled": True, "state": "ready", "profile": "full-local"},
     )
     assert projection["schema_version"] == "room_memory_projection/v2"

@@ -60,9 +60,15 @@ class RoomMemoryDeliveryReadStore(Protocol):
     def count_outbox_by_state(self, *, conversation_id: str) -> Mapping[str, int]: ...
 
 
+class RoomMemoryMessageDeliveryReadStore(Protocol):
+    def count_message_outbox_by_state(self, *, conversation_id: str) -> Mapping[str, int]: ...
+
+
 class RoomMemoryRecallReadStore(Protocol):
     def list_attempt_receipts(self, *, conversation_id: str, limit: int = 20) -> object: ...
 
+
+class RoomMemoryAdvisoryReadStore(Protocol):
     def list_external_advisory_receipts(
         self, conversation_id: str, *, limit: int = 20
     ) -> object: ...
@@ -294,6 +300,8 @@ def build_room_memory_projection(
     governance_store: RoomMemoryGovernanceReadStore,
     delivery_store: RoomMemoryDeliveryReadStore,
     recall_store: RoomMemoryRecallReadStore,
+    advisory_store: RoomMemoryAdvisoryReadStore | None = None,
+    message_delivery_store: RoomMemoryMessageDeliveryReadStore | None = None,
     runtime_status: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
     schema_version: str = ROOM_MEMORY_PROJECTION_SCHEMA,
@@ -309,9 +317,10 @@ def build_room_memory_projection(
     )
     outbox_counts = delivery_store.count_outbox_by_state(conversation_id=conversation_id)
     raw_receipts = recall_store.list_attempt_receipts(conversation_id=conversation_id, limit=8)
-    advisory_reader = getattr(recall_store, "list_external_advisory_receipts", None)
     raw_advisory_receipts = (
-        advisory_reader(conversation_id, limit=8) if callable(advisory_reader) else []
+        advisory_store.list_external_advisory_receipts(conversation_id, limit=8)
+        if advisory_store is not None
+        else []
     )
     candidates = [
         candidate
@@ -361,9 +370,10 @@ def build_room_memory_projection(
         profile = _identifier((runtime_status or {}).get("profile"))
         if profile not in {"full-local", "archive-only"}:
             profile = "archive-only"
-        message_counter = getattr(delivery_store, "count_message_outbox_by_state", None)
         raw_message_counts = (
-            message_counter(conversation_id=conversation_id) if callable(message_counter) else {}
+            message_delivery_store.count_message_outbox_by_state(conversation_id=conversation_id)
+            if message_delivery_store is not None
+            else {}
         )
         message_counts = raw_message_counts if isinstance(raw_message_counts, Mapping) else {}
         projection["profile"] = profile
@@ -383,6 +393,8 @@ def build_room_memory_projection_v2(
     governance_store: RoomMemoryGovernanceReadStore,
     delivery_store: RoomMemoryDeliveryReadStore,
     recall_store: RoomMemoryRecallReadStore,
+    advisory_store: RoomMemoryAdvisoryReadStore | None = None,
+    message_delivery_store: RoomMemoryMessageDeliveryReadStore | None = None,
     runtime_status: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -394,6 +406,8 @@ def build_room_memory_projection_v2(
         governance_store=governance_store,
         delivery_store=delivery_store,
         recall_store=recall_store,
+        advisory_store=advisory_store,
+        message_delivery_store=message_delivery_store,
         runtime_status=runtime_status,
         generated_at=generated_at,
         schema_version=ROOM_MEMORY_PROJECTION_V2_SCHEMA,

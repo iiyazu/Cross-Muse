@@ -52,6 +52,9 @@ class _Store:
     def list_attempt_receipts(self, *, conversation_id: str, limit=20):
         return []
 
+    def list_external_advisory_receipts(self, conversation_id: str, *, limit=20):
+        return []
+
     def get_candidate(self, candidate_id: str):
         return (
             self.list_candidates(conversation_id="conv-1")[0]
@@ -85,7 +88,9 @@ def _client(store: _Store, token: str | None = "operator-secret") -> TestClient:
         binding_store_factory=lambda _path: store,
         governance_store_factory=lambda _path: store,
         delivery_store_factory=lambda _path: store,
+        message_delivery_store_factory=lambda _path: store,
         recall_store_factory=lambda _path: store,
+        advisory_store_factory=lambda _path: store,
         operator_token=token,
         runtime_status_provider=lambda: {
             "enabled": True,

@@ -11,10 +11,11 @@ from typing import Any
 
 import pytest
 
-from xmuse.memoryos_adapter import (
-    ArchiveOnlyRoomMemoryRuntime,
-    MemoryOSAdapterError,
-)
+from xmuse.memoryos_adapter import MemoryOSAdapterError
+from xmuse.memoryos_delivery_pump import MemoryOSDeliveryPump
+from xmuse.memoryos_evidence import MemoryOSEvidenceDecoder
+from xmuse.memoryos_recall_runtime import MemoryOSRecallRuntime
+from xmuse.memoryos_runtime_adapter import MemoryOSRoomMemoryRuntime
 from xmuse_core.chat.room_memory_runtime import RoomMemoryRecallInput
 
 
@@ -165,6 +166,8 @@ class FakeStore:
         self.reject_source = False
         self.requeue_result: list[dict[str, Any]] = []
         self.expected_text = "prior durable fact"
+        self.advisories: list[dict[str, Any]] = []
+        self.advisory_failures: list[dict[str, Any]] = []
 
     def build_recall_request(self, **_kwargs: Any) -> dict[str, Any]:
         return {
@@ -222,6 +225,13 @@ class FakeStore:
         self.binds.append(kwargs)
         return kwargs
 
+    def record_external_advisories(self, **kwargs: Any) -> list[dict[str, Any]]:
+        self.advisories.append(kwargs)
+        return [kwargs]
+
+    def record_external_advisory_failure(self, **kwargs: Any) -> None:
+        self.advisory_failures.append(kwargs)
+
     def list_pending_bindings(self, *, limit: int = 20) -> list[dict[str, Any]]:
         assert limit == 20
         return self.bindings
@@ -273,6 +283,10 @@ class FakeAdapter:
         self.profile = "archive-only"
         self.message_calls: list[dict[str, Any]] = []
 
+    @property
+    def recall_timeout_s(self) -> float:
+        return 0.75
+
     def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
         return self.payload
 
@@ -300,13 +314,27 @@ class FakeAdapter:
             "replayed": False,
         }
 
+    def list_advisories(self, *, session_id: str) -> list[Mapping[str, Any]]:
+        del session_id
+        return []
 
-def _runtime(store: FakeStore, adapter: FakeAdapter) -> ArchiveOnlyRoomMemoryRuntime:
-    return ArchiveOnlyRoomMemoryRuntime(  # type: ignore[arg-type]
-        store,
-        store,
-        adapter,  # type: ignore[arg-type]
-        worker_id="memory-worker-1",
+
+def _runtime(store: FakeStore, adapter: FakeAdapter) -> MemoryOSRoomMemoryRuntime:
+    return MemoryOSRoomMemoryRuntime(
+        MemoryOSRecallRuntime(
+            source_store=store,
+            receipt_store=store,
+            advisory_store=store,
+            client=adapter,
+            decoder=MemoryOSEvidenceDecoder(store),
+        ),
+        MemoryOSDeliveryPump(
+            binding_store=store,
+            message_store=store,
+            document_store=store,
+            client=adapter,
+            worker_id="memory-worker-1",
+        ),
     )
 
 
