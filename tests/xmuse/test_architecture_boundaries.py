@@ -79,6 +79,7 @@ def test_room_runner_entrypoint_does_not_own_memoryos_adapter_or_stores() -> Non
         "xmuse.memoryos_adapter",
         "xmuse_core.chat.room_memory_delivery_store",
         "xmuse_core.chat.room_memory_recall_store",
+        "xmuse_core.chat.room_execution_store",
     )
 
     assert [prefix for prefix in forbidden if _imports_prefix(runner, prefix)] == []

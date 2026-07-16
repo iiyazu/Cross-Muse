@@ -39,7 +39,7 @@ from xmuse_core.chat.room_codex_native_runtime import (
 )
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_runtime import (
     ROOM_MCP_PATH,
     ROOM_MCP_SURFACE,
@@ -179,7 +179,7 @@ async def run_room_runner(
                 RoomDatabase(root / "chat.db").initialize()
                 controls = RoomObservationControlStore(root / "chat.db")
                 skill_decisions = RoomAttemptSkillDecisionStore(root / "chat.db")
-                execution_store = RoomExecutionStore(root / "chat.db")
+                execution_store = RoomExecutionReviewStore(root / "chat.db")
             except Exception as exc:
                 raise RoomRunnerError("room_runner_chat_db_unavailable") from exc
             readiness["chat_db"] = True
