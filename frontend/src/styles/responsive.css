@@ -1,0 +1,141 @@
+@media (max-width: 1179px) {
+  .room-app,
+  .room-app.has-sidebar,
+  .room-app.has-inspector,
+  .room-app.has-sidebar.has-inspector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-sidebar-slot {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    pointer-events: none;
+    z-index: 40;
+  }
+
+  .room-sidebar-slot .room-sidebar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    width: min(86vw, 320px);
+    pointer-events: none;
+    transform: translateX(-105%);
+    transition: transform 160ms ease;
+  }
+
+  .room-sidebar-slot.is-mobile-open .room-sidebar {
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+
+  .room-mobile-scrim {
+    position: fixed;
+    inset: 0;
+    display: block;
+    z-index: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: auto;
+  }
+
+  .room-mobile-only {
+    display: grid;
+  }
+
+  .room-inspector {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 35;
+    width: min(94vw, 440px);
+    box-shadow: -18px 0 50px rgba(0, 0, 0, 0.28);
+  }
+
+  .room-inspector-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 34;
+    border: 0;
+    background: rgba(0, 0, 0, 0.5);
+  }
+}
+
+@media (max-width: 700px) {
+  .room-composer__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .room-composer__footer > span {
+    max-width: 100%;
+    line-height: 1.35;
+  }
+
+  .room-composer__footer .room-primary-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .room-inspector {
+    width: 100vw;
+  }
+  .room-header {
+    min-height: 56px;
+    padding: 8px 10px;
+  }
+
+  .room-header__actions .room-member-stack {
+    display: none;
+  }
+
+  .room-turn-status {
+    padding: 8px 10px;
+    display: grid;
+    gap: 7px;
+  }
+
+  .room-turn-status__agents {
+    overflow-x: auto;
+  }
+
+  .room-timeline {
+    padding: 14px 10px;
+  }
+
+  .room-message {
+    max-width: 94%;
+  }
+
+  .room-message__content {
+    padding: 9px 10px;
+  }
+
+  .room-message__avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .room-composer {
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .room-error-banner {
+    margin: 6px 10px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-timeline {
+    scroll-behavior: auto;
+  }
+
+  .room-sidebar-slot .room-sidebar {
+    transition: none;
+  }
+
+  .room-stream-caret,
+  .room-stream-placeholder span {
+    animation: none;
+  }
+}

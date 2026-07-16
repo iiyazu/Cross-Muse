@@ -1,0 +1,505 @@
+/* Workbench refresh ----------------------------------------------------- */
+
+.workspace-dock-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  margin: 10px 12px 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--bg), var(--surface) 40%);
+  backdrop-filter: blur(10px);
+}
+
+.workspace-dock-tabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workspace-dock-tabs button.is-active {
+  color: var(--fg);
+  background: var(--surface-2);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+}
+
+.workspace-dock-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 18px;
+}
+
+.room-sidebar__brand {
+  min-height: 56px;
+}
+
+.room-sidebar__actions .room-primary-button,
+.room-create-dialog .room-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.room-search-wrap {
+  position: relative;
+}
+
+.room-search-wrap > svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  z-index: 1;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.room-search-wrap .room-search {
+  padding-left: 32px;
+}
+
+.room-list-row {
+  position: relative;
+}
+
+.room-list-row .room-list-item {
+  width: 100%;
+  padding-right: 34px;
+}
+
+.room-pin-button {
+  position: absolute;
+  top: 27px;
+  right: 7px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.room-list-row:hover .room-pin-button,
+.room-pin-button:focus-visible {
+  opacity: 1;
+}
+
+.room-list-section {
+  display: block;
+  padding: 11px 10px 5px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.room-unread {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  text-align: center;
+}
+
+.room-create-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(680px, calc(100vw - 28px));
+  max-height: min(760px, calc(100dvh - 28px));
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.room-create-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.room-create-dialog h2 {
+  margin: 2px 0 0;
+  font-size: 20px;
+}
+
+.room-create-dialog header span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.room-create-dialog > label,
+.room-roster-options legend {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.room-create-dialog > input {
+  width: 100%;
+  margin: 6px 0 18px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.room-roster-options {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.room-roster-options > label {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.room-roster-options > label.is-selected {
+  border-color: color-mix(in oklab, var(--accent), var(--border) 25%);
+  background: color-mix(in oklab, var(--accent), transparent 92%);
+}
+
+.room-roster-options label span {
+  display: grid;
+  gap: 3px;
+}
+
+.room-roster-options small,
+.room-roster-options em,
+.room-create-note,
+.room-roster-loading {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.room-create-note {
+  margin: 14px 0;
+}
+
+.room-date-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 22px 0 16px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-date-separator::before,
+.room-date-separator::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: color-mix(in oklab, var(--border), transparent 35%);
+}
+
+.room-message-copy {
+  width: 24px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.room-message:hover .room-message-copy,
+.room-message-copy:focus-visible {
+  opacity: 1;
+}
+
+.room-agent-state__identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-agent-state__identity > span {
+  display: grid;
+}
+
+.room-agent-state__controls {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-agent-state__controls > div {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.agent-console__bridge-disclosure {
+  margin: 10px 12px;
+  color: var(--muted);
+}
+
+.agent-console__bridge-disclosure > summary {
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.agent-console__action.is-prominent {
+  border-color: color-mix(in oklab, var(--danger), var(--border) 40%);
+  color: var(--danger);
+}
+
+.agent-console__goal-editor {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.agent-console__goal-editor label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-console__goal-editor textarea,
+.agent-console__goal-editor input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.workspace-status-region {
+  position: fixed;
+  z-index: 90;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(420px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.workspace-status-region.has-message {
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-raised);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.agent-console__command-menu {
+  display: grid;
+  max-height: 210px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+.agent-console__command-menu button {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-console__command-menu span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.command-palette-trigger {
+  position: fixed;
+  right: 14px;
+  bottom: 82px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--surface), transparent 4%);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+}
+
+.command-palette-trigger span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.command-palette-layer {
+  align-items: flex-start;
+  padding-top: min(18vh, 150px);
+}
+
+.command-palette {
+  position: relative;
+  z-index: 1;
+  width: min(620px, calc(100vw - 24px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.command-palette > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.command-palette input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: var(--fg);
+  background: transparent;
+}
+
+.command-palette-list {
+  display: grid;
+  max-height: 390px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.command-palette-list button {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-palette-list button:hover,
+.command-palette-list button:focus-visible {
+  background: var(--surface-2);
+}
+
+.command-palette-list span,
+.command-palette-list p,
+.command-palette footer {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.command-palette footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .command-palette-trigger {
+    display: none;
+  }
+
+  .room-create-dialog {
+    padding: 16px;
+  }
+}
+
+.room-agent-console-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.room-agent-console-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 2px 2px;
+  background: var(--surface);
+}
+
+.room-agent-console-tabs button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.room-agent-console-tabs button strong,
+.room-agent-console-tabs button small {
+  display: block;
+}
+
+.room-agent-console-tabs button small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.room-agent-console-tabs button[aria-selected="true"] {
+  border-color: var(--accent);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
