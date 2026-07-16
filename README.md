@@ -92,6 +92,21 @@ optional source-backed memory
 - This remains a loopback-only, single-user application. Managed writes use a server-only
   `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
+## v0.3.0 release
+
+The `v0.3.0` release makes the local Workroom installable outside a source checkout and
+closes the first installed, full-local MemoryOS dogfood cycle. The browser state and
+components are split by Room, Codex, execution, memory, and runtime domains; the Linux
+x86_64 bundle verifies its platform, Python ABI, manifest, and every payload digest before
+atomically activating an isolated version.
+
+Installed four-Agent dogfood proved that Room Codex can inspect the configured workspace
+through network-disabled, read-only tools while the only durable Room write remains
+`chat_room_submit_outcome`. A provider turn which ends without that outcome now rotates only
+its exactly bound delivery session before a bounded retry; an unproven cleanup keeps the old
+lease fenced. The final run settled root and peer phases in exactly eight attempts with no
+exhausted observation or runtime residue.
+
 ## v0.1.0 release baseline
 
 The `v0.1.0` release closed the fixed production soak with 16/16 correlations settled across
@@ -117,9 +132,9 @@ bundle ABI; installation is offline and verifies every payload digest before act
 
 ```bash
 python3.11 xmuse-setup.pyz install \
-  --bundle xmuse-0.2.0-linux-x86_64.tar.gz
+  --bundle xmuse-0.3.0-linux-x86_64.tar.gz
 python3.11 xmuse-setup.pyz install-memory \
-  --bundle memoryos-0.2.0-linux-x86_64.tar.gz   # optional
+  --bundle memoryos-0.3.0-linux-x86_64.tar.gz   # optional
 
 export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
 xmuse-setup verify
@@ -135,8 +150,8 @@ Install a newer base bundle to create and atomically activate a separate version
 or remove an inactive version explicitly:
 
 ```bash
-xmuse-setup activate 0.2.0
-xmuse-setup uninstall 0.1.0
+xmuse-setup activate 0.3.0
+xmuse-setup uninstall 0.2.0
 ```
 
 The active version cannot be uninstalled. Native Windows and macOS bundles are not provided;
