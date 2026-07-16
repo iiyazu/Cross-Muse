@@ -11,12 +11,13 @@ import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_execution_controller import (
     ControllerConfig,
     RoomExecutionControllerError,
     run_execution_controller,
 )
-from xmuse_core.chat.room_execution_store import RoomExecutionStore, RoomExecutionStoreError
+from xmuse_core.chat.room_execution_controller_store import RoomExecutionControllerStore
 from xmuse_core.chat.room_runtime import read_process_start_identity
 from xmuse_core.runtime.data_guard import assert_data_operation_complete
 
@@ -46,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not generation:
             raise RoomExecutionControllerError("execution_controller_generation_required")
         result = run_execution_controller(
-            RoomExecutionStore(xmuse_root / "chat.db"),
+            RoomExecutionControllerStore(xmuse_root / "chat.db"),
             ControllerConfig(
                 xmuse_root=xmuse_root,
                 execution_root=worktree,

@@ -81,6 +81,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_execution_views.py` | Transaction-free candidate and run ledger read models. |
 | `src/xmuse_core/chat/room_execution_read_store.py` | Read-only candidate/run projection source without command capabilities. |
 | `src/xmuse_core/chat/room_execution_operator_store.py` | Fixed policy, candidate-decision, and cancel capability adapter for operator routes. |
+| `src/xmuse_core/chat/room_execution_controller_store.py` | One-shot controller claim, gate, promotion, and finalization capability adapter. |
 | `src/xmuse_core/chat/room_execution_review_store.py` | Least-authority review material and receipt store used by Room delivery. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
@@ -155,6 +156,11 @@ Operator HTTP routes receive a separate `RoomExecutionOperatorStore`. It preserv
 ledger's existing atomic authorization/cancel transactions while withholding controller
 claim, gate evidence, promotion, acknowledgement, and finalization methods from the API
 composition.
+
+The one-shot Harness process receives a distinct `RoomExecutionControllerStore`. It can
+recover its authorized run and record fixed gate/promotion evidence, but cannot change Room
+policy, authorize candidates, reconcile consensus, request operator cancellation, or bind
+Room delivery review receipts.
 
 Core continues to have no dependency on the application namespace or `memoryos_lite`.
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and
