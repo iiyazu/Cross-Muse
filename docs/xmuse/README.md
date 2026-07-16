@@ -67,6 +67,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_memory_governance_store.py` | Source-bound candidates and guarded operator decisions. |
 | `src/xmuse_core/chat/room_memory_recall_store.py` | Source proof, recall requests, receipts, and context binding. |
 | `src/xmuse_core/chat/room_memory_rebuild_store.py` | Durable guarded rebuild action and transactional derived-index replay reset. |
+| `src/xmuse_core/chat/room_memory_ports.py` | Narrow persistence ports consumed by optional memory adapters. |
 | `src/xmuse_core/chat/room_memory_runtime.py` | Sidecar-neutral Host evidence protocol. |
 | `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` safe read model. |
 | `src/xmuse_core/chat/memoryos_supervisor.py` | Optional sidecar command, environment, receipt, and safe status. |
@@ -79,6 +80,8 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_goal_memory_soak.py` | Fixed v0.1 release profile and `room_goal_memory_soak_result/v1` contract. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
+| `xmuse/room_runner_composition.py` | Room-only Host, transport, native runtime, stream, and session wiring. |
+| `xmuse/room_runner_memory.py` | Optional MemoryOS environment, store, adapter, and pump composition. |
 | `frontend/src/` | Room-first browser and fixed write proxies. |
 
 ## Authority
@@ -120,6 +123,20 @@ is no executable compatibility API, MCP, runner, UI projection, or ChatStore run
 
 Use Git history for retired implementations; do not create repository-local archive or
 legacy source trees.
+
+## Maintenance boundaries
+
+The process entrypoints own lifecycle, not provider wiring or persistence policy.
+`xmuse/room_runner.py` delegates object wiring to `room_runner_composition.py` and receives one
+sidecar-neutral `RoomMemoryRuntime`; only `room_runner_memory.py` may compose the MemoryOS HTTP
+adapter, concrete memory stores, environment configuration, and outbox pump policy. The
+adapter depends on the behavioral store ports in `room_memory_ports.py`, not concrete SQLite
+classes.
+
+Core continues to have no dependency on the application namespace or `memoryos_lite`.
+Boundary tests enforce both directions. Future reductions should preserve wire contracts and
+move one cohesive responsibility at a time; line-count movement without a narrower import or
+authority boundary is not considered an architectural improvement.
 
 ## References
 

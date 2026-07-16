@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from xmuse import room_runner
+from xmuse import room_runner, room_runner_composition, room_runner_memory
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_store import RoomExecutionStore
@@ -372,8 +372,13 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
     db_path = tmp_path / "chat.db"
     RoomDatabase(db_path).initialize()
     execution_store = RoomExecutionStore(db_path)
+    memory_runtime, memory_enabled = room_runner_memory.compose_room_runner_memory(
+        db_path,
+        worker_id="memory-composition-test",
+        environ={},
+    )
 
-    composition = room_runner._compose_runtime(
+    composition = room_runner_composition.compose_room_runtime(
         root=tmp_path,
         worktree=tmp_path,
         launchers={},
@@ -386,6 +391,8 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
         cleanup_grace_s=1,
         runner_generation="generation-execution-store",
         runner_boot_id="boot-execution-store",
+        memory_runtime=memory_runtime,
+        memory_enabled=memory_enabled,
     )
 
     assert composition.host._execution_store is execution_store
@@ -394,32 +401,30 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
 
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from xmuse.memoryos_adapter import (
         ArchiveOnlyRoomMemoryRuntime,
         DisabledRoomMemoryRuntime,
     )
-    from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
-    from xmuse_core.chat.room_memory_recall_store import RoomMemoryRecallStore
 
     db_path = tmp_path / "chat.db"
     RoomDatabase(db_path).initialize()
-    delivery_store = RoomMemoryDeliveryStore(db_path)
-    recall_store = RoomMemoryRecallStore(db_path)
-    monkeypatch.delenv("XMUSE_MEMORYOS_URL", raising=False)
-    monkeypatch.delenv("XMUSE_MEMORYOS_API_KEY", raising=False)
 
-    disabled, enabled = room_runner._memory_runtime_from_environment(
-        delivery_store, recall_store, worker_id="memory-worker-disabled"
+    disabled, enabled = room_runner_memory.compose_room_runner_memory(
+        db_path,
+        worker_id="memory-worker-disabled",
+        environ={},
     )
     assert enabled is False
     assert isinstance(disabled, DisabledRoomMemoryRuntime)
 
-    monkeypatch.setenv("XMUSE_MEMORYOS_URL", "http://127.0.0.1:8301")
-    monkeypatch.setenv("XMUSE_MEMORYOS_API_KEY", "memory-server-secret")
-    active, enabled = room_runner._memory_runtime_from_environment(
-        delivery_store, recall_store, worker_id="memory-worker-enabled"
+    active, enabled = room_runner_memory.compose_room_runner_memory(
+        db_path,
+        worker_id="memory-worker-enabled",
+        environ={
+            "XMUSE_MEMORYOS_URL": "http://127.0.0.1:8301",
+            "XMUSE_MEMORYOS_API_KEY": "memory-server-secret",
+        },
     )
     assert enabled is True
     assert isinstance(active, ArchiveOnlyRoomMemoryRuntime)
@@ -441,9 +446,9 @@ def test_memory_pump_failure_only_marks_host_attention(tmp_path: Path) -> None:
     host = RoomParticipantHost(tmp_path / "chat.db", UnusedTransport())
 
     asyncio.run(
-        room_runner._memory_pump_loop(
+        room_runner_memory.run_room_memory_pump(
             FailingMemoryRuntime(),  # type: ignore[arg-type]
-            host=host,
+            report_attention=host.set_memory_runtime_attention,
             stop=stop,
         )
     )
@@ -499,7 +504,7 @@ def test_room_runner_reaches_ready_and_stops_without_control_plane_artifacts(
     ambient_home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(ambient_home))
     startup_fenced = False
-    original_fence = room_runner.RoomParticipantHost.fence_prior_runner_attempts
+    original_fence = RoomParticipantHost.fence_prior_runner_attempts
     original_write_status = room_runner._write_status
 
     def fence_before_ready(host) -> dict[str, Any] | None:
@@ -514,7 +519,7 @@ def test_room_runner_reaches_ready_and_stops_without_control_plane_artifacts(
         original_write_status(*args, **kwargs)
 
     monkeypatch.setattr(
-        room_runner.RoomParticipantHost,
+        RoomParticipantHost,
         "fence_prior_runner_attempts",
         fence_before_ready,
     )

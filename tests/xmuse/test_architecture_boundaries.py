@@ -71,6 +71,32 @@ def test_core_does_not_import_memoryos_lite_directly() -> None:
     assert offenders == []
 
 
+def test_room_runner_entrypoint_does_not_own_memoryos_adapter_or_stores() -> None:
+    """Keep optional memory implementation details behind one app composition port."""
+
+    runner = APP_ROOT / "room_runner.py"
+    forbidden = (
+        "xmuse.memoryos_adapter",
+        "xmuse_core.chat.room_memory_delivery_store",
+        "xmuse_core.chat.room_memory_recall_store",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(runner, prefix)] == []
+
+
+def test_room_runner_lifecycle_does_not_wire_provider_object_graph() -> None:
+    runner = APP_ROOT / "room_runner.py"
+    wiring_modules = (
+        "xmuse_core.agents.god_session_layer",
+        "xmuse_core.chat.room_agent_stream",
+        "xmuse_core.chat.room_codex_projection_cache",
+        "xmuse_core.chat.room_codex_transport",
+        "xmuse_core.chat.room_host",
+    )
+
+    assert [prefix for prefix in wiring_modules if _imports_prefix(runner, prefix)] == []
+
+
 def test_surviving_local_imports_resolve() -> None:
     missing: list[str] = []
     roots = (CORE_ROOT, APP_ROOT, PROJECT_ROOT / "scripts", PROJECT_ROOT / "tests" / "xmuse")
