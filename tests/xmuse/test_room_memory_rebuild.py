@@ -9,7 +9,7 @@ import pytest
 
 from tests.xmuse.test_room_participant_outcomes import root_and_claims, submit
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
 from xmuse_core.chat.room_memory_rebuild_store import (
     RoomMemoryRebuildActionStore,
@@ -159,7 +159,7 @@ def _seed_rebuildable_memory(
     candidates = RoomMemoryGovernanceStore(db).list_candidates(conversation_id)
     approved = next(item for item in candidates if item["approval_state"] == "approved")
     pending = next(item for item in candidates if item["approval_state"] == "pending")
-    RoomMemoryDeliveryStore(db).ensure_binding(conversation_id=conversation_id)
+    RoomMemoryBindingStore(db).ensure_binding(conversation_id=conversation_id)
     stamp = "2026-07-12T00:00:00.000000Z"
     with sqlite3.connect(db) as conn:
         conn.execute(

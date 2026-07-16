@@ -1,8 +1,8 @@
-"""Narrow persistence ports used by the optional Room memory adapter.
+"""Narrow persistence ports used by the optional Room memory runtime.
 
-The application-owned HTTP adapter depends on these behavioral contracts rather
-than concrete SQLite stores.  Durable store implementations remain in core and
-``chat.db`` remains authoritative.
+Each production component receives only the durable capability it needs.  The
+ports intentionally exclude schema setup and caller-owned transaction helpers;
+``chat.db`` remains authoritative for every operation below.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 
-class RoomMemoryDeliveryStorePort(Protocol):
+class RoomMemoryBindingSessionAttachmentPort(Protocol):
     def list_pending_bindings(self, *, limit: int = 20) -> list[dict[str, Any]]: ...
 
     def reserve_session_create(
@@ -63,34 +63,8 @@ class RoomMemoryDeliveryStorePort(Protocol):
         now: datetime | None = None,
     ) -> dict[str, Any]: ...
 
-    def claim_next_outbox(
-        self,
-        *,
-        worker_id: str,
-        lease_ttl_s: int = 30,
-        now: datetime | None = None,
-    ) -> dict[str, Any] | None: ...
 
-    def complete_delivery(
-        self,
-        *,
-        outbox_id: str,
-        delivery_id: str,
-        lease_token: str,
-        status: Literal["delivered", "conflict", "failed"],
-        request_digest: str,
-        response_digest: str | None = None,
-        reason_code: str | None = None,
-        now: datetime | None = None,
-    ) -> dict[str, Any]: ...
-
-    def requeue_retryable_failed_outbox(
-        self,
-        *,
-        now: datetime | None = None,
-        limit: int = 20,
-    ) -> list[dict[str, Any]]: ...
-
+class RoomMemoryMessageOutboxPort(Protocol):
     def claim_next_message_outbox(
         self,
         *,
@@ -122,7 +96,37 @@ class RoomMemoryDeliveryStorePort(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
-class RoomMemoryRecallStorePort(Protocol):
+class RoomMemoryDocumentOutboxPort(Protocol):
+    def claim_next_outbox(
+        self,
+        *,
+        worker_id: str,
+        lease_ttl_s: int = 30,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    def complete_delivery(
+        self,
+        *,
+        outbox_id: str,
+        delivery_id: str,
+        lease_token: str,
+        status: Literal["delivered", "conflict", "failed"],
+        request_digest: str,
+        response_digest: str | None = None,
+        reason_code: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]: ...
+
+    def requeue_retryable_failed_outbox(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]: ...
+
+
+class RoomMemoryRecallSourceRequestPort(Protocol):
     def build_recall_request(
         self,
         *,
@@ -153,6 +157,8 @@ class RoomMemoryRecallStorePort(Protocol):
         derived: bool = False,
     ) -> dict[str, Any]: ...
 
+
+class RoomMemoryRecallReceiptContextPort(Protocol):
     def record_attempt_memory_receipt(
         self,
         *,
@@ -174,6 +180,8 @@ class RoomMemoryRecallStorePort(Protocol):
         now: datetime | None = None,
     ) -> dict[str, Any]: ...
 
+
+class RoomMemoryAdvisoryGovernancePort(Protocol):
     def record_external_advisories(
         self,
         *,

@@ -14,14 +14,18 @@ from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.chat.room_memory_advisory_store import RoomMemoryAdvisoryStore
+from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_common import RoomMemoryStoreError
 from xmuse_core.chat.room_memory_contracts import (
     RoomMemoryContractError,
     normalize_memory_candidates,
 )
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
+from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
-from xmuse_core.chat.room_memory_recall_store import RoomMemoryRecallStore
+from xmuse_core.chat.room_memory_message_outbox_store import RoomMemoryMessageOutboxStore
+from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
+from xmuse_core.chat.room_memory_recall_source_store import RoomMemoryRecallSourceStore
 from xmuse_core.chat.room_setup import RoomSetupService
 
 DIGEST = "sha256:" + "1" * 64
@@ -39,7 +43,7 @@ def _candidate(kind: str, content: str, activity_id: str) -> dict[str, object]:
     }
 
 
-def _setup_memory_session(store: RoomMemoryDeliveryStore, conversation_id: str) -> None:
+def _setup_memory_session(store: RoomMemoryBindingStore, conversation_id: str) -> None:
     bindings = store.list_pending_bindings()
     room = next(
         item
@@ -73,7 +77,7 @@ def _setup_memory_session(store: RoomMemoryDeliveryStore, conversation_id: str) 
         )
 
 
-def _deliver_all(store: RoomMemoryDeliveryStore) -> None:
+def _deliver_all(store: RoomMemoryDocumentOutboxStore) -> None:
     while claim := store.claim_next_outbox(worker_id="memory-worker"):
         store.complete_delivery(
             outbox_id=claim["outbox"]["outbox_id"],
@@ -118,8 +122,8 @@ def test_room_setup_prebuilds_bindings_for_pre_turn_pump_and_first_recall(
     participants = result["participants"]
     assert isinstance(participants, list)
     participant_id = str(participants[0]["participant_id"])
-    delivery = RoomMemoryDeliveryStore(db)
-    recall_store = RoomMemoryRecallStore(db)
+    delivery = RoomMemoryBindingStore(db)
+    recall_store = RoomMemoryRecallSourceStore(db)
 
     bindings = [
         item
@@ -297,14 +301,15 @@ def test_message_outbox_is_atomic_and_excludes_infrastructure_activity(tmp_path:
 
     # The message ledger is independently leasable and does not alter the
     # archive document outbox created by the existing trigger.
-    delivery = RoomMemoryDeliveryStore(db)
-    _setup_memory_session(delivery, conversation_id)
-    claim = delivery.claim_next_message_outbox(worker_id="message-worker")
+    binding = RoomMemoryBindingStore(db)
+    message_store = RoomMemoryMessageOutboxStore(db)
+    _setup_memory_session(binding, conversation_id)
+    claim = message_store.claim_next_message_outbox(worker_id="message-worker")
     assert claim is not None
     assert claim["message_request"]["role"] == "user"
     assert claim["message_request"]["content"] == "durable human speech"
     assert claim["message_request"]["external_id"].startswith("xmuse-room-message-")
-    delivery.complete_message_delivery(
+    message_store.complete_message_delivery(
         message_outbox_id=claim["outbox"]["message_outbox_id"],
         delivery_id=claim["delivery"]["delivery_id"],
         lease_token=claim["delivery"]["lease_token"],
@@ -312,7 +317,7 @@ def test_message_outbox_is_atomic_and_excludes_infrastructure_activity(tmp_path:
         request_digest=claim["delivery"]["request_digest"],
         response_digest=DIGEST,
     )
-    assert delivery.count_message_outbox_by_state(conversation_id)["delivered"] == 1
+    assert message_store.count_message_outbox_by_state(conversation_id)["delivered"] == 1
 
 
 def test_derived_message_recall_proves_ledger_sources_without_claiming_exact_text(
@@ -326,12 +331,13 @@ def test_derived_message_recall_proves_ledger_sources_without_claiming_exact_tex
         content="authoritative source text",
         client_request_id="derived-message-root",
     )
-    delivery = RoomMemoryDeliveryStore(db)
-    _setup_memory_session(delivery, conversation_id)
-    claim = delivery.claim_next_message_outbox(worker_id="message-worker")
+    binding = RoomMemoryBindingStore(db)
+    message_store = RoomMemoryMessageOutboxStore(db)
+    _setup_memory_session(binding, conversation_id)
+    claim = message_store.claim_next_message_outbox(worker_id="message-worker")
     assert claim is not None
     session_id = f"session-{conversation_id}"
-    delivery.complete_message_delivery(
+    message_store.complete_message_delivery(
         message_outbox_id=claim["outbox"]["message_outbox_id"],
         delivery_id=claim["delivery"]["delivery_id"],
         lease_token=claim["delivery"]["lease_token"],
@@ -341,7 +347,7 @@ def test_derived_message_recall_proves_ledger_sources_without_claiming_exact_tex
         memoryos_message_id="memoryos-message-1",
         memoryos_session_id=session_id,
     )
-    recall = RoomMemoryRecallStore(db)
+    recall = RoomMemoryRecallSourceStore(db)
     derived = "derived episode summary"
 
     proof = recall.resolve_recall_message_source(
@@ -389,7 +395,7 @@ def test_candidate_authority_source_guards_approval_and_no_content_spread(
     )
     assert all("content" not in item for item in result["memory_candidates"])
     governance = RoomMemoryGovernanceStore(db)
-    delivery = RoomMemoryDeliveryStore(db)
+    delivery = RoomMemoryDocumentOutboxStore(db)
     candidates = governance.list_candidates(conversation_id)
     automatic = next(item for item in candidates if item["kind"] == "room_fact")
     pending = next(item for item in candidates if item["kind"] == "user_preference")
@@ -513,20 +519,21 @@ def test_candidate_unrelated_source_and_transaction_failure_roll_back(tmp_path, 
 
 def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> None:
     db, _registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
-    delivery = RoomMemoryDeliveryStore(db)
-    recall_store = RoomMemoryRecallStore(db)
+    binding = RoomMemoryBindingStore(db)
+    source_store = RoomMemoryRecallSourceStore(db)
+    receipt_store = RoomMemoryRecallReceiptStore(db)
     attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
     activity_id = root["activity"]["activity_id"]
     with pytest.raises(RoomMemoryStoreError) as unavailable:
-        recall_store.build_recall_request(
+        source_store.build_recall_request(
             conversation_id=conversation_id,
             attempt_id=attempt_id,
             correlation_id=root["activity"]["correlation_id"],
             causal_activity_ids=[activity_id],
         )
     assert unavailable.value.code == "room_memory_recall_unavailable"
-    _setup_memory_session(delivery, conversation_id)
-    request = recall_store.build_recall_request(
+    _setup_memory_session(binding, conversation_id)
+    request = source_store.build_recall_request(
         conversation_id=conversation_id,
         attempt_id=attempt_id,
         correlation_id=root["activity"]["correlation_id"],
@@ -534,7 +541,7 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
     )
     assert request["build_context_request"]["include_global_core"] is False
     with pytest.raises(RoomMemoryStoreError) as forged:
-        recall_store.record_attempt_memory_receipt(
+        receipt_store.record_attempt_memory_receipt(
             attempt_id=attempt_id,
             status="ok",
             schema_version="metadata.v3_context/v1",
@@ -551,7 +558,7 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
             evidence_sha256=DIGEST,
         )
     assert forged.value.code == "room_memory_recall_source_rejected"
-    receipt = recall_store.record_attempt_memory_receipt(
+    receipt = receipt_store.record_attempt_memory_receipt(
         attempt_id=attempt_id,
         status="ok",
         schema_version="metadata.v3_context/v1",
@@ -569,7 +576,7 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
     )
     assert receipt["context_payload_sha256"] is None
     assert all("text" not in item for item in receipt["item_refs"])
-    bound = recall_store.bind_attempt_memory_context(
+    bound = receipt_store.bind_attempt_memory_context(
         attempt_id=attempt_id,
         evidence_sha256=DIGEST,
         context_payload_sha256="sha256:" + "2" * 64,
@@ -618,7 +625,7 @@ def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(
             }
         ],
     }
-    recall_store = RoomMemoryRecallStore(db)
+    recall_store = RoomMemoryAdvisoryStore(db)
     first = recall_store.record_external_advisories(
         conversation_id=conversation_id,
         attempt_id=claim["attempt"]["attempt_id"],
@@ -642,7 +649,7 @@ def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(
 
 def test_external_advisory_bridge_failure_leaves_durable_receipt(tmp_path: Path) -> None:
     db, registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
-    recall_store = RoomMemoryRecallStore(db)
+    recall_store = RoomMemoryAdvisoryStore(db)
     attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
     recall_store.record_external_advisory_failure(
         conversation_id=conversation_id,
@@ -670,8 +677,9 @@ def test_external_advisory_bridge_failure_leaves_durable_receipt(tmp_path: Path)
 
 def test_outbox_claim_uses_real_archive_contract_and_ack_replays(tmp_path: Path) -> None:
     db, _registry, conversation_id, _records, root, _claims = root_and_claims(tmp_path)
-    delivery = RoomMemoryDeliveryStore(db)
-    _setup_memory_session(delivery, conversation_id)
+    binding = RoomMemoryBindingStore(db)
+    delivery = RoomMemoryDocumentOutboxStore(db)
+    _setup_memory_session(binding, conversation_id)
     claim = delivery.claim_next_outbox(worker_id="worker")
     assert claim is not None
     request = claim["document_request"]
@@ -692,7 +700,7 @@ def test_outbox_claim_uses_real_archive_contract_and_ack_replays(tmp_path: Path)
 
 def test_uncertain_binding_reopens_only_after_durable_backoff(tmp_path: Path) -> None:
     db, _registry, conversation_id, _records, _root, _claims = root_and_claims(tmp_path)
-    delivery = RoomMemoryDeliveryStore(db)
+    delivery = RoomMemoryBindingStore(db)
     start = datetime(2026, 7, 12, tzinfo=UTC)
     room = next(
         item
@@ -791,8 +799,9 @@ def test_failed_outbox_retry_is_durable_bounded_and_never_reopens_conflict(
     tmp_path: Path,
 ) -> None:
     db, _registry, conversation_id, _records, _root, _claims = root_and_claims(tmp_path)
-    delivery = RoomMemoryDeliveryStore(db)
-    _setup_memory_session(delivery, conversation_id)
+    binding = RoomMemoryBindingStore(db)
+    delivery = RoomMemoryDocumentOutboxStore(db)
+    _setup_memory_session(binding, conversation_id)
     start = datetime(2026, 7, 12, tzinfo=UTC)
     first = delivery.claim_next_outbox(worker_id="worker", now=start)
     assert first is not None
@@ -873,8 +882,9 @@ def test_candidate_recall_scope_chunk_and_source_proof_are_strict(
         client_request_id="second-root",
     )
     governance = RoomMemoryGovernanceStore(db)
-    delivery = RoomMemoryDeliveryStore(db)
-    recall_store = RoomMemoryRecallStore(db)
+    binding = RoomMemoryBindingStore(db)
+    delivery = RoomMemoryDocumentOutboxStore(db)
+    recall_store = RoomMemoryRecallSourceStore(db)
     document_id = f"xmuse-room-memory-candidate-{candidate_ref['candidate_id']}"
     pending = governance.get_candidate(candidate_ref["candidate_id"])
     assert pending is not None
@@ -887,8 +897,8 @@ def test_candidate_recall_scope_chunk_and_source_proof_are_strict(
             expected_candidate_digest=pending["candidate_digest"],
             expected_revision=pending["revision"],
         )
-    _setup_memory_session(delivery, first_room)
-    _setup_memory_session(delivery, second_room)
+    _setup_memory_session(binding, first_room)
+    _setup_memory_session(binding, second_room)
     _deliver_all(delivery)
     recall_room = second_room if cross_room else first_room
     resolved = recall_store.resolve_recall_source(

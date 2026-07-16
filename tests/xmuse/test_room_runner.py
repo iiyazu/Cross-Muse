@@ -402,9 +402,9 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
     tmp_path: Path,
 ) -> None:
-    from xmuse.memoryos_adapter import (
-        ArchiveOnlyRoomMemoryRuntime,
+    from xmuse.memoryos_runtime_adapter import (
         DisabledRoomMemoryRuntime,
+        MemoryOSRoomMemoryRuntime,
     )
 
     db_path = tmp_path / "chat.db"
@@ -427,8 +427,9 @@ def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
         },
     )
     assert enabled is True
-    assert isinstance(active, ArchiveOnlyRoomMemoryRuntime)
-    assert "memory-server-secret" not in repr(active.adapter)
+    assert isinstance(active, MemoryOSRoomMemoryRuntime)
+    assert "memory-server-secret" not in repr(active)
+    assert "memory-server-secret" not in repr(active._delivery_pump._client)
 
 
 def test_memory_pump_failure_only_marks_host_attention(tmp_path: Path) -> None:
