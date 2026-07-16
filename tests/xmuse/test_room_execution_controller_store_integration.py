@@ -22,6 +22,7 @@ from xmuse_core.chat.room_execution_controller import (
     run_execution_controller,
     stage_exact_patch,
 )
+from xmuse_core.chat.room_execution_controller_store import RoomExecutionControllerStore
 from xmuse_core.chat.room_execution_profiles import (
     build_execution_gate_plan,
     get_execution_gate_profile,
@@ -37,6 +38,23 @@ from xmuse_core.chat.room_execution_sandbox import (
 )
 from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_runtime import read_process_start_identity
+
+
+def _controller_store(config: ControllerConfig) -> RoomExecutionControllerStore:
+    return RoomExecutionControllerStore(config.xmuse_root / "chat.db")
+
+
+def test_controller_store_withholds_operator_and_room_delivery_capabilities(
+    tmp_path: Path,
+) -> None:
+    store = RoomExecutionControllerStore(tmp_path / "chat.db")
+
+    assert not hasattr(store, "set_policy")
+    assert not hasattr(store, "apply_operator_decision")
+    assert not hasattr(store, "reconcile_consensus_candidate")
+    assert not hasattr(store, "request_cancel")
+    assert not hasattr(store, "get_review_material_for_batch")
+    assert not hasattr(store, "bind_review_material_receipt")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -274,7 +292,7 @@ def test_real_store_manual_run_promotes_exact_patch_with_real_bwrap(tmp_path: Pa
             (candidate["conversation_id"],),
         )
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "succeeded"
     assert (config.execution_root / "README.md").read_text() == "new\n"
@@ -302,7 +320,7 @@ def test_consensus_room_manual_fallback_uses_frozen_room_policy(tmp_path: Path) 
     store, config, candidate, _diff = _authorized(tmp_path, consensus_policy=True)
     assert candidate["policy_snapshot"]["mode"] == "consensus"
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "succeeded"
     assert (config.execution_root / "README.md").read_text() == "new\n"
@@ -329,7 +347,7 @@ def test_gate_failure_leaves_target_bytes_unchanged(
         ),
     )
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "failed"
     assert (config.execution_root / "README.md").read_text() == "old\n"
@@ -366,7 +384,7 @@ def test_cancel_during_gate_is_durable_and_target_unchanged(
 
     monkeypatch.setattr(controller, "run_gate", cancel_gate)
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "cancelled"
     assert (config.execution_root / "README.md").read_text() == "old\n"
@@ -391,7 +409,7 @@ def test_cancel_before_controller_claim_is_terminal_and_never_touches_target(
     assert cancelled["state"] == "cancelled"
     assert cancelled["reason_code"] == "operator_cancelled_before_start"
     assert (config.execution_root / "README.md").read_text() == "old\n"
-    assert run_execution_controller(store, config)["state"] == "cancelled"
+    assert run_execution_controller(_controller_store(config), config)["state"] == "cancelled"
     assert _git(config.execution_root, "status", "--porcelain") == ""
 
 
@@ -451,7 +469,7 @@ def test_preimage_crash_recovery_finishes_exact_promotion(
         lambda _layout, **_kwargs: "unused",
     )
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "succeeded"
     assert (config.execution_root / "README.md").read_text() == "new\n"
@@ -543,7 +561,7 @@ def test_preimage_recovery_blocks_durable_profile_drift_before_write(
         )
         expected_reason = "execution_gate_profile_drift"
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "blocked"
     assert result["reason_code"] == expected_reason
@@ -613,7 +631,7 @@ def test_applied_multi_gate_recovery_preserves_durable_plan_order(tmp_path: Path
         )
         assert resolved["resolution"] == "applied"
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "succeeded"
     assert result["gate_ids"] == [
@@ -670,7 +688,7 @@ def test_applying_mixed_image_is_blocked_without_guessed_rollback(tmp_path: Path
         )
     (config.execution_root / "README.md").write_text("new\n", encoding="utf-8")
 
-    result = run_execution_controller(store, config)
+    result = run_execution_controller(_controller_store(config), config)
 
     assert result["state"] == "blocked"
     assert (config.execution_root / "README.md").read_text() == "new\n"
@@ -683,7 +701,7 @@ def test_real_store_repo_lock_and_live_binding_prevent_duplicate_controller(
     store, config, _candidate, _diff = _authorized(tmp_path)
     with repository_execution_lock(config.execution_root):
         with pytest.raises(RoomExecutionControllerError) as busy:
-            run_execution_controller(store, config)
+            run_execution_controller(_controller_store(config), config)
     assert busy.value.code == "execution_repo_busy"
     assert store.get_run(config.run_id)["state"] == "requested"  # type: ignore[index]
 
@@ -696,7 +714,7 @@ def test_real_store_repo_lock_and_live_binding_prevent_duplicate_controller(
     )
     contender = replace(config, controller_id="execution_controller_contender")
     with pytest.raises(RoomExecutionControllerError) as live:
-        run_execution_controller(store, contender)
+        run_execution_controller(_controller_store(contender), contender)
     assert live.value.code == "execution_controller_already_live"
     assert store.get_run(config.run_id)["state"] == "preparing"  # type: ignore[index]
 

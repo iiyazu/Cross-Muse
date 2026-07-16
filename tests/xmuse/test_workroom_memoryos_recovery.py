@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tests.xmuse.test_workroom_cli import FakeRuntime
 from xmuse import workroom
+from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 from xmuse_core.chat.memoryos_supervisor import read_memoryos_status
 
 
@@ -19,8 +20,8 @@ def _runtime_control(
     tmp_path: Path,
 ) -> tuple[
     FakeRuntime,
-    workroom.WorkroomDependencies,
-    workroom.WorkroomPaths,
+    WorkroomDependencies,
+    WorkroomPaths,
     dict[str, object],
     workroom.MemoryOSRuntimeControl,
 ]:
@@ -30,7 +31,7 @@ def _runtime_control(
     root.mkdir()
     runtime = FakeRuntime(repo)
     dependencies = runtime.dependencies()
-    paths = workroom.WorkroomPaths.resolve(root, repo)
+    paths = WorkroomPaths.resolve(root, repo)
     manifest: dict[str, object] = {
         "schema_version": workroom.SCHEMA_VERSION,
         "generation": "generation-one",
@@ -231,7 +232,7 @@ def test_initial_spawn_failure_still_hands_fixed_capability_to_chat_api(
         return original_spawn(spec)
 
     dependencies.spawn = spawn
-    paths = workroom.WorkroomPaths.resolve(tmp_path / "root", repo)
+    paths = WorkroomPaths.resolve(tmp_path / "root", repo)
     assert (
         workroom.start_workroom(
             paths,

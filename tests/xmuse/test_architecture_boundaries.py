@@ -20,7 +20,7 @@ DEFAULT_ENTRYPOINT_IMPORTS = (
     ("xmuse.chat_api", "chat_api"),
     ("xmuse.room_runner", "room_runner"),
     ("xmuse.room_mcp_server", "room_mcp_server"),
-    ("xmuse.workroom", "workroom"),
+    ("xmuse.workroom_cli", "workroom"),
     ("xmuse.data_cli", "data_cli"),
 )
 
@@ -69,6 +69,137 @@ def test_core_does_not_import_memoryos_lite_directly() -> None:
     ]
 
     assert offenders == []
+
+
+def test_room_runner_entrypoint_does_not_own_memoryos_adapter_or_stores() -> None:
+    """Keep optional memory implementation details behind one app composition port."""
+
+    runner = APP_ROOT / "room_runner.py"
+    forbidden = (
+        "xmuse.memoryos_adapter",
+        "xmuse_core.chat.room_memory_delivery_store",
+        "xmuse_core.chat.room_memory_recall_store",
+        "xmuse_core.chat.room_execution_store",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(runner, prefix)] == []
+
+
+def test_room_runner_lifecycle_does_not_wire_provider_object_graph() -> None:
+    runner = APP_ROOT / "room_runner.py"
+    wiring_modules = (
+        "xmuse_core.agents.god_session_layer",
+        "xmuse_core.chat.room_agent_stream",
+        "xmuse_core.chat.room_codex_projection_cache",
+        "xmuse_core.chat.room_codex_transport",
+        "xmuse_core.chat.room_host",
+    )
+
+    assert [prefix for prefix in wiring_modules if _imports_prefix(runner, prefix)] == []
+
+
+def test_room_delivery_surfaces_depend_on_execution_review_ports() -> None:
+    """Room delivery must not acquire the privileged execution ledger surface."""
+
+    guarded = (
+        CORE_ROOT / "chat" / "room_host.py",
+        CORE_ROOT / "chat" / "room_codex_transport.py",
+    )
+
+    assert [
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in guarded
+        if _imports_prefix(path, "xmuse_core.chat.room_execution_store")
+    ] == []
+
+
+def test_execution_ledger_views_do_not_own_transactions_or_actions() -> None:
+    views = CORE_ROOT / "chat" / "room_execution_views.py"
+    forbidden = (
+        "xmuse_core.chat.room_database",
+        "xmuse_core.chat.room_execution_actions",
+        "xmuse_core.chat.room_execution_promotion",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(views, prefix)] == []
+    tree = ast.parse(views.read_text(encoding="utf-8"), filename=str(views))
+    transaction_calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+    }
+    assert transaction_calls == set()
+
+
+def test_execution_ledger_reader_does_not_own_commands() -> None:
+    reader = CORE_ROOT / "chat" / "room_execution_read_store.py"
+    forbidden = (
+        "xmuse_core.chat.room_execution_actions",
+        "xmuse_core.chat.room_execution_promotion",
+        "xmuse_core.chat.room_execution_review_store",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(reader, prefix)] == []
+    tree = ast.parse(reader.read_text(encoding="utf-8"), filename=str(reader))
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+        for node in ast.walk(tree)
+    )
+
+
+def test_chat_api_composes_separate_execution_read_and_operator_stores() -> None:
+    api = APP_ROOT / "chat_api.py"
+
+    assert _imports_prefix(api, "xmuse_core.chat.room_execution_read_store")
+    assert _imports_prefix(api, "xmuse_core.chat.room_execution_operator_store")
+    assert not _imports_prefix(api, "xmuse_core.chat.room_execution_store")
+
+
+def test_execution_controller_entrypoint_uses_controller_capability_store() -> None:
+    entrypoint = APP_ROOT / "room_execution_controller.py"
+
+    assert _imports_prefix(entrypoint, "xmuse_core.chat.room_execution_controller_store")
+    assert not _imports_prefix(entrypoint, "xmuse_core.chat.room_execution_store")
+
+
+def test_execution_runtime_uses_reconciler_capability_store() -> None:
+    runtime = APP_ROOT / "chat_api_execution_runtime.py"
+
+    assert _imports_prefix(runtime, "xmuse_core.chat.room_execution_runtime_store")
+    assert not _imports_prefix(runtime, "xmuse_core.chat.room_execution_store")
+
+
+def test_execution_event_helper_uses_caller_owned_transaction() -> None:
+    events = CORE_ROOT / "chat" / "room_execution_events.py"
+
+    tree = ast.parse(events.read_text(encoding="utf-8"), filename=str(events))
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "RoomDatabase" for node in ast.walk(tree)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+        for node in ast.walk(tree)
+    )
+
+
+def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
+    lifecycle = APP_ROOT / "workroom.py"
+    tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))
+    forbidden_functions = {"build_parser", "run_cli", "main"}
+
+    assert not _imports_prefix(lifecycle, "argparse")
+    assert [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in forbidden_functions
+    ] == []
 
 
 def test_surviving_local_imports_resolve() -> None:

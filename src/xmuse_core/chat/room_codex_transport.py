@@ -30,7 +30,8 @@ from xmuse_core.chat.participant_session_identity import (
 from xmuse_core.chat.participant_store import Participant
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamProjector
 from xmuse_core.chat.room_controls import RoomControlError, RoomObservationControlStore
-from xmuse_core.chat.room_execution_store import RoomExecutionStore, RoomExecutionStoreError
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
+from xmuse_core.chat.room_execution_ports import ExecutionReviewReceiptWriter
 from xmuse_core.chat.room_host import (
     RoomCancelReconcileResult,
     RoomObservationDelivery,
@@ -58,7 +59,7 @@ class CodexRoomObservationTransport:
         worktree: Path | str,
         control_store: RoomObservationControlStore | None = None,
         skill_decision_store: RoomAttemptSkillDecisionStore | None = None,
-        execution_store: RoomExecutionStore | None = None,
+        execution_store: ExecutionReviewReceiptWriter | None = None,
         memory_runtime: RoomMemoryRuntime | None = None,
         stream_projector: RoomAgentStreamProjector | None = None,
         clock: Callable[[], datetime] | None = None,
