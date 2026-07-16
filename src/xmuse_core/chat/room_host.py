@@ -20,7 +20,8 @@ from xmuse_core.chat.room_context_selection import (
     select_room_context,
 )
 from xmuse_core.chat.room_controls import RoomControlError, RoomObservationControlStore
-from xmuse_core.chat.room_execution_store import RoomExecutionStore, RoomExecutionStoreError
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
+from xmuse_core.chat.room_execution_ports import ExecutionReviewMaterialReader
 from xmuse_core.chat.room_kernel import OUTCOME_ORDER, RoomKernelStore
 from xmuse_core.chat.room_memory_runtime import (
     ROOM_MEMORY_RECALL_TIMEOUT_S,
@@ -218,7 +219,7 @@ class RoomParticipantHost:
         control_store: RoomObservationControlStore | None = None,
         skill_catalog: SkillCatalog | None = None,
         skill_decision_store: RoomAttemptSkillDecisionStore | None = None,
-        execution_store: RoomExecutionStore | None = None,
+        execution_store: ExecutionReviewMaterialReader | None = None,
         memory_runtime: RoomMemoryRuntime | None = None,
         runner_generation: str | None = None,
         runner_boot_id: str | None = None,

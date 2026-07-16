@@ -97,6 +97,21 @@ def test_room_runner_lifecycle_does_not_wire_provider_object_graph() -> None:
     assert [prefix for prefix in wiring_modules if _imports_prefix(runner, prefix)] == []
 
 
+def test_room_delivery_surfaces_depend_on_execution_review_ports() -> None:
+    """Room delivery must not acquire the privileged execution ledger surface."""
+
+    guarded = (
+        CORE_ROOT / "chat" / "room_host.py",
+        CORE_ROOT / "chat" / "room_codex_transport.py",
+    )
+
+    assert [
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in guarded
+        if _imports_prefix(path, "xmuse_core.chat.room_execution_store")
+    ] == []
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))

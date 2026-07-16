@@ -14,7 +14,7 @@ from xmuse_core.chat.room_codex_native_runtime import RoomCodexNativeRuntime
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_ports import ExecutionReviewPort
 from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
 from xmuse_core.chat.room_memory_runtime import RoomMemoryRuntime
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
@@ -39,7 +39,7 @@ def compose_room_runtime(
     controls: RoomObservationControlStore,
     skill_decisions: RoomAttemptSkillDecisionStore,
     skill_catalog: SkillCatalog,
-    execution_store: RoomExecutionStore,
+    execution_store: ExecutionReviewPort,
     max_concurrent_rooms: int,
     delivery_timeout_s: float,
     cleanup_grace_s: float,

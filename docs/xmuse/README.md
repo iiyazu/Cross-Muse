@@ -136,6 +136,11 @@ adapter, concrete memory stores, environment configuration, and outbox pump poli
 adapter depends on the behavioral store ports in `room_memory_ports.py`, not concrete SQLite
 classes.
 
+Room delivery follows the same least-authority rule. `room_host.py` only reads bounded
+execution review material and `room_codex_transport.py` only binds the submitted-context
+receipt through `room_execution_ports.py`; neither imports the privileged operator,
+controller, promotion, or cancel facade.
+
 Core continues to have no dependency on the application namespace or `memoryos_lite`.
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and
 move one cohesive responsibility at a time; line-count movement without a narrower import or
