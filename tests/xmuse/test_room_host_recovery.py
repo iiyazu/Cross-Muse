@@ -102,6 +102,18 @@ def test_failure_matrix_has_no_synthetic_truth_and_completion_wins(tmp_path):
         assert out.state == ("incomplete" if i == 0 else "failed")
         expected = ["durable_outcome_missing", "bad", "transport_exception"][i]
         assert out.reason == expected and _counts(db, cid) == (1, 1)
+        observation = RoomKernelStore(db).list_observations(
+            conversation_id=cid,
+            participant_id=people[0].participant_id,
+        )[0]
+        if i == 0:
+            assert observation["status"] == "pending"
+            assert observation["lease_token"] is None
+            assert out.retry_at is None
+            retry = asyncio.run(_host(db, _Return()).pump_once(conversation_id=cid))
+            assert retry.deliveries[0].attempt_count == 2
+        else:
+            assert observation["status"] == "claimed"
     db, registry, cid, people, sessions = _room(tmp_path / "complete")
     _post(db, cid, "complete")
     t = _Return(error=RuntimeError("late"))
@@ -269,7 +281,7 @@ def test_restart_reclaims_once_fences_stale_token_and_stops_after_commit(tmp_pat
     pre = _Return()
     assert not asyncio.run(_host(db, pre, clock[0]).pump_once(conversation_id=cid)).deliveries
     clock[0] = NOW + timedelta(seconds=4)
-    post = _Return()
+    post = _Return(rh.RoomTransportResult("failed", "bad-again"))
     out2 = asyncio.run(_host(db, post, clock[0]).pump_once(conversation_id=cid)).deliveries[0]
     new = post.deliveries[0].observation
     assert out1.attempt_count == 1 and out2.attempt_count == 2
@@ -397,7 +409,7 @@ def test_exhausted_infrastructure_frontier_does_not_starve_later_human_root(tmp_
         item["observation_id"]: item for item in RoomKernelStore(db).list_observations(cid)
     }
     assert observations["old-exhausted"]["control_state"] == "exhausted"
-    assert observations[posted["observations"][0]["observation_id"]]["status"] == "claimed"
+    assert observations[posted["observations"][0]["observation_id"]]["status"] == "pending"
 
 
 def test_claim_race_defers_without_transport(tmp_path, monkeypatch):

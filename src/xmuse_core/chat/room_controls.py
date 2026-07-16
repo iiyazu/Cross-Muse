@@ -1320,12 +1320,15 @@ class RoomObservationControlStore:
         attempt_id: str,
         reason_code: str,
         base_attempt_limit: int,
+        reopen_immediately: bool = False,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Persist a transport terminal state and materialize exhaustion."""
 
         if not reason_code:
             raise RoomControlError("room_attempt_reason_required")
+        if not isinstance(reopen_immediately, bool):
+            raise RoomControlError("room_attempt_reopen_invalid")
         stamp = _now(now)
         with self._connect() as conn:
             conn.execute("begin immediate")
@@ -1355,6 +1358,13 @@ class RoomObservationControlStore:
                     expires_at = null, updated_at = ?
                     where observation_id = ?""",
                     (seq, stamp, observation_id),
+                )
+            elif reopen_immediately:
+                conn.execute(
+                    """update room_observations set status = 'pending',
+                    lease_owner = null, lease_token = null, acquired_at = null,
+                    expires_at = null, updated_at = ? where observation_id = ?""",
+                    (stamp, observation_id),
                 )
             event = _record_projection_event_conn(
                 conn,

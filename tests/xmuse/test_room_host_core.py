@@ -117,8 +117,9 @@ def test_core_selects_oldest_frontier_then_priority_and_bounds_context(tmp_path)
     second = asyncio.run(
         RoomParticipantHost(db, _Transport(), policy=policy).pump_once(conversation_id=cid)
     )
-    live = [d for d in second.deferrals if d.reason == "lease_active"]
-    assert live and all(isinstance(d.retry_at, str) for d in live)
+    assert len(second.deliveries) == 2
+    assert all(item.attempt_count == 2 for item in second.deliveries)
+    assert not [d for d in second.deferrals if d.reason == "lease_active"]
 
 
 def test_core_normal_delivery_requires_durable_outcome(tmp_path):
@@ -144,7 +145,12 @@ def test_native_delivery_gate_prevents_claim_and_filters_fully_held_room(tmp_pat
         conversation_id=cid, human_id="h", content="hello", client_request_id="held"
     )
     accepting = {people[0].participant_id}
-    transport = _Transport()
+    transport = _Transport(
+        db,
+        _registry,
+        _sessions,
+        {people[0].participant_id},
+    )
     host = RoomParticipantHost(
         db,
         transport,

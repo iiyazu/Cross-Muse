@@ -18,6 +18,7 @@ from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
+from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_store import RoomExecutionStoreError
 from xmuse_core.chat.room_host import (
     RoomHostPolicy,
@@ -36,12 +37,14 @@ class _GodLayer:
         receive_hook: Callable[[], None] | None = None,
         binding_error: Exception | None = None,
         ensure_error: Exception | None = None,
+        abort_error: Exception | None = None,
     ) -> None:
         self.record = record
         self.messages = messages
         self.receive_hook = receive_hook
         self.binding_error = binding_error
         self.ensure_error = ensure_error
+        self.abort_error = abort_error
         self.ensure_calls: list[dict[str, object]] = []
         self.binding_calls: list[dict[str, object]] = []
         self.send_calls: list[dict[str, object]] = []
@@ -85,6 +88,8 @@ class _GodLayer:
 
     async def abort_session(self, god_session_id: str) -> None:
         self.abort_calls.append(god_session_id)
+        if self.abort_error is not None:
+            raise self.abort_error
 
 
 class _ExecutionReceiptStore:
@@ -744,6 +749,11 @@ def test_batch_context_preserves_root_ancestry_members_and_reply_contract(
     assert "tools.mcp__xmuse_room__chat_room_submit_outcome" in str(sent["prompt"])
     assert "outcome_payload" in str(sent["prompt"])
     assert "never substitute content, message" in str(sent["prompt"])
+    assert "built-in read-only workspace inspection tools" in str(sent["prompt"])
+    assert "Never use the network, modify workspace bytes" in str(sent["prompt"])
+    assert "inspection does not complete the observation" in str(sent["prompt"])
+    assert "never end after inspection or an assistant draft alone" in str(sent["prompt"])
+    assert "Do not inspect files" not in str(sent["prompt"])
 
 
 def test_exact_execution_review_material_is_sent_and_receipted_with_final_context_hash(
@@ -875,6 +885,12 @@ def test_execution_review_receipt_conflict_fails_and_aborts_sent_turn(
 
 def test_provider_final_text_cannot_complete_room_observation(tmp_path: Path) -> None:
     db, _, conversation_id, participant, record = _room(tmp_path)
+    record = replace(
+        record,
+        provider_session_id="provider-room-final-only",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+    )
     RoomKernelStore(db).post_human_activity(
         conversation_id=conversation_id,
         human_id="human",
@@ -893,21 +909,83 @@ def test_provider_final_text_cannot_complete_room_observation(tmp_path: Path) ->
         )
 
     layer.receive_message = receive  # type: ignore[method-assign]
+    controls = RoomObservationControlStore(db)
     outcome = asyncio.run(
         RoomParticipantHost(
             db,
-            CodexRoomObservationTransport(layer, worktree=tmp_path),
+            CodexRoomObservationTransport(
+                layer,
+                worktree=tmp_path,
+                control_store=controls,
+            ),
             policy=RoomHostPolicy(participant_cooldown_s=0),
+            control_store=controls,
         ).pump_once(conversation_id=conversation_id)
     ).deliveries[0]
 
-    assert outcome.state == "incomplete"
-    assert outcome.reason == "durable_outcome_missing"
+    assert (outcome.state, outcome.reason) == ("incomplete", "durable_outcome_missing")
     assert outcome.diagnostic_text == "This must not become a room message"
     observation = RoomKernelStore(db).get_observation(outcome.observation_id)
-    assert observation["status"] == "claimed" and observation["outcome_type"] is None
+    assert observation["status"] == "pending" and observation["outcome_type"] is None
+    assert observation["lease_token"] is None
+    assert layer.abort_calls == [record.god_session_id]
+    attempt = controls.reconcile_state(outcome.observation_id)["reconcile_binding"]
+    assert attempt["provider_phase"] == "cleanup_succeeded"
+    assert attempt["provider_cleanup_reason"] == (
+        "room_codex_durable_outcome_missing:abort_succeeded"
+    )
     messages = RoomTestStore(db).list_messages(conversation_id)
     assert [message.content for message in messages] == ["hello"]
+
+
+def test_missing_outcome_abort_failure_does_not_reopen_lease(tmp_path: Path) -> None:
+    db, _, conversation_id, participant, record = _room(tmp_path)
+    record = replace(
+        record,
+        provider_session_id="provider-room-abort-failure",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+    )
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="hello",
+        client_request_id="human-abort-failure",
+    )
+    layer = _GodLayer(record, [], abort_error=RuntimeError("abort failed"))
+
+    async def receive(god_session_id: str):
+        assert god_session_id == record.god_session_id
+        return StdoutMessage(
+            type="result",
+            request_id=str(layer.send_calls[0]["request_id"]),
+            status="success",
+            message="diagnostic only",
+        )
+
+    layer.receive_message = receive  # type: ignore[method-assign]
+    controls = RoomObservationControlStore(db)
+    outcome = asyncio.run(
+        RoomParticipantHost(
+            db,
+            CodexRoomObservationTransport(
+                layer,
+                worktree=tmp_path,
+                control_store=controls,
+            ),
+            policy=RoomHostPolicy(participant_cooldown_s=0),
+            control_store=controls,
+        ).pump_once(conversation_id=conversation_id)
+    ).deliveries[0]
+
+    assert (outcome.state, outcome.reason) == ("incomplete", "durable_outcome_missing")
+    observation = RoomKernelStore(db).get_observation(outcome.observation_id)
+    assert observation["status"] == "claimed"
+    assert isinstance(observation["lease_token"], str)
+    assert isinstance(outcome.retry_at, str)
+    attempt = controls.reconcile_state(outcome.observation_id)["reconcile_binding"]
+    assert attempt["provider_phase"] == "cleanup_pending"
+    assert attempt["provider_cleanup_reason"] == ("room_codex_durable_outcome_missing:abort_failed")
 
 
 def test_mcp_equivalent_durable_outcome_is_the_only_completion_evidence(
