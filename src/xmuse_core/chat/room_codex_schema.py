@@ -83,6 +83,45 @@ def create_room_codex_schema(conn: sqlite3.Connection) -> None:
         );
         create index if not exists idx_room_codex_bridge_actions_pending
             on room_codex_bridge_actions(status, participant_id, control_seq);
+
+        create table if not exists room_codex_goal_intents (
+            intent_id text primary key,
+            conversation_id text not null references conversations(id),
+            participant_id text not null references participants(participant_id),
+            scope text not null check (scope = 'room_native_v1'),
+            revision integer not null check (revision >= 0),
+            desired_state text not null check (desired_state in ('active','paused','cleared')),
+            objective text not null check (length(cast(objective as blob)) <= 4096),
+            token_budget integer check (token_budget is null or token_budget > 0),
+            last_applied_session_guard text,
+            observed_status text not null default 'none' check (observed_status in (
+                'active','paused','blocked','usageLimited','budgetLimited','complete','cleared','none'
+            )),
+            recoverable integer not null default 0 check (recoverable in (0,1)),
+            created_at text not null,
+            updated_at text not null,
+            unique(participant_id, scope)
+        );
+        create index if not exists idx_room_codex_goal_intents_room
+            on room_codex_goal_intents(conversation_id, participant_id, scope);
+
+        create table if not exists room_codex_goal_recoveries (
+            recovery_id text primary key,
+            conversation_id text not null references conversations(id),
+            participant_id text not null references participants(participant_id),
+            intent_revision integer not null check (intent_revision >= 0),
+            target_session_guard text not null,
+            phase text not null check (phase in (
+                'requested','goal_dispatching','pause_dispatching','applied','result_unknown'
+            )),
+            reason_code text,
+            requested_at text not null,
+            completed_at text,
+            updated_at text not null,
+            unique(participant_id, intent_revision, target_session_guard)
+        );
+        create index if not exists idx_room_codex_goal_recoveries_pending
+            on room_codex_goal_recoveries(participant_id, phase, updated_at);
         """,
     )
     columns = {str(row[1]) for row in conn.execute("pragma table_info(room_codex_bridge_actions)")}
@@ -111,6 +150,19 @@ def create_room_codex_schema(conn: sqlite3.Connection) -> None:
                    when status = 'applying' then 'dispatching'
                    else 'completed'
                end"""
+        )
+
+    intent_columns = {
+        str(row[1]) for row in conn.execute("pragma table_info(room_codex_goal_intents)")
+    }
+    if "observed_status" not in intent_columns:
+        conn.execute(
+            "alter table room_codex_goal_intents add column observed_status text "
+            "not null default 'none'"
+        )
+    if "recoverable" not in intent_columns:
+        conn.execute(
+            "alter table room_codex_goal_intents add column recoverable integer not null default 0"
         )
 
 

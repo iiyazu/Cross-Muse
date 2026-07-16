@@ -25,9 +25,11 @@ Treat implementation and fresh tests as evidence. Documentation is descriptive.
 
 ```bash
 uv sync --frozen --all-groups
-TMPDIR=/tmp uv run pytest -q
+PYTHONWARNINGS=error TMPDIR=/tmp uv run pytest -q
 uv run ruff check .
-uv run mypy --explicit-package-bases xmuse src/xmuse_core scripts/room_first_real_acceptance.py
+uv run ruff format --check .
+uv run mypy --explicit-package-bases xmuse src/xmuse_core scripts
+uv build
 cd frontend
 npm ci
 npm run typecheck
@@ -35,6 +37,11 @@ npm test
 npm run lint
 npm run build
 npm run test:e2e
+cd ..
+uv run python scripts/room_soak_chaos.py ci-sim \
+  --root /tmp/xmuse-ci-sim \
+  --result /tmp/xmuse-ci-sim-result.json \
+  --no-build-frontend
 ```
 
 Public commands: `xmuse-chat-api`, `xmuse-mcp-server`, `xmuse-room-runner`,
@@ -51,6 +58,9 @@ do not load `.env`.
   eligibility or the bounded response budget.
 - The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`, and
   `room_operations_projection/v2`.
+- Room Agent response previews use a separate private disposable cache and
+  `room_agent_stream_projection/v1` SSE. They are sanitized provider evidence only, never
+  Room speech, memory, execution evidence, or completion authority.
 - The isolated Room Runner does not initialize a platform queue, scheduler, review plane,
   execution harness, self-evolution controller, or A2A transport.
 - Room Codex sessions are participant-bound, read-only, network-disabled, and config-isolated.

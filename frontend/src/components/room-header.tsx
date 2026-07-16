@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
+import { Menu, Moon, PanelRight, Sun } from "lucide-react";
 
 import type { RoomParticipant } from "@/lib/types";
 
@@ -92,7 +93,7 @@ export function RoomHeader({
   return (
     <header className="room-header">
       <div className="room-header__leading">
-        <button className="room-icon-button" onClick={onToggleNavigation} type="button" aria-label={navigationOpen ? "关闭房间栏" : "打开房间栏"}>☰</button>
+        <button className="room-icon-button" onClick={onToggleNavigation} type="button" aria-label={navigationOpen ? "关闭房间栏" : "打开房间栏"}><Menu size={18} /></button>
         <div>
           <h1>{title}</h1>
           <span className={`room-sync state-${syncState}`}><i />{syncLabel}</span>
@@ -107,11 +108,11 @@ export function RoomHeader({
           onClick={onToggleInspector}
           type="button"
         >
-          {inspectorOpen ? "收起检查器" : "成员与状态"}
+          <PanelRight size={16} />{inspectorOpen ? "收起工作台" : "工作台"}
           {operationsAlert ? <span aria-label={operationsAlert.label}>{operationsAlert.glyph}</span> : null}
         </button>
         <button className="room-icon-button" onClick={onToggleTheme} type="button" aria-label="切换主题">
-          {theme === "dark" ? "☼" : "◐"}
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
         </button>
       </div>
     </header>

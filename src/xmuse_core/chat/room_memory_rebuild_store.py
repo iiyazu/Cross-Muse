@@ -196,6 +196,28 @@ def reset_room_memory_index_conn(
               )""",
         (reason, current),
     ).rowcount
+    # Message ingest has its own idempotency ledger and must be reopened
+    # independently from the archival-document outbox.  Older databases do not
+    # have these additive tables, so restore remains backward compatible.
+    if {
+        "room_memory_message_outbox",
+        "room_memory_message_deliveries",
+    }.issubset(tables):
+        conn.execute(
+            """update room_memory_message_deliveries
+               set state = 'failed', reason_code = ?,
+                   finished_at = coalesce(finished_at, ?), updated_at = ?
+               where state = 'claimed'""",
+            (reason, current, current),
+        )
+        conn.execute(
+            """update room_memory_message_outbox
+               set state = 'pending', lease_owner = null, lease_token = null,
+                   acquired_at = null, expires_at = null, current_delivery_id = null,
+                   reason_code = ?, next_attempt_at = null, delivered_at = null,
+                   updated_at = ?""",
+            (reason, current),
+        )
     conn.execute(
         """update room_memory_outbox
            set state = 'failed', lease_owner = null, lease_token = null,

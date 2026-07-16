@@ -12,10 +12,30 @@ import {
 import {
   captureTimelineAnchor,
   restoreTimelineAnchor,
+  roomAgentStreamAnnouncement,
   RoomWorkspace,
   shouldInitializeTimeline,
   snapTimelineToBottom
 } from "./room-workspace";
+
+it("aggregates concurrent Agent stream announcements without dropping peers", () => {
+  const names = new Map([
+    ["part-a", "Architect"],
+    ["part-b", "Reviewer"]
+  ]);
+  const started = roomAgentStreamAnnouncement(
+    new Map(),
+    [
+      { stream_id: "stream-a", participant_id: "part-a", state: "streaming" },
+      { stream_id: "stream-b", participant_id: "part-b", state: "streaming" }
+    ],
+    names
+  );
+  expect(started.announcement).toBe("Architect 开始生成；Reviewer 开始生成");
+
+  const finished = roomAgentStreamAnnouncement(started.current, [], names);
+  expect(finished.announcement).toBe("Architect 结束生成；Reviewer 结束生成");
+});
 
 const originalControl = useRoomStore.getState().controlObservation;
 const originalRecover = useRoomStore.getState().recoverRuntime;
@@ -152,7 +172,12 @@ function cache(): RoomCache {
     lastAccessedAt: Date.now(),
     error: null,
     controlPending: null,
-    controlError: null
+    controlError: null,
+    agentStreams: [],
+    agentStreamAvailable: true,
+    agentStreamEpoch: null,
+    agentStreamSeq: 0,
+    agentStreamGeneration: 0
   };
 }
 
@@ -419,12 +444,13 @@ afterEach(() => {
     memoryActionError: null,
     memoryRebuildPending: false,
     memoryRebuildIncidentId: null,
-    memoryRebuildError: null
+    memoryRebuildError: null,
+    dockTab: "room"
   }));
 });
 
 describe("RoomWorkspace observation controls", () => {
-  it("refreshes Operations on focus and only replans its timer on visibility changes", () => {
+  it("refreshes only the visible dock model on focus and replans timers on visibility changes", () => {
     const loadRooms = vi.fn(async () => []);
     const refreshOperations = vi.fn(async () => undefined);
     const startOperationsSync = vi.fn();
@@ -435,14 +461,16 @@ describe("RoomWorkspace observation controls", () => {
       refreshOperations,
       startOperationsSync,
       refreshMemory,
-      startMemorySync
+      startMemorySync,
+      inspectorOpen: true,
+      dockTab: "runtime"
     });
     render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={vi.fn()} />);
 
     window.dispatchEvent(new Event("focus"));
     expect(loadRooms).toHaveBeenCalledOnce();
     expect(refreshOperations).toHaveBeenCalledOnce();
-    expect(refreshMemory).toHaveBeenCalledOnce();
+    expect(refreshMemory).not.toHaveBeenCalled();
     document.dispatchEvent(new Event("visibilitychange"));
     expect(startOperationsSync).toHaveBeenCalledOnce();
     expect(startMemorySync).toHaveBeenCalledOnce();
@@ -527,7 +555,10 @@ describe("RoomWorkspace observation controls", () => {
       selectedRoomId: "conv-1",
       sidebarOpen: false,
       inspectorOpen: true,
-      operations
+      dockTab: "runtime",
+      operations,
+      refreshOperations: vi.fn(async () => undefined),
+      startOperationsSync: vi.fn()
     });
 
     render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={onNavigateRoom} />);
@@ -546,7 +577,7 @@ describe("RoomWorkspace observation controls", () => {
       observationId: "obs-2",
       incidentId: "other"
     });
-    expect(screen.getByRole("button", { name: /收起检查器.*运行时阻塞/ })).toHaveClass("has-alert");
+    expect(screen.getByRole("button", { name: /收起工作台.*运行时阻塞/ })).toHaveClass("has-alert");
   });
 
   it("keeps a failed Room title and reuses its create request id until edited", async () => {
@@ -572,17 +603,17 @@ describe("RoomWorkspace observation controls", () => {
     });
     render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: "新建房间" }));
-    const title = screen.getByLabelText("房间名称");
+    await user.click(screen.getByRole("button", { name: "新建 Room" }));
+    const title = screen.getByLabelText("Room 名称");
     await user.type(title, "夜间验收");
-    await user.click(screen.getByRole("button", { name: "创建" }));
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
     expect(title).toHaveValue("夜间验收");
     expect(screen.getByRole("alert")).toHaveTextContent("创建请求超时");
-    await user.click(screen.getByRole("button", { name: "创建" }));
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
     expect(ids[1]).toBe(ids[0]);
 
     await user.type(title, " v2");
-    await user.click(screen.getByRole("button", { name: "创建" }));
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
     expect(ids[2]).not.toBe(ids[0]);
   });
 
@@ -602,6 +633,12 @@ describe("RoomWorkspace observation controls", () => {
 
   it("keeps Operations next actions scoped to navigation, projected guards, and confirmation", async () => {
     const user = userEvent.setup();
+    // Keep this projection fixture authoritative; the runtime sync must not
+    // replace it with the empty healthy response from an unavailable API.
+    useRoomStore.setState({
+      refreshOperations: vi.fn(async () => undefined),
+      startOperationsSync: vi.fn()
+    });
     const operations = normalizeRoomOperationsProjection({
       schema_version: "room_operations_projection/v2",
       overall: "attention",
@@ -647,14 +684,16 @@ describe("RoomWorkspace observation controls", () => {
       selectedRoomId: "conv-1",
       sidebarOpen: false,
       inspectorOpen: true,
+      dockTab: "runtime",
       operations
     });
     render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={vi.fn()} />);
 
     expect(screen.getByText("等待系统清理")).toBeVisible();
-    expect(screen.getByRole("button", { name: /收起检查器.*运行时需要关注/ })).toHaveClass("has-attention");
+    expect(screen.getByRole("button", { name: /收起工作台.*运行时需要关注/ })).toHaveClass("has-attention");
     await user.click(screen.getByRole("button", { name: "定位并重试" }));
     await waitFor(() => expect(document.activeElement).toHaveAttribute("data-observation-id", "obs-1"));
+    await user.click(screen.getByRole("tab", { name: "Runtime" }));
     await user.click(screen.getByRole("button", { name: "修复后恢复" }));
     expect(screen.getByRole("alertdialog")).toBeVisible();
     expect(useRoomStore.getState().runtimeRecoverPending).toBe(false);
@@ -692,6 +731,7 @@ describe("RoomWorkspace observation controls", () => {
       selectedRoomId: "conv-1",
       sidebarOpen: false,
       inspectorOpen: true,
+      dockTab: "runtime",
       operations
     });
 
@@ -891,6 +931,46 @@ describe("RoomWorkspace observation controls", () => {
     await waitFor(() => expect(approve).toHaveFocus());
   });
 
+  it("surfaces full-local capability proof and safe recovery facts", () => {
+    const memory = memoryCache();
+    memory.projection = {
+      ...memory.projection!,
+      schema_version: "room_memory_projection/v2",
+      profile: "full-local",
+      capabilities: { hybrid: true, message_ingest: true, agentic_advisory: true },
+      runtime: {
+        ...memory.projection!.runtime,
+        consecutive_restart_count: 1,
+        last_healthy_at: "2026-07-14T18:48:08Z"
+      },
+      sync: {
+        ...memory.projection!.sync,
+        backlog: 3,
+        messages: { backlog: 2, pending: 1, processing: 0, failed: 0, conflict: 0, delivered: 12 }
+      }
+    };
+    useRoomStore.setState({
+      roomsById: { "conv-1": cache() },
+      selectedRoomId: "conv-1",
+      sidebarOpen: false,
+      inspectorOpen: true,
+      dockTab: "room",
+      memoryByRoom: { "conv-1": memory }
+    });
+
+    render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={vi.fn()} />);
+
+    const region = screen.getByRole("region", { name: "长期记忆" });
+    expect(region).toHaveTextContent("Full-local");
+    expect(region).toHaveTextContent("Hybrid 就绪");
+    expect(region).toHaveTextContent("3待同步（档案）");
+    expect(region).toHaveTextContent("2消息待同步");
+    expect(region).toHaveTextContent("1连续重启");
+    expect(region).toHaveTextContent("最近健康");
+    expect(region).not.toHaveTextContent("8301");
+    expect(region).not.toHaveTextContent("api_key");
+  });
+
   it("keeps memory actions disabled and Room intact after a 409 refresh", () => {
     const room = cache();
     useRoomStore.setState({
@@ -958,6 +1038,7 @@ describe("RoomWorkspace observation controls", () => {
       selectedRoomId: "conv-1",
       sidebarOpen: false,
       inspectorOpen: true,
+      dockTab: "runtime",
       operations,
       recoverRuntime
     });
@@ -1091,8 +1172,8 @@ describe("RoomWorkspace observation controls", () => {
     const retry = screen.getByRole("button", { name: "重试 Builder 当前 observation" });
     expect(cancel).toBeEnabled();
     expect(retry).toBeDisabled();
-    expect(screen.getByRole("button", { name: "取消 Reviewer 当前处理" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "重试 Reviewer 当前 observation" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "取消 Reviewer 当前处理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试 Reviewer 当前 observation" })).not.toBeInTheDocument();
 
     await user.click(cancel);
     const dialog = screen.getByRole("alertdialog");

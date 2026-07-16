@@ -13,6 +13,7 @@ from xmuse_core.agents.codex_app_server_transport import (
 )
 from xmuse_core.agents.codex_persistent_session import CodexAppServerSession
 from xmuse_core.agents.registry import AgentRuntime
+from xmuse_core.agents.room_codex_scopes import ROOM_NATIVE_SESSION_SCOPE
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
 from xmuse_core.providers.models import ProviderProfileId
 from xmuse_core.providers.registry import (
@@ -20,6 +21,15 @@ from xmuse_core.providers.registry import (
     build_default_provider_registry,
     normalize_codex_model_id,
 )
+
+_ROOM_DEFAULT_EFFORT_BY_ROLE = {
+    "architect": "medium",
+    "review": "medium",
+    "reviewer": "medium",
+    "execute": "high",
+    "builder": "high",
+    "critic": "high",
+}
 
 
 @dataclass
@@ -58,11 +68,20 @@ class RoomCodexLauncher:
         model: str | None = None,
         provider_session_id: str | None = None,
         db_path: Path | None = None,
+        feature_scope_id: str | None = None,
     ) -> CodexAppServerSession:
         resolved_model = normalize_codex_model_id(
             model if model is not None else self.model,
             profile_id=self.profile_id,
             allow_final_quality=False,
+        )
+        # Room delivery is fully reconstructed from chat.db for every attempt.
+        # Codex 0.144 cannot reliably restore the actual MCP turn surface of an
+        # old app-server thread, even when status/list reports the configured
+        # tool. Keep native Goal/console continuity, but rotate the delivery
+        # provider thread whenever its process incarnation is rebuilt.
+        resume_thread_id = (
+            provider_session_id if feature_scope_id == ROOM_NATIVE_SESSION_SCOPE else None
         )
 
         async def spawn() -> CodexAppServerSession:
@@ -71,12 +90,13 @@ class RoomCodexLauncher:
                 role=role,
                 display_name=_display_name_for_role(role),
                 model=resolved_model,
+                reasoning_effort=_default_reasoning_effort_for_role(role),
                 worktree=worktree,
                 db_path=db_path,
                 mcp_port=self.mcp_port,
                 mcp_path=self.mcp_path,
-                enable_mcp=True,
-                resume_thread_id=provider_session_id,
+                enable_mcp=feature_scope_id != ROOM_NATIVE_SESSION_SCOPE,
+                resume_thread_id=resume_thread_id,
                 sandbox_profile=self.sandbox_profile,
                 codex_home=self.codex_home,
             )
@@ -114,3 +134,9 @@ def _display_name_for_role(role: str) -> str:
     }
     normalized = role.strip().lower()
     return aliases.get(normalized, role.strip().replace("_", " ").title() or "Codex")
+
+
+def _default_reasoning_effort_for_role(role: str) -> str:
+    """Keep the default Room roster's effort policy next to its role mapping."""
+
+    return _ROOM_DEFAULT_EFFORT_BY_ROLE.get(role.strip().lower(), "high")

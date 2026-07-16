@@ -6,7 +6,8 @@ import type {
   RoomCodexActionDescriptor,
   RoomCodexCapabilityId,
   RoomCodexNativeEvent,
-  RoomCodexParticipantProjection
+  RoomCodexParticipantProjection,
+  RoomSkillDecision
 } from "@/lib/types";
 import { AgentConsole, type AgentConsoleProps } from "./agent-console";
 
@@ -230,6 +231,10 @@ describe("AgentConsole", () => {
     expect(screen.getByText(/applied 仅证明动作账本已应用/)).toBeInTheDocument();
     expect(screen.getByLabelText("Token 用量（不会实时播报）")).toHaveTextContent("128,000");
     expect(screen.getByRole("button", { name: "压缩上下文" })).toBeDisabled();
+    expect(screen.getByRole("heading", { name: "Plan / Todo" })).toBeInTheDocument();
+    expect(screen.getByText("1/2 完成 · 1 进行中")).toBeInTheDocument();
+    expect(screen.getByText("Inspect")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "工具活动" })).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Codex effort"), "high");
     expect(onAction).toHaveBeenCalledWith(
@@ -243,6 +248,88 @@ describe("AgentConsole", () => {
     const dialog = screen.getByRole("dialog", { name: "Codex 原生事件详情" });
     expect(within(dialog).getByText(/Implement/)).toBeInTheDocument();
     expect(within(dialog).getByText(/部分内容已省略/)).toBeInTheDocument();
+  });
+
+  it("renders safe Codex work activity and durable bundled Skills without provider details", () => {
+    const skill: RoomSkillDecision = {
+      skill_id: "implementation-planning",
+      version: "1",
+      content_sha256: GUARD,
+      selection_reason: "命中 planning 关键词",
+      matched_terms: ["plan"],
+      context_status: "submitted"
+    };
+    const nativeEvents = [
+      ...events(),
+      {
+        event_seq: 5,
+        participant_seq: 5,
+        participant_id: "participant-one",
+        observed_at: "2026-07-13T01:00:04Z",
+        kind: "item_started",
+        item_type: "mcpToolCall"
+      },
+      {
+        event_seq: 6,
+        participant_seq: 6,
+        participant_id: "participant-one",
+        observed_at: "2026-07-13T01:00:05Z",
+        kind: "item_completed",
+        item_type: "mcpToolCall",
+        duration_ms: 1000,
+        exit_code: 0,
+        text: "provider output must not render"
+      },
+      {
+        event_seq: 7,
+        participant_seq: 7,
+        participant_id: "participant-one",
+        observed_at: "2026-07-13T01:00:06Z",
+        kind: "item_started",
+        item_type: "enteredReviewMode"
+      },
+      {
+        event_seq: 8,
+        participant_seq: 8,
+        participant_id: "participant-one",
+        observed_at: "2026-07-13T01:00:07Z",
+        kind: "item_completed",
+        item_type: "exitedReviewMode"
+      }
+    ] satisfies RoomCodexNativeEvent[];
+    render(<AgentConsole {...props({ nativeEvents, skillDecisions: [skill] })} />);
+
+    expect(screen.getAllByText("MCP 工具")).toHaveLength(2);
+    expect(screen.getByText("已完成 · 1000 ms · exit 0")).toBeInTheDocument();
+    expect(screen.getByText("implementation-planning")).toBeInTheDocument();
+    expect(screen.getByText(/已提交上下文/)).toBeInTheDocument();
+    expect(screen.getByText("进入审查模式")).toBeInTheDocument();
+    expect(screen.getByText("退出审查模式")).toBeInTheDocument();
+    expect(screen.queryByText("provider output must not render")).not.toBeInTheDocument();
+  });
+
+  it("keeps repeated native event summaries distinguishable to assistive technology", () => {
+    const repeated = [
+      ...events(),
+      {
+        event_seq: 7,
+        participant_seq: 7,
+        participant_id: "participant-one",
+        observed_at: "2026-07-13T01:00:06Z",
+        kind: "plan_updated",
+        step_count: 2,
+        status_counts: { completed: 1, in_progress: 1 },
+        steps: [{ step: "Inspect", status: "completed" }]
+      }
+    ] satisfies RoomCodexNativeEvent[];
+    render(<AgentConsole {...props({ nativeEvents: repeated })} />);
+
+    const labels = screen
+      .getAllByRole("button", { name: /计划更新/ })
+      .map((button) => button.getAttribute("aria-label"));
+    expect(labels).toEqual(
+      expect.arrayContaining(["计划更新 · 2 步 · 事件 2", "计划更新 · 2 步 · 事件 7"])
+    );
   });
 
   it("submits ordinary text and aliases, preserves Shift+Enter, and ignores IME Enter", async () => {
@@ -300,6 +387,26 @@ describe("AgentConsole", () => {
     expect(screen.getByRole("alertdialog", { name: "打断当前 Codex turn？" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "返回" }));
     expect(interrupt).toHaveFocus();
+  });
+
+  it("authors a Goal through bounded structured fields", async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    render(<AgentConsole {...props({ onAction })} />);
+
+    await user.click(screen.getByRole("button", { name: "新建 Goal" }));
+    await user.type(screen.getByLabelText("Goal objective"), "Stabilize the Room shell");
+    await user.clear(screen.getByLabelText("Goal token 预算"));
+    await user.type(screen.getByLabelText("Goal token 预算"), "42000");
+    await user.click(screen.getByRole("button", { name: "继续确认" }));
+    await user.click(screen.getByRole("button", { name: "确认启动 Goal" }));
+
+    expect(onAction).toHaveBeenCalledWith(
+      "goal_set",
+      { objective: "Stabilize the Room shell", token_budget: 42_000 },
+      expect.objectContaining({ capability_id: "goal_set" }),
+      true
+    );
   });
 
   it("fails closed for a future Goal status", () => {

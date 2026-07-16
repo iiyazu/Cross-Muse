@@ -18,6 +18,7 @@ from xmuse_core.chat.room_memory_projection import (
     RoomMemoryGovernanceReadStore,
     RoomMemoryRecallReadStore,
     build_room_memory_projection,
+    build_room_memory_projection_v2,
 )
 from xmuse_core.runtime.frontend_api import operator_error
 
@@ -158,12 +159,28 @@ def register_room_memory_routes(
                     "code": "room_memory_runtime_status_unavailable",
                 }
         try:
+            binding = binding_store()
+            governance = governance_store()
+            delivery = delivery_store()
+            recall = recall_store()
+            if (
+                isinstance(runtime_status, Mapping)
+                and runtime_status.get("profile") == "full-local"
+            ):
+                return build_room_memory_projection_v2(
+                    conversation_id,
+                    binding_store=binding,
+                    governance_store=governance,
+                    delivery_store=delivery,
+                    recall_store=recall,
+                    runtime_status=runtime_status,
+                )
             return build_room_memory_projection(
                 conversation_id,
-                binding_store=binding_store(),
-                governance_store=governance_store(),
-                delivery_store=delivery_store(),
-                recall_store=recall_store(),
+                binding_store=binding,
+                governance_store=governance,
+                delivery_store=delivery,
+                recall_store=recall,
                 runtime_status=runtime_status,
             )
         except (KeyError, ValueError, RuntimeError) as exc:

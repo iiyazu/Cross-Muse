@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Linux or WSL. Native Windows and macOS lifecycle support is not yet provided;
-- Python 3.11+, `uv`, and Git;
+- Python 3.11+, `uv`, Git, and Bubblewrap (`bwrap`);
 - an authenticated Codex CLI on `PATH` for real Agent turns;
 - Node.js 20.9+ and npm when running the browser Workroom.
 

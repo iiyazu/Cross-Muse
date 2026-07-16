@@ -34,9 +34,9 @@ describe("RoomHeader", () => {
     expect(screen.getByRole("heading", { name: "Natural Room" })).toBeInTheDocument();
     expect(screen.getByText("已同步")).toHaveClass("state-synced");
     expect(screen.getByLabelText("运行时阻塞")).toHaveTextContent("!");
-    expect(screen.getByRole("button", { name: /成员与状态/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /工作台/ })).toHaveAttribute("aria-expanded", "false");
     await user.click(screen.getByRole("button", { name: "关闭房间栏" }));
-    await user.click(screen.getByRole("button", { name: /成员与状态/ }));
+    await user.click(screen.getByRole("button", { name: /工作台/ }));
     await user.click(screen.getByRole("button", { name: "切换主题" }));
     expect(onToggleNavigation).toHaveBeenCalledOnce();
     expect(onToggleInspector).toHaveBeenCalledOnce();

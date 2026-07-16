@@ -51,8 +51,8 @@ describe("RoomSidebar", () => {
     expect(screen.getByRole("complementary", { name: "房间导航" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("房间列表可能已过期：stale");
     expect(screen.getByText("草稿：draft")).toBeInTheDocument();
-    expect(screen.getByLabelText("有未读更新")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Architecture/ }));
+    expect(screen.getByLabelText("7 条未读更新")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Architecture/ }));
     await user.type(screen.getByRole("searchbox", { name: "搜索房间" }), "arch");
     expect(props.onNavigate).toHaveBeenCalledWith("conv-1");
     expect(props.onQueryChange).toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe("RoomSidebar", () => {
     const user = userEvent.setup();
     const props = renderSidebar({ creating: true, title: "New Room", createRequestId: "stable-create", createError: { message: "retry" } });
     expect(screen.getByRole("alert")).toHaveTextContent("retry");
-    await user.click(screen.getByRole("button", { name: "创建" }));
-    expect(props.onCreate).toHaveBeenCalledWith("New Room", "stable-create");
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
+    expect(props.onCreate).toHaveBeenCalledWith("New Room", "stable-create", "builtin.development");
   });
 });

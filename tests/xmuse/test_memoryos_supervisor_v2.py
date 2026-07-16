@@ -61,6 +61,7 @@ def test_v2_receipt_reads_v1_and_exposes_only_safe_recovery_fields(tmp_path: Pat
         "enabled": True,
         "state": "recovering",
         "code": "memoryos_process_exited",
+        "profile": "archive-only",
         "heartbeat_at": "2026-07-12T00:00:02Z",
         "started_at": "2026-07-12T00:00:00Z",
         "consecutive_restart_count": 3,

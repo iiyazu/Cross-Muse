@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, isValidElement, type ReactNode, useState } from "react";
+import { Children, isValidElement, memo, type ReactNode, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -68,7 +68,21 @@ const components: Components = {
   pre: ({ children }) => <CodeBlock>{Children.toArray(children)}</CodeBlock>
 };
 
-export function RoomMarkdown({ content }: { content: string }) {
+const MARKDOWN_CODE_SEGMENT = /(```[\s\S]*?```|`[^`\n]*`)/g;
+const ESCAPED_LINE_BREAK = /\\r\\n|\\n/g;
+
+export function normalizeRoomMarkdownContent(content: string): string {
+  const segments = content.split(MARKDOWN_CODE_SEGMENT);
+  const prose = segments.filter((_, index) => index % 2 === 0).join("");
+  const escapedBreakCount = prose.match(ESCAPED_LINE_BREAK)?.length ?? 0;
+  if (escapedBreakCount < 2) return content;
+  return segments.map((segment, index) => (
+    index % 2 === 0 ? segment.replace(ESCAPED_LINE_BREAK, "\n") : segment
+  )).join("");
+}
+
+export const RoomMarkdown = memo(function RoomMarkdown({ content }: { content: string }) {
+  const normalized = normalizeRoomMarkdownContent(content);
   return (
     <div className="room-markdown">
       <ReactMarkdown
@@ -79,8 +93,8 @@ export function RoomMarkdown({ content }: { content: string }) {
         unwrapDisallowed
         urlTransform={safeUrl}
       >
-        {content}
+        {normalized}
       </ReactMarkdown>
     </div>
   );
-}
+});

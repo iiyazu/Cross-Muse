@@ -281,6 +281,10 @@ def test_memory_index_reset_requires_caller_transaction_rolls_back_and_replays_o
                 "select candidate_id, publish_state from room_memory_candidates"
             ).fetchall()
         )
+        message_outbox = conn.execute(
+            "select state, lease_owner, lease_token, current_delivery_id, delivered_at "
+            "from room_memory_message_outbox"
+        ).fetchall()
         delivery = conn.execute("select state, reason_code from room_memory_deliveries").fetchone()
 
     assert bindings == [(None, "unbound", None, "pending")] * 3
@@ -289,6 +293,8 @@ def test_memory_index_reset_requires_caller_transaction_rolls_back_and_replays_o
     assert [row[0] for row in outbox].count(approved_id) == 1
     assert pending_id not in {row[0] for row in outbox}
     assert candidates == {approved_id: "queued", pending_id: "not_queued"}
+    assert message_outbox
+    assert all(row == ("pending", None, None, None, None) for row in message_outbox)
     assert delivery == ("failed", "room_memory_operator_rebuild_required")
 
     replay = RoomMemoryRebuildActionStore(db).replay_status()

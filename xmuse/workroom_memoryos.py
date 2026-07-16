@@ -30,6 +30,7 @@ class MemoryOSRuntimeControl:
     executable: Path
     api_key: str = field(repr=False)
     url: str
+    profile: Literal["archive-only", "full-local"] = "archive-only"
     process: ManagedProcess | None = None
     record: dict[str, Any] | None = None
     started_at: str | None = None

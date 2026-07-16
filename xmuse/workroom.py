@@ -19,7 +19,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from xmuse.workroom_manifest import (
     ManifestError as ManifestLeafError,
@@ -517,6 +517,7 @@ def _spawn_chat_api(
     execution_profile_id: str,
     memoryos_url: str | None = None,
     memoryos_api_key: str | None = None,
+    memoryos_profile: str = "full-local",
 ) -> tuple[ManagedProcess, ProcessSpec]:
     log_path = paths.xmuse_root / "logs" / "workroom-chat-api.log"
     environment = _child_environment(
@@ -529,6 +530,7 @@ def _spawn_chat_api(
     if memoryos_url is not None and memoryos_api_key is not None:
         environment["XMUSE_MEMORYOS_URL"] = memoryos_url
         environment["XMUSE_MEMORYOS_API_KEY"] = memoryos_api_key
+        environment["XMUSE_MEMORYOS_PROFILE"] = memoryos_profile
     spec = ProcessSpec(
         service="chat_api",
         command=(sys.executable, "-m", "xmuse.chat_api"),
@@ -546,6 +548,7 @@ def _spawn_memoryos(
     executable: Path,
     generation: str,
     api_key: str,
+    profile: str = "full-local",
 ) -> tuple[ManagedProcess, ProcessSpec]:
     prepare_memoryos_derived_cache(paths.xmuse_root)
     environment = memoryos_child_environment(
@@ -553,6 +556,7 @@ def _spawn_memoryos(
         xmuse_root=paths.xmuse_root,
         generation=generation,
         api_key=api_key,
+        profile=profile,
     )
     spec = ProcessSpec(
         service="memoryos",
@@ -594,6 +598,7 @@ def _write_memoryos_control_status(
             consecutive_restart_count=control.consecutive_restart_count,
             next_retry_at=control.next_retry_at,
             last_healthy_at=control.last_healthy_at,
+            profile=control.profile,
         )
     except Exception:
         return {
@@ -720,6 +725,7 @@ def _attempt_memoryos_spawn(
             executable=control.executable,
             generation=generation,
             api_key=control.api_key,
+            profile=control.profile,
         )
     except MemoryOSSupervisorError as exc:
         return _schedule_memoryos_recovery(
@@ -837,6 +843,35 @@ def _assess_live_memoryos(
             state="degraded",
             code="memoryos_health_unavailable",
         )
+    if control.profile == "full-local":
+        try:
+            health_payload = deps.http_json(f"{control.url}/health")
+        except Exception:
+            health_payload = None
+        capabilities = (
+            health_payload.get("capabilities") if isinstance(health_payload, Mapping) else None
+        )
+        hybrid = capabilities.get("hybrid") if isinstance(capabilities, Mapping) else None
+        full_local_ready = (
+            isinstance(capabilities, Mapping)
+            and isinstance(hybrid, Mapping)
+            and hybrid.get("lexical") is True
+            and hybrid.get("semantic") is True
+            and hybrid.get("rrf") is True
+            and capabilities.get("message_ingest") is True
+            and capabilities.get("agentic_advisory") is True
+            and capabilities.get("paging") is True
+        )
+        if not full_local_ready:
+            control.healthy_since_monotonic = None
+            return _write_memoryos_control_status(
+                control,
+                manifest=manifest,
+                paths=paths,
+                deps=deps,
+                state="degraded",
+                code="memoryos_full_local_capability_missing",
+            )
     decision = mark_memoryos_healthy(
         control,
         monotonic_now=deps.monotonic(),
@@ -1618,6 +1653,7 @@ def start_workroom(
     execution_profile_id: str | None = None,
     memory_enabled: bool = False,
     memoryos_executable: Path | None = None,
+    memory_profile: str = "full-local",
 ) -> int:
     controller = deps.shutdown_controller_factory()
     manifest: dict[str, Any] | None = None
@@ -1640,6 +1676,11 @@ def start_workroom(
             raise WorkroomError(
                 "execution_profile_required",
                 "a non-default workspace requires an explicit --execution-profile",
+            )
+        if memory_profile not in {"archive-only", "full-local"}:
+            raise WorkroomError(
+                "memory_profile_invalid",
+                "memory profile must be archive-only or full-local",
             )
         resolved_profile_id = execution_profile_id or DEFAULT_EXECUTION_PROFILE_ID
         try:
@@ -1713,6 +1754,7 @@ def start_workroom(
                     executable=executable,
                     api_key=memory_key,
                     url=memory_url,
+                    profile=cast(Literal["archive-only", "full-local"], memory_profile),
                 )
                 _reconcile_optional_memoryos_runtime(
                     memory_control,
@@ -1737,6 +1779,7 @@ def start_workroom(
                 execution_profile_id=resolved_profile_id,
                 memoryos_url=memory_url,
                 memoryos_api_key=memory_key,
+                memoryos_profile=memory_profile,
             )
             spawned_processes.append(chat_api)
             chat_record = _record_process(
@@ -2137,6 +2180,25 @@ def _refresh_memoryos_status(
             )
         )
         healthy = live and deps.http_ready(f"http://{MEMORYOS_HOST}:{MEMORYOS_PORT}/health")
+        prior_status = read_memoryos_status(paths.xmuse_root)
+        profile = prior_status.get("profile") if isinstance(prior_status, Mapping) else None
+        if healthy and profile == "full-local":
+            try:
+                payload = deps.http_json(f"http://{MEMORYOS_HOST}:{MEMORYOS_PORT}/health")
+            except Exception:
+                payload = None
+            capabilities = payload.get("capabilities") if isinstance(payload, Mapping) else None
+            hybrid = capabilities.get("hybrid") if isinstance(capabilities, Mapping) else None
+            healthy = (
+                isinstance(capabilities, Mapping)
+                and isinstance(hybrid, Mapping)
+                and hybrid.get("lexical") is True
+                and hybrid.get("semantic") is True
+                and hybrid.get("rrf") is True
+                and capabilities.get("message_ingest") is True
+                and capabilities.get("agentic_advisory") is True
+                and capabilities.get("paging") is True
+            )
         return write_memoryos_status(
             paths.xmuse_root,
             enabled=True,
@@ -2444,6 +2506,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="absolute or relative path to the MemoryOS executable (requires --memory)",
     )
+    start.add_argument(
+        "--memory-profile",
+        choices=("archive-only", "full-local"),
+        default=None,
+        help=(
+            "MemoryOS capability profile (default: full-local; archive-only is compatibility mode)"
+        ),
+    )
 
     status = subparsers.add_parser("status", help="inspect the managed Workroom")
     status.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
@@ -2470,6 +2540,11 @@ def run_cli(
             build_parser().error("timeouts must be positive")
         if bool(args.memory) != (args.memoryos_executable is not None):
             build_parser().error("--memory and --memoryos-executable must be provided together")
+        if args.memory_profile is not None and not args.memory:
+            build_parser().error("--memory-profile requires --memory")
+        resolved_memory_profile = args.memory_profile or (
+            "full-local" if args.memory else "archive-only"
+        )
         return start_workroom(
             paths,
             deps,
@@ -2479,6 +2554,7 @@ def run_cli(
             execution_profile_id=args.execution_profile,
             memory_enabled=bool(args.memory),
             memoryos_executable=args.memoryos_executable,
+            memory_profile=resolved_memory_profile,
         )
     if args.command == "status":
         return workroom_status(paths, deps)[0]

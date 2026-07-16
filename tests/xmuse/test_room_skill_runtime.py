@@ -10,6 +10,7 @@ from pathlib import Path
 from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionRegistry
 from xmuse_core.agents.protocol import StdoutMessage
+from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
@@ -106,7 +107,7 @@ def _bound_delivery(
         f"inbox-{role}",
         conversation_id,
         participant.participant_id,
-        feature_scope_id="room_v1",
+        feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
     )
     record = registry.update_provider_binding(
         record.god_session_id,

@@ -1367,8 +1367,11 @@ class RoomParticipantHost:
         correlation_id = str(source.get("correlation_id") or "")
         causal_ids = self._memory_excluded_activity_ids(delivery)
         task = self._memory_retrieval_task(delivery)
+        timeout_s = float(getattr(runtime, "recall_timeout_s", ROOM_MEMORY_RECALL_TIMEOUT_S))
+        if not 0.1 <= timeout_s <= 10.0:
+            timeout_s = ROOM_MEMORY_RECALL_TIMEOUT_S
         try:
-            async with asyncio.timeout(ROOM_MEMORY_RECALL_TIMEOUT_S):
+            async with asyncio.timeout(timeout_s):
                 evidence = await runtime.recall(
                     RoomMemoryRecallInput(
                         conversation_id=delivery.conversation_id,
@@ -1383,7 +1386,7 @@ class RoomParticipantHost:
                 status="timeout",
                 reason_code="room_memory_timeout",
                 schema_version="memoryos_v3_context/v1",
-                latency_ms=int(ROOM_MEMORY_RECALL_TIMEOUT_S * 1000),
+                latency_ms=int(timeout_s * 1000),
                 evidence_sha256="sha256:" + "0" * 64,
             )
         except Exception:

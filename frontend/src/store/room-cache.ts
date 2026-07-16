@@ -13,15 +13,19 @@ export type CacheRetentionFacts = {
 export function trimRoomCaches<T extends CacheRetentionFacts>(
   caches: Record<string, T>,
   selectedRoomId: string | null,
-  maximum = MAX_CACHED_ROOMS
+  maximum = MAX_CACHED_ROOMS,
+  additionallyProtectedIds: readonly string[] = []
 ): Record<string, T> {
   const entries = Object.entries(caches);
   if (entries.length <= maximum) return caches;
-  const protectedIds = new Set(
+  const protectedIds = new Set([
+    ...additionallyProtectedIds,
+    ...(
     entries
       .filter(([id, cache]) => id === selectedRoomId || cache.pendingMessages.length > 0)
       .map(([id]) => id)
-  );
+    )
+  ]);
   const removable = entries
     .filter(([id]) => !protectedIds.has(id))
     .sort(([, left], [, right]) => left.lastAccessedAt - right.lastAccessedAt);

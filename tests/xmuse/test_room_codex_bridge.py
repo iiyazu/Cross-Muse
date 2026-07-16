@@ -10,6 +10,7 @@ from xmuse_core.chat.room_codex_bridge import (
     RoomCodexBridgeStore,
     opaque_guard,
 )
+from xmuse_core.chat.room_codex_schema import create_room_codex_schema
 from xmuse_core.chat.room_database import RoomDatabase
 
 
@@ -546,3 +547,181 @@ def test_ack_summary_rejects_provider_text_and_private_identifiers(tmp_path: Pat
     with sqlite3.connect(path) as conn:
         serialized = "\n".join(str(value) for row in conn.iterdump() for value in (row,))
     assert "secret" not in serialized and "thread_id" not in serialized
+
+
+def test_goal_intent_is_authoritative_and_commits_only_with_applied_action(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    requested, _ = store.request_action(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        capability_id="goal_set",
+        safe_request={"objective": "Ship the bounded fix", "token_budget": 20_000},
+        client_action_id="goal-set-1",
+        expected_session_guard=session,
+        expected_goal_guard=goal,
+        expected_settings_guard=settings,
+    )
+    claimed = store.claim_next_action(runner_generation="runner")
+    assert claimed is not None and claimed["action_id"] == requested["action_id"]
+    assert store.get_goal_intent("participant-1") is None
+    applied = store.complete_action(
+        action_id=str(claimed["action_id"]),
+        runner_generation="runner",
+        status="applied",
+        reason_code=None,
+        ack_summary={"native_method": "thread/goal/set", "acknowledged": True},
+    )
+    assert applied["status"] == "applied"
+    intent = store.get_goal_intent("participant-1")
+    assert intent is not None
+    assert intent["revision"] == 1
+    assert intent["desired_state"] == "active"
+    assert intent["objective"] == "Ship the bounded fix"
+    assert intent["token_budget"] == 20_000
+    assert intent["last_applied_session_guard"] == session
+    assert intent["recoverable"] is True
+
+    observed = store.observe_goal_snapshot(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        session_guard=session,
+        status="complete",
+    )
+    assert observed is not None
+    assert observed["observed_status"] == "complete"
+    assert observed["recoverable"] is False
+
+
+def test_goal_recovery_is_revision_and_session_guard_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, settings = _ready(store)
+    requested, _ = store.request_action(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        capability_id="goal_set",
+        safe_request={"objective": "Recover me", "token_budget": 10_000},
+        client_action_id="goal-set-recovery",
+        expected_session_guard=session,
+        expected_goal_guard=goal,
+        expected_settings_guard=settings,
+    )
+    claimed = store.claim_next_action(runner_generation="runner")
+    assert claimed is not None
+    store.complete_action(
+        action_id=str(requested["action_id"]),
+        runner_generation="runner",
+        status="applied",
+        reason_code=None,
+        ack_summary={"native_method": "thread/goal/set", "acknowledged": True},
+    )
+    first = store.begin_goal_recovery(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        intent_revision=1,
+        target_session_guard=session,
+    )
+    replay = store.begin_goal_recovery(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        intent_revision=1,
+        target_session_guard=session,
+    )
+    assert replay == first
+    dispatching = store.advance_goal_recovery(
+        recovery_id=str(first["recovery_id"]), phase="goal_dispatching"
+    )
+    assert dispatching["phase"] == "goal_dispatching"
+    applied = store.complete_goal_recovery(recovery_id=str(first["recovery_id"]), applied=True)
+    assert applied["phase"] == "applied"
+    assert store.list_goal_recoveries("participant-1")[0]["phase"] == "applied"
+
+
+def test_legacy_pause_without_goal_set_authority_is_not_recoverable(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    _seed(path)
+    store = RoomCodexBridgeStore(path)
+    session, goal, _settings = _ready(store)
+    store.apply_native_snapshot(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        expected_session_guard=session,
+        state="goal_active",
+        goal_guard=goal,
+        settings_guard=_settings,
+        active_turn_guard=None,
+    )
+    action, _ = store.request_action(
+        conversation_id="room-1",
+        participant_id="participant-1",
+        capability_id="goal_pause",
+        safe_request={},
+        client_action_id="legacy-pause",
+        expected_session_guard=session,
+        expected_goal_guard=goal,
+    )
+    claimed = store.claim_next_action(runner_generation="runner")
+    assert claimed is not None and claimed["action_id"] == action["action_id"]
+    store.complete_action(
+        action_id=str(action["action_id"]),
+        runner_generation="runner",
+        status="applied",
+        reason_code=None,
+        ack_summary={"native_method": "thread/goal/set", "acknowledged": True},
+    )
+
+    intent = store.get_goal_intent("participant-1")
+    assert intent is not None
+    assert intent["desired_state"] == "paused"
+    assert intent["recoverable"] is False
+
+
+def test_goal_intent_schema_migrates_and_keeps_required_authority_columns(tmp_path: Path) -> None:
+    path = tmp_path / "chat.db"
+    RoomDatabase(path).initialize()
+    with RoomDatabase(path).connect(readonly=True) as conn:
+        intent_columns = {
+            str(row[1]) for row in conn.execute("pragma table_info(room_codex_goal_intents)")
+        }
+        recovery_columns = {
+            str(row[1]) for row in conn.execute("pragma table_info(room_codex_goal_recoveries)")
+        }
+    assert {
+        "revision",
+        "desired_state",
+        "objective",
+        "token_budget",
+        "observed_status",
+        "recoverable",
+    } <= intent_columns
+    assert {"intent_revision", "target_session_guard", "phase"} <= recovery_columns
+
+
+def test_legacy_goal_intent_additive_migration(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """create table room_codex_goal_intents (
+                intent_id text primary key,
+                conversation_id text not null,
+                participant_id text not null,
+                scope text not null,
+                revision integer not null,
+                desired_state text not null,
+                objective text not null,
+                token_budget integer,
+                last_applied_session_guard text,
+                created_at text not null,
+                updated_at text not null,
+                unique(participant_id, scope)
+            )"""
+        )
+        create_room_codex_schema(conn)
+        columns = {
+            str(row[1]) for row in conn.execute("pragma table_info(room_codex_goal_intents)")
+        }
+    assert {"observed_status", "recoverable"} <= columns

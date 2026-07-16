@@ -96,6 +96,40 @@ def test_default_room_setup_creates_only_room_participants(tmp_path: Path) -> No
         )
 
 
+def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_invalid(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "workroom_roster_templates.json").write_text(
+        '{"roster_templates":[{"template_id":"broken","roles":[]},'
+        '{"template_id":"custom.review","display_name":"Review pair",'
+        '"description":"Focused review","roles":['
+        '{"role_id":"reviewer","provider_profile_ref":"codex.review"}]}]}',
+        encoding="utf-8",
+    )
+
+    response = _client(tmp_path).get("/api/chat/room-setup-options")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == "room_setup_options/v1"
+    assert payload["default_roster_template_id"] == "builtin.development"
+    assert [item["template_id"] for item in payload["roster_templates"]] == [
+        "builtin.development",
+        "custom.review",
+    ]
+    assert len(payload["roster_templates"][0]["participants"]) == 4
+    assert set(payload["roster_templates"][0]["participants"][0]) == {
+        "role_id",
+        "role",
+        "display_name",
+        "description",
+        "collaboration_focus",
+    }
+    serialized = response.text
+    assert "provider_profile" not in serialized
+    assert "model" not in serialized
+
+
 @pytest.mark.parametrize("provider", ["a2a", "opencode"])
 def test_room_setup_public_request_rejects_retired_providers_before_writing(
     tmp_path: Path,
@@ -380,8 +414,10 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
 
     assert routes == {
         ("/api/chat/conversations", "POST"),
+        ("/api/chat/room-setup-options", "GET"),
         ("/api/chat/rooms", "GET"),
         ("/api/chat/conversations/{conversation_id}/room-projection", "GET"),
+        ("/api/chat/conversations/{conversation_id}/agent-streams", "GET"),
         ("/api/chat/conversations/{conversation_id}/events", "GET"),
         ("/api/chat/threads/{conversation_id}/messages", "POST"),
         ("/api/chat/operator/room-observations/{observation_id}/cancel", "POST"),

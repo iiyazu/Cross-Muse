@@ -6,6 +6,8 @@ import {
   type KeyboardEvent,
   type ReactNode
 } from "react";
+import type { WorkspaceDockTab } from "@/store/room-persistence";
+import { X } from "lucide-react";
 
 export type RoomInspectorTarget = {
   roomId: string;
@@ -24,6 +26,8 @@ export type RoomInspectorProps = {
   executionSection: ReactNode;
   memorySection: ReactNode;
   roomEvidenceSection: ReactNode;
+  activeTab?: WorkspaceDockTab;
+  onTabChange?: (tab: WorkspaceDockTab) => void;
   onClose: () => void;
   onTargetResolved: () => void;
   onTargetMissing: () => void;
@@ -54,6 +58,8 @@ export function RoomInspector({
   executionSection,
   memorySection,
   roomEvidenceSection,
+  activeTab = "room",
+  onTabChange = () => undefined,
   onClose,
   onTargetResolved,
   onTargetMissing
@@ -144,20 +150,32 @@ export function RoomInspector({
       role={modal ? "dialog" : undefined}
     >
       <header>
-        <div><span>Room inspector</span><strong>成员与因果状态</strong></div>
+        <div><span>xmuse</span><strong>工作台</strong></div>
         <button
           aria-label="关闭检查器"
           className="room-icon-button"
           onClick={onClose}
           ref={closeRef}
           type="button"
-        >×</button>
+        ><X size={17} /></button>
       </header>
-      {agentConsoleSection}
-      {operationsSection}
-      {executionSection}
-      {memorySection}
-      {roomEvidenceSection}
+      <div className="workspace-dock-tabs" role="tablist" aria-label="工作台视图">
+        {(["agent", "room", "runtime"] as const).map((tab) => (
+          <button
+            aria-selected={activeTab === tab}
+            className={activeTab === tab ? "is-active" : ""}
+            key={tab}
+            onClick={() => onTabChange(tab)}
+            role="tab"
+            type="button"
+          >{{ agent: "Agent", room: "Room", runtime: "Runtime" }[tab]}</button>
+        ))}
+      </div>
+      <div className="workspace-dock-content" role="tabpanel">
+        {activeTab === "agent" ? agentConsoleSection : null}
+        {activeTab === "room" ? <>{executionSection}{memorySection}{roomEvidenceSection}</> : null}
+        {activeTab === "runtime" ? operationsSection : null}
+      </div>
     </aside>
   );
 }

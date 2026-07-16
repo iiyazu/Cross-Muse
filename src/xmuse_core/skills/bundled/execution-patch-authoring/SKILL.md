@@ -5,7 +5,7 @@ description: >-
   privileged tools.
 metadata:
   version: "1.0.0"
-  xmuse: '{"roles":["architect","execute"],"triggers":["exact patch","execution patch","unified diff","执行候选","补丁"],"not_for":["仅讨论","无需补丁","闲聊"],"priority":200}'
+  xmuse: '{"roles":["architect","execute"],"triggers":["exact patch","execution patch","unified diff","执行候选","补丁","修复代码","实现改动","落地修改"],"not_for":["仅讨论","无需补丁","闲聊"],"priority":200}'
 ---
 # Exact patch authoring
 

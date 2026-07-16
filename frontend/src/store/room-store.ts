@@ -17,6 +17,7 @@ import {
   fetchRooms,
   isCallerAbort,
   recoverRoomRuntime,
+  roomAgentStreamsUrl,
   rebuildRoomMemoryIndex,
   resolveRoomMemoryCandidate,
   sendThreadMessage,
@@ -32,6 +33,8 @@ import {
 } from "@/lib/room-view";
 import type {
   RoomChatProjection,
+  RoomAgentStream,
+  RoomAgentStreamProjection,
   RoomCodexActionDescriptor,
   RoomCodexActionResult,
   RoomCodexCapabilityId,
@@ -78,7 +81,7 @@ import {
   readRoomDraft,
   readRoomUiState
 } from "@/store/room-persistence";
-import type { ScrollAnchor } from "@/store/room-persistence";
+import type { ScrollAnchor, WorkspaceDockTab } from "@/store/room-persistence";
 import { createRoomSyncCoordinator } from "@/store/room-sync-coordinator";
 import {
   persistCodexConsolePreference,
@@ -113,6 +116,11 @@ export type RoomCache = {
   error: XmuseApiErrorShape | null;
   controlPending: { observationId: string; action: "cancel" | "retry" } | null;
   controlError: XmuseApiErrorShape | null;
+  agentStreams: RoomAgentStream[];
+  agentStreamAvailable: boolean;
+  agentStreamEpoch: string | null;
+  agentStreamSeq: number;
+  agentStreamGeneration: number;
 };
 
 export type RoomExecutionCache = {
@@ -163,6 +171,9 @@ type RoomState = {
   theme: "dark" | "light";
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  dockTab: WorkspaceDockTab;
+  pinnedRoomIds: string[];
+  selectedParticipants: Record<string, string>;
   operations: RoomOperationsProjection | null;
   operationsLoading: boolean;
   operationsError: XmuseApiErrorShape | null;
@@ -194,7 +205,7 @@ type RoomState = {
   } | null;
   bootstrap: (requestedRoomId?: string | null) => Promise<string | null>;
   loadRooms: () => Promise<RoomSummary[]>;
-  createRoom: (title: string, clientRequestId?: string) => Promise<string | null>;
+  createRoom: (title: string, clientRequestId?: string, rosterTemplateId?: string) => Promise<string | null>;
   selectRoom: (roomId: string) => Promise<void>;
   refreshRoom: (roomId?: string, mode?: "initial" | "incremental" | "older") => Promise<void>;
   catchUpRoom: (roomId?: string) => Promise<void>;
@@ -247,6 +258,8 @@ type RoomState = {
   setTheme: (theme: "dark" | "light") => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
+  setDockTab: (tab: WorkspaceDockTab) => void;
+  togglePinnedRoom: (roomId: string) => void;
   setInspectorTarget: (target: RoomState["inspectorTarget"]) => void;
   clearRoomError: (roomId?: string) => void;
   clearControlError: (roomId?: string) => void;
@@ -255,6 +268,7 @@ type RoomState = {
   startExecutionSync: () => void;
   startMemorySync: () => void;
   startCodexSync: () => void;
+  startAgentStream: () => void;
   stopSync: () => void;
 };
 
@@ -278,10 +292,56 @@ const memoryRequests = new Map<string, Promise<void>>();
 const codexControllers = new Map<string, AbortController>();
 const codexRequests = new Map<string, Promise<void>>();
 let codexFocusHandler: (() => void) | null = null;
+let agentStreamSource: EventSource | null = null;
+let agentStreamGeneration = 0;
 const CODEX_ACTION_STORAGE_KEY = "xmuse.codex-action-ids.v1";
 
 function apiOptions(signal?: AbortSignal) {
   return { chatApiBaseUrl, signal };
+}
+
+function normalizeAgentStreamProjection(value: unknown): RoomAgentStreamProjection | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Partial<RoomAgentStreamProjection>;
+  if (
+    source.schema_version !== "room_agent_stream_projection/v1" ||
+    source.proof_boundary !== "provider_preview_not_room_or_codex_authority" ||
+    typeof source.conversation_id !== "string" ||
+    typeof source.stream_seq !== "number" ||
+    !Array.isArray(source.streams)
+  ) return null;
+  const streams = source.streams.filter((item): item is RoomAgentStream => {
+    if (!item || typeof item !== "object") return false;
+    const stream = item as Partial<RoomAgentStream>;
+    return (
+      typeof stream.stream_id === "string" &&
+      typeof stream.participant_id === "string" &&
+      typeof stream.observation_id === "string" &&
+      ["streaming", "committing", "resolved", "invalidated"].includes(
+        String(stream.state)
+      ) &&
+      typeof stream.content === "string" &&
+      typeof stream.truncated === "boolean" &&
+      typeof stream.started_at === "string" &&
+      typeof stream.updated_at === "string"
+    );
+  });
+  return {
+    schema_version: source.schema_version,
+    proof_boundary: source.proof_boundary,
+    projection_available: source.projection_available === true,
+    reason_code: typeof source.reason_code === "string" ? source.reason_code : null,
+    conversation_id: source.conversation_id,
+    epoch: typeof source.epoch === "string" ? source.epoch : null,
+    stream_seq: Math.max(0, Math.floor(source.stream_seq)),
+    streams
+  };
+}
+
+function closeAgentStream() {
+  agentStreamSource?.close();
+  agentStreamSource = null;
+  agentStreamGeneration += 1;
 }
 
 function emptyCache(now = Date.now()): RoomCache {
@@ -299,7 +359,12 @@ function emptyCache(now = Date.now()): RoomCache {
     lastAccessedAt: now,
     error: null,
     controlPending: null,
-    controlError: null
+    controlError: null,
+    agentStreams: [],
+    agentStreamAvailable: true,
+    agentStreamEpoch: null,
+    agentStreamSeq: 0,
+    agentStreamGeneration: 0
   };
 }
 
@@ -353,7 +418,8 @@ function browserStorage(kind: "local" | "session"): Storage | null {
 
 function readLocalState(): Pick<
   RoomState,
-  "readCursors" | "scrollAnchors" | "theme" | "sidebarOpen" | "inspectorOpen"
+  "readCursors" | "scrollAnchors" | "theme" | "sidebarOpen" | "inspectorOpen" |
+  "dockTab" | "pinnedRoomIds" | "selectedParticipants"
 > {
   return readRoomUiState(browserStorage("local"));
 }
@@ -362,8 +428,12 @@ function persistLocalState(state: RoomState) {
   persistRoomUiState(browserStorage("local"), state);
 }
 
-function trimCaches(caches: Record<string, RoomCache>, selectedRoomId: string | null) {
-  return trimRoomCaches(caches, selectedRoomId);
+function trimCaches(
+  caches: Record<string, RoomCache>,
+  selectedRoomId: string | null,
+  pinnedRoomIds: readonly string[] = []
+) {
+  return trimRoomCaches(caches, selectedRoomId, 8, pinnedRoomIds);
 }
 
 function projectionCursorRegressed(
@@ -516,6 +586,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   theme: "dark",
   sidebarOpen: true,
   inspectorOpen: false,
+  dockTab: "room",
+  pinnedRoomIds: [],
+  selectedParticipants: {},
   operations: null,
   operationsLoading: false,
   operationsError: null,
@@ -564,14 +637,19 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     }
   },
 
-  async createRoom(title, clientRequestId = `ui_room_create_${crypto.randomUUID()}`) {
+  async createRoom(
+    title,
+    clientRequestId = `ui_room_create_${crypto.randomUUID()}`,
+    rosterTemplateId = "builtin.development"
+  ) {
     const cleanTitle = title.trim();
     if (!cleanTitle) return null;
     set({ roomCreatePending: true, roomCreateError: null });
     try {
       const conversation = await createConversation(cleanTitle, {
         ...apiOptions(),
-        clientRequestId
+        clientRequestId,
+        rosterTemplateId
       });
       const id = String(conversation.id);
       await get().loadRooms();
@@ -605,7 +683,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
           ...state.roomsById,
           [roomId]: { ...cache, lastAccessedAt: Date.now() }
         },
-        roomId
+        roomId,
+        state.pinnedRoomIds
       );
       return {
         selectedRoomId: roomId,
@@ -1186,9 +1265,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
           const participantIds = projection.participants.map(
             (item) => item.participant.participant_id
           );
+          const persistedParticipantId = get().selectedParticipants[roomId];
           const selectedParticipantId = cache.selectedParticipantId
             && participantIds.includes(cache.selectedParticipantId)
             ? cache.selectedParticipantId
+            : persistedParticipantId && participantIds.includes(persistedParticipantId)
+              ? persistedParticipantId
             : participantIds[0] ?? null;
           return {
             codexByRoom: {
@@ -1235,13 +1317,18 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     if (!roomId) return;
     set((state) => {
       const cache = state.codexByRoom[roomId] ?? emptyCodexCache();
+      const selectedParticipants = { ...state.selectedParticipants };
+      if (participantId) selectedParticipants[roomId] = participantId;
+      else delete selectedParticipants[roomId];
       return {
+        selectedParticipants,
         codexByRoom: {
           ...state.codexByRoom,
           [roomId]: { ...cache, selectedParticipantId: participantId }
         }
       };
     });
+    persistLocalState(get());
   },
 
   async submitCodexAction(
@@ -1639,6 +1726,30 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().startCodexSync();
   },
 
+  setDockTab(tab) {
+    set({ dockTab: tab, inspectorOpen: true });
+    persistLocalState(get());
+    if (tab === "agent") void get().refreshCodexAgents();
+    if (tab === "room") {
+      void get().refreshExecutions();
+      void get().refreshMemory();
+    }
+    if (tab === "runtime") void get().refreshOperations();
+    get().startOperationsSync();
+    get().startExecutionSync();
+    get().startMemorySync();
+    get().startCodexSync();
+  },
+
+  togglePinnedRoom(roomId) {
+    set((state) => ({
+      pinnedRoomIds: state.pinnedRoomIds.includes(roomId)
+        ? state.pinnedRoomIds.filter((id) => id !== roomId)
+        : [roomId, ...state.pinnedRoomIds].slice(0, 50)
+    }));
+    persistLocalState(get());
+  },
+
   setInspectorTarget(target) {
     set({ inspectorTarget: target, inspectorOpen: target ? true : get().inspectorOpen });
     if (target) {
@@ -1707,6 +1818,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().startExecutionSync();
     get().startMemorySync();
     get().startCodexSync();
+    get().startAgentStream();
   },
 
   startOperationsSync() {
@@ -1714,7 +1826,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     const scheduleOperations = () => {
       if (!syncCoordinator.isCurrent("operations", currentOperationsEpoch)) return;
       const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
-      const base = !hidden && get().inspectorOpen ? 5_000 : 15_000;
+      const base = !hidden && get().inspectorOpen && get().dockTab === "runtime" ? 5_000 : 15_000;
       const delay = Math.min(
         30_000,
         base * 2 ** Math.min(get().operationsConsecutiveFailures, 2)
@@ -1736,7 +1848,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
       const roomId = get().selectedRoomId;
       const cache = roomId ? get().executionsByRoom[roomId] : null;
-      const base = !hidden && get().inspectorOpen ? 5_000 : 15_000;
+      const base = !hidden && get().inspectorOpen && get().dockTab === "room" ? 5_000 : 15_000;
       const delay = Math.min(
         30_000,
         base * 2 ** Math.min(cache?.consecutiveFailures ?? 0, 2)
@@ -1762,7 +1874,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
       const roomId = get().selectedRoomId;
       const cache = roomId ? get().memoryByRoom[roomId] : null;
-      const base = !hidden && get().inspectorOpen ? 5_000 : 15_000;
+      const base = !hidden && get().inspectorOpen && get().dockTab === "room" ? 5_000 : 15_000;
       const delay = Math.min(
         30_000,
         base * 2 ** Math.min(cache?.consecutiveFailures ?? 0, 2)
@@ -1788,7 +1900,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
       const roomId = get().selectedRoomId;
       const cache = roomId ? get().codexByRoom[roomId] : null;
-      const base = hidden ? 15_000 : 2_000;
+      const projection = cache?.projection;
+      const active = projection?.participants.some(
+        (participant) => participant.native_snapshot.value?.active_turn
+      ) ?? false;
+      const foregroundAgent = !hidden && get().inspectorOpen && get().dockTab === "agent";
+      const base = hidden ? 15_000 : foregroundAgent ? (active ? 2_000 : 5_000) : 15_000;
       const delay = Math.min(
         30_000,
         base * 2 ** Math.min(cache?.consecutiveFailures ?? 0, 3)
@@ -1809,7 +1926,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     if (typeof window !== "undefined") {
       if (codexFocusHandler) window.removeEventListener("focus", codexFocusHandler);
       codexFocusHandler = () => {
-        const currentRoomId = get().selectedRoomId;
+        const state = get();
+        if (!state.inspectorOpen || state.dockTab !== "agent") return;
+        const currentRoomId = state.selectedRoomId;
         if (currentRoomId) void get().refreshCodexAgents(currentRoomId);
       };
       window.addEventListener("focus", codexFocusHandler);
@@ -1817,7 +1936,94 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     scheduleCodex();
   },
 
+  startAgentStream() {
+    closeAgentStream();
+    const roomId = get().selectedRoomId;
+    if (!roomId || typeof window === "undefined" || typeof EventSource === "undefined") return;
+    const generation = agentStreamGeneration;
+    set((state) => {
+      const cache = state.roomsById[roomId] ?? emptyCache();
+      return {
+        roomsById: {
+          ...state.roomsById,
+          [roomId]: {
+            ...cache,
+            agentStreams: [],
+            agentStreamAvailable: true,
+            agentStreamEpoch: null,
+            agentStreamSeq: 0,
+            agentStreamGeneration: generation
+          }
+        }
+      };
+    });
+    const source = new EventSource(roomAgentStreamsUrl(roomId, apiOptions()));
+    agentStreamSource = source;
+    const receive = (event: MessageEvent<string>) => {
+      if (
+        source !== agentStreamSource ||
+        generation !== agentStreamGeneration ||
+        get().selectedRoomId !== roomId
+      ) return;
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(event.data) as unknown;
+      } catch {
+        return;
+      }
+      const projection = normalizeAgentStreamProjection(decoded);
+      if (!projection || projection.conversation_id !== roomId) return;
+      const isReset = event.type === "reset";
+      const current = get().roomsById[roomId] ?? emptyCache();
+      if (
+        !isReset &&
+        current.agentStreamEpoch === projection.epoch &&
+        projection.stream_seq <= current.agentStreamSeq
+      ) return;
+      const shouldCatchUp = projection.streams.some(
+        (stream) => stream.state === "resolved"
+      );
+      set((state) => {
+        if (state.selectedRoomId !== roomId) return state;
+        const cache = state.roomsById[roomId] ?? emptyCache();
+        if (cache.agentStreamGeneration !== generation) return state;
+        return {
+          roomsById: {
+            ...state.roomsById,
+            [roomId]: {
+              ...cache,
+              agentStreams: projection.streams,
+              agentStreamAvailable: projection.projection_available,
+              agentStreamEpoch: projection.epoch ?? null,
+              agentStreamSeq: projection.stream_seq
+            }
+          }
+        };
+      });
+      if (shouldCatchUp) void get().catchUpRoom(roomId);
+    };
+    source.addEventListener("projection", receive as EventListener);
+    source.addEventListener("reset", receive as EventListener);
+    source.onerror = () => {
+      if (
+        source !== agentStreamSource ||
+        generation !== agentStreamGeneration ||
+        get().selectedRoomId !== roomId
+      ) return;
+      set((state) => {
+        const cache = state.roomsById[roomId] ?? emptyCache();
+        return {
+          roomsById: {
+            ...state.roomsById,
+            [roomId]: { ...cache, agentStreamAvailable: false }
+          }
+        };
+      });
+    };
+  },
+
   stopSync() {
+    closeAgentStream();
     syncCoordinator.teardown();
     operationsController?.abort();
     operationsController = null;

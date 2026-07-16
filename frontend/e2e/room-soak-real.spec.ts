@@ -31,6 +31,8 @@ type ViewportEvidence = {
   http_5xx_count: number;
   native_snapshot_count: number;
   native_capabilities_count: number;
+  native_event_count: number;
+  native_event_kind_count: number;
   history_partial_count: number;
   digest: string;
 };
@@ -155,6 +157,8 @@ function validateNativeProjection(value: unknown, room: string): {
   participantCount: number;
   snapshotCount: number;
   capabilitiesCount: number;
+  eventCount: number;
+  eventKindCount: number;
   historyPartialCount: number;
 } {
   const projection = record(value);
@@ -203,10 +207,20 @@ function validateNativeProjection(value: unknown, room: string): {
     expect(Number(participant.omitted_event_count)).toBeGreaterThanOrEqual(0);
     historyPartialCount += 1;
   }
+  const nativeEvents = record(projection.native_events);
+  const eventItems = Array.isArray(nativeEvents.items) ? nativeEvents.items.map(record) : [];
+  expect(nativeEvents.projection_available).toBe(true);
+  expect(eventItems.length).toBeGreaterThan(0);
+  const eventKinds = new Set(eventItems.map((item) => item.kind).filter((kind): kind is string => typeof kind === "string"));
+  for (const requiredKind of ["turn_started", "item_completed", "token_usage_updated", "turn_completed"]) {
+    expect(eventKinds.has(requiredKind)).toBe(true);
+  }
   return {
     participantCount: participants.length,
     snapshotCount,
     capabilitiesCount,
+    eventCount: eventItems.length,
+    eventKindCount: eventKinds.size,
     historyPartialCount
   };
 }
@@ -299,12 +313,21 @@ test(goalMemorySoak
   let refreshes = 0;
   let nativeSnapshotCount = 0;
   let nativeCapabilitiesCount = 0;
+  let nativeEventCount = 0;
+  let nativeEventKindCount = 0;
   let historyPartialCount = 0;
   for (const id of rooms) {
     const target = new URL(`/rooms/${encodeURIComponent(id)}`, base);
     await page.goto(target.toString(), { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("log", { name: "房间消息" })).toBeVisible();
     await expect(page.getByRole("region", { name: "当前 Agent 状态" })).toContainText("本轮已收束");
+    const workbenchToggle = page.getByRole("button", { name: /工作台/ });
+    if (await workbenchToggle.getAttribute("aria-expanded") !== "true") {
+      await workbenchToggle.click();
+    }
+    await expect(page.getByRole("tab", { name: "Agent" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: "Plan / Todo" })).toBeVisible();
+    await expect(page.getByRole("log", { name: "Codex 原生事件" }).locator("article")).not.toHaveCount(0);
     const roomProjectionPromise = page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
@@ -329,6 +352,8 @@ test(goalMemorySoak
     const native = validateNativeProjection(await nativeProjection.json(), id);
     nativeSnapshotCount += native.snapshotCount;
     nativeCapabilitiesCount += native.capabilitiesCount;
+    nativeEventCount += native.eventCount;
+    nativeEventKindCount += native.eventKindCount;
     historyPartialCount += native.historyPartialCount;
     refreshes += 1;
   }
@@ -343,6 +368,8 @@ test(goalMemorySoak
     http_5xx_count: counts.http5xx,
     native_snapshot_count: nativeSnapshotCount,
     native_capabilities_count: nativeCapabilitiesCount,
+    native_event_count: nativeEventCount,
+    native_event_kind_count: nativeEventKindCount,
     history_partial_count: historyPartialCount
   };
   const viewportEvidence: ViewportEvidence = {
@@ -354,6 +381,8 @@ test(goalMemorySoak
   expect(viewportEvidence.refresh_count).toBe(rooms.length);
   expect(viewportEvidence.native_snapshot_count).toBeGreaterThanOrEqual(rooms.length);
   expect(viewportEvidence.native_capabilities_count).toBe(viewportEvidence.native_snapshot_count);
+  expect(viewportEvidence.native_event_count).toBeGreaterThan(0);
+  expect(viewportEvidence.native_event_kind_count).toBeGreaterThanOrEqual(4);
   expect(viewportEvidence.history_partial_count).toBe(viewportEvidence.native_snapshot_count);
   expect(counts.http5xx).toBe(0);
   expect(counts.consoleErrors).toBe(0);

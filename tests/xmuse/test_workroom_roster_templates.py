@@ -174,7 +174,7 @@ def test_template_to_participant_inits_uses_backend_registry_not_browser_command
             "provider_id": "codex",
             "profile_id": "god",
             "cli_kind": "codex",
-            "model": "gpt-5.4",
+            "model": "gpt-5.6-sol",
             "display_name": "Architect",
         },
         {
@@ -182,7 +182,7 @@ def test_template_to_participant_inits_uses_backend_registry_not_browser_command
             "provider_id": "codex",
             "profile_id": "worker",
             "cli_kind": "codex",
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
             "display_name": "Builder",
         },
         {
@@ -190,7 +190,7 @@ def test_template_to_participant_inits_uses_backend_registry_not_browser_command
             "provider_id": "codex",
             "profile_id": "review",
             "cli_kind": "codex",
-            "model": "gpt-5.4",
+            "model": "gpt-5.6-sol",
             "display_name": "Reviewer",
         },
     ]

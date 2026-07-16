@@ -23,20 +23,22 @@ function props(overrides: Partial<RoomInspectorProps> = {}): RoomInspectorProps 
 }
 
 describe("RoomInspector", () => {
-  it("composes durable domain sections in a stable order without interpreting them", () => {
+  it("shows Room evidence in a stable order without mounting other domains", () => {
     const { container } = render(<RoomInspector {...props()} />);
     const inspector = container.querySelector(".room-inspector")!;
     expect(within(inspector as HTMLElement).getAllByRole("heading", { level: 3 }).map(
       (heading) => heading.textContent
-    )).toEqual(["运行与恢复", "执行候选", "长期记忆", "活跃成员"]);
+    )).toEqual(["执行候选", "长期记忆", "活跃成员"]);
+    expect(within(inspector as HTMLElement).queryByText("运行与恢复")).not.toBeInTheDocument();
     expect(inspector).not.toHaveAttribute("role");
     expect(inspector).not.toHaveAttribute("aria-modal");
   });
 
-  it("places the optional Agent Console before operational evidence", () => {
+  it("mounts only the selected Agent tab", () => {
     const { container } = render(
       <RoomInspector
         {...props({
+          activeTab: "agent",
           agentConsoleSection: <section><h3>Agent Console</h3></section>
         })}
       />
@@ -44,7 +46,7 @@ describe("RoomInspector", () => {
     const inspector = container.querySelector(".room-inspector")!;
     expect(within(inspector as HTMLElement).getAllByRole("heading", { level: 3 }).map(
       (heading) => heading.textContent
-    )).toEqual(["Agent Console", "运行与恢复", "执行候选", "长期记忆", "活跃成员"]);
+    )).toEqual(["Agent Console"]);
   });
 
   it("traps modal focus, closes on Escape, and restores prior focus on unmount", async () => {
@@ -107,6 +109,7 @@ describe("RoomInspector", () => {
       <RoomInspector
         {...props({
           target,
+          activeTab: "runtime",
           targetReady: false,
           onTargetResolved,
           onTargetMissing,
@@ -124,6 +127,7 @@ describe("RoomInspector", () => {
 
     view.rerender(<RoomInspector {...props({
       target,
+      activeTab: "runtime",
       targetReady: true,
       targetVersion: 2,
       onTargetResolved,

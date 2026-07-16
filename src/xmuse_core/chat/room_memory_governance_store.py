@@ -121,6 +121,7 @@ def record_memory_candidates_conn(
     batch_activity_ids: set[str],
     candidates: Sequence[MemoryCandidateInput],
     stamp: str,
+    allow_external_sources: bool = False,
 ) -> list[dict[str, Any]]:
     """Persist candidate authority in the caller's Room outcome transaction."""
 
@@ -154,7 +155,24 @@ def record_memory_candidates_conn(
     references: list[dict[str, Any]] = []
     for item in candidates:
         sources = tuple(sorted(item.source_activity_ids))
-        if not set(sources).issubset(allowed_sources):
+        if allow_external_sources:
+            # A MemoryOS advisory may cite an older Room activity recovered by
+            # recall.  It is still admitted only after this transaction proves
+            # every reference is a visible activity in this same Room; the
+            # causal batch rule remains the default for Agent-authored facts.
+            placeholders = ",".join("?" for _ in sources)
+            visible = {
+                str(row["activity_id"])
+                for row in conn.execute(
+                    f"""select activity_id from room_activities
+                        where conversation_id = ? and visibility = 'room'
+                          and activity_id in ({placeholders})""",
+                    (conversation_id, *sources),
+                ).fetchall()
+            }
+            if visible != set(sources):
+                raise RoomMemoryStoreError("room_memory_candidate_source_forbidden")
+        elif not set(sources).issubset(allowed_sources):
             raise RoomMemoryStoreError("room_memory_candidate_source_forbidden")
         content_sha256 = sha256_text(item.content)
         candidate_id = new_id("memory_candidate")

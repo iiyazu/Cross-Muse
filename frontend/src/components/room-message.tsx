@@ -1,5 +1,8 @@
 "use client";
 
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
+
 import type { RoomTimelineItem, XmuseApiErrorShape } from "@/lib/types";
 import { formatRoomTime, identityStyle, initials } from "./room-header";
 import { RoomMarkdown } from "./room-markdown";
@@ -35,13 +38,14 @@ export function RoomMessageDetails({ item }: { item: RoomTimelineItem }) {
 }
 
 export function RoomMessage({ item, onJumpToReference }: { item: RoomTimelineItem; onJumpToReference: (messageId?: string | null, activityId?: string | null) => void }) {
+  const [copied, setCopied] = useState(false);
   const human = item.actor.kind === "human" || item.actor.role === "human" || item.actor.role === "user";
   const identity = item.actor.participant_id || item.actor.identity || item.actor.role;
   return (
     <article className={`room-message ${human ? "from-human" : "from-agent"} kind-${item.kind}`} data-activity-id={item.activity_id ?? undefined} data-message-id={item.id} style={identityStyle(identity)} tabIndex={-1}>
       {!human ? <span className="room-avatar room-message__avatar">{initials(item.actor.display_name)}</span> : null}
       <div className="room-message__content">
-        <header><strong>{human ? "你" : item.actor.display_name}</strong>{item.kind === "handoff" ? <span className="room-kind-pill">建议转交</span> : null}{item.kind === "proposal" ? <span className="room-kind-pill">提案</span> : null}<time dateTime={item.created_at ?? undefined}>{formatRoomTime(item.created_at)}</time></header>
+        <header><strong>{human ? "你" : item.actor.display_name}</strong>{item.kind === "handoff" ? <span className="room-kind-pill">建议转交</span> : null}{item.kind === "proposal" ? <span className="room-kind-pill">提案</span> : null}<time dateTime={item.created_at ?? undefined}>{formatRoomTime(item.created_at)}</time><button aria-label={copied ? "已复制消息" : "复制消息"} className="room-message-copy" onClick={async () => { try { await navigator.clipboard.writeText(item.content); setCopied(true); window.setTimeout(() => setCopied(false), 1400); } catch { setCopied(false); } }} type="button">{copied ? <Check size={13} /> : <Copy size={13} />}</button></header>
         {item.reply_to_message_id || item.reply_to_activity_id ? <button className="room-reply-link" onClick={() => onJumpToReference(item.reply_to_message_id, item.reply_to_activity_id)} title={`跳到上游 ${item.reply_to_message_id ?? item.reply_to_activity_id}`} type="button">回复 {item.reply_target_display_name ?? "上一条消息"}</button> : null}
         <RoomMarkdown content={item.content} />
         {item.kind === "handoff" && item.handoff_targets?.length ? <div className="room-causal-pill">转交给 {item.handoff_targets.join("、")}</div> : null}

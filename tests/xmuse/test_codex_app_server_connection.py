@@ -73,6 +73,18 @@ def _writes(process: FakeProcess) -> list[dict[str, object]]:
 
 
 @pytest.mark.asyncio
+async def test_request_with_none_omits_params_for_null_schema_methods() -> None:
+    process = FakeProcess()
+    connection = CodexAppServerConnection(process, generation=1, owns_process_group=False)
+    pending = await connection.start_request("config/mcpServer/reload", None)
+    process.feed_stdout({"id": pending.request_id, "result": {}})
+
+    assert await pending.response == {}
+    assert _writes(process) == [{"id": pending.request_id, "method": "config/mcpServer/reload"}]
+    await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_sole_reader_routes_interleaved_messages_and_denies_server_request() -> None:
     process = FakeProcess()
     connection = CodexAppServerConnection(process, generation=7, owns_process_group=False)

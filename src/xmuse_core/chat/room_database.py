@@ -600,6 +600,42 @@ ROOM_REQUIRED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "room_memory_message_outbox": frozenset(
+        {
+            "message_outbox_id",
+            "conversation_id",
+            "activity_id",
+            "external_id",
+            "state",
+            "attempt_count",
+            "lease_owner",
+            "lease_token",
+            "acquired_at",
+            "expires_at",
+            "current_delivery_id",
+            "reason_code",
+            "next_attempt_at",
+            "created_at",
+            "updated_at",
+            "delivered_at",
+        }
+    ),
+    "room_memory_message_deliveries": frozenset(
+        {
+            "delivery_id",
+            "message_outbox_id",
+            "attempt_number",
+            "worker_id",
+            "lease_token_sha256",
+            "state",
+            "request_digest",
+            "response_digest",
+            "reason_code",
+            "claimed_at",
+            "finished_at",
+            "updated_at",
+        }
+    ),
     "room_memory_attempt_receipts": frozenset(
         {
             "receipt_id",
@@ -707,6 +743,37 @@ ROOM_REQUIRED_COLUMNS: Mapping[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "room_codex_goal_intents": frozenset(
+        {
+            "intent_id",
+            "conversation_id",
+            "participant_id",
+            "scope",
+            "revision",
+            "desired_state",
+            "objective",
+            "token_budget",
+            "last_applied_session_guard",
+            "observed_status",
+            "recoverable",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "room_codex_goal_recoveries": frozenset(
+        {
+            "recovery_id",
+            "conversation_id",
+            "participant_id",
+            "intent_revision",
+            "target_session_guard",
+            "phase",
+            "reason_code",
+            "requested_at",
+            "completed_at",
+            "updated_at",
+        }
+    ),
 }
 
 ROOM_REQUIRED_UNIQUE_KEYS = frozenset(
@@ -738,6 +805,9 @@ ROOM_REQUIRED_UNIQUE_KEYS = frozenset(
         ("room_memory_outbox", ("candidate_id",)),
         ("room_memory_outbox", ("document_id",)),
         ("room_memory_deliveries", ("outbox_id", "attempt_number")),
+        ("room_memory_message_outbox", ("activity_id",)),
+        ("room_memory_message_outbox", ("external_id",)),
+        ("room_memory_message_deliveries", ("message_outbox_id", "attempt_number")),
         ("room_memory_attempt_receipts", ("attempt_id",)),
         ("room_memory_rebuild_actions", ("client_action_id",)),
         (
@@ -750,6 +820,11 @@ ROOM_REQUIRED_UNIQUE_KEYS = frozenset(
             ("participant_id", "operator_identity", "client_action_id"),
         ),
         ("room_codex_bridge_actions", ("participant_id", "control_seq")),
+        ("room_codex_goal_intents", ("participant_id", "scope")),
+        (
+            "room_codex_goal_recoveries",
+            ("participant_id", "intent_revision", "target_session_guard"),
+        ),
     }
 )
 

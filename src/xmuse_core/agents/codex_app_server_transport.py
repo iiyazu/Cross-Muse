@@ -24,6 +24,8 @@ from xmuse_core.agents.protocol import StdoutMessage
 
 APP_SERVER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _APP_SERVER_WAIT_HEARTBEAT_INTERVAL_S = 5.0
+_ROOM_MCP_READY_TIMEOUT_S = 15.0
+_ROOM_MCP_TOOL_NAME = "chat_room_submit_outcome"
 _ROOM_DISABLED_CODEX_FEATURES = (
     "apps",
     "plugins",
@@ -284,9 +286,9 @@ class CodexAppServerTransport:
         self._mcp_port = mcp_port
         self._codex_command = codex_command
         self._reasoning_effort = _normalize_effort(reasoning_effort)
-        if enable_mcp is not True:
-            raise ValueError("Room Codex transport requires Room MCP")
-        self._enable_mcp = True
+        if not isinstance(enable_mcp, bool):
+            raise TypeError("enable_mcp must be a bool")
+        self._enable_mcp = enable_mcp
         self._mcp_path = _normalize_mcp_path(mcp_path)
         if not isinstance(sandbox_profile, CodexSandboxProfile):
             raise TypeError("sandbox_profile must be a CodexSandboxProfile")
@@ -313,6 +315,9 @@ class CodexAppServerTransport:
         self._native_active_turn_id: str | None = None
         self._native_idle = asyncio.Event()
         self._native_idle.set()
+        self._mcp_startup_done = asyncio.Event()
+        self._mcp_ready = False
+        self._mcp_failure_code: str | None = None
         self._native_catalog: NativeModelCatalog | None = None
         self._native_state_stream: AppServerEventStream | None = None
         self._native_state_task: asyncio.Task[None] | None = None
@@ -321,6 +326,9 @@ class CodexAppServerTransport:
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
             return
+        self._mcp_startup_done.clear()
+        self._mcp_ready = False
+        self._mcp_failure_code = None
         process_kwargs: dict[str, Any] = {
             "stdin": asyncio.subprocess.PIPE,
             "stdout": asyncio.subprocess.PIPE,
@@ -350,6 +358,8 @@ class CodexAppServerTransport:
             )
             if self._resume_thread_id is None:
                 await self._start_thread()
+                if self._enable_mcp:
+                    await self._wait_for_room_mcp()
                 return
             try:
                 response = await self._request(
@@ -360,6 +370,8 @@ class CodexAppServerTransport:
                 if exc.code != "codex_app_server_thread_not_found":
                     raise
                 await self._start_thread()
+                if self._enable_mcp:
+                    await self._wait_for_room_mcp()
                 return
             thread = response.get("thread") if isinstance(response, dict) else None
             thread_id = _clean_text(thread.get("id")) if isinstance(thread, dict) else None
@@ -369,6 +381,8 @@ class CodexAppServerTransport:
                 raise RuntimeError("codex app-server thread/resume returned mismatched thread id")
             self._thread_id = thread_id
             self._record_thread_settings(response)
+            if self._enable_mcp:
+                await self._reload_and_prove_room_mcp_after_resume()
         except BaseException:
             try:
                 await asyncio.shield(self.shutdown())
@@ -392,6 +406,8 @@ class CodexAppServerTransport:
 
     async def send_typed(self, msg_type: str, **kwargs: object) -> None:
         await self.start()
+        if msg_type == "room_observation" and not self._enable_mcp:
+            raise RuntimeError("codex_native_session_room_delivery_forbidden")
         if self._thread_id is None:
             raise RuntimeError("codex app-server thread is not initialized")
         if self._active_accumulator is not None:
@@ -448,6 +464,85 @@ class CodexAppServerTransport:
                 )
             except TimeoutError:
                 continue
+
+    async def _wait_for_room_mcp(self) -> None:
+        """Do not start a Room turn before its sole MCP surface is ready.
+
+        ``thread/start`` is acknowledged before Codex finishes initializing MCP
+        servers.  Starting a Room observation in that window lets a fast model
+        produce a non-authoritative final message without ever seeing the only
+        durable outcome tool.  The app-server notification is the per-session
+        readiness proof; Workroom's process-level health remains a separate
+        guard.  Test doubles that do not create a connection retain the old
+        startup behavior.
+        """
+
+        if self._native_state_task is None:
+            return
+        try:
+            await asyncio.wait_for(
+                self._mcp_startup_done.wait(),
+                timeout=_ROOM_MCP_READY_TIMEOUT_S,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError("codex_app_server_mcp_not_ready") from exc
+        if not self._mcp_ready:
+            raise RuntimeError(self._mcp_failure_code or "codex_app_server_mcp_not_ready")
+
+    async def _reload_and_prove_room_mcp_after_resume(self) -> None:
+        """Rebind the sole Room tool after resuming a persisted Codex thread.
+
+        Codex can acknowledge ``thread/resume`` while retaining a stale MCP
+        registry from the previous app-server incarnation. A later Room turn
+        must not fall back to code-mode tool spelling, so reload the configured
+        servers and prove the exact tool before publishing the session.
+        """
+
+        # Test doubles which do not create a connection cannot receive startup
+        # notifications. Real app-server sessions always have this task.
+        if self._native_state_task is None:
+            await self._wait_for_room_mcp()
+            return
+        self._mcp_startup_done.clear()
+        self._mcp_ready = False
+        self._mcp_failure_code = None
+        try:
+            # Codex 0.144's schema declares this request's params as null (and
+            # optional), not an empty object.  Omitting params keeps the wire
+            # request accepted by strict app-server implementations.
+            await self._request("config/mcpServer/reload", None)
+        except Exception as exc:
+            raise RuntimeError("codex_app_server_mcp_reload_failed") from exc
+        await self._wait_for_room_mcp()
+        await self._prove_room_mcp_tool()
+
+    async def _prove_room_mcp_tool(self) -> None:
+        if self._thread_id is None:
+            raise RuntimeError("codex_app_server_mcp_tool_missing")
+        try:
+            response = await self._request(
+                "mcpServerStatus/list",
+                {
+                    "threadId": self._thread_id,
+                    "detail": "toolsAndAuthOnly",
+                    "limit": 16,
+                },
+            )
+        except Exception as exc:
+            raise RuntimeError("codex_app_server_mcp_tool_probe_failed") from exc
+        servers = response.get("data") if isinstance(response, dict) else None
+        if not isinstance(servers, list):
+            raise RuntimeError("codex_app_server_mcp_tool_missing")
+        room_servers = [
+            server
+            for server in servers
+            if isinstance(server, dict) and server.get("name") == "xmuse-room"
+        ]
+        if len(room_servers) != 1:
+            raise RuntimeError("codex_app_server_mcp_tool_missing")
+        tools = room_servers[0].get("tools")
+        if not isinstance(tools, dict) or set(tools) != {_ROOM_MCP_TOOL_NAME}:
+            raise RuntimeError("codex_app_server_mcp_tool_missing")
 
     def active_latency_stages(self) -> dict[str, dict[str, float]]:
         if self._active_accumulator is None:
@@ -641,6 +736,8 @@ class CodexAppServerTransport:
                     ]
                 )
             command[2:2] = mcp_configuration
+        elif isolated_room:
+            command[2:2] = ["-c", "mcp_servers={}"]
         return command
 
     def _process_environment(self) -> dict[str, str] | None:
@@ -686,7 +783,7 @@ class CodexAppServerTransport:
             "sandboxPolicy": self._sandbox_profile.turn_sandbox_policy(),
         }
 
-    async def _request(self, method: str, params: dict[str, Any]) -> Any:
+    async def _request(self, method: str, params: Mapping[str, Any] | None) -> Any:
         try:
             return await self._ensure_connection().request(method, params)
         except AppServerConnectionError as exc:
@@ -779,6 +876,17 @@ class CodexAppServerTransport:
         params = message.get("params")
         if not isinstance(method, str) or not isinstance(params, dict):
             return
+        if method == "mcpServer/startupStatus/updated":
+            server_name = _clean_text(params.get("name")) or _clean_text(params.get("serverName"))
+            if server_name == "xmuse-room":
+                status = _clean_text(params.get("status"))
+                if status == "ready":
+                    self._mcp_ready = True
+                    self._mcp_startup_done.set()
+                elif status in {"failed", "cancelled"}:
+                    self._mcp_failure_code = "codex_app_server_mcp_startup_failed"
+                    self._mcp_startup_done.set()
+            return
         if method == "thread/settings/updated":
             settings = params.get("threadSettings")
             if isinstance(settings, dict):
@@ -833,6 +941,14 @@ class CodexAppServerTransport:
         )
 
     def _base_instructions(self) -> str:
+        if not self._enable_mcp:
+            return (
+                f"You are {self._display_name}, the participant-owned Codex workbench "
+                f"session for role {self._role}. Native Goal, Plan, review, settings, "
+                "and console activity here are not Room speech and cannot commit a Room "
+                "outcome. Infrastructure keeps Room delivery in a separate read-only "
+                "session bound to the same participant identity."
+            )
         return (
             f"You are {self._display_name}, a persistent xmuse room participant "
             f"with role {self._role}. Observe shared room events and decide "

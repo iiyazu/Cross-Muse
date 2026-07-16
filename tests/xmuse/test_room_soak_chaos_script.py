@@ -983,6 +983,9 @@ def test_provider_recovery_proof_keeps_private_identity_and_requires_exact_actio
                         "god_session_id": "god-stable",
                         "conversation_id": "conv-room",
                         "participant_id": "participant-target",
+                        "feature_scope_id": "room_delivery_v1",
+                        "provider_session_id": "thread-after",
+                        "provider_binding_status": "active",
                     }
                 ]
             }
@@ -993,12 +996,13 @@ def test_provider_recovery_proof_keeps_private_identity_and_requires_exact_actio
         conversation_id="conv-room",
         participant_id="participant-target",
         god_session_id="god-stable",
+        provider_session_id_before="thread-before",
         session_guard_before="sha256:" + "a" * 64,
     )
     target_view = {
         "native_snapshot": {
             "value": {
-                "guards": {"session": "sha256:" + "b" * 64},
+                "guards": {"session": "sha256:" + "a" * 64},
             }
         }
     }
@@ -1011,7 +1015,11 @@ def test_provider_recovery_proof_keeps_private_identity_and_requires_exact_actio
         ],
     )
     assert target[:2] == ("conv-room", "participant-target")
-    assert identity == {"god_identity_unchanged": 1, "session_guard_changed": 1}
+    assert identity == {
+        "god_identity_unchanged": 1,
+        "delivery_provider_rebound": 1,
+        "native_session_guard_unchanged": 1,
+    }
     assert "god-stable" not in json.dumps(identity)
 
     with sqlite3.connect(runtime / "chat.db") as conn:
@@ -1048,6 +1056,9 @@ def test_provider_recovery_proof_rejects_unchanged_guard_and_duplicate_action(
                         "god_session_id": "god-stable",
                         "conversation_id": "conv-room",
                         "participant_id": "participant-target",
+                        "feature_scope_id": "room_delivery_v1",
+                        "provider_session_id": "thread-before",
+                        "provider_binding_status": "active",
                     }
                 ]
             }
@@ -1059,9 +1070,10 @@ def test_provider_recovery_proof_rejects_unchanged_guard_and_duplicate_action(
         conversation_id="conv-room",
         participant_id="participant-target",
         god_session_id="god-stable",
+        provider_session_id_before="thread-before",
         session_guard_before=guard,
     )
-    with pytest.raises(soak.SoakError, match="soak_provider_recovery_session_guard_unchanged"):
+    with pytest.raises(soak.SoakError, match="soak_provider_recovery_delivery_session_unchanged"):
         soak._prove_provider_recovery_identity(
             runtime,
             proof,
@@ -1195,7 +1207,7 @@ def test_goal_native_coverage_does_not_require_recovered_session_to_steer(
                                 {
                                     "id": "model-one",
                                     "model": "model-one",
-                                    "efforts": ["max", "high"],
+                                    "efforts": ["max", "high", "medium"],
                                 }
                             ]
                         }
@@ -1253,6 +1265,7 @@ def test_goal_native_coverage_does_not_require_recovered_session_to_steer(
             conversation_id=recovered[0],
             participant_id=recovered[1],
             god_session_id="god-stable",
+            provider_session_id_before="thread-before",
             session_guard_before="sha256:" + "a" * 64,
         ),
     )
@@ -1287,6 +1300,76 @@ def test_goal_native_coverage_does_not_require_recovered_session_to_steer(
     assert state.goal_memory_evidence["goal_auto_continuations"] == 1
 
 
+def test_post_cache_native_evidence_uses_one_non_goal_participant_per_room(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(tmp_path)
+    deps = _FakeSystem(repo).dependencies()
+    rooms = [f"conv-{index}" for index in range(4)]
+    participants = [
+        (room, f"participant-{room_index}-{agent_index}")
+        for room_index, room in enumerate(rooms)
+        for agent_index in range(2)
+    ]
+    goal_target = participants[0]
+    calls: list[tuple[str, str, str]] = []
+
+    def invoke(
+        _config: object,
+        _deps: object,
+        conversation_id: str,
+        participant_id: str,
+        capability_id: str,
+        _request: Mapping[str, Any],
+        **_kwargs: object,
+    ) -> dict[str, Any]:
+        calls.append((conversation_id, participant_id, capability_id))
+        return {}
+
+    monkeypatch.setattr(soak, "_invoke_native_action", invoke)
+    projection_calls: dict[str, int] = {}
+
+    def projection(_deps: object, conversation_id: str) -> dict[str, Any]:
+        projection_calls[conversation_id] = projection_calls.get(conversation_id, 0) + 1
+        participant_id = next(
+            item[1] for item in participants if item[0] == conversation_id and item != goal_target
+        )
+        return {
+            "native_events": {
+                "latest_event_seq": 10,
+                "items": [
+                    {"kind": kind, "participant_id": participant_id, "event_seq": 11 + index}
+                    for index, kind in enumerate(soak.REQUIRED_NATIVE_EVENT_KINDS)
+                ],
+            }
+        }
+
+    monkeypatch.setattr(
+        soak,
+        "_codex_projection",
+        projection,
+    )
+    state = soak._LiveState(
+        room_ids=rooms,
+        goal_memory_evidence={
+            "participants": participants,
+            "goal_room": goal_target[0],
+            "goal_participant": goal_target[1],
+        },
+    )
+
+    soak._rebuild_native_event_evidence_after_cache_reset(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.GOAL_MEMORY_PROFILE_ID),
+        deps,
+        state,
+    )
+
+    assert len(calls) == len(rooms)
+    assert {item[0] for item in calls} == set(rooms)
+    assert all(item[2] == "console_turn_start" for item in calls)
+    assert goal_target not in {(item[0], item[1]) for item in calls}
+
+
 def test_provider_recovery_requires_durable_cleanup_proof(tmp_path: Path) -> None:
     database = tmp_path / "chat.db"
     connection = sqlite3.connect(database)
@@ -1307,6 +1390,96 @@ def test_provider_recovery_requires_durable_cleanup_proof(tmp_path: Path) -> Non
     connection.commit()
     connection.close()
     assert soak._provider_cleanup_confirmed(database, "attempt")
+
+
+def test_goal_model_combinations_exclude_models_not_supported_in_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    (tmp_path / "models_cache.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"slug": "room-safe", "supported_in_api": True},
+                    {"slug": "room-unsafe", "supported_in_api": False},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    combinations = soak._goal_model_combinations(
+        [
+            {"id": "room-safe", "model": "room-safe", "efforts": ["max", "medium"]},
+            {"id": "room-unsafe", "model": "room-unsafe", "efforts": ["max", "medium"]},
+            {"id": "unknown", "model": "unknown", "efforts": ["max"]},
+        ]
+    )
+
+    assert combinations == [
+        ("room-safe", "room-safe", "max"),
+        ("unknown", "unknown", "max"),
+        ("room-safe", "room-safe", "medium"),
+    ]
+
+
+def test_goal_model_combinations_prefer_runtime_scoped_codex_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "host-codex"))
+    host_cache = tmp_path / "host-codex" / "models_cache.json"
+    host_cache.parent.mkdir()
+    host_cache.write_text(
+        json.dumps({"models": [{"slug": "room-model", "supported_in_api": True}]}),
+        encoding="utf-8",
+    )
+    runtime_cache = tmp_path / "runtime" / "room-codex-home" / "models_cache.json"
+    runtime_cache.parent.mkdir(parents=True)
+    runtime_cache.write_text(
+        json.dumps({"models": [{"slug": "room-model", "supported_in_api": False}]}),
+        encoding="utf-8",
+    )
+
+    assert (
+        soak._goal_model_combinations(
+            [{"id": "room-model", "model": "room-model", "efforts": ["max"]}],
+            runtime_root=tmp_path,
+        )
+        == []
+    )
+
+
+def test_goal_participant_prefers_bounded_effort_over_max_assignment() -> None:
+    assignments = [
+        ("room-a", "participant-a", "gpt-5.6-sol", "max"),
+        ("room-b", "participant-b", "gpt-5.6-terra", "max"),
+        ("room-c", "participant-c", "gpt-5.4", "low"),
+        ("room-d", "participant-d", "gpt-5.6-luna", "medium"),
+    ]
+
+    selected = soak._select_goal_participant(
+        assignments,
+        (
+            ("room-a", "participant-a"),
+            ("room-b", "participant-b"),
+            ("room-d", "participant-d"),
+        ),
+    )
+
+    assert selected == ("room-c", "participant-c", "gpt-5.4", "low")
+
+
+def test_goal_participant_fails_closed_without_bounded_effort() -> None:
+    with pytest.raises(soak.SoakError, match="soak_codex_goal_participant_unavailable"):
+        soak._select_goal_participant(
+            [
+                ("room-a", "participant-a", "gpt-5.6-sol", "max"),
+                ("room-b", "participant-b", "gpt-5.6-terra", "high"),
+            ],
+            (),
+        )
 
 
 def test_runtime_provider_discovery_owns_only_runner_descendants(
@@ -1348,6 +1521,106 @@ def test_runtime_provider_discovery_owns_only_runner_descendants(
     )
 
     assert soak._runtime_provider_pids(tmp_path) == (150, 201, 202)
+
+
+def test_full_local_preflight_copies_proven_cache_and_runs_offline(tmp_path: Path) -> None:
+    source = tmp_path / "proven-cache"
+    blobs = source / "models--qdrant--bge-small-en-v1.5-onnx-q" / "blobs"
+    snapshot = source / "models--qdrant--bge-small-en-v1.5-onnx-q" / "snapshots" / "revision"
+    blobs.mkdir(parents=True)
+    snapshot.mkdir(parents=True)
+    (blobs / "model").write_bytes(b"proved-model")
+    (snapshot / "model_optimized.onnx").symlink_to("../../blobs/model")
+    executable = tmp_path / "memoryos-venv" / "memoryos"
+    python = executable.parent / "python"
+    executable.parent.mkdir()
+    executable.write_text("", encoding="utf-8")
+    python.write_text("", encoding="utf-8")
+    python.chmod(0o700)
+    captured: dict[str, object] = {}
+
+    def run(command, *, cwd, env, timeout_s):
+        captured.update(command=command, cwd=cwd, env=env, timeout_s=timeout_s)
+        return soak.CommandResult(0)
+
+    runtime_root = tmp_path / "runtime-root"
+    soak._prepare_full_local_memory_cache(
+        soak.SoakConfig(
+            repo_root=tmp_path,
+            profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+            memoryos_executable=executable,
+        ),
+        soak.SoakDependencies(run=run),
+        runtime_root,
+        {soak.SOAK_FASTEMBED_CACHE_SOURCE_ENV: str(source)},
+    )
+
+    copied = runtime_root / "runtime" / "fastembed-cache"
+    assert (copied / snapshot.relative_to(source) / "model_optimized.onnx").is_symlink()
+    assert (copied / snapshot.relative_to(source) / "model_optimized.onnx").read_bytes() == (
+        b"proved-model"
+    )
+    proof_env = captured["env"]
+    assert isinstance(proof_env, dict)
+    assert proof_env["HF_HUB_OFFLINE"] == "1"
+    assert proof_env["TRANSFORMERS_OFFLINE"] == "1"
+    assert proof_env["MEMORYOS_FASTEMBED_OFFLINE"] == "1"
+
+
+def test_full_local_preflight_fails_closed_without_cache_source(tmp_path: Path) -> None:
+    executable = tmp_path / "memoryos-venv" / "memoryos"
+    python = executable.parent / "python"
+    executable.parent.mkdir()
+    executable.write_text("", encoding="utf-8")
+    python.write_text("", encoding="utf-8")
+    python.chmod(0o700)
+
+    with pytest.raises(soak.SoakError, match="soak_memoryos_fastembed_cache_source_required"):
+        soak._prepare_full_local_memory_cache(
+            soak.SoakConfig(
+                repo_root=tmp_path,
+                profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+                memoryos_executable=executable,
+            ),
+            soak.SoakDependencies(),
+            tmp_path / "runtime-root",
+            {},
+        )
+
+
+def test_provider_fault_identity_selects_only_room_delivery_scope(tmp_path: Path) -> None:
+    (tmp_path / "god_sessions.json").write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "god_session_id": "god-native",
+                        "conversation_id": "conv-1",
+                        "participant_id": "part-1",
+                        "feature_scope_id": "room_native_v1",
+                    },
+                    {
+                        "god_session_id": "god-delivery",
+                        "conversation_id": "conv-1",
+                        "participant_id": "part-1",
+                        "feature_scope_id": "room_delivery_v1",
+                        "provider_session_id": "thread-delivery",
+                        "provider_binding_status": "active",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        soak._registered_god_session_id(
+            tmp_path,
+            conversation_id="conv-1",
+            participant_id="part-1",
+        )
+        == "god-delivery"
+    )
 
 
 def test_provider_fault_never_signals_unowned_or_reused_pid(
@@ -1800,7 +2073,7 @@ def test_goal_native_continuation_and_peer_wait_are_projection_proven() -> None:
         "mode": "default",
     }
     goal_request = soak._goal_native_request()
-    assert goal_request["token_budget"] == 100_000
+    assert goal_request["token_budget"] == 1_000_000
     assert 0 < len(str(goal_request["objective"])) <= 4_000
     native = {
         "native_events": {
@@ -2458,6 +2731,8 @@ def test_goal_browser_item_and_top_digests_are_independently_verified(tmp_path: 
             "http_5xx_count": 0,
             "native_snapshot_count": 8,
             "native_capabilities_count": 8,
+            "native_event_count": 32,
+            "native_event_kind_count": 4,
             "history_partial_count": 8,
         }
         viewports[key] = {**numeric, "digest": soak._canonical_digest_json(numeric)}

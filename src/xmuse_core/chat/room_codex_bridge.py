@@ -35,6 +35,14 @@ ActionExecutionStage = Literal[
     "dispatching",
     "completed",
 ]
+GoalIntentState = Literal["active", "paused", "cleared"]
+GoalRecoveryPhase = Literal[
+    "requested",
+    "goal_dispatching",
+    "pause_dispatching",
+    "applied",
+    "result_unknown",
+]
 _HOLD_STATES = frozenset(
     {
         "reconciling",
@@ -547,6 +555,13 @@ class RoomCodexBridgeStore:
                     generation,
                 ),
             )
+            if status == "applied" and str(row["capability_id"]) in {
+                "goal_set",
+                "goal_pause",
+                "goal_resume",
+                "goal_clear",
+            }:
+                _apply_goal_intent_conn(conn, row, stamp)
             _append_projection_event(conn, str(row["conversation_id"]), action, "action", stamp)
             updated = _action_row(conn, action)
             conn.commit()
@@ -560,10 +575,329 @@ class RoomCodexBridgeStore:
             ).fetchone()
         return row is not None and row["state"] == "accepting"
 
+    def get_goal_intent(
+        self, participant_id: str, *, scope: str = "room_native_v1"
+    ) -> dict[str, object] | None:
+        if scope != "room_native_v1":
+            raise RoomCodexBridgeError("codex_native_goal_scope_invalid")
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            row = conn.execute(
+                """select * from room_codex_goal_intents
+                   where participant_id = ? and scope = ?""",
+                (participant_id, scope),
+            ).fetchone()
+        return _goal_intent_view(row) if row is not None else None
+
+    def begin_goal_recovery(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        intent_revision: int,
+        target_session_guard: str,
+        reason_code: str | None = None,
+    ) -> dict[str, object]:
+        if (
+            isinstance(intent_revision, bool)
+            or not isinstance(intent_revision, int)
+            or intent_revision < 0
+        ):
+            raise RoomCodexBridgeError("codex_native_goal_revision_invalid")
+        guard = _guard(target_session_guard, required=True)
+        assert guard is not None
+        _identifier(participant_id, "codex_native_participant_invalid", 128)
+        stamp = _timestamp()
+        with RoomDatabase(self._path).connect() as conn:
+            conn.execute("begin immediate")
+            _participant(conn, conversation_id, participant_id)
+            intent = conn.execute(
+                """select revision, desired_state, recoverable from room_codex_goal_intents
+                   where participant_id = ? and scope = 'room_native_v1'""",
+                (participant_id,),
+            ).fetchone()
+            if (
+                intent is None
+                or int(intent["revision"]) != intent_revision
+                or not bool(intent["recoverable"])
+                or intent["desired_state"] not in {"active", "paused"}
+            ):
+                raise RoomCodexBridgeError("codex_native_goal_intent_revision_conflict")
+            recovery_id = f"codex_goal_recovery_{uuid.uuid4().hex}"
+            conn.execute(
+                """insert into room_codex_goal_recoveries
+                   (recovery_id, conversation_id, participant_id, intent_revision,
+                    target_session_guard, phase, reason_code, requested_at, updated_at)
+                   values (?, ?, ?, ?, ?, 'requested', ?, ?, ?)
+                   on conflict(participant_id, intent_revision, target_session_guard)
+                   do nothing""",
+                (
+                    recovery_id,
+                    conversation_id,
+                    participant_id,
+                    intent_revision,
+                    guard,
+                    reason_code,
+                    stamp,
+                    stamp,
+                ),
+            )
+            row = conn.execute(
+                """select * from room_codex_goal_recoveries
+                   where participant_id = ? and intent_revision = ?
+                     and target_session_guard = ?""",
+                (participant_id, intent_revision, guard),
+            ).fetchone()
+            assert row is not None
+            conn.commit()
+        return _goal_recovery_view(row)
+
+    def advance_goal_recovery(
+        self,
+        *,
+        recovery_id: str,
+        phase: GoalRecoveryPhase,
+        reason_code: str | None = None,
+    ) -> dict[str, object]:
+        recovery = _identifier(recovery_id, "codex_native_goal_recovery_invalid", 128)
+        if phase not in {
+            "requested",
+            "goal_dispatching",
+            "pause_dispatching",
+            "applied",
+            "result_unknown",
+        }:
+            raise RoomCodexBridgeError("codex_native_goal_recovery_phase_invalid")
+        stamp = _timestamp()
+        with RoomDatabase(self._path).connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select * from room_codex_goal_recoveries where recovery_id = ?",
+                (recovery,),
+            ).fetchone()
+            if row is None:
+                raise RoomCodexBridgeError("codex_native_goal_recovery_not_found")
+            current = str(row["phase"])
+            if current != phase:
+                allowed = {
+                    "requested": {"goal_dispatching", "pause_dispatching"},
+                    "goal_dispatching": {"pause_dispatching", "applied", "result_unknown"},
+                    "pause_dispatching": {"applied", "result_unknown"},
+                    "applied": set(),
+                    "result_unknown": set(),
+                }
+                if phase not in allowed[current]:
+                    raise RoomCodexBridgeError("codex_native_goal_recovery_phase_conflict")
+                conn.execute(
+                    """update room_codex_goal_recoveries set phase = ?, reason_code = ?,
+                       completed_at = ?, updated_at = ? where recovery_id = ?""",
+                    (
+                        phase,
+                        reason_code,
+                        stamp if phase in {"applied", "result_unknown"} else None,
+                        stamp,
+                        recovery,
+                    ),
+                )
+            updated = conn.execute(
+                "select * from room_codex_goal_recoveries where recovery_id = ?",
+                (recovery,),
+            ).fetchone()
+            assert updated is not None
+            conn.commit()
+        return _goal_recovery_view(updated)
+
+    def complete_goal_recovery(
+        self,
+        *,
+        recovery_id: str,
+        applied: bool,
+        reason_code: str | None = None,
+    ) -> dict[str, object]:
+        return self.advance_goal_recovery(
+            recovery_id=recovery_id,
+            phase="applied" if applied else "result_unknown",
+            reason_code=reason_code,
+        )
+
+    def list_goal_recoveries(
+        self, participant_id: str, *, limit: int = 20
+    ) -> list[dict[str, object]]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise RoomCodexBridgeError("codex_native_goal_recovery_limit_invalid")
+        with RoomDatabase(self._path).connect(readonly=True) as conn:
+            rows = conn.execute(
+                """select * from room_codex_goal_recoveries
+                   where participant_id = ? order by requested_at desc limit ?""",
+                (participant_id, limit),
+            ).fetchall()
+        return [_goal_recovery_view(row) for row in rows]
+
+    def observe_goal_snapshot(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        session_guard: str,
+        status: Literal[
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete",
+            "cleared",
+            "none",
+        ],
+    ) -> dict[str, object] | None:
+        """Record a provider Goal snapshot without inferring intent from cache."""
+
+        guard = _guard(session_guard, required=True)
+        assert guard is not None
+        if status not in {
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete",
+            "cleared",
+            "none",
+        }:
+            raise RoomCodexBridgeError("codex_native_goal_snapshot_status_invalid")
+        stamp = _timestamp()
+        with RoomDatabase(self._path).connect() as conn:
+            conn.execute("begin immediate")
+            _participant(conn, conversation_id, participant_id)
+            hold = _hold_row(conn, participant_id)
+            if hold["conversation_id"] != conversation_id or hold["session_guard"] != guard:
+                raise RoomCodexBridgeError("codex_native_session_guard_conflict")
+            row = conn.execute(
+                """select * from room_codex_goal_intents
+                   where participant_id = ? and scope = 'room_native_v1'""",
+                (participant_id,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            conn.execute(
+                """update room_codex_goal_intents set observed_status = ?, recoverable = ?,
+                   last_applied_session_guard = ?, updated_at = ? where participant_id = ?
+                   and scope = 'room_native_v1'""",
+                (
+                    status,
+                    (
+                        1
+                        if status in {"active", "paused"}
+                        and bool(str(row["objective"]).strip())
+                        and row["token_budget"] is not None
+                        else 0
+                    ),
+                    guard,
+                    stamp,
+                    participant_id,
+                ),
+            )
+            updated = conn.execute(
+                """select * from room_codex_goal_intents
+                   where participant_id = ? and scope = 'room_native_v1'""",
+                (participant_id,),
+            ).fetchone()
+            assert updated is not None
+            conn.commit()
+        return _goal_intent_view(updated)
+
 
 def opaque_guard(*parts: str) -> str:
     canonical = "\0".join(parts).encode("utf-8")
     return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def _apply_goal_intent_conn(conn: sqlite3.Connection, action: sqlite3.Row, stamp: str) -> None:
+    """Commit a Goal intent only alongside its applied native action."""
+
+    capability = str(action["capability_id"])
+    participant_id = str(action["participant_id"])
+    conversation_id = str(action["conversation_id"])
+    try:
+        request = json.loads(str(action["request_json"]))
+    except (TypeError, ValueError) as exc:
+        raise RoomCodexBridgeError("codex_native_goal_intent_request_invalid") from exc
+    if not isinstance(request, dict):
+        raise RoomCodexBridgeError("codex_native_goal_intent_request_invalid")
+    prior = conn.execute(
+        """select * from room_codex_goal_intents
+           where participant_id = ? and scope = 'room_native_v1'""",
+        (participant_id,),
+    ).fetchone()
+    if capability == "goal_set":
+        objective = request.get("objective")
+        token_budget = request.get("token_budget")
+        if (
+            not isinstance(objective, str)
+            or not objective.strip()
+            or len(objective.encode("utf-8")) > 4096
+            or isinstance(token_budget, bool)
+            or not isinstance(token_budget, int)
+            or token_budget <= 0
+        ):
+            raise RoomCodexBridgeError("codex_native_goal_intent_request_invalid")
+        desired: GoalIntentState = "active"
+    elif capability == "goal_pause":
+        desired = "paused"
+        objective = str(prior["objective"]) if prior is not None else ""
+        token_budget = (
+            int(prior["token_budget"]) if prior is not None and prior["token_budget"] else None
+        )
+    elif capability == "goal_resume":
+        desired = "active"
+        objective = str(prior["objective"]) if prior is not None else ""
+        token_budget = (
+            int(prior["token_budget"]) if prior is not None and prior["token_budget"] else None
+        )
+    else:
+        desired = "cleared"
+        objective = ""
+        token_budget = None
+    revision = int(prior["revision"]) + 1 if prior is not None else 1
+    intent_id = (
+        str(prior["intent_id"]) if prior is not None else f"codex_goal_intent_{uuid.uuid4().hex}"
+    )
+    recoverable = (
+        desired in {"active", "paused"}
+        and bool(str(objective).strip())
+        and token_budget is not None
+    )
+    conn.execute(
+        """insert into room_codex_goal_intents
+           (intent_id, conversation_id, participant_id, scope, revision, desired_state,
+            objective, token_budget, last_applied_session_guard, observed_status,
+            recoverable, created_at, updated_at)
+           values (?, ?, ?, 'room_native_v1', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           on conflict(participant_id, scope) do update set
+             conversation_id = excluded.conversation_id,
+             revision = excluded.revision,
+             desired_state = excluded.desired_state,
+             objective = excluded.objective,
+             token_budget = excluded.token_budget,
+             last_applied_session_guard = excluded.last_applied_session_guard,
+             observed_status = excluded.observed_status,
+             recoverable = excluded.recoverable,
+             updated_at = excluded.updated_at""",
+        (
+            intent_id,
+            conversation_id,
+            participant_id,
+            revision,
+            desired,
+            objective,
+            token_budget,
+            action["expected_session_guard"],
+            "active" if desired == "active" else "paused" if desired == "paused" else "cleared",
+            1 if recoverable else 0,
+            str(prior["created_at"]) if prior is not None else stamp,
+            stamp,
+        ),
+    )
 
 
 def _participant(
@@ -721,6 +1055,39 @@ def _action_view(row: sqlite3.Row, *, include_request: bool) -> dict[str, object
     if include_request:
         result["safe_request"] = json.loads(row["request_json"])
     return result
+
+
+def _goal_intent_view(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "intent_id": row["intent_id"],
+        "conversation_id": row["conversation_id"],
+        "participant_id": row["participant_id"],
+        "scope": row["scope"],
+        "revision": int(row["revision"]),
+        "desired_state": row["desired_state"],
+        "objective": row["objective"],
+        "token_budget": int(row["token_budget"]) if row["token_budget"] is not None else None,
+        "last_applied_session_guard": row["last_applied_session_guard"],
+        "observed_status": row["observed_status"],
+        "recoverable": bool(row["recoverable"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _goal_recovery_view(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "recovery_id": row["recovery_id"],
+        "conversation_id": row["conversation_id"],
+        "participant_id": row["participant_id"],
+        "intent_revision": int(row["intent_revision"]),
+        "target_session_guard": row["target_session_guard"],
+        "phase": row["phase"],
+        "reason_code": row["reason_code"],
+        "requested_at": row["requested_at"],
+        "completed_at": row["completed_at"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def _append_projection_event(

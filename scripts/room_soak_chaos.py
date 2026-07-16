@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 FRONTEND_URL = "http://127.0.0.1:3000"
 CHAT_API_BASE_URL = "http://127.0.0.1:8201/api/chat"
@@ -49,6 +49,7 @@ GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
 GOAL_BROWSER_CONSUMER = "g9_live_goal_memory_soak"
 CLI_ERROR_SCHEMA = "room_soak_chaos_cli_error/v1"
 CLI_ERROR_PROOF_BOUNDARY = "cli_failure_before_complete_soak_evidence"
+FROZEN_MEMORYOS_BASE = "1b9d5dad7e3ba944fb668d8d87e364a06e0b20ef"
 REQUIRED_SERVICES = ("frontend", "chat_api", "room_runner", "room_mcp")
 MAX_HTTP_RESPONSE_BYTES = 1024 * 1024
 MAX_ACTIVE_PROVIDER_DELIVERIES = 4
@@ -57,6 +58,13 @@ MAX_FAULT_RECOVERY_MS = 45_000
 GOAL_PEER_OUTCOME_TIMEOUT_S = 240.0
 CLEANUP_PROVIDER_TIMEOUT_S = 10.0
 RESOURCE_SAMPLE_INTERVAL_MS = 1_000
+FULL_LOCAL_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+SOAK_FASTEMBED_CACHE_SOURCE_ENV = "XMUSE_SOAK_FASTEMBED_CACHE_SOURCE"
+MAX_FASTEMBED_CACHE_ENTRIES = 1_024
+MAX_FASTEMBED_CACHE_BYTES = 256 * 1024 * 1024
+REQUIRED_NATIVE_EVENT_KINDS = frozenset(
+    {"turn_started", "item_completed", "token_usage_updated", "turn_completed"}
+)
 
 
 @dataclass(frozen=True)
@@ -503,7 +511,24 @@ def _registered_god_session_id(
     *,
     conversation_id: str,
     participant_id: str,
+    feature_scope_id: str = "room_delivery_v1",
 ) -> str | None:
+    binding = _registered_god_session_private_binding(
+        runtime_root,
+        conversation_id=conversation_id,
+        participant_id=participant_id,
+        feature_scope_id=feature_scope_id,
+    )
+    return binding[0] if binding is not None else None
+
+
+def _registered_god_session_private_binding(
+    runtime_root: Path,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    feature_scope_id: str = "room_delivery_v1",
+) -> tuple[str, str] | None:
     try:
         payload = json.loads((runtime_root / "god_sessions.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -512,12 +537,15 @@ def _registered_god_session_id(
     if not isinstance(sessions, list):
         return None
     matches = [
-        str(item["god_session_id"])
+        (str(item["god_session_id"]), str(item["provider_session_id"]))
         for item in sessions
         if isinstance(item, Mapping)
         and item.get("conversation_id") == conversation_id
         and item.get("participant_id") == participant_id
+        and item.get("feature_scope_id") == feature_scope_id
         and _safe_id(item.get("god_session_id"))
+        and _safe_id(item.get("provider_session_id"))
+        and item.get("provider_binding_status") == "active"
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -776,6 +804,7 @@ class _ProviderRecoveryProof:
     conversation_id: str
     participant_id: str
     god_session_id: str
+    provider_session_id_before: str
     session_guard_before: str
 
 
@@ -1111,7 +1140,12 @@ def _goal_native_request() -> dict[str, str | int]:
             "checkpoint, but keep the Goal active so the external pause/resume and Room delivery "
             "hold can be verified before completion."
         ),
-        "token_budget": 100000,
+        # The acceptance Goal must survive all four fixed waves and the
+        # recovery hold.  Codex's native accounting includes the full context
+        # envelope; the previous 100k budget became budgetLimited during the
+        # first recovery run before pause/resume could be proven.  Use the
+        # contract's bounded maximum rather than weakening the external Guard.
+        "token_budget": 1_000_000,
     }
 
 
@@ -1212,7 +1246,7 @@ def _prove_provider_recovery_identity(
     )
     if target is None:
         raise SoakError("soak_provider_recovery_participant_missing")
-    registered = _registered_god_session_id(
+    registered = _registered_god_session_private_binding(
         runtime_root,
         conversation_id=proof.conversation_id,
         participant_id=proof.participant_id,
@@ -1220,15 +1254,17 @@ def _prove_provider_recovery_identity(
     snapshot = _native_snapshot(target[2])
     guards = snapshot.get("guards")
     session_guard = guards.get("session") if isinstance(guards, Mapping) else None
-    if registered != proof.god_session_id:
+    if registered is None or registered[0] != proof.god_session_id:
         raise SoakError("soak_provider_recovery_god_identity_changed")
-    if (
-        not isinstance(session_guard, str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", session_guard) is None
-        or session_guard == proof.session_guard_before
-    ):
-        raise SoakError("soak_provider_recovery_session_guard_unchanged")
-    return target, {"god_identity_unchanged": 1, "session_guard_changed": 1}
+    if registered[1] == proof.provider_session_id_before:
+        raise SoakError("soak_provider_recovery_delivery_session_unchanged")
+    if not isinstance(session_guard, str) or session_guard != proof.session_guard_before:
+        raise SoakError("soak_provider_recovery_native_session_changed")
+    return target, {
+        "god_identity_unchanged": 1,
+        "delivery_provider_rebound": 1,
+        "native_session_guard_unchanged": 1,
+    }
 
 
 def _provider_recovery_action_counts(
@@ -1260,6 +1296,118 @@ def _provider_recovery_action_counts(
     if any(statuses != {"applied": 1} for statuses in by_capability.values()):
         raise SoakError("soak_provider_recovery_native_action_evidence_invalid")
     return {capability: statuses["applied"] for capability, statuses in by_capability.items()}
+
+
+def _codex_api_model_support(runtime_root: Path | None = None) -> Mapping[str, bool]:
+    """Read only the local Codex model availability flags for soak assignment.
+
+    ``model/list`` is intentionally a UI capability surface and does not say
+    whether a model can serve an API/MCP Room turn.  The local Codex catalog is
+    the only server-side capability evidence available to this harness.  A
+    missing or malformed cache is treated as unknown, not as a reason to
+    reject every model; entries explicitly marked unsupported are fail-closed.
+    """
+
+    cache_paths: list[Path] = []
+    if runtime_root is not None:
+        cache_paths.append(runtime_root / "runtime" / "room-codex-home" / "models_cache.json")
+    codex_home = os.environ.get("CODEX_HOME")
+    cache_paths.append(
+        Path(codex_home).expanduser() / "models_cache.json"
+        if codex_home
+        else Path.home() / ".codex" / "models_cache.json"
+    )
+    raw: object | None = None
+    for cache_path in cache_paths:
+        if not cache_path.is_file():
+            continue
+        try:
+            raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        break
+    if raw is None:
+        return {}
+    models = raw.get("models") if isinstance(raw, Mapping) else None
+    if not isinstance(models, list):
+        return {}
+    result: dict[str, bool] = {}
+    for item in models[:2_000]:
+        if not isinstance(item, Mapping) or not isinstance(item.get("supported_in_api"), bool):
+            continue
+        supported = bool(item["supported_in_api"])
+        for key in (item.get("slug"), item.get("id"), item.get("model")):
+            if isinstance(key, str) and key and len(key) <= 256:
+                result[key] = supported
+    return result
+
+
+def _goal_model_combinations(
+    models: Sequence[Mapping[str, Any]],
+    *,
+    runtime_root: Path | None = None,
+) -> list[tuple[str, str, str]]:
+    """Build deterministic native settings coverage for API-capable models."""
+
+    api_support = _codex_api_model_support(runtime_root)
+    combinations: list[tuple[str, str, str]] = []
+    for model in models:
+        model_id = model.get("id")
+        model_name = model.get("model")
+        efforts = model.get("efforts")
+        if (
+            not isinstance(model_id, str)
+            or not isinstance(model_name, str)
+            or not isinstance(efforts, list)
+        ):
+            continue
+        if api_support.get(model_id) is False or api_support.get(model_name) is False:
+            continue
+        combinations.extend(
+            (model_id, model_name, effort)
+            for effort in efforts
+            if isinstance(effort, str) and effort
+        )
+    return sorted(set(combinations), key=lambda item: (item[2] != "max", item))
+
+
+def _select_goal_participant(
+    assignments: Sequence[tuple[str, str, str, str]],
+    excluded_targets: Sequence[tuple[str, str]],
+) -> tuple[str, str, str, str]:
+    """Choose a bounded-cost participant for the native Goal proof.
+
+    The soak still exercises every frozen model/effort assignment above, but the
+    Goal control proof itself must be run on a participant that can reach a
+    continuation checkpoint before provider budget exhaustion.  An active Codex
+    Goal can continue consuming until it reaches a terminal/budget state, so the
+    control proof requires an explicitly bounded low/medium effort assignment.
+    The recovery, review, and steer participants are excluded because their
+    session identities are reserved for the other native proofs.
+    """
+
+    effort_rank = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
+    model_rank = {
+        "gpt-5.4": 0,
+        "gpt-5.4-mini": 1,
+        "gpt-5.6-sol": 2,
+        "gpt-5.6-luna": 3,
+        "gpt-5.6-terra": 4,
+    }
+    excluded = set(excluded_targets)
+    candidates = [item for item in assignments if item[:2] not in excluded]
+    bounded_candidates = [item for item in candidates if item[3] in {"low", "medium"}]
+    if not bounded_candidates:
+        raise SoakError("soak_codex_goal_participant_unavailable")
+    return min(
+        bounded_candidates,
+        key=lambda item: (
+            effort_rank.get(item[3], 99),
+            model_rank.get(item[2], 99),
+            item[0],
+            item[1],
+        ),
+    )
 
 
 def _prepare_goal_native_capabilities(
@@ -1295,7 +1443,6 @@ def _prepare_goal_native_capabilities(
         recovery_proof,
         participants,
     )
-    combinations: list[tuple[str, str, str]] = []
     first_capabilities = participants[0][2].get("capabilities")
     first_value = (
         first_capabilities.get("value") if isinstance(first_capabilities, Mapping) else None
@@ -1303,25 +1450,11 @@ def _prepare_goal_native_capabilities(
     models = _mapping_records(
         first_value.get("models") if isinstance(first_value, Mapping) else None
     )
-    for model in models:
-        model_id = model.get("id")
-        model_name = model.get("model")
-        efforts = model.get("efforts")
-        if (
-            not isinstance(model_id, str)
-            or not isinstance(model_name, str)
-            or not isinstance(efforts, list)
-        ):
-            continue
-        combinations.extend(
-            (model_id, model_name, effort)
-            for effort in efforts
-            if isinstance(effort, str) and effort
-        )
-    combinations = sorted(set(combinations), key=lambda item: (item[2] != "max", item))
+    combinations = _goal_model_combinations(models, runtime_root=runtime_root)
     if len(combinations) < 2 or not any(effort == "max" for _, _, effort in combinations):
         raise SoakError("soak_codex_settings_coverage_unavailable", blocked=True)
     assignments: list[dict[str, str]] = []
+    assigned_participants: list[tuple[str, str, str, str]] = []
     for index, (conversation_id, participant_id, _item) in enumerate(participants):
         model_id, model_name, effort = combinations[index % len(combinations)]
         _invoke_native_action(
@@ -1361,6 +1494,7 @@ def _prepare_goal_native_capabilities(
                 "effort": effort,
             }
         )
+        assigned_participants.append((conversation_id, participant_id, model_id, effort))
     other_participants = [item for item in participants if item[:2] != recovery_target[:2]]
     if len(other_participants) < 2:
         raise SoakError("soak_codex_participant_count_invalid")
@@ -1427,7 +1561,14 @@ def _prepare_goal_native_capabilities(
         timeout_s=300.0,
         code="soak_codex_steer_turn_not_terminal",
     )
-    goal_room, goal_participant, _ = other_participants[2]
+    goal_room, goal_participant, _goal_model, _goal_effort = _select_goal_participant(
+        assigned_participants,
+        (
+            recovery_target[:2],
+            (review_room, review_participant),
+            (steer_room, steer_participant),
+        ),
+    )
     goal_before = _codex_projection(deps, goal_room)
     before_native = goal_before.get("native_events")
     baseline_event_seq = (
@@ -1478,8 +1619,88 @@ def _prepare_goal_native_capabilities(
             "steer_actions": 1,
             "review_actions": 1,
             "goal_initial_continuation_checkpoint": goal_auto_continuations,
+            "goal_model": _goal_model,
+            "goal_effort": _goal_effort,
         }
     )
+
+
+def _rebuild_native_event_evidence_after_cache_reset(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+) -> None:
+    """Prove rebuilt native subscriptions with one real Console turn per Room."""
+
+    raw_participants = state.goal_memory_evidence.get("participants")
+    if not isinstance(raw_participants, list):
+        raise SoakError("soak_codex_native_evidence_missing")
+    goal_target = (
+        state.goal_memory_evidence.get("goal_room"),
+        state.goal_memory_evidence.get("goal_participant"),
+    )
+    candidates: dict[str, list[str]] = {room_id: [] for room_id in state.room_ids}
+    for value in raw_participants:
+        if (
+            isinstance(value, (list, tuple))
+            and len(value) == 2
+            and value[0] in candidates
+            and _safe_id(value[1])
+        ):
+            candidates[str(value[0])].append(str(value[1]))
+    targets: list[tuple[str, str]] = []
+    for room_id in state.room_ids:
+        available = candidates.get(room_id, [])
+        participant_id = next(
+            (item for item in available if (room_id, item) != goal_target),
+            available[0] if available else None,
+        )
+        if participant_id is None:
+            raise SoakError("soak_codex_participant_count_invalid")
+        targets.append((room_id, participant_id))
+
+    def exercise(target: tuple[str, str]) -> None:
+        conversation_id, participant_id = target
+        before = _codex_projection(deps, conversation_id)
+        before_events = before.get("native_events")
+        baseline_seq = (
+            before_events.get("latest_event_seq") if isinstance(before_events, Mapping) else 0
+        )
+        if not isinstance(baseline_seq, int) or isinstance(baseline_seq, bool):
+            baseline_seq = 0
+        _invoke_native_action(
+            config,
+            deps,
+            conversation_id,
+            participant_id,
+            "console_turn_start",
+            _goal_console_turn_request(
+                "Report one concise read-only runtime verification checkpoint."
+            ),
+            timeout_s=180.0,
+        )
+        deadline = deps.monotonic() + 300.0
+        while deps.monotonic() < deadline:
+            projection = _codex_projection(deps, conversation_id)
+            native_events = projection.get("native_events")
+            events = native_events.get("items") if isinstance(native_events, Mapping) else None
+            kinds = {
+                str(item["kind"])
+                for item in _mapping_records(events)
+                if item.get("participant_id") == participant_id
+                and isinstance(item.get("event_seq"), int)
+                and int(item["event_seq"]) > baseline_seq
+                and isinstance(item.get("kind"), str)
+            }
+            if REQUIRED_NATIVE_EVENT_KINDS <= kinds:
+                return
+            deps.sleep(0.25)
+        raise SoakError("soak_codex_post_cache_event_evidence_incomplete")
+
+    with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+        futures = [executor.submit(exercise, target) for target in targets]
+        for future in as_completed(futures):
+            future.result()
 
 
 def _goal_observation_state(
@@ -1663,7 +1884,21 @@ def _goal_manifest(
         code="soak_memoryos_repository_unavailable",
         blocked=True,
     ).stdout
-    if memory_head != "1b9d5dad7e3ba944fb668d8d87e364a06e0b20ef":
+    ancestry = deps.run(
+        (
+            "git",
+            "-C",
+            top,
+            "merge-base",
+            "--is-ancestor",
+            FROZEN_MEMORYOS_BASE,
+            memory_head,
+        ),
+        cwd=config.repo_root,
+        env=clean_env,
+        timeout_s=20.0,
+    )
+    if ancestry.returncode != 0:
         raise SoakError("soak_memoryos_revision_mismatch", blocked=True)
     if memory_status.strip():
         raise SoakError("soak_memoryos_worktree_dirty", blocked=True)
@@ -1858,6 +2093,114 @@ def _clean_environment() -> dict[str, str]:
         "XMUSE_MEMORYOS_API_KEY",
     }
     return {key: value for key, value in os.environ.items() if key not in denied}
+
+
+def _prepare_full_local_memory_cache(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    runtime_root: Path,
+    env: Mapping[str, str],
+) -> None:
+    """Prove the offline FastEmbed model before starting the managed sidecar.
+
+    The supervisor deliberately pins FastEmbed to a root-scoped cache and starts
+    the sidecar with all model-network access disabled.  A fresh soak root is
+    therefore empty during preflight, then receives only this bounded local
+    capability proof before Workroom starts.  This keeps a missing model a
+    deterministic preflight blocker rather than a misleading degraded run.
+    """
+
+    if config.profile_id != GOAL_MEMORY_PROFILE_ID:
+        return
+    executable = config.memoryos_executable
+    if executable is None:
+        raise SoakError("soak_memoryos_executable_required", blocked=True)
+    python = executable.parent / "python"
+    if not python.is_file() or not os.access(python, os.X_OK):
+        raise SoakError("soak_memoryos_python_unavailable", blocked=True)
+    cache = runtime_root / "runtime" / "fastembed-cache"
+    try:
+        cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SoakError("soak_memoryos_fastembed_cache_unavailable", blocked=True) from exc
+    source_value = env.get(SOAK_FASTEMBED_CACHE_SOURCE_ENV)
+    if not isinstance(source_value, str) or not source_value.strip():
+        raise SoakError("soak_memoryos_fastembed_cache_source_required", blocked=True)
+    _copy_proven_fastembed_cache(Path(source_value), cache)
+    proof = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from fastembed import TextEmbedding\n"
+        "cache = Path(sys.argv[1])\n"
+        f"model = TextEmbedding(model_name={FULL_LOCAL_FASTEMBED_MODEL!r}, cache_dir=str(cache))\n"
+        "next(model.embed(['xmuse full-local capability proof']), None)\n"
+    )
+    result = deps.run(
+        (str(python), "-c", proof, str(cache)),
+        cwd=config.repo_root,
+        env={
+            **env,
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "MEMORYOS_FASTEMBED_OFFLINE": "1",
+            "FASTEMBED_CACHE_PATH": str(cache),
+        },
+        timeout_s=900.0,
+    )
+    if result.returncode != 0:
+        raise SoakError("soak_memoryos_fastembed_cache_unavailable", blocked=True)
+
+
+def _copy_proven_fastembed_cache(source: Path, destination: Path) -> None:
+    """Copy one bounded, locally proven model cache without following escapes."""
+
+    try:
+        source = source.expanduser().resolve(strict=True)
+        destination = destination.resolve(strict=True)
+        source_stat = source.stat()
+        destination_stat = destination.stat()
+    except OSError as exc:
+        raise SoakError("soak_memoryos_fastembed_cache_source_invalid", blocked=True) from exc
+    if (
+        not stat.S_ISDIR(source_stat.st_mode)
+        or not stat.S_ISDIR(destination_stat.st_mode)
+        or source == destination
+        or source_stat.st_uid != os.getuid()
+        or destination_stat.st_uid != os.getuid()
+    ):
+        raise SoakError("soak_memoryos_fastembed_cache_source_invalid", blocked=True)
+    entries = 0
+    total_bytes = 0
+    for candidate in source.rglob("*"):
+        entries += 1
+        if entries > MAX_FASTEMBED_CACHE_ENTRIES:
+            raise SoakError("soak_memoryos_fastembed_cache_source_unbounded", blocked=True)
+        try:
+            item = candidate.lstat()
+        except OSError as exc:
+            raise SoakError("soak_memoryos_fastembed_cache_source_invalid", blocked=True) from exc
+        if stat.S_ISLNK(item.st_mode):
+            try:
+                target = candidate.resolve(strict=True)
+                target.relative_to(source)
+            except (OSError, ValueError) as exc:
+                raise SoakError(
+                    "soak_memoryos_fastembed_cache_source_invalid", blocked=True
+                ) from exc
+            if not target.is_file():
+                raise SoakError("soak_memoryos_fastembed_cache_source_invalid", blocked=True)
+            continue
+        if stat.S_ISDIR(item.st_mode):
+            continue
+        if not stat.S_ISREG(item.st_mode) or candidate.name.endswith(".incomplete"):
+            raise SoakError("soak_memoryos_fastembed_cache_source_invalid", blocked=True)
+        total_bytes += item.st_size
+        if total_bytes > MAX_FASTEMBED_CACHE_BYTES:
+            raise SoakError("soak_memoryos_fastembed_cache_source_unbounded", blocked=True)
+    try:
+        shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+    except OSError as exc:
+        raise SoakError("soak_memoryos_fastembed_cache_unavailable", blocked=True) from exc
 
 
 def _checked(
@@ -2634,7 +2977,7 @@ def _kill_one_provider(
                 registry_binding = selected.binding
                 signal_target = candidate_target
                 if config.profile_id == GOAL_MEMORY_PROFILE_ID:
-                    registered = _registered_god_session_id(
+                    registered = _registered_god_session_private_binding(
                         runtime_root,
                         conversation_id=selected.conversation_id,
                         participant_id=selected.participant_id,
@@ -2645,7 +2988,8 @@ def _kill_one_provider(
                     guards = snapshot.get("guards") if isinstance(snapshot, Mapping) else None
                     session_guard = guards.get("session") if isinstance(guards, Mapping) else None
                     if (
-                        registered != selected.god_session_id
+                        registered is None
+                        or registered[0] != selected.god_session_id
                         or not isinstance(session_guard, str)
                         or re.fullmatch(r"sha256:[0-9a-f]{64}", session_guard) is None
                     ):
@@ -2654,6 +2998,7 @@ def _kill_one_provider(
                         conversation_id=selected.conversation_id,
                         participant_id=selected.participant_id,
                         god_session_id=selected.god_session_id,
+                        provider_session_id_before=registered[1],
                         session_guard_before=session_guard,
                     )
                 break
@@ -3212,6 +3557,8 @@ def _verify_goal_browser(
         "http_5xx_count",
         "native_snapshot_count",
         "native_capabilities_count",
+        "native_event_count",
+        "native_event_kind_count",
         "history_partial_count",
         "digest",
     }
@@ -3242,6 +3589,8 @@ def _verify_goal_browser(
             or numeric["http_5xx_count"] != 0
             or numeric["native_snapshot_count"] != len(state.room_ids) * 2
             or numeric["native_capabilities_count"] != len(state.room_ids) * 2
+            or cast(int, numeric["native_event_count"]) <= 0
+            or cast(int, numeric["native_event_kind_count"]) < len(REQUIRED_NATIVE_EVENT_KINDS)
             or numeric["history_partial_count"] != len(state.room_ids) * 2
         ):
             raise SoakError("soak_browser_evidence_invalid")
@@ -4119,6 +4468,7 @@ def _run_goal_memory_live(
                 run_started_at=started,
             )
             _record_chaos(state, event=cache_event, recovery_wave_settled=True)
+            _rebuild_native_event_evidence_after_cache_reset(config, deps, state)
         if wave == 2:
             state.memory_fault_proof = _begin_memoryos_fault(
                 config,
@@ -4259,7 +4609,7 @@ def _run_goal_memory_live(
     )
     if (
         applied["settings_update"] != 8
-        or applied["console_turn_start"] != 2
+        or applied["console_turn_start"] != 2 + len(state.room_ids)
         or applied["turn_steer"] < 1
         or applied["review_start"] < 1
     ):
@@ -4491,6 +4841,7 @@ def run_soak(
             if spec is None:
                 raise SoakError("soak_profile_not_supported", blocked=True)
             cleanup_required = True
+            _prepare_full_local_memory_cache(config, deps, runtime_root, env)
             # _run_live owns a private state.  The manager is recovered for cleanup
             # from the manifest by xmuse-workroom stop even if an exception escapes.
             run = (

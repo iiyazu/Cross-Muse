@@ -2,9 +2,34 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { RoomMarkdown } from "./room-markdown";
+import { normalizeRoomMarkdownContent, RoomMarkdown } from "./room-markdown";
 
 describe("RoomMarkdown", () => {
+  it("repairs repeated escaped line breaks in prose without rewriting code", () => {
+    const content = [
+      "结论如下：\\n\\n1. 第一项\\n2. 第二项 `\\n\\n`",
+      "```text",
+      "literal \\n and \\r\\n",
+      "```"
+    ].join("\n\n");
+    expect(normalizeRoomMarkdownContent(content)).toBe(
+      [
+        "结论如下：\n\n1. 第一项\n2. 第二项 `\\n\\n`",
+        "```text",
+        "literal \\n and \\r\\n",
+        "```"
+      ].join("\n\n")
+    );
+    const { container } = render(<RoomMarkdown content={content} />);
+    expect(container.querySelectorAll("p, ol, pre")).toHaveLength(3);
+    expect(screen.getByText("\\n\\n")).toBeInTheDocument();
+    expect(screen.getByText("literal \\n and \\r\\n")).toBeInTheDocument();
+  });
+
+  it("preserves a single escaped newline because it may be intentional text", () => {
+    expect(normalizeRoomMarkdownContent("使用 \\n 表示换行")).toBe("使用 \\n 表示换行");
+  });
+
   it("renders GFM while removing executable and media content", () => {
     const { container } = render(
       <RoomMarkdown
