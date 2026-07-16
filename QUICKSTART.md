@@ -3,15 +3,34 @@
 ## Prerequisites
 
 - Linux or WSL. Native Windows and macOS lifecycle support is not yet provided;
-- Python 3.11+, `uv`, Git, and Bubblewrap (`bwrap`);
+- Python 3.11+, `uv`, Git, and Bubblewrap (`bwrap`) for source development;
 - an authenticated Codex CLI on `PATH` for real Agent turns;
 - Node.js 20.9+ and npm when running the browser Workroom.
 
-MemoryOS is optional. Source-backed long-term recall additionally requires a real
-`memoryos` executable; xmuse does not install or import its Python package.
+MemoryOS is optional. A release companion can install its executable and offline FastEmbed
+cache; source development may instead point xmuse at a real external `memoryos` executable.
 
 Backend entrypoints read the process environment directly. They do not automatically load a
 repository `.env` file.
+
+## Install a release
+
+Linux x86_64 / WSL release assets are self-contained and offline after download:
+
+```bash
+python3.11 xmuse-setup.pyz install --bundle xmuse-0.2.0-linux-x86_64.tar.gz
+python3.11 xmuse-setup.pyz install-memory \
+  --bundle memoryos-0.2.0-linux-x86_64.tar.gz  # optional
+export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
+xmuse-setup verify
+xmuse-workroom launch
+```
+
+The bootstrap validates Linux/x86_64, the exact CPython ABI, normalized archive paths and all
+file digests. `launch` uses the installed Next standalone assets, starts one detached instance
+of the existing Workroom manager, waits for real readiness and opens the browser. Use
+`xmuse-workroom status` and `xmuse-workroom stop` for the same runtime generation. With the
+optional companion installed, `xmuse-workroom launch --memory` automatically selects it.
 
 ## Build the local application
 
@@ -69,7 +88,8 @@ to the LAN or Internet.
 
 ## Optional source-backed memory
 
-Start the same Workroom with the archive-only MemoryOS sidecar explicitly enabled:
+Start the same Workroom with MemoryOS explicitly enabled. Full-local hybrid retrieval is the
+default profile; archive-only remains available only as a compatibility profile:
 
 ```bash
 uv run xmuse-workroom start \
@@ -79,9 +99,9 @@ uv run xmuse-workroom start \
 
 Both flags are required together. Workroom binds MemoryOS to `127.0.0.1:8301`, gives it a
 random server-only API key and a private `<XMUSE_ROOT>/runtime/memoryos-derived` directory,
-and starts it with v3 memory/v2 recall while LLM rewriting, reranking, paging, item
-extraction, recall cache, and archival vectors are disabled. The key is never put in argv,
-the browser, the Room MCP process, or a Codex session.
+and starts it with v3 memory/v2 recall. Full-local uses offline BM25, FastEmbed and RRF while
+xmuse retains external governance of durable memory candidates in `chat.db`. The key is never
+put in argv, the browser, the Room MCP process, or a Codex session.
 
 MemoryOS is a rebuildable index. `chat.db` remains authority for source activities, pending
 and approved memory candidates, delivery state, and recall receipts. If the sidecar is slow

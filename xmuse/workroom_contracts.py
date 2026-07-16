@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import signal
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
@@ -29,6 +30,21 @@ from xmuse.workroom_processes import (
 from xmuse_core.runtime.root_contract import RuntimeRootPaths
 
 WORKROOM_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _default_assets_root(
+    *,
+    repo_root: Path,
+    environ: Mapping[str, str],
+) -> Path:
+    configured = environ.get("XMUSE_ASSETS_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    runtime_prefix = Path(sys.prefix).resolve()
+    installed = runtime_prefix.parent / "share" / "xmuse"
+    if installed.is_dir():
+        return installed
+    return repo_root.expanduser().resolve()
 
 
 class WorkroomError(RuntimeError):
@@ -83,6 +99,7 @@ def _stop_runtime_generation(root: Path, generation: str) -> Mapping[str, Any]:
 class WorkroomDependencies:
     repo_root: Path = WORKROOM_REPO_ROOT
     environ: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
+    assets_root: Path | None = None
     spawn: Callable[[ProcessSpec], ManagedProcess] = spawn_process
     inspect_process: Callable[[int], ProcessIdentity | None] = inspect_process
     port_available: Callable[[str, int], bool] = port_available
@@ -101,11 +118,22 @@ class WorkroomDependencies:
     current_pid: Callable[[], int] = os.getpid
     shutdown_controller_factory: Callable[[], ShutdownController] = SignalShutdownController
 
+    def __post_init__(self) -> None:
+        self.repo_root = self.repo_root.expanduser().resolve()
+        if self.assets_root is None:
+            self.assets_root = _default_assets_root(
+                repo_root=self.repo_root,
+                environ=self.environ,
+            )
+        else:
+            self.assets_root = self.assets_root.expanduser().resolve()
+
 
 @dataclass(frozen=True)
 class WorkroomPaths:
     xmuse_root: Path
     repo_root: Path
+    assets_root: Path
     frontend_dir: Path
     standalone_dir: Path
     standalone_server: Path
@@ -125,15 +153,22 @@ class WorkroomPaths:
     memoryos_derived_dir: Path
 
     @classmethod
-    def resolve(cls, xmuse_root: Path, repo_root: Path) -> WorkroomPaths:
+    def resolve(
+        cls,
+        xmuse_root: Path,
+        repo_root: Path,
+        assets_root: Path | None = None,
+    ) -> WorkroomPaths:
         root = xmuse_root.expanduser().resolve()
         authority = RuntimeRootPaths.resolve(root, fallback=root)
         repository = repo_root.expanduser().resolve()
-        frontend = repository / "frontend"
+        assets = (assets_root or repository).expanduser().resolve()
+        frontend = assets / "frontend"
         standalone = frontend / ".next" / "standalone"
         return cls(
             xmuse_root=root,
             repo_root=repository,
+            assets_root=assets,
             frontend_dir=frontend,
             standalone_dir=standalone,
             standalone_server=standalone / "server.js",
