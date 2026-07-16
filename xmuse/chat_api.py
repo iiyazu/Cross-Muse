@@ -34,6 +34,7 @@ from xmuse.chat_api_runtime import (
 )
 from xmuse.operator_auth import resolve_operator_token
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
+from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
 from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
@@ -108,7 +109,7 @@ def create_app(
     register_room_execution_routes(
         app,
         root=context.root,
-        store_factory=lambda _path: execution_runtime.store,
+        store_factory=RoomExecutionOperatorStore,
         read_store_factory=RoomExecutionLedgerReader,
         operator_token=operator_token,
         decision_context_provider=execution_runtime.decision_context,

@@ -80,6 +80,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_goal_memory_soak.py` | Fixed v0.1 release profile and `room_goal_memory_soak_result/v1` contract. |
 | `src/xmuse_core/chat/room_execution_views.py` | Transaction-free candidate and run ledger read models. |
 | `src/xmuse_core/chat/room_execution_read_store.py` | Read-only candidate/run projection source without command capabilities. |
+| `src/xmuse_core/chat/room_execution_operator_store.py` | Fixed policy, candidate-decision, and cancel capability adapter for operator routes. |
 | `src/xmuse_core/chat/room_execution_review_store.py` | Least-authority review material and receipt store used by Room delivery. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
@@ -149,6 +150,11 @@ annotation.
 Execution HTTP reads likewise construct `RoomExecutionLedgerReader`; only fixed operator
 routes acquire the command store. A projection request therefore cannot obtain authorization,
 cancel, controller, or promotion methods through its injected store.
+
+Operator HTTP routes receive a separate `RoomExecutionOperatorStore`. It preserves the
+ledger's existing atomic authorization/cancel transactions while withholding controller
+claim, gate evidence, promotion, acknowledgement, and finalization methods from the API
+composition.
 
 Core continues to have no dependency on the application namespace or `memoryos_lite`.
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and

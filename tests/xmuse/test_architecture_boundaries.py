@@ -151,6 +151,14 @@ def test_execution_ledger_reader_does_not_own_commands() -> None:
     )
 
 
+def test_chat_api_composes_separate_execution_read_and_operator_stores() -> None:
+    api = APP_ROOT / "chat_api.py"
+
+    assert _imports_prefix(api, "xmuse_core.chat.room_execution_read_store")
+    assert _imports_prefix(api, "xmuse_core.chat.room_execution_operator_store")
+    assert not _imports_prefix(api, "xmuse_core.chat.room_execution_store")
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))
