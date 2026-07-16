@@ -151,6 +151,7 @@ def test_preflight_sync_and_start_keep_capabilities_server_side(
     assert [spec.service for spec in harness.specs] == ["chat_api", "frontend"]
     chat_api, frontend = harness.specs
     assert chat_api.command == (sys.executable, "-m", "xmuse.chat_api")
+    assert chat_api.cwd == paths.repo_root
     assert frontend.command == (node, str(paths.standalone_server))
     assert frontend.cwd == paths.standalone_dir
     assert (paths.static_destination / "chunks" / "app.js").read_text() == "static\n"
