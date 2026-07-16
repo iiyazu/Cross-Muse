@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import secrets
 import shutil
 import signal
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +29,14 @@ from xmuse.workroom_processes import (
 from xmuse_core.runtime.root_contract import RuntimeRootPaths
 
 WORKROOM_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class WorkroomError(RuntimeError):
+    """A stable, user-facing Workroom lifecycle error."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ShutdownController(Protocol):
@@ -142,3 +152,16 @@ class WorkroomPaths:
             memoryos_status_file=authority.memoryos_status,
             memoryos_derived_dir=authority.memoryos_derived,
         )
+
+
+@contextmanager
+def workroom_lifecycle_lock(paths: WorkroomPaths) -> Iterator[None]:
+    """Serialize one root's lifecycle mutations without owning their state machine."""
+
+    paths.xmuse_root.mkdir(parents=True, exist_ok=True)
+    with paths.lock.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
