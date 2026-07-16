@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from xmuse import workroom, workroom_processes
+from xmuse import workroom, workroom_cli, workroom_processes
+from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 
 
 @dataclass
@@ -93,8 +94,8 @@ class FakeRuntime:
         self.runtime_stops.append((root, generation))
         return {"state": "stopped"}
 
-    def dependencies(self) -> workroom.WorkroomDependencies:
-        return workroom.WorkroomDependencies(
+    def dependencies(self) -> WorkroomDependencies:
+        return WorkroomDependencies(
             repo_root=self.repo_root,
             environ={"PATH": "/usr/bin", "KEEP": "yes"},
             spawn=self.spawn,
@@ -285,7 +286,7 @@ def test_project_registers_workroom_entrypoint() -> None:
         (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
     )
 
-    assert project["project"]["scripts"]["xmuse-workroom"] == "xmuse.workroom:main"
+    assert project["project"]["scripts"]["xmuse-workroom"] == "xmuse.workroom_cli:main"
 
 
 def test_port_probe_treats_connection_refusal_as_available(monkeypatch) -> None:
@@ -311,7 +312,7 @@ def test_start_refuses_an_incomplete_data_operation(
     )
     runtime = FakeRuntime(built_repo)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["start", "--root", str(runtime_root)],
         dependencies=runtime.dependencies(),
     )
@@ -330,7 +331,7 @@ def test_start_requires_codex_before_spawning_services(
     dependencies = runtime.dependencies()
     dependencies.which = lambda name: "/usr/bin/node" if name == "node" else None
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["start", "--root", str(tmp_path / "runtime")],
         dependencies=dependencies,
     )
@@ -367,7 +368,7 @@ def test_start_runs_api_then_standalone_and_keeps_token_out_of_manifest(
     runtime_root = tmp_path / "runtime"
     runtime = FakeRuntime(built_repo)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -451,7 +452,7 @@ def test_non_default_workspace_requires_explicit_fixed_profile_before_spawn(
     workspace.mkdir()
     runtime = FakeRuntime(built_repo)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -477,7 +478,7 @@ def test_explicit_workspace_and_profile_reach_only_server_side_runtime(
     runtime_root = tmp_path / "runtime"
     runtime = FakeRuntime(built_repo)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -515,7 +516,7 @@ def test_unknown_execution_profile_is_rejected_before_spawn(
 ) -> None:
     runtime = FakeRuntime(built_repo)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -540,7 +541,7 @@ def test_start_cleans_api_when_readiness_fails_without_spawning_frontend(
     runtime.ready = False
     runtime_root = tmp_path / "runtime"
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -580,7 +581,7 @@ def test_memory_opt_in_uses_isolated_sidecar_env_and_server_only_chat_api_key(
     }
     runtime_root = tmp_path / "runtime"
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -647,7 +648,7 @@ def test_memory_unknown_port_degrades_but_still_hands_fixed_capability_to_chat_a
         False if port == workroom.MEMORYOS_PORT else True
     )
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -698,7 +699,7 @@ def test_memory_sidecar_exit_is_optional_and_does_not_fail_workroom(
 
     dependencies.sleep = sleep
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -723,7 +724,7 @@ def test_start_cleans_a_spawned_child_when_identity_registration_times_out(
     runtime.publish_spawn_identity = False
     runtime_root = tmp_path / "runtime"
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         [
             "start",
             "--root",
@@ -755,7 +756,7 @@ def test_start_converts_spawn_oserror_into_a_failed_manifest(
     dependencies.spawn = lambda _spec: (_ for _ in ()).throw(OSError("spawn failed"))
     runtime_root = tmp_path / "runtime"
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["start", "--root", str(runtime_root)],
         dependencies=dependencies,
     )
@@ -780,7 +781,7 @@ def test_duplicate_start_is_rejected_before_any_spawn(
     _seed_room_runtime(runtime, runtime_root, manifest)
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["start", "--root", str(runtime_root)],
         dependencies=runtime.dependencies(),
     )
@@ -819,7 +820,7 @@ def test_start_reclaims_stale_manifest_generation_before_spawning_new_services(
 
     assert (
         workroom.start_workroom(
-            workroom.WorkroomPaths.resolve(runtime_root, built_repo),
+            WorkroomPaths.resolve(runtime_root, built_repo),
             dependencies,
             readiness_timeout_s=1.0,
             stop_timeout_s=1.0,
@@ -845,7 +846,7 @@ def test_status_requires_generation_scoped_live_processes(
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -857,7 +858,7 @@ def test_status_requires_generation_scoped_live_processes(
 
     runtime.identities[301].environment["XMUSE_WORKROOM_GENERATION"] = "older-generation"
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -884,7 +885,7 @@ def test_status_includes_generation_scoped_room_runner_and_room_mcp(
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -958,7 +959,10 @@ def test_memory_degraded_status_does_not_change_required_workroom_readiness(
     dependencies = runtime.dependencies()
     dependencies.http_ready = lambda url: False if "127.0.0.1:8301" in url else True
 
-    assert workroom.run_cli(["status", "--root", str(runtime_root)], dependencies=dependencies) == 0
+    assert (
+        workroom_cli.run_cli(["status", "--root", str(runtime_root)], dependencies=dependencies)
+        == 0
+    )
     payload = _output_lines(capsys)[0]
     assert payload["state"] == "ready"
     memory = payload["services"][-1]
@@ -994,7 +998,7 @@ def test_status_reports_v2_blocked_host_as_degraded(
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -1030,7 +1034,7 @@ def test_status_honors_manifest_custom_runner_status_path(
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -1061,7 +1065,7 @@ def test_status_reports_live_stale_room_runner_as_degraded_without_signalling(
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
     assert (
-        workroom.run_cli(
+        workroom_cli.run_cli(
             ["status", "--root", str(runtime_root)],
             dependencies=runtime.dependencies(),
         )
@@ -1089,7 +1093,7 @@ def test_stop_reconciles_orphaned_services_in_frontend_then_api_order(
     runtime.identities.pop(runtime.current_pid)
     workroom._atomic_write_manifest(runtime_root / workroom.MANIFEST_NAME, manifest)
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["stop", "--root", str(runtime_root), "--timeout-s", "0.2"],
         dependencies=runtime.dependencies(),
     )
@@ -1113,7 +1117,7 @@ def test_doctor_is_read_only_and_reports_missing_build(
     runtime = FakeRuntime(repo_root)
     runtime.spawn_forbidden = True
 
-    exit_code = workroom.run_cli(
+    exit_code = workroom_cli.run_cli(
         ["doctor", "--root", str(tmp_path / "runtime")],
         dependencies=runtime.dependencies(),
     )

@@ -15,7 +15,7 @@ dependencies = [
 xmuse-chat-api = "xmuse.chat_api:main"
 xmuse-mcp-server = "xmuse.room_mcp_server:main"
 xmuse-room-runner = "xmuse.room_runner:main"
-xmuse-workroom = "xmuse.workroom:main"
+xmuse-workroom = "xmuse.workroom_cli:main"
 xmuse-data = "xmuse.data_cli:main"
 
 [build-system]

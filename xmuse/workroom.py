@@ -3,24 +3,23 @@
 
 from __future__ import annotations
 
-import argparse
 import fcntl
 import importlib.metadata
 import json
 import os
-import secrets
 import shutil
 import signal
 import sys
-import time
-import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, cast
 
+from xmuse.workroom_contracts import (
+    WORKROOM_REPO_ROOT,
+    WorkroomDependencies,
+    WorkroomPaths,
+)
 from xmuse.workroom_manifest import (
     ManifestError as ManifestLeafError,
 )
@@ -46,14 +45,10 @@ from xmuse.workroom_processes import (
     ProcessIdentity,
     ProcessLifecycleError,
     ProcessSpec,
-    http_json,
-    http_ready,
     identity_matches,
-    inspect_process,
     port_available,
     record_process,
     service_is_live,
-    spawn_process,
     stop_service_record,
     stop_spawned_processes,
 )
@@ -89,11 +84,7 @@ from xmuse_core.runtime.paths import default_xmuse_root
 from xmuse_core.runtime.root_contract import (
     DATA_OPERATION_JOURNAL_NAME as DATA_OPERATION_JOURNAL_NAME,
 )
-from xmuse_core.runtime.root_contract import (
-    WORKROOM_LIFECYCLE_LOCK_NAME,
-    WORKROOM_MANIFEST_NAME,
-    RuntimeRootPaths,
-)
+from xmuse_core.runtime.root_contract import WORKROOM_LIFECYCLE_LOCK_NAME, WORKROOM_MANIFEST_NAME
 
 SCHEMA_VERSION = "xmuse_workroom_runtime/v1"
 STATUS_SCHEMA_VERSION = "xmuse_workroom_status/v2"
@@ -104,7 +95,7 @@ CHAT_API_PORT = 8201
 FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = 3000
 MEMORYOS_HEARTBEAT_INTERVAL_S = 5.0
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = WORKROOM_REPO_ROOT
 DEFAULT_EXECUTION_PROFILE_ID = "xmuse-monorepo/v2"
 DEFAULT_XMUSE_ROOT = default_xmuse_root(REPO_ROOT / "xmuse")
 MANIFEST_NAME = WORKROOM_MANIFEST_NAME
@@ -123,40 +114,6 @@ class ManifestError(WorkroomError):
     pass
 
 
-class ShutdownController(Protocol):
-    def install(self) -> None: ...
-
-    def requested(self) -> bool: ...
-
-    def restore(self) -> None: ...
-
-
-class _SignalShutdownController:
-    def __init__(self) -> None:
-        self._requested = False
-        self._previous: dict[int, Any] = {}
-
-    def install(self) -> None:
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            self._previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, self._handle)
-
-    def _handle(self, _signum: int, _frame: Any) -> None:
-        self._requested = True
-
-    def requested(self) -> bool:
-        return self._requested
-
-    def restore(self) -> None:
-        for signum, handler in self._previous.items():
-            signal.signal(signum, handler)
-        self._previous.clear()
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-
 def _package_version() -> str:
     try:
         return importlib.metadata.version("xmuse")
@@ -164,92 +121,7 @@ def _package_version() -> str:
         return "0.1.0"
 
 
-_spawn_process = spawn_process
-_inspect_process = inspect_process
 _port_available = port_available
-_http_ready = http_ready
-_http_json = http_json
-
-
-def _stop_runtime_generation(root: Path, generation: str) -> Mapping[str, Any]:
-    from xmuse.chat_api_runtime import stop_workroom_room_runtime
-
-    return stop_workroom_room_runtime(root, generation=generation)
-
-
-@dataclass
-class WorkroomDependencies:
-    repo_root: Path = REPO_ROOT
-    environ: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
-    spawn: Callable[[ProcessSpec], ManagedProcess] = _spawn_process
-    inspect_process: Callable[[int], ProcessIdentity | None] = _inspect_process
-    port_available: Callable[[str, int], bool] = _port_available
-    http_ready: Callable[[str], bool] = _http_ready
-    http_json: Callable[[str], Mapping[str, Any] | None] = _http_json
-    which: Callable[[str], str | None] = shutil.which
-    signal_pid: Callable[[int, int], None] = os.kill
-    signal_group: Callable[[int, int], None] = os.killpg
-    stop_runtime: Callable[[Path, str], Mapping[str, Any]] = _stop_runtime_generation
-    sleep: Callable[[float], None] = time.sleep
-    monotonic: Callable[[], float] = time.monotonic
-    now: Callable[[], str] = _utc_now
-    generation_factory: Callable[[], str] = lambda: uuid.uuid4().hex
-    token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32)
-    memory_key_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32)
-    current_pid: Callable[[], int] = os.getpid
-    shutdown_controller_factory: Callable[[], ShutdownController] = _SignalShutdownController
-
-
-@dataclass(frozen=True)
-class WorkroomPaths:
-    xmuse_root: Path
-    repo_root: Path
-    frontend_dir: Path
-    standalone_dir: Path
-    standalone_server: Path
-    static_source: Path
-    static_destination: Path
-    public_source: Path
-    public_destination: Path
-    runner_pid_file: Path
-    mcp_pid_file: Path
-    manifest: Path
-    lock: Path
-    data_operation_journal: Path
-    room_runner_status_file: Path
-    legacy_runner_pid_file: Path
-    legacy_mcp_pid_file: Path
-    memoryos_status_file: Path
-    memoryos_derived_dir: Path
-
-    @classmethod
-    def resolve(cls, xmuse_root: Path, repo_root: Path) -> WorkroomPaths:
-        root = xmuse_root.expanduser().resolve()
-        authority = RuntimeRootPaths.resolve(root, fallback=root)
-        repository = repo_root.expanduser().resolve()
-        frontend = repository / "frontend"
-        standalone = frontend / ".next" / "standalone"
-        return cls(
-            xmuse_root=root,
-            repo_root=repository,
-            frontend_dir=frontend,
-            standalone_dir=standalone,
-            standalone_server=standalone / "server.js",
-            static_source=frontend / ".next" / "static",
-            static_destination=standalone / ".next" / "static",
-            public_source=frontend / "public",
-            public_destination=standalone / "public",
-            runner_pid_file=authority.room_runner_pid,
-            mcp_pid_file=authority.room_mcp_pid,
-            manifest=authority.manifest,
-            lock=authority.lifecycle_lock,
-            data_operation_journal=authority.data_operation_journal,
-            room_runner_status_file=authority.room_runner_status,
-            legacy_runner_pid_file=root / "workroom_peer_runtime.pid.json",
-            legacy_mcp_pid_file=root / "workroom_mcp_server.pid.json",
-            memoryos_status_file=authority.memoryos_status,
-            memoryos_derived_dir=authority.memoryos_derived,
-        )
 
 
 def _read_manifest(path: Path) -> dict[str, Any] | None:
@@ -2477,99 +2349,3 @@ def doctor_workroom(paths: WorkroomPaths, deps: WorkroomDependencies) -> int:
     }
     _emit(payload)
     return 1 if blockers else 0
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    start = subparsers.add_parser("start", help="start and supervise the local Workroom")
-    start.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
-    start.add_argument("--readiness-timeout-s", type=float, default=30.0)
-    start.add_argument("--stop-timeout-s", type=float, default=20.0)
-    start.add_argument(
-        "--workspace",
-        type=Path,
-        help="read-only Agent workspace and exact-patch target (defaults to xmuse)",
-    )
-    start.add_argument(
-        "--execution-profile",
-        help="fixed server gate profile; required for a non-default workspace",
-    )
-    start.add_argument(
-        "--memory",
-        action="store_true",
-        help="enable the optional source-backed MemoryOS archive sidecar",
-    )
-    start.add_argument(
-        "--memoryos-executable",
-        type=Path,
-        help="absolute or relative path to the MemoryOS executable (requires --memory)",
-    )
-    start.add_argument(
-        "--memory-profile",
-        choices=("archive-only", "full-local"),
-        default=None,
-        help=(
-            "MemoryOS capability profile (default: full-local; archive-only is compatibility mode)"
-        ),
-    )
-
-    status = subparsers.add_parser("status", help="inspect the managed Workroom")
-    status.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
-
-    stop = subparsers.add_parser("stop", help="stop the managed Workroom")
-    stop.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
-    stop.add_argument("--timeout-s", type=float, default=20.0)
-
-    doctor = subparsers.add_parser("doctor", help="check local Workroom prerequisites")
-    doctor.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
-    return parser
-
-
-def run_cli(
-    argv: Sequence[str] | None = None,
-    *,
-    dependencies: WorkroomDependencies | None = None,
-) -> int:
-    args = build_parser().parse_args(argv)
-    deps = dependencies or WorkroomDependencies()
-    paths = WorkroomPaths.resolve(args.root, deps.repo_root)
-    if args.command == "start":
-        if args.readiness_timeout_s <= 0 or args.stop_timeout_s <= 0:
-            build_parser().error("timeouts must be positive")
-        if bool(args.memory) != (args.memoryos_executable is not None):
-            build_parser().error("--memory and --memoryos-executable must be provided together")
-        if args.memory_profile is not None and not args.memory:
-            build_parser().error("--memory-profile requires --memory")
-        resolved_memory_profile = args.memory_profile or (
-            "full-local" if args.memory else "archive-only"
-        )
-        return start_workroom(
-            paths,
-            deps,
-            readiness_timeout_s=args.readiness_timeout_s,
-            stop_timeout_s=args.stop_timeout_s,
-            execution_workspace=args.workspace,
-            execution_profile_id=args.execution_profile,
-            memory_enabled=bool(args.memory),
-            memoryos_executable=args.memoryos_executable,
-            memory_profile=resolved_memory_profile,
-        )
-    if args.command == "status":
-        return workroom_status(paths, deps)[0]
-    if args.command == "stop":
-        if args.timeout_s <= 0:
-            build_parser().error("--timeout-s must be positive")
-        return stop_workroom(paths, deps, timeout_s=args.timeout_s)
-    if args.command == "doctor":
-        return doctor_workroom(paths, deps)
-    raise AssertionError(f"unhandled command: {args.command}")
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    return run_cli(argv)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

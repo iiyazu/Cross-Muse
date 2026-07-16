@@ -16,6 +16,8 @@ from tests.xmuse.test_room_execution_outcomes import (
 from xmuse.chat_api_executions import register_room_execution_routes
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
+from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
+from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
 from xmuse_core.chat.room_execution_store import RoomExecutionStore
 
 
@@ -258,6 +260,26 @@ def test_execution_reads_are_bounded_no_store_and_candidate_detail_is_explicit()
     assert "/must-not-project" not in listing.text
     assert client.get("/api/chat/execution-candidates/missing").status_code == 404
     assert client.get("/api/chat/conversations/conv-1/executions?limit=51").status_code == 422
+
+
+def test_execution_get_routes_do_not_construct_the_command_store() -> None:
+    read_store = _ExecutionStore()
+    app = FastAPI()
+
+    def command_store_forbidden(_path: Path):
+        raise AssertionError("GET projection acquired the command store")
+
+    register_room_execution_routes(
+        app,
+        root=Path("/tmp/xmuse-execution-read-api-test"),
+        store_factory=command_store_forbidden,
+        read_store_factory=lambda _path: read_store,
+        conversation_exists=lambda conversation_id: conversation_id == "conv-1",
+    )
+    client = TestClient(app)
+
+    assert client.get("/api/chat/conversations/conv-1/executions").status_code == 200
+    assert client.get("/api/chat/execution-candidates/candidate-1").status_code == 200
 
 
 def test_operator_routes_require_token_and_reject_extra_or_invalid_guards() -> None:
@@ -512,7 +534,8 @@ def test_routes_bind_the_real_store_keyword_contract_and_default_manual_policy(
     register_room_execution_routes(
         app,
         root=tmp_path,
-        store_factory=RoomExecutionStore,
+        store_factory=RoomExecutionOperatorStore,
+        read_store_factory=RoomExecutionLedgerReader,
         operator_token="operator-secret",
         consensus_kill_switch_enabled=False,
     )
@@ -538,6 +561,12 @@ def test_routes_bind_the_real_store_keyword_contract_and_default_manual_policy(
     stored = RoomExecutionStore(tmp_path / "chat.db").get_policy("conv-real-store")
     assert stored is not None
     assert stored["mode"] == "consensus"
+
+    operator_store = RoomExecutionOperatorStore(tmp_path / "chat.db")
+    assert not hasattr(operator_store, "claim_requested_run")
+    assert not hasattr(operator_store, "record_gate_evidence")
+    assert not hasattr(operator_store, "prepare_promotion")
+    assert not hasattr(operator_store, "finalize_run")
 
 
 def _real_decision_fixture(tmp_path: Path, *, action_id: str):

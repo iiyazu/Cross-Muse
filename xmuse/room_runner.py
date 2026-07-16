@@ -20,36 +20,26 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
-from xmuse.memoryos_adapter import (
-    ArchiveOnlyRoomMemoryRuntime,
-    DisabledRoomMemoryRuntime,
-    MemoryOSArchiveAdapter,
+from xmuse.room_runner_composition import (
+    RoomRuntimeComposition,
+    compose_room_runtime,
+)
+from xmuse.room_runner_memory import (
+    compose_room_runner_memory,
+    run_room_memory_pump,
 )
 from xmuse_core.agents.codex_app_server_transport import CODEX_ROOM_READ_ONLY_SANDBOX
-from xmuse_core.agents.god_session_layer import GodSessionLayer
 from xmuse_core.agents.room_codex_launcher import build_room_launchers
-from xmuse_core.chat.room_agent_stream import (
-    RoomAgentStreamCache,
-    RoomAgentStreamProjector,
-)
 from xmuse_core.chat.room_codex_native_runtime import (
-    RoomCodexNativeRuntime,
     run_room_codex_native_loop,
 )
-from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
-from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
-from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
-from xmuse_core.chat.room_memory_delivery_store import RoomMemoryDeliveryStore
-from xmuse_core.chat.room_memory_recall_store import RoomMemoryRecallStore
-from xmuse_core.chat.room_memory_runtime import RoomMemoryRuntime
+from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_runtime import (
     ROOM_MCP_PATH,
     ROOM_MCP_SURFACE,
@@ -89,16 +79,6 @@ class RoomRunnerError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
-
-
-@dataclass(frozen=True)
-class RoomRuntimeComposition:
-    host: RoomParticipantHost
-    session_layer: GodSessionLayer
-    native_runtime: RoomCodexNativeRuntime
-    stream_projector: RoomAgentStreamProjector
-    memory_runtime: RoomMemoryRuntime
-    memory_enabled: bool
 
 
 @contextmanager
@@ -199,16 +179,13 @@ async def run_room_runner(
                 RoomDatabase(root / "chat.db").initialize()
                 controls = RoomObservationControlStore(root / "chat.db")
                 skill_decisions = RoomAttemptSkillDecisionStore(root / "chat.db")
-                execution_store = RoomExecutionStore(root / "chat.db")
-                memory_delivery_store = RoomMemoryDeliveryStore(root / "chat.db")
-                memory_recall_store = RoomMemoryRecallStore(root / "chat.db")
+                execution_store = RoomExecutionReviewStore(root / "chat.db")
             except Exception as exc:
                 raise RoomRunnerError("room_runner_chat_db_unavailable") from exc
             readiness["chat_db"] = True
 
-            memory_runtime, memory_enabled = _memory_runtime_from_environment(
-                memory_delivery_store,
-                memory_recall_store,
+            memory_runtime, memory_enabled = compose_room_runner_memory(
+                root / "chat.db",
                 worker_id=f"room-memory-{boot_id}",
             )
 
@@ -252,7 +229,7 @@ async def run_room_runner(
             readiness["persistent_launcher"] = True
 
             try:
-                composition = _compose_runtime(
+                composition = compose_room_runtime(
                     root=root,
                     worktree=resolved_worktree,
                     launchers=launchers,
@@ -325,9 +302,9 @@ async def run_room_runner(
             readiness["host_loop"] = True
             if composition.memory_enabled:
                 memory_task = asyncio.create_task(
-                    _memory_pump_loop(
+                    run_room_memory_pump(
                         composition.memory_runtime,
-                        host=composition.host,
+                        report_attention=composition.host.set_memory_runtime_attention,
                         stop=stop,
                     ),
                     name="xmuse-room-memory-outbox",
@@ -481,132 +458,6 @@ async def run_room_runner(
                     await composition.host.shutdown()
                 with suppress(Exception):
                     await composition.session_layer.shutdown()
-
-
-def _compose_runtime(
-    *,
-    root: Path,
-    worktree: Path,
-    launchers: Mapping[Any, object],
-    controls: RoomObservationControlStore,
-    skill_decisions: RoomAttemptSkillDecisionStore,
-    skill_catalog: SkillCatalog,
-    execution_store: RoomExecutionStore,
-    max_concurrent_rooms: int,
-    delivery_timeout_s: float,
-    cleanup_grace_s: float,
-    runner_generation: str,
-    runner_boot_id: str,
-    memory_runtime: RoomMemoryRuntime | None = None,
-    memory_enabled: bool = False,
-) -> RoomRuntimeComposition:
-    memory = memory_runtime or DisabledRoomMemoryRuntime(RoomMemoryRecallStore(root / "chat.db"))
-    session_layer = GodSessionLayer(
-        registry_path=root / "god_sessions.json",
-        launchers=dict(launchers),
-    )
-    lease_ttl_s = max(
-        240,
-        int(math.ceil(delivery_timeout_s + cleanup_grace_s + 30.0)),
-    )
-    native_runtime = RoomCodexNativeRuntime(
-        root / "chat.db",
-        session_layer,
-        worktree=worktree,
-        runner_generation=runner_generation,
-        projection_cache=RoomCodexProjectionCache(root),
-    )
-    stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
-    host = RoomParticipantHost(
-        root / "chat.db",
-        CodexRoomObservationTransport(
-            session_layer,
-            worktree=worktree,
-            control_store=controls,
-            skill_decision_store=skill_decisions,
-            execution_store=execution_store,
-            memory_runtime=memory,
-            stream_projector=stream_projector,
-        ),
-        policy=RoomHostPolicy(
-            delivery_timeout_s=delivery_timeout_s,
-            cleanup_grace_s=cleanup_grace_s,
-            lease_ttl_s=lease_ttl_s,
-            max_batch_size=max_concurrent_rooms,
-        ),
-        control_store=controls,
-        skill_catalog=skill_catalog,
-        skill_decision_store=skill_decisions,
-        execution_store=execution_store,
-        memory_runtime=memory,
-        runner_generation=runner_generation,
-        runner_boot_id=runner_boot_id,
-        delivery_gate=native_runtime.accepts_delivery,
-    )
-    return RoomRuntimeComposition(
-        host=host,
-        session_layer=session_layer,
-        native_runtime=native_runtime,
-        stream_projector=stream_projector,
-        memory_runtime=memory,
-        memory_enabled=memory_enabled,
-    )
-
-
-def _memory_runtime_from_environment(
-    delivery_store: RoomMemoryDeliveryStore,
-    recall_store: RoomMemoryRecallStore,
-    *,
-    worker_id: str,
-) -> tuple[RoomMemoryRuntime, bool]:
-    url = os.environ.get("XMUSE_MEMORYOS_URL")
-    api_key = os.environ.get("XMUSE_MEMORYOS_API_KEY")
-    profile = os.environ.get("XMUSE_MEMORYOS_PROFILE", "archive-only")
-    if url and api_key:
-        try:
-            return (
-                ArchiveOnlyRoomMemoryRuntime(
-                    delivery_store,
-                    recall_store,
-                    MemoryOSArchiveAdapter(
-                        base_url=url,
-                        api_key=api_key,
-                        profile=cast(Literal["archive-only", "full-local"], profile),
-                    ),
-                    worker_id=worker_id,
-                ),
-                True,
-            )
-        except Exception:
-            # Memory is derived and optional.  Invalid sidecar configuration must
-            # not prevent the isolated Room Host from starting.
-            return DisabledRoomMemoryRuntime(recall_store), False
-    return DisabledRoomMemoryRuntime(recall_store), False
-
-
-async def _memory_pump_loop(
-    runtime: RoomMemoryRuntime,
-    *,
-    host: RoomParticipantHost,
-    stop: asyncio.Event,
-) -> None:
-    backoff_s = 1.0
-    while not stop.is_set():
-        try:
-            progressed = await runtime.pump_once()
-            host.set_memory_runtime_attention(None)
-            backoff_s = 1.0
-            delay = 0.05 if progressed else 1.0
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            host.set_memory_runtime_attention("room_memory_degraded")
-            delay = backoff_s
-            backoff_s = min(backoff_s * 2.0, 30.0)
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=delay)
-        except TimeoutError:
-            pass
 
 
 def _prepare_room_codex_home(
