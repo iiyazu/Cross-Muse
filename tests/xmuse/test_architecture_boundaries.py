@@ -112,6 +112,26 @@ def test_room_delivery_surfaces_depend_on_execution_review_ports() -> None:
     ] == []
 
 
+def test_execution_ledger_views_do_not_own_transactions_or_actions() -> None:
+    views = CORE_ROOT / "chat" / "room_execution_views.py"
+    forbidden = (
+        "xmuse_core.chat.room_database",
+        "xmuse_core.chat.room_execution_actions",
+        "xmuse_core.chat.room_execution_promotion",
+    )
+
+    assert [prefix for prefix in forbidden if _imports_prefix(views, prefix)] == []
+    tree = ast.parse(views.read_text(encoding="utf-8"), filename=str(views))
+    transaction_calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+    }
+    assert transaction_calls == set()
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))

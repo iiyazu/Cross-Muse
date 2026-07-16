@@ -394,21 +394,6 @@ def _policy_view(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _assessment_view(row: sqlite3.Row) -> dict[str, Any]:
-    return {
-        "assessment_id": row["assessment_id"],
-        "assessor_participant_id": row["assessor_participant_id"],
-        "assessment": row["assessment"],
-        "rationale": row["rationale"],
-        "candidate_digest": row["candidate_digest"],
-        "review_material_digest": row["review_material_digest"],
-        "source_attempt_id": row["source_attempt_id"],
-        "source_batch_id": row["source_batch_id"],
-        "source_activity_id": row["source_activity_id"],
-        "created_at": row["created_at"],
-    }
-
-
 def workspace_guard_digest(candidate: sqlite3.Row, workspace_guard: ExecutionWorkspaceGuard) -> str:
     require_digest(
         workspace_guard.target_files_digest,

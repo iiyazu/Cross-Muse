@@ -78,6 +78,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_codex_bridge.py` | Guarded native capability and action ledger boundary. |
 | `src/xmuse_core/chat/room_codex_native_runtime.py` | Participant session singleflight, recovery, and dispatch fencing. |
 | `src/xmuse_core/chat/room_goal_memory_soak.py` | Fixed v0.1 release profile and `room_goal_memory_soak_result/v1` contract. |
+| `src/xmuse_core/chat/room_execution_views.py` | Transaction-free candidate and run ledger read models. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
 | `xmuse/room_runner_composition.py` | Room-only Host, transport, native runtime, stream, and session wiring. |
