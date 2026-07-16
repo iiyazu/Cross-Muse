@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
-from xmuse_core.chat.room_database import FRONTEND_EVENT_PROOF_BOUNDARY, RoomDatabase
+from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_actions import (
     complete_execution_action_conn,
     replay_execution_action,
@@ -72,12 +72,12 @@ from xmuse_core.chat.room_execution_common import (
     timestamp as _timestamp,
 )
 from xmuse_core.chat.room_execution_contracts import (
-    ExecutionPatch,
     ExecutionRiskEvaluation,
     ExecutionWorkspaceGuard,
     canonical_execution_path,
     low_risk_patch_eligible,
 )
+from xmuse_core.chat.room_execution_events import record_execution_event_conn
 from xmuse_core.chat.room_execution_profiles import ExecutionGatePlan
 from xmuse_core.chat.room_execution_promotion import (
     mark_promotion_applying_conn,
@@ -129,98 +129,17 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
             ).fetchall()
         return [str(row["candidate_id"]) for row in rows]
 
-    @staticmethod
-    def _reserve_action_conn(
-        conn: sqlite3.Connection,
-        *,
-        conversation_id: str,
-        candidate_id: str | None,
-        action_type: str,
-        client_action_id: str,
-        operator_identity: str,
-        fingerprint: str,
-        expected_candidate_digest: str | None,
-        expected_candidate_revision: int | None,
-        expected_policy_revision: int | None,
-        expected_run_state: str | None,
-        expected_run_revision: int | None,
-        stamp: str,
-    ) -> tuple[sqlite3.Row, bool]:
-        return reserve_execution_action_conn(
-            conn,
-            conversation_id=conversation_id,
-            candidate_id=candidate_id,
-            action_type=action_type,
-            client_action_id=client_action_id,
-            operator_identity=operator_identity,
-            fingerprint=fingerprint,
-            expected_candidate_digest=expected_candidate_digest,
-            expected_candidate_revision=expected_candidate_revision,
-            expected_policy_revision=expected_policy_revision,
-            expected_run_state=expected_run_state,
-            expected_run_revision=expected_run_revision,
-            stamp=stamp,
-        )
-
-    @staticmethod
-    def _complete_action_conn(
-        conn: sqlite3.Connection,
-        *,
-        action_id: str,
-        status: Literal["applied", "rejected", "failed"],
-        result: Mapping[str, Any],
-        reason_code: str | None,
-        run_id: str | None,
-        stamp: str,
-    ) -> None:
-        complete_execution_action_conn(
-            conn,
-            action_id=action_id,
-            status=status,
-            result=result,
-            reason_code=reason_code,
-            run_id=run_id,
-            stamp=stamp,
-        )
-
-    @staticmethod
-    def _record_event_conn(
-        conn: sqlite3.Connection,
-        *,
-        conversation_id: str,
-        event_type: str,
-        resource_ref: str,
-        source_ref: str,
-        payload: Mapping[str, Any],
-        client_action_id: str | None,
-        stamp: str,
-    ) -> None:
-        seq = int(
-            conn.execute(
-                "select coalesce(max(seq), 0) + 1 from chat_frontend_events "
-                "where conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()[0]
-        )
-        conn.execute(
-            """insert into chat_frontend_events
-               (event_id, conversation_id, seq, event_type, resource_ref,
-                source_authority, source_ref, payload_json, client_action_id, created_at,
-                projection_only, proof_boundary)
-               values (?, ?, ?, ?, ?, 'chat.db', ?, ?, ?, ?, 1, ?)""",
-            (
-                _id("frontend_event"),
-                conversation_id,
-                seq,
-                event_type,
-                resource_ref,
-                source_ref,
-                _json(dict(payload)),
-                client_action_id,
-                stamp,
-                FRONTEND_EVENT_PROOF_BOUNDARY,
-            ),
-        )
+    _reserve_action_conn = staticmethod(reserve_execution_action_conn)
+    _complete_action_conn = staticmethod(complete_execution_action_conn)
+    _record_event_conn = staticmethod(record_execution_event_conn)
+    _workspace_guard_digest = staticmethod(workspace_guard_digest)
+    _patch_from_candidate = staticmethod(patch_from_candidate)
+    _authorize_conn = staticmethod(authorize_execution_conn)
+    _action_replay = staticmethod(replay_execution_action)
+    _controller_identity = staticmethod(controller_identity)
+    _assert_controller_conn = staticmethod(assert_controller_conn)
+    _bound_run_conn = staticmethod(bound_run_conn)
+    _promotion_entries = staticmethod(normalize_promotion_entries)
 
     def set_policy(
         self,
@@ -325,41 +244,6 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
             except Exception:
                 conn.rollback()
                 raise
-
-    @staticmethod
-    def _workspace_guard_digest(
-        candidate: sqlite3.Row, workspace_guard: ExecutionWorkspaceGuard
-    ) -> str:
-        return workspace_guard_digest(candidate, workspace_guard)
-
-    @staticmethod
-    def _patch_from_candidate(candidate: sqlite3.Row) -> ExecutionPatch:
-        return patch_from_candidate(candidate)
-
-    @staticmethod
-    def _authorize_conn(
-        conn: sqlite3.Connection,
-        *,
-        candidate: sqlite3.Row,
-        authorization_mode: Literal["manual", "consensus"],
-        workspace_guard_digest: str,
-        risk_evidence_digest: str | None,
-        gate_plan: ExecutionGatePlan,
-        stamp: str,
-    ) -> tuple[sqlite3.Row, sqlite3.Row, bool]:
-        return authorize_execution_conn(
-            conn,
-            candidate=candidate,
-            authorization_mode=authorization_mode,
-            workspace_guard_digest=workspace_guard_digest,
-            risk_evidence_digest=risk_evidence_digest,
-            gate_plan=gate_plan,
-            stamp=stamp,
-        )
-
-    @staticmethod
-    def _action_replay(row: sqlite3.Row) -> dict[str, Any]:
-        return replay_execution_action(row)
 
     def replay_operator_decision(
         self,
@@ -805,40 +689,6 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
                 raise
 
     @staticmethod
-    def _controller_identity(
-        *,
-        controller_id: str,
-        controller_generation: str,
-        controller_pid: int,
-        controller_start_identity: str,
-    ) -> tuple[str, str, int, str]:
-        return controller_identity(
-            controller_id=controller_id,
-            controller_generation=controller_generation,
-            controller_pid=controller_pid,
-            controller_start_identity=controller_start_identity,
-        )
-
-    @staticmethod
-    def _assert_controller_conn(
-        row: sqlite3.Row,
-        *,
-        controller_id: str,
-        controller_generation: str,
-        controller_pid: int,
-        controller_start_identity: str,
-        execution_generation: int,
-    ) -> None:
-        assert_controller_conn(
-            row,
-            controller_id=controller_id,
-            controller_generation=controller_generation,
-            controller_pid=controller_pid,
-            controller_start_identity=controller_start_identity,
-            execution_generation=execution_generation,
-        )
-
-    @staticmethod
     def _controller_material_conn(conn: sqlite3.Connection, run: sqlite3.Row) -> dict[str, Any]:
         candidate = conn.execute(
             "select * from room_execution_candidates where candidate_id = ?",
@@ -1063,25 +913,6 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
             for row in rows
         ]
 
-    @staticmethod
-    def _bound_run_conn(
-        conn: sqlite3.Connection,
-        *,
-        run_id: str,
-        expected_state: str,
-        expected_revision: int,
-        execution_generation: int,
-        identity: tuple[str, str, int, str],
-    ) -> sqlite3.Row:
-        return bound_run_conn(
-            conn,
-            run_id=run_id,
-            expected_state=expected_state,
-            expected_revision=expected_revision,
-            execution_generation=execution_generation,
-            identity=identity,
-        )
-
     def advance_run(
         self,
         *,
@@ -1187,12 +1018,6 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
             except Exception:
                 conn.rollback()
                 raise
-
-    @staticmethod
-    def _promotion_entries(
-        candidate: sqlite3.Row, file_entries: Sequence[Mapping[str, Any]]
-    ) -> str:
-        return normalize_promotion_entries(candidate, file_entries)
 
     def prepare_promotion(
         self,

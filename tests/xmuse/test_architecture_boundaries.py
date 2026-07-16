@@ -173,6 +173,21 @@ def test_execution_runtime_uses_reconciler_capability_store() -> None:
     assert not _imports_prefix(runtime, "xmuse_core.chat.room_execution_store")
 
 
+def test_execution_event_helper_uses_caller_owned_transaction() -> None:
+    events = CORE_ROOT / "chat" / "room_execution_events.py"
+
+    tree = ast.parse(events.read_text(encoding="utf-8"), filename=str(events))
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "RoomDatabase" for node in ast.walk(tree)
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"commit", "rollback"}
+        for node in ast.walk(tree)
+    )
+
+
 def test_workroom_lifecycle_does_not_own_cli_parsing() -> None:
     lifecycle = APP_ROOT / "workroom.py"
     tree = ast.parse(lifecycle.read_text(encoding="utf-8"), filename=str(lifecycle))

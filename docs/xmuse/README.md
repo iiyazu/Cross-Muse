@@ -83,6 +83,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_execution_operator_store.py` | Fixed policy, candidate-decision, and cancel capability adapter for operator routes. |
 | `src/xmuse_core/chat/room_execution_controller_store.py` | One-shot controller claim, gate, promotion, and finalization capability adapter. |
 | `src/xmuse_core/chat/room_execution_runtime_store.py` | Long-lived consensus discovery and controller-recovery capability adapter. |
+| `src/xmuse_core/chat/room_execution_events.py` | Caller-transaction projection invalidation helper for execution changes. |
 | `src/xmuse_core/chat/room_execution_review_store.py` | Least-authority review material and receipt store used by Room delivery. |
 | `src/xmuse_core/skills/` | Bundled Skill catalog, selection, and evidence. |
 | `scripts/room_soak_chaos.py` | Independent live provider/MemoryOS fault and browser orchestration; no production telemetry surface. |
@@ -166,6 +167,11 @@ Room delivery review receipts.
 The long-lived Chat API reconciler uses `RoomExecutionRuntimeStore`: it may discover endorsed
 candidates, reconcile consensus authorization, and recover controller bindings, but it does
 not receive operator commands or the controller's gate/promotion/finalization surface.
+
+The remaining internal execution authority binds existing candidate, action, run, promotion,
+and event `*_conn` helpers as explicit class seams. This keeps transaction fault injection
+possible without duplicating forwarding signatures inside the aggregate store; event helpers
+never open or commit their own connection.
 
 Core continues to have no dependency on the application namespace or `memoryos_lite`.
 Boundary tests enforce both directions. Future reductions should preserve wire contracts and
