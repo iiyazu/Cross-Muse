@@ -35,25 +35,7 @@ import type {
   RoomChatProjection,
   RoomAgentStream,
   RoomAgentStreamProjection,
-  RoomCodexActionDescriptor,
-  RoomCodexActionResult,
-  RoomCodexCapabilityId,
-  RoomCodexProjection,
-  RoomCodexSafeRequestByCapability,
-  RoomControlActionDescriptor,
-  RoomExecutionCancelDescriptor,
-  RoomExecutionCandidateProjection,
-  RoomExecutionDecisionDescriptor,
-  RoomExecutionListProjection,
-  RoomExecutionPolicyMode,
-  RoomExecutionPolicyUpdateDescriptor,
   RoomMessageReceipt,
-  RoomMemoryRebuildDescriptor,
-  RoomMemoryProjection,
-  RoomMemoryResolveDescriptor,
-  RoomOperationsProjection,
-  RoomRuntimeRecoverDescriptor,
-  RoomSummary,
   RoomTimelineItem,
   XmuseApiErrorShape
 } from "@/lib/types";
@@ -81,196 +63,31 @@ import {
   readRoomDraft,
   readRoomUiState
 } from "@/store/room-persistence";
-import type { ScrollAnchor, WorkspaceDockTab } from "@/store/room-persistence";
 import { createRoomSyncCoordinator } from "@/store/room-sync-coordinator";
 import {
   persistCodexConsolePreference,
   readCodexConsolePreference
 } from "@/store/codex-console-preferences";
-import type { CodexConsoleTurnMode } from "@/store/codex-console-preferences";
+import type {
+  PendingRoomMessage,
+  RoomCache,
+  RoomCodexCache,
+  RoomExecutionCache,
+  RoomMemoryCache,
+  RoomStoreRoot
+} from "@/store/domain";
 
 export type { ScrollAnchor } from "@/store/room-persistence";
+export type {
+  PendingRoomMessage,
+  RoomCache,
+  RoomCodexCache,
+  RoomExecutionCache,
+  RoomMemoryCache,
+  RoomSyncState
+} from "@/store/domain";
 
-export type RoomSyncState = "idle" | "syncing" | "synced" | "catching-up" | "stale" | "offline";
-
-export type PendingRoomMessage = {
-  clientRequestId: string;
-  content: string;
-  createdAt: string;
-  status: "sending" | "failed";
-  error?: XmuseApiErrorShape | null;
-};
-
-export type RoomCache = {
-  projection: RoomChatProjection | null;
-  timelineItems: RoomTimelineItem[];
-  pendingMessages: PendingRoomMessage[];
-  requestGeneration: number;
-  loading: boolean;
-  loadingOlder: boolean;
-  eventCursor: number;
-  syncState: RoomSyncState;
-  consecutiveFailures: number;
-  lastSyncedAt: number;
-  lastAccessedAt: number;
-  error: XmuseApiErrorShape | null;
-  controlPending: { observationId: string; action: "cancel" | "retry" } | null;
-  controlError: XmuseApiErrorShape | null;
-  agentStreams: RoomAgentStream[];
-  agentStreamAvailable: boolean;
-  agentStreamEpoch: string | null;
-  agentStreamSeq: number;
-  agentStreamGeneration: number;
-};
-
-export type RoomExecutionCache = {
-  list: RoomExecutionListProjection | null;
-  details: Record<string, RoomExecutionCandidateProjection>;
-  selectedCandidateId: string | null;
-  loading: boolean;
-  detailLoading: boolean;
-  requestGeneration: number;
-  consecutiveFailures: number;
-  lastSyncedAt: number;
-  error: XmuseApiErrorShape | null;
-};
-
-export type RoomMemoryCache = {
-  projection: RoomMemoryProjection | null;
-  loading: boolean;
-  requestGeneration: number;
-  consecutiveFailures: number;
-  lastSyncedAt: number;
-  error: XmuseApiErrorShape | null;
-};
-
-export type RoomCodexCache = {
-  projection: RoomCodexProjection | null;
-  selectedParticipantId: string | null;
-  loading: boolean;
-  requestGeneration: number;
-  consecutiveFailures: number;
-  lastSyncedAt: number;
-  error: XmuseApiErrorShape | null;
-  actionPending: Record<string, { capabilityId: string; clientActionId: string }>;
-  actionErrors: Record<string, XmuseApiErrorShape | null>;
-};
-
-type RoomState = {
-  rooms: RoomSummary[];
-  roomsById: Record<string, RoomCache>;
-  selectedRoomId: string | null;
-  roomsLoading: boolean;
-  roomsLoaded: boolean;
-  roomsError: XmuseApiErrorShape | null;
-  roomCreatePending: boolean;
-  roomCreateError: XmuseApiErrorShape | null;
-  drafts: Record<string, string>;
-  readCursors: Record<string, number>;
-  scrollAnchors: Record<string, ScrollAnchor>;
-  theme: "dark" | "light";
-  sidebarOpen: boolean;
-  inspectorOpen: boolean;
-  dockTab: WorkspaceDockTab;
-  pinnedRoomIds: string[];
-  selectedParticipants: Record<string, string>;
-  operations: RoomOperationsProjection | null;
-  operationsLoading: boolean;
-  operationsError: XmuseApiErrorShape | null;
-  operationsGeneration: number;
-  operationsConsecutiveFailures: number;
-  executionsByRoom: Record<string, RoomExecutionCache>;
-  memoryByRoom: Record<string, RoomMemoryCache>;
-  codexByRoom: Record<string, RoomCodexCache>;
-  codexPreferenceRevision: number;
-  executionActionPending: {
-    kind: "policy" | "execute" | "reject" | "cancel";
-    targetId: string;
-  } | null;
-  executionActionError: XmuseApiErrorShape | null;
-  memoryActionPending: {
-    candidateId: string;
-    decision: "approve" | "reject";
-  } | null;
-  memoryActionError: XmuseApiErrorShape | null;
-  memoryRebuildPending: boolean;
-  memoryRebuildIncidentId: string | null;
-  memoryRebuildError: XmuseApiErrorShape | null;
-  runtimeRecoverPending: boolean;
-  runtimeRecoverError: XmuseApiErrorShape | null;
-  inspectorTarget: {
-    roomId: string;
-    observationId: string | null;
-    incidentId: string;
-  } | null;
-  bootstrap: (requestedRoomId?: string | null) => Promise<string | null>;
-  loadRooms: () => Promise<RoomSummary[]>;
-  createRoom: (title: string, clientRequestId?: string, rosterTemplateId?: string) => Promise<string | null>;
-  selectRoom: (roomId: string) => Promise<void>;
-  refreshRoom: (roomId?: string, mode?: "initial" | "incremental" | "older") => Promise<void>;
-  catchUpRoom: (roomId?: string) => Promise<void>;
-  loadOlder: (roomId?: string) => Promise<void>;
-  sendMessage: (content: string, clientRequestId?: string) => Promise<string | null>;
-  retryMessage: (clientRequestId: string) => Promise<void>;
-  controlObservation: (
-    observationId: string,
-    action: "cancel" | "retry",
-    descriptor: RoomControlActionDescriptor
-  ) => Promise<boolean>;
-  refreshOperations: () => Promise<void>;
-  refreshExecutions: (roomId?: string, candidateId?: string | null) => Promise<void>;
-  refreshMemory: (roomId?: string) => Promise<void>;
-  refreshCodexAgents: (roomId?: string) => Promise<void>;
-  selectCodexParticipant: (participantId: string | null, roomId?: string) => void;
-  submitCodexAction: (
-    participantId: string,
-    capabilityId: RoomCodexCapabilityId,
-    request: RoomCodexSafeRequestByCapability[RoomCodexCapabilityId],
-    descriptor: RoomCodexActionDescriptor,
-    confirmedPendingObservations?: boolean
-  ) => Promise<RoomCodexActionResult | null>;
-  getCodexConsolePreference: (participantId: string) => CodexConsoleTurnMode;
-  setCodexConsolePreference: (participantId: string, mode: CodexConsoleTurnMode) => void;
-  resolveMemoryCandidate: (
-    candidateId: string,
-    decision: "approve" | "reject",
-    descriptor: RoomMemoryResolveDescriptor
-  ) => Promise<boolean>;
-  rebuildMemoryIndex: (descriptor: RoomMemoryRebuildDescriptor) => Promise<boolean>;
-  selectExecutionCandidate: (candidateId: string | null) => Promise<void>;
-  updateExecutionPolicy: (
-    mode: RoomExecutionPolicyMode,
-    descriptor: RoomExecutionPolicyUpdateDescriptor
-  ) => Promise<boolean>;
-  decideExecutionCandidate: (
-    candidateId: string,
-    decision: "execute" | "reject",
-    descriptor: RoomExecutionDecisionDescriptor
-  ) => Promise<boolean>;
-  cancelExecutionRun: (
-    runId: string,
-    descriptor: RoomExecutionCancelDescriptor
-  ) => Promise<boolean>;
-  recoverRuntime: (descriptor: RoomRuntimeRecoverDescriptor) => Promise<boolean>;
-  setDraft: (roomId: string, draft: string) => void;
-  markRead: (roomId: string, roomSeq: number) => void;
-  saveScrollAnchor: (roomId: string, anchor: ScrollAnchor | null) => void;
-  setTheme: (theme: "dark" | "light") => void;
-  setSidebarOpen: (open: boolean) => void;
-  setInspectorOpen: (open: boolean) => void;
-  setDockTab: (tab: WorkspaceDockTab) => void;
-  togglePinnedRoom: (roomId: string) => void;
-  setInspectorTarget: (target: RoomState["inspectorTarget"]) => void;
-  clearRoomError: (roomId?: string) => void;
-  clearControlError: (roomId?: string) => void;
-  startSync: () => void;
-  startOperationsSync: () => void;
-  startExecutionSync: () => void;
-  startMemorySync: () => void;
-  startCodexSync: () => void;
-  startAgentStream: () => void;
-  stopSync: () => void;
-};
+export type RoomState = RoomStoreRoot;
 
 const chatApiBaseUrl = process.env.NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL;
 const MESSAGE_SEND_TIMEOUT_MS = 24_000;
