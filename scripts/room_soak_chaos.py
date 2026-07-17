@@ -134,41 +134,44 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
 }
 
 
+ENDURANCE_OUTCOME_REQUIREMENT = (
+    " Submit exactly one concise durable Room outcome through the allowed Room outcome tool; "
+    "do not end with provider text alone."
+)
 ENDURANCE_PROMPT_CATEGORIES: tuple[tuple[str, str], ...] = (
     (
         "boundary_inventory",
         "Read-only architecture review: identify one runtime boundary and report only "
-        "evidence-backed observations; do not edit files.",
+        "evidence-backed observations; do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
     (
         "package_direction",
         "Read-only architecture review: inspect runtime boundaries and package import "
-        "direction, cite durable evidence, and do not edit files.",
+        "direction, cite durable evidence, and do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
     (
         "authority_ownership",
         "Read-only architecture review: inspect boundaries, package direction, and durable "
         "authority ownership; distinguish infrastructure from Agent decisions and do not "
-        "edit files.",
+        "edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
     (
         "causality_recovery",
         "Read-only architecture review: inspect boundaries, direction, authority, causality, "
         "idempotency, and recovery behavior using only re-provable Room sources; do not "
-        "edit files.",
+        "edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
     (
         "execution_safety",
         "Read-only architecture review: inspect boundaries, direction, authority, causality, "
         "recovery, and exact-patch execution safety; reject claims lacking durable evidence and "
-        "do not edit files.",
+        "do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
     (
         "adversarial_integration",
         "Read-only adversarial architecture review: jointly inspect boundaries, import direction, "
         "authority, causality, idempotency, recovery, memory source proof, and execution gates; "
-        "surface contradictions, submit one concise evidence-backed outcome, and do not edit "
-        "files.",
+        "surface contradictions and do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
     ),
 )
 

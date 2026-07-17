@@ -758,6 +758,7 @@ def test_endurance_posts_cover_six_fixed_read_only_categories_without_public_evi
     assert all(count > 0 for count in state.endurance_prompt_categories.values())
     assert set(messages) == set(category_messages.values())
     assert all("Read-only" in message and "do not edit files" in message for message in messages)
+    assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
 
 
 def test_memory_recovery_uses_old_archival_anchor_across_two_phases(tmp_path: Path) -> None:
