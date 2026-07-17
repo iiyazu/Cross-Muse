@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from xmuse.memoryos_http_client import MemoryOSAdapterError
 from xmuse_core.chat.room_memory_ports import RoomMemoryRecallReceiptContextPort
@@ -34,6 +35,7 @@ class MemoryRecallCapability(Protocol):
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None: ...
 
 
@@ -76,11 +78,13 @@ class MemoryOSRoomMemoryRuntime:
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         self._recall_runtime.bind_context_receipt(
             attempt_id=attempt_id,
             evidence_sha256=evidence_sha256,
             context_payload_sha256=context_payload_sha256,
+            included_items=included_items,
         )
 
     async def pump_once(self) -> bool:
@@ -122,6 +126,7 @@ class DisabledRoomMemoryRuntime:
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         if not evidence_sha256.startswith("sha256:") or not context_payload_sha256.startswith(
             "sha256:"
@@ -131,6 +136,7 @@ class DisabledRoomMemoryRuntime:
             attempt_id=attempt_id,
             evidence_sha256=evidence_sha256,
             context_payload_sha256=context_payload_sha256,
+            included_items=included_items,
             now=datetime.now(UTC),
         )
 

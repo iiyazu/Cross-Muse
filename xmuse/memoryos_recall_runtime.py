@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
@@ -170,6 +170,17 @@ class MemoryOSRecallRuntime:
                     "source_activity_ids": list(item.source_activity_ids),
                     "content_sha256": item.content_sha256,
                     "text": item.text,
+                    "layer": item.layer,
+                    "derived": item.derived,
+                    **(
+                        {
+                            "proof_source_type": "message",
+                            "proof_session_id": item.proof_session_id,
+                            "proof_source_ids": list(item.proof_source_ids),
+                        }
+                        if item.proof_source_type == "message"
+                        else {}
+                    ),
                 }
                 for item in evidence.items
             ],
@@ -183,6 +194,7 @@ class MemoryOSRecallRuntime:
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         if (
             _DIGEST_RE.fullmatch(evidence_sha256) is None
@@ -193,6 +205,7 @@ class MemoryOSRecallRuntime:
             attempt_id=attempt_id,
             evidence_sha256=evidence_sha256,
             context_payload_sha256=context_payload_sha256,
+            included_items=included_items,
             now=datetime.now(UTC),
         )
 
