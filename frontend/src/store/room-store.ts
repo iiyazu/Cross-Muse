@@ -68,6 +68,13 @@ import {
   persistCodexConsolePreference,
   readCodexConsolePreference
 } from "@/store/codex-console-preferences";
+import {
+  createEmptyCodexCache,
+  createEmptyExecutionCache,
+  createEmptyMemoryCache,
+  createEmptyRoomCache
+} from "@/store/room-cache-factories";
+import { createUiDomainActions } from "@/store/ui-action-factory";
 import type {
   PendingRoomMessage,
   RoomCache,
@@ -93,6 +100,11 @@ const chatApiBaseUrl = process.env.NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL;
 const MESSAGE_SEND_TIMEOUT_MS = 24_000;
 const SAFE_REFRESH_MS = 15_000;
 const ROOM_LIST_REFRESH_MS = 12_000;
+
+const emptyCache = createEmptyRoomCache;
+const emptyExecutionCache = createEmptyExecutionCache;
+const emptyMemoryCache = createEmptyMemoryCache;
+const emptyCodexCache = createEmptyCodexCache;
 
 const syncCoordinator = createRoomSyncCoordinator();
 let lastSafeRefreshAt = 0;
@@ -159,69 +171,6 @@ function closeAgentStream() {
   agentStreamSource?.close();
   agentStreamSource = null;
   agentStreamGeneration += 1;
-}
-
-function emptyCache(now = Date.now()): RoomCache {
-  return {
-    projection: null,
-    timelineItems: [],
-    pendingMessages: [],
-    requestGeneration: 0,
-    loading: false,
-    loadingOlder: false,
-    eventCursor: 0,
-    syncState: "idle",
-    consecutiveFailures: 0,
-    lastSyncedAt: 0,
-    lastAccessedAt: now,
-    error: null,
-    controlPending: null,
-    controlError: null,
-    agentStreams: [],
-    agentStreamAvailable: true,
-    agentStreamEpoch: null,
-    agentStreamSeq: 0,
-    agentStreamGeneration: 0
-  };
-}
-
-function emptyExecutionCache(): RoomExecutionCache {
-  return {
-    list: null,
-    details: {},
-    selectedCandidateId: null,
-    loading: false,
-    detailLoading: false,
-    requestGeneration: 0,
-    consecutiveFailures: 0,
-    lastSyncedAt: 0,
-    error: null
-  };
-}
-
-function emptyMemoryCache(): RoomMemoryCache {
-  return {
-    projection: null,
-    loading: false,
-    requestGeneration: 0,
-    consecutiveFailures: 0,
-    lastSyncedAt: 0,
-    error: null
-  };
-}
-
-function emptyCodexCache(): RoomCodexCache {
-  return {
-    projection: null,
-    selectedParticipantId: null,
-    loading: false,
-    requestGeneration: 0,
-    consecutiveFailures: 0,
-    lastSyncedAt: 0,
-    error: null,
-    actionPending: {},
-    actionErrors: {}
-  };
 }
 
 function browserStorage(kind: "local" | "session"): Storage | null {
@@ -1492,80 +1441,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     }
   },
 
-  setDraft(roomId, draft) {
-    set((state) => ({ drafts: { ...state.drafts, [roomId]: draft } }));
-    persistRoomDraft(browserStorage("session"), roomId, draft);
-  },
-
-  markRead(roomId, nextSeq) {
-    if (nextSeq <= (get().readCursors[roomId] ?? 0)) return;
-    set((state) => ({
-      readCursors: {
-        ...state.readCursors,
-        [roomId]: Math.max(state.readCursors[roomId] ?? 0, nextSeq)
-      }
-    }));
-    persistLocalState(get());
-  },
-
-  saveScrollAnchor(roomId, anchor) {
-    set((state) => {
-      const scrollAnchors = { ...state.scrollAnchors };
-      if (anchor) scrollAnchors[roomId] = anchor;
-      else delete scrollAnchors[roomId];
-      return { scrollAnchors };
-    });
-    persistLocalState(get());
-  },
-
-  setTheme(theme) {
-    set({ theme });
-    persistLocalState(get());
-  },
-
-  setSidebarOpen(open) {
-    set({ sidebarOpen: open });
-    persistLocalState(get());
-  },
-
-  setInspectorOpen(open) {
-    set({ inspectorOpen: open });
-    persistLocalState(get());
-    if (open) {
-      void get().refreshOperations();
-      void get().refreshExecutions();
-      void get().refreshMemory();
-      void get().refreshCodexAgents();
-    }
-    get().startOperationsSync();
-    get().startExecutionSync();
-    get().startMemorySync();
-    get().startCodexSync();
-  },
-
-  setDockTab(tab) {
-    set({ dockTab: tab, inspectorOpen: true });
-    persistLocalState(get());
-    if (tab === "agent") void get().refreshCodexAgents();
-    if (tab === "room") {
-      void get().refreshExecutions();
-      void get().refreshMemory();
-    }
-    if (tab === "runtime") void get().refreshOperations();
-    get().startOperationsSync();
-    get().startExecutionSync();
-    get().startMemorySync();
-    get().startCodexSync();
-  },
-
-  togglePinnedRoom(roomId) {
-    set((state) => ({
-      pinnedRoomIds: state.pinnedRoomIds.includes(roomId)
-        ? state.pinnedRoomIds.filter((id) => id !== roomId)
-        : [roomId, ...state.pinnedRoomIds].slice(0, 50)
-    }));
-    persistLocalState(get());
-  },
+  ...createUiDomainActions({
+    get,
+    set,
+    persistDraft: (roomId, draft) =>
+      persistRoomDraft(browserStorage("session"), roomId, draft),
+    persistUiState: persistLocalState
+  }),
 
   setInspectorTarget(target) {
     set({ inspectorTarget: target, inspectorOpen: target ? true : get().inspectorOpen });

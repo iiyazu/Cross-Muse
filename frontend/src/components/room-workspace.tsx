@@ -3,6 +3,7 @@
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -55,10 +56,10 @@ import {
 import { RoomMessage, RoomPendingBubble } from "./room-message";
 import { RoomAgentPreview } from "./room-agent-preview";
 import { RoomInspector as RoomInspectorShell } from "./room-inspector";
-import { RoomSidebar } from "./room-sidebar";
+import { WorkspaceSidebar } from "./room-workspace-sidebar";
 import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
 import { AgentConsole } from "./agent-console";
-import { CommandPalette, type CommandPaletteAction } from "./command-palette";
+import { WorkspaceCommandPalette } from "./room-workspace-command-palette";
 import { RoomEvidenceDomain } from "./room-evidence-domain";
 import { RoomExecutionDomain } from "./room-execution-domain";
 import { RoomMemoryDomain } from "./room-memory-domain";
@@ -87,6 +88,18 @@ type RoomWorkspaceCache = Pick<
   | "controlPending"
   | "controlError"
 >;
+const EMPTY_ROOM_WORKSPACE_CACHE: RoomWorkspaceCache = {
+  projection: null,
+  timelineItems: [],
+  pendingMessages: [],
+  loading: false,
+  loadingOlder: false,
+  syncState: "idle",
+  error: null,
+  controlPending: null,
+  controlError: null
+};
+const EMPTY_ROOM_TURNS: RoomTurn[] = [];
 
 export function roomAgentStreamAnnouncement(
   previous: ReadonlyMap<string, StreamAnnouncementSnapshot>,
@@ -217,6 +230,30 @@ export function snapTimelineToBottom(container: HTMLElement) {
   container.style.scrollBehavior = scrollBehavior;
 }
 
+const DurableTimelineContent = memo(function DurableTimelineContent({
+  items,
+  pendingMessages,
+  onJumpToReference,
+  onRetry
+}: {
+  items: RoomTimelineItem[];
+  pendingMessages: RoomWorkspaceCache["pendingMessages"];
+  onJumpToReference: (messageId?: string | null, activityId?: string | null) => void;
+  onRetry: (clientRequestId: string) => void;
+}) {
+  return <>
+    {items.map((item, index) => (
+      <Fragment key={item.id}>
+        {new Date(item.created_at ?? 0).toDateString() !== new Date(items[index - 1]?.created_at ?? 0).toDateString() ? (
+          <div className="room-date-separator" role="separator"><span>{formatTime(item.created_at)}</span></div>
+        ) : null}
+        <RoomMessage item={item} onJumpToReference={onJumpToReference} />
+      </Fragment>
+    ))}
+    {pendingMessages.map((pending) => <RoomPendingBubble key={pending.clientRequestId} onRetry={() => onRetry(pending.clientRequestId)} pending={pending} />)}
+  </>;
+});
+
 export function shouldInitializeTimeline(
   initializedRoomId: string | null,
   roomId: string,
@@ -226,12 +263,25 @@ export function shouldInitializeTimeline(
 }
 
 const RoomTimeline = memo(function RoomTimeline({
-  roomId,
-  cache
+  roomId
 }: {
   roomId: string;
-  cache: RoomWorkspaceCache;
 }) {
+  const cache = useRoomStore(useShallow((state): RoomWorkspaceCache => {
+    const room = state.roomsById[roomId];
+    if (!room) return EMPTY_ROOM_WORKSPACE_CACHE;
+    return {
+      projection: room.projection,
+      timelineItems: room.timelineItems,
+      pendingMessages: room.pendingMessages,
+      loading: room.loading,
+      loadingOlder: room.loadingOlder,
+      syncState: room.syncState,
+      error: room.error,
+      controlPending: room.controlPending,
+      controlError: room.controlError
+    };
+  }));
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRoomRef = useRef<string | null>(null);
   const wasAtBottomRef = useRef(true);
@@ -396,10 +446,14 @@ const RoomTimeline = memo(function RoomTimeline({
     }
   }
 
-  async function handleJumpToReference(
+  const handleRetryMessage = useCallback((clientRequestId: string) => {
+    void retryMessage(clientRequestId);
+  }, [retryMessage]);
+
+  const handleJumpToReference = useCallback(async (
     messageId?: string | null,
     activityId?: string | null
-  ) {
+  ) => {
     const locate = () => {
       const container = containerRef.current;
       if (!container) return null;
@@ -421,7 +475,7 @@ const RoomTimeline = memo(function RoomTimeline({
       await loadOlder(roomId);
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
-  }
+  }, [loadOlder, roomId]);
 
   return (
     <div className="room-timeline-wrap">
@@ -437,26 +491,12 @@ const RoomTimeline = memo(function RoomTimeline({
             {cache.loadingOlder ? "正在加载…" : "加载更早消息"}
           </button>
         ) : null}
-        {cache.timelineItems.map((item, index) => (
-          <Fragment key={item.id}>
-          {new Date(item.created_at ?? 0).toDateString() !== new Date(cache.timelineItems[index - 1]?.created_at ?? 0).toDateString() ? (
-            <div className="room-date-separator" role="separator"><span>{formatTime(item.created_at)}</span></div>
-          ) : null}
-          <RoomMessage
-            item={item}
-            onJumpToReference={(messageId, activityId) => {
-              void handleJumpToReference(messageId, activityId);
-            }}
-          />
-          </Fragment>
-        ))}
-        {cache.pendingMessages.map((pending) => (
-          <RoomPendingBubble
-            key={pending.clientRequestId}
-            onRetry={() => void retryMessage(pending.clientRequestId)}
-            pending={pending}
-          />
-        ))}
+        <DurableTimelineContent
+          items={cache.timelineItems}
+          onJumpToReference={handleJumpToReference}
+          onRetry={handleRetryMessage}
+          pendingMessages={cache.pendingMessages}
+        />
         {visibleStreams.length ? (
           <div aria-label="Agent 正在生成" className="room-agent-streams">
             {visibleStreams.map((stream) => (
@@ -650,6 +690,333 @@ function RoomInspector({
   );
 }
 
+type WorkspaceInspectorProps = {
+  compact: boolean;
+  onIncidentRoom: (roomId: string) => void;
+  onNotice: (notice: string) => void;
+  onRequestCancel: (target: CancelTarget) => void;
+  onRequestMemoryRebuild: (descriptor: RoomMemoryRebuildDescriptor) => void;
+  onRequestRecover: (descriptor: RoomRuntimeRecoverDescriptor) => void;
+};
+
+/**
+ * The Dock owns all domain-cache subscriptions. Keeping it below the shell means
+ * operations, memory and Codex polling cannot invalidate the Room timeline tree.
+ */
+function WorkspaceInspector({
+  compact,
+  onIncidentRoom,
+  onNotice,
+  onRequestCancel,
+  onRequestMemoryRebuild,
+  onRequestRecover
+}: WorkspaceInspectorProps) {
+  const selectedRoomId = useRoomStore((state) => state.selectedRoomId);
+  const dockTab = useRoomStore((state) => state.dockTab);
+  const selectedCache = useRoomStore((state) => {
+    const roomId = state.selectedRoomId;
+    return roomId ? state.roomsById[roomId] ?? null : null;
+  });
+  const executionCache = useRoomStore((state) => {
+    const roomId = state.selectedRoomId;
+    return roomId ? state.executionsByRoom[roomId] ?? null : null;
+  });
+  const memoryCache = useRoomStore((state) => {
+    const roomId = state.selectedRoomId;
+    return roomId ? state.memoryByRoom[roomId] ?? null : null;
+  });
+  const codexCache = useRoomStore((state) => {
+    const roomId = state.selectedRoomId;
+    return roomId ? state.codexByRoom[roomId] ?? null : null;
+  });
+  const operations = useRoomStore((state) => state.operations);
+  const operationsLoading = useRoomStore((state) => state.operationsLoading);
+  const operationsError = useRoomStore((state) => state.operationsError);
+  const executionActionPending = useRoomStore((state) => state.executionActionPending);
+  const executionActionError = useRoomStore((state) => state.executionActionError);
+  const memoryActionPending = useRoomStore((state) => state.memoryActionPending);
+  const memoryActionError = useRoomStore((state) => state.memoryActionError);
+  const memoryRebuildPending = useRoomStore((state) => state.memoryRebuildPending);
+  const memoryRebuildError = useRoomStore((state) => state.memoryRebuildError);
+  const runtimeRecoverPending = useRoomStore((state) => state.runtimeRecoverPending);
+  const runtimeRecoverError = useRoomStore((state) => state.runtimeRecoverError);
+  const inspectorTarget = useRoomStore((state) => state.inspectorTarget);
+  const setInspectorOpen = useRoomStore((state) => state.setInspectorOpen);
+  const setDockTab = useRoomStore((state) => state.setDockTab);
+  const setInspectorTarget = useRoomStore((state) => state.setInspectorTarget);
+  const selectCodexParticipant = useRoomStore((state) => state.selectCodexParticipant);
+  const submitCodexAction = useRoomStore((state) => state.submitCodexAction);
+  const getCodexConsolePreference = useRoomStore((state) => state.getCodexConsolePreference);
+  const setCodexConsolePreference = useRoomStore((state) => state.setCodexConsolePreference);
+  const refreshCodexAgents = useRoomStore((state) => state.refreshCodexAgents);
+  const refreshOperations = useRoomStore((state) => state.refreshOperations);
+  const refreshRoom = useRoomStore((state) => state.refreshRoom);
+  const controlObservation = useRoomStore((state) => state.controlObservation);
+  const selectExecutionCandidate = useRoomStore((state) => state.selectExecutionCandidate);
+  const updateExecutionPolicy = useRoomStore((state) => state.updateExecutionPolicy);
+  const decideExecutionCandidate = useRoomStore((state) => state.decideExecutionCandidate);
+  const cancelExecutionRun = useRoomStore((state) => state.cancelExecutionRun);
+  const resolveMemoryCandidate = useRoomStore((state) => state.resolveMemoryCandidate);
+
+  const projection = selectedCache?.projection ?? null;
+  const participants = projection?.participants ?? [];
+  const turns = projection?.turns ?? EMPTY_ROOM_TURNS;
+  const codexParticipants = codexCache?.projection?.participants ?? [];
+  const selectedCodexParticipant = codexParticipants.find(
+    (item) => item.participant.participant_id === codexCache?.selectedParticipantId
+  ) ?? codexParticipants[0] ?? null;
+  const selectedRoomParticipant = participants.find(
+    (item) => item.participant_id === selectedCodexParticipant?.participant.participant_id
+  );
+  const selectedParticipantId = selectedCodexParticipant?.participant.participant_id;
+  const selectedSkillDecisions = useMemo(() => {
+    const decisions = [
+      selectedRoomParticipant?.frontier?.current_attempt?.skill_decision,
+      selectedRoomParticipant?.last_completed_outcome?.skill_decision,
+      ...turns.flatMap((turn) => turn.participants
+        .filter((item) => item.participant_id === selectedParticipantId)
+        .flatMap((item) => [item.root_skill_decision, item.frontier?.current_attempt?.skill_decision, item.latest_outcome?.skill_decision]))
+    ].filter((item): item is RoomSkillDecision => Boolean(item));
+    const unique = new Map<string, RoomSkillDecision>();
+    for (const decision of decisions) {
+      unique.set(`${decision.skill_id}:${decision.version}:${decision.context_status}`, decision);
+    }
+    return [...unique.values()].slice(-8);
+  }, [selectedParticipantId, selectedRoomParticipant, turns]);
+
+  const handleIncidentAction = (incident: RoomOperationsIncident) => {
+    if (incident.next_action === "rebuild_memory_index") {
+      const descriptor = operations?.actions.rebuild_memory_index;
+      if (descriptor?.available && !descriptor.pending) onRequestMemoryRebuild(descriptor);
+      else void refreshOperations();
+      return;
+    }
+    if (incident.next_action === "recover_runtime" || incident.next_action === "repair_then_recover") {
+      const descriptor = operations?.actions.recover_runtime;
+      if (descriptor?.available) onRequestRecover(descriptor);
+      else void refreshOperations();
+      return;
+    }
+    if (!incident.conversation_id) return;
+    setDockTab("room");
+    setInspectorTarget({ roomId: incident.conversation_id, observationId: incident.observation_id, incidentId: incident.incident_id });
+    if (incident.conversation_id !== selectedRoomId) onIncidentRoom(incident.conversation_id);
+  };
+
+  return <RoomInspector
+    activeTab={dockTab}
+    agentConsoleSection={<section className="room-agent-console-section" aria-label="Codex Agent Console">
+      <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
+        {codexParticipants.map((item) => <button
+          aria-label={item.participant.display_name}
+          aria-selected={item.participant.participant_id === selectedCodexParticipant?.participant.participant_id}
+          key={item.participant.participant_id}
+          onClick={() => selectCodexParticipant(item.participant.participant_id)}
+          role="tab"
+          type="button"
+        ><strong>{item.participant.display_name}</strong><small>{item.participant.role} · {roomAgentWorkStateLabel(item)}</small></button>)}
+      </div>
+      {selectedCodexParticipant && codexCache?.projection ? <AgentConsole
+        error={codexCache.actionErrors[selectedCodexParticipant.participant.participant_id]?.message ?? codexCache.error?.message ?? null}
+        key={selectedCodexParticipant.participant.participant_id}
+        localMode={getCodexConsolePreference(selectedCodexParticipant.participant.participant_id)}
+        nativeEvents={codexCache.projection.native_events.items}
+        onAction={async (capabilityId, safeRequest, descriptor, confirmed) => {
+          const result = await submitCodexAction(selectedCodexParticipant.participant.participant_id, capabilityId, safeRequest, descriptor, confirmed);
+          onNotice(result ? "单 Agent Codex 操作已提交；不会生成 Room 发言。" : "Codex 操作未完成，已保留最新投影。");
+          return result;
+        }}
+        onPreferenceChange={(mode) => setCodexConsolePreference(selectedCodexParticipant.participant.participant_id, mode)}
+        onRefresh={() => void refreshCodexAgents()}
+        participant={selectedCodexParticipant}
+        pending={Boolean(codexCache.actionPending[selectedCodexParticipant.participant.participant_id])}
+        skillDecisions={selectedSkillDecisions}
+      /> : <div className="agent-console agent-console--empty" role="status"><h3>Agent Console</h3><p>{codexCache?.loading ? "正在读取 Codex 原生状态…" : "当前房间没有可用的 Codex Agent 投影。"}</p>{codexCache?.error ? <button onClick={() => void refreshCodexAgents()} type="button">重试</button> : null}</div>}
+    </section>}
+    controlPending={selectedCache?.controlPending ?? null}
+    executionActionError={executionActionError}
+    executionActionPending={Boolean(executionActionPending)}
+    executionCache={executionCache}
+    inspectorTarget={inspectorTarget}
+    memoryActionError={memoryActionError}
+    memoryActionPending={Boolean(memoryActionPending)}
+    memoryCache={memoryCache}
+    memoryRebuildError={memoryRebuildError}
+    memoryRebuildPending={memoryRebuildPending}
+    modal={compact}
+    onCancel={onRequestCancel}
+    onCancelExecutionRun={cancelExecutionRun}
+    onClose={() => setInspectorOpen(false)}
+    onDecideExecutionCandidate={decideExecutionCandidate}
+    onIncidentAction={handleIncidentAction}
+    onRebuildMemoryIndex={onRequestMemoryRebuild}
+    onRecover={onRequestRecover}
+    onResolveMemoryCandidate={resolveMemoryCandidate}
+    onRetry={(observationId, descriptor) => { void controlObservation(observationId, "retry", descriptor); }}
+    onSelectExecutionCandidate={selectExecutionCandidate}
+    onTabChange={setDockTab}
+    onTargetMissing={() => { void refreshOperations(); if (selectedRoomId) void refreshRoom(selectedRoomId, "incremental"); }}
+    onTargetResolved={setInspectorTarget}
+    onUpdateExecutionPolicy={updateExecutionPolicy}
+    operations={operations}
+    operationsError={operationsError}
+    operationsLoading={operationsLoading}
+    participants={participants}
+    recoverError={runtimeRecoverError}
+    recoverPending={runtimeRecoverPending}
+    selectedRoomId={selectedRoomId}
+    targetReady={Boolean(projection) && !selectedCache?.loading}
+    turns={turns}
+  />;
+}
+
+function AgentInspectorTab({ onNotice }: Pick<WorkspaceInspectorProps, "onNotice">) {
+  const roomId = useRoomStore((state) => state.selectedRoomId);
+  const codexCache = useRoomStore((state) => roomId ? state.codexByRoom[roomId] ?? null : null);
+  const roomProjection = useRoomStore((state) => roomId ? state.roomsById[roomId]?.projection ?? null : null);
+  const selectParticipant = useRoomStore((state) => state.selectCodexParticipant);
+  const submitAction = useRoomStore((state) => state.submitCodexAction);
+  const preference = useRoomStore((state) => state.getCodexConsolePreference);
+  const setPreference = useRoomStore((state) => state.setCodexConsolePreference);
+  const refresh = useRoomStore((state) => state.refreshCodexAgents);
+  const participants = codexCache?.projection?.participants ?? [];
+  const selected = participants.find((item) => item.participant.participant_id === codexCache?.selectedParticipantId) ?? participants[0] ?? null;
+  const roomParticipant = roomProjection?.participants.find((item) => item.participant_id === selected?.participant.participant_id);
+  const skillDecisions = useMemo(() => {
+    const decisions = [roomParticipant?.frontier?.current_attempt?.skill_decision, roomParticipant?.last_completed_outcome?.skill_decision]
+      .filter((item): item is RoomSkillDecision => Boolean(item));
+    return [...new Map(decisions.map((item) => [`${item.skill_id}:${item.version}:${item.context_status}`, item])).values()].slice(-8);
+  }, [roomParticipant]);
+  return <section className="room-agent-console-section" aria-label="Codex Agent Console">
+    <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
+      {participants.map((item) => <button aria-label={item.participant.display_name} aria-selected={item.participant.participant_id === selected?.participant.participant_id} key={item.participant.participant_id} onClick={() => selectParticipant(item.participant.participant_id)} role="tab" type="button"><strong>{item.participant.display_name}</strong><small>{item.participant.role} · {roomAgentWorkStateLabel(item)}</small></button>)}
+    </div>
+    {selected && codexCache?.projection ? <AgentConsole
+      error={codexCache.actionErrors[selected.participant.participant_id]?.message ?? codexCache.error?.message ?? null}
+      key={selected.participant.participant_id}
+      localMode={preference(selected.participant.participant_id)}
+      nativeEvents={codexCache.projection.native_events.items}
+      onAction={async (capabilityId, safeRequest, descriptor, confirmed) => {
+        const result = await submitAction(selected.participant.participant_id, capabilityId, safeRequest, descriptor, confirmed);
+        onNotice(result ? "单 Agent Codex 操作已提交；不会生成 Room 发言。" : "Codex 操作未完成，已保留最新投影。");
+        return result;
+      }}
+      onPreferenceChange={(mode) => setPreference(selected.participant.participant_id, mode)}
+      onRefresh={() => void refresh()}
+      participant={selected}
+      pending={Boolean(codexCache.actionPending[selected.participant.participant_id])}
+      skillDecisions={skillDecisions}
+    /> : <div className="agent-console agent-console--empty" role="status"><h3>Agent Console</h3><p>{codexCache?.loading ? "正在读取 Codex 原生状态…" : "当前房间没有可用的 Codex Agent 投影。"}</p>{codexCache?.error ? <button onClick={() => void refresh()} type="button">重试</button> : null}</div>}
+  </section>;
+}
+
+function RoomInspectorTab({ onRequestCancel, onRequestMemoryRebuild }: Pick<WorkspaceInspectorProps, "onRequestCancel" | "onRequestMemoryRebuild">) {
+  const roomId = useRoomStore((state) => state.selectedRoomId);
+  const cache = useRoomStore((state) => roomId ? state.roomsById[roomId] ?? null : null);
+  const execution = useRoomStore((state) => roomId ? state.executionsByRoom[roomId] ?? null : null);
+  const memory = useRoomStore((state) => roomId ? state.memoryByRoom[roomId] ?? null : null);
+  const executionPending = useRoomStore((state) => state.executionActionPending);
+  const executionError = useRoomStore((state) => state.executionActionError);
+  const memoryPending = useRoomStore((state) => state.memoryActionPending);
+  const memoryError = useRoomStore((state) => state.memoryActionError);
+  const rebuildPending = useRoomStore((state) => state.memoryRebuildPending);
+  const rebuildError = useRoomStore((state) => state.memoryRebuildError);
+  const rebuildDescriptor = useRoomStore((state) => state.operations?.actions.rebuild_memory_index ?? null);
+  const control = useRoomStore((state) => state.controlObservation);
+  const selectCandidate = useRoomStore((state) => state.selectExecutionCandidate);
+  const updatePolicy = useRoomStore((state) => state.updateExecutionPolicy);
+  const decideCandidate = useRoomStore((state) => state.decideExecutionCandidate);
+  const cancelRun = useRoomStore((state) => state.cancelExecutionRun);
+  const resolveCandidate = useRoomStore((state) => state.resolveMemoryCandidate);
+  const projection = cache?.projection;
+  return <>
+    <RoomExecutionDomain actionError={executionError} actionPending={Boolean(executionPending)} cache={execution} onCancelRun={cancelRun} onDecideCandidate={decideCandidate} onSelectCandidate={selectCandidate} onUpdatePolicy={updatePolicy} />
+    <RoomMemoryDomain actionError={memoryError} actionPending={Boolean(memoryPending)} cache={memory} rebuildDescriptor={rebuildDescriptor} rebuildError={rebuildError} rebuildPending={rebuildPending} onRebuild={onRequestMemoryRebuild} onResolve={resolveCandidate} />
+    <RoomEvidenceDomain controlPending={cache?.controlPending ?? null} onCancel={onRequestCancel} onRetry={(id, descriptor) => { void control(id, "retry", descriptor); }} participants={projection?.participants ?? []} turns={projection?.turns ?? EMPTY_ROOM_TURNS} />
+  </>;
+}
+
+function RuntimeInspectorTab({ onIncidentRoom, onRequestMemoryRebuild, onRequestRecover }: Pick<WorkspaceInspectorProps, "onIncidentRoom" | "onRequestMemoryRebuild" | "onRequestRecover">) {
+  const roomId = useRoomStore((state) => state.selectedRoomId);
+  const operations = useRoomStore((state) => state.operations);
+  const loading = useRoomStore((state) => state.operationsLoading);
+  const error = useRoomStore((state) => state.operationsError);
+  const pending = useRoomStore((state) => state.runtimeRecoverPending);
+  const recoverError = useRoomStore((state) => state.runtimeRecoverError);
+  const setDockTab = useRoomStore((state) => state.setDockTab);
+  const setTarget = useRoomStore((state) => state.setInspectorTarget);
+  const refresh = useRoomStore((state) => state.refreshOperations);
+  const onIncidentAction = (incident: RoomOperationsIncident) => {
+    if (incident.next_action === "rebuild_memory_index") {
+      const descriptor = operations?.actions.rebuild_memory_index;
+      if (descriptor?.available && !descriptor.pending) onRequestMemoryRebuild(descriptor); else void refresh();
+      return;
+    }
+    if (incident.next_action === "recover_runtime" || incident.next_action === "repair_then_recover") {
+      const descriptor = operations?.actions.recover_runtime;
+      if (descriptor?.available) onRequestRecover(descriptor); else void refresh();
+      return;
+    }
+    if (!incident.conversation_id) return;
+    setDockTab("room");
+    setTarget({ roomId: incident.conversation_id, observationId: incident.observation_id, incidentId: incident.incident_id });
+    if (incident.conversation_id !== roomId) onIncidentRoom(incident.conversation_id);
+  };
+  return <RoomRuntimeDomain onIncidentAction={onIncidentAction} onRecover={onRequestRecover} operations={operations} operationsError={error} operationsLoading={loading} recoverError={recoverError} recoverPending={pending} selectedRoomId={roomId} />;
+}
+
+function TabScopedWorkspaceInspector(props: WorkspaceInspectorProps) {
+  const roomId = useRoomStore((state) => state.selectedRoomId);
+  const activeTab = useRoomStore((state) => state.dockTab);
+  const target = useRoomStore((state) => state.inspectorTarget);
+  const setInspectorOpen = useRoomStore((state) => state.setInspectorOpen);
+  const setDockTab = useRoomStore((state) => state.setDockTab);
+  const setTarget = useRoomStore((state) => state.setInspectorTarget);
+  const targetVersion = useRoomStore((state) => {
+    if (state.dockTab === "runtime") return state.operations?.incident_total ?? 0;
+    if (state.dockTab === "room" && state.selectedRoomId) return state.roomsById[state.selectedRoomId]?.projection?.turns.length ?? 0;
+    return 0;
+  });
+  const targetReady = useRoomStore((state) => {
+    if (state.dockTab === "runtime") return Boolean(state.operations) && !state.operationsLoading;
+    if (state.dockTab === "room" && state.selectedRoomId) return Boolean(state.roomsById[state.selectedRoomId]?.projection) && !state.roomsById[state.selectedRoomId]?.loading;
+    return true;
+  });
+  const refreshOperations = useRoomStore((state) => state.refreshOperations);
+  const refreshRoom = useRoomStore((state) => state.refreshRoom);
+  return <RoomInspectorShell
+    activeTab={activeTab}
+    agentConsoleSection={activeTab === "agent" ? <AgentInspectorTab onNotice={props.onNotice} /> : undefined}
+    executionSection={activeTab === "room" ? <RoomInspectorTab onRequestCancel={props.onRequestCancel} onRequestMemoryRebuild={props.onRequestMemoryRebuild} /> : null}
+    memorySection={null}
+    modal={props.compact}
+    onClose={() => setInspectorOpen(false)}
+    onTabChange={setDockTab}
+    onTargetMissing={() => { void refreshOperations(); if (roomId) void refreshRoom(roomId, "incremental"); }}
+    onTargetResolved={() => setTarget(null)}
+    operationsSection={activeTab === "runtime" ? <RuntimeInspectorTab onIncidentRoom={props.onIncidentRoom} onRequestMemoryRebuild={props.onRequestMemoryRebuild} onRequestRecover={props.onRequestRecover} /> : null}
+    roomEvidenceSection={null}
+    selectedRoomId={roomId}
+    target={target}
+    targetReady={targetReady}
+    targetVersion={targetVersion}
+  />;
+}
+
+function WorkspaceStatus({ notice }: { notice: string | null }) {
+  const browserOnline = useBrowserOnline();
+  const roomId = useRoomStore((state) => state.selectedRoomId);
+  const controlError = useRoomStore((state) => roomId ? state.roomsById[roomId]?.controlError ?? null : null);
+  const executionError = useRoomStore((state) => state.executionActionError);
+  const memoryError = useRoomStore((state) => state.memoryActionError);
+  return <WorkspaceStatusRegion message={!browserOnline
+    ? "浏览器离线；Room 与 Runtime 状态暂不更新。"
+    : controlError?.status === 409 || executionError?.status === 409 || memoryError?.status === 409
+      ? "状态已经变化，已刷新耐久投影。"
+      : notice}
+  />;
+}
+
 function syncLabel(cache: RoomWorkspaceCache | null): string {
   if (!cache) return "未选择房间";
   const labels = {
@@ -676,64 +1043,64 @@ function useCompactLayout() {
   return compact;
 }
 
+function WorkspaceHeader({
+  cache, compactNavigationOpen, inspectorOpen, onToggleInspector, onToggleNavigation,
+  onToggleTheme, participants, theme, title
+}: {
+  cache: RoomWorkspaceCache | null;
+  compactNavigationOpen: boolean;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
+  onToggleNavigation: () => void;
+  onToggleTheme: () => void;
+  participants: RoomParticipant[];
+  theme: "dark" | "light" | "system";
+  title: string;
+}) {
+  const operationsOverall = useRoomStore((state) => state.operations?.overall ?? null);
+  const memoryCache = useRoomStore((state) => state.selectedRoomId ? state.memoryByRoom[state.selectedRoomId] ?? null : null);
+  const operationsAlert = operationsOverall === "blocked"
+    ? { className: "has-alert", label: "运行时阻塞", glyph: "!" }
+    : operationsOverall === "attention"
+      ? { className: "has-attention", label: "运行时需要关注", glyph: "·" }
+      : memoryCache?.projection?.degraded || memoryCache?.projection?.pending_candidate_total
+        ? { className: "has-attention", label: "长期记忆需要关注", glyph: "·" }
+        : null;
+  return <RoomHeader
+    inspectorOpen={inspectorOpen}
+    navigationOpen={compactNavigationOpen}
+    onToggleInspector={onToggleInspector}
+    onToggleNavigation={onToggleNavigation}
+    onToggleTheme={onToggleTheme}
+    operationsAlert={operationsAlert}
+    participants={participants}
+    syncLabel={syncLabel(cache)}
+    syncState={cache?.syncState ?? "idle"}
+    theme={theme === "system" ? "light" : theme}
+    title={title}
+  />;
+}
+
 export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspaceProps) {
   const store = useRoomStore(useShallow((state) => ({
-    rooms: state.rooms,
     selectedRoomId: state.selectedRoomId,
     roomsLoading: state.roomsLoading,
     roomsLoaded: state.roomsLoaded,
     roomsError: state.roomsError,
-    roomCreatePending: state.roomCreatePending,
-    roomCreateError: state.roomCreateError,
-    drafts: state.drafts,
-    readCursors: state.readCursors,
     theme: state.theme,
     sidebarOpen: state.sidebarOpen,
     inspectorOpen: state.inspectorOpen,
     dockTab: state.dockTab,
-    pinnedRoomIds: state.pinnedRoomIds,
-    operations: state.operations,
-    operationsLoading: state.operationsLoading,
-    operationsError: state.operationsError,
-    executionsByRoom: state.executionsByRoom,
-    memoryByRoom: state.memoryByRoom,
-    codexByRoom: state.codexByRoom,
-    executionActionPending: state.executionActionPending,
-    executionActionError: state.executionActionError,
-    memoryActionPending: state.memoryActionPending,
-    memoryActionError: state.memoryActionError,
-    memoryRebuildPending: state.memoryRebuildPending,
-    memoryRebuildError: state.memoryRebuildError,
-    runtimeRecoverPending: state.runtimeRecoverPending,
-    runtimeRecoverError: state.runtimeRecoverError,
-    inspectorTarget: state.inspectorTarget,
     loadRooms: state.loadRooms,
-    createRoom: state.createRoom,
     refreshRoom: state.refreshRoom,
     sendMessage: state.sendMessage,
     controlObservation: state.controlObservation,
-    refreshOperations: state.refreshOperations,
-    refreshExecutions: state.refreshExecutions,
-    refreshMemory: state.refreshMemory,
-    refreshCodexAgents: state.refreshCodexAgents,
     selectCodexParticipant: state.selectCodexParticipant,
-    submitCodexAction: state.submitCodexAction,
-    getCodexConsolePreference: state.getCodexConsolePreference,
-    setCodexConsolePreference: state.setCodexConsolePreference,
-    resolveMemoryCandidate: state.resolveMemoryCandidate,
-    rebuildMemoryIndex: state.rebuildMemoryIndex,
-    selectExecutionCandidate: state.selectExecutionCandidate,
-    updateExecutionPolicy: state.updateExecutionPolicy,
-    decideExecutionCandidate: state.decideExecutionCandidate,
-    cancelExecutionRun: state.cancelExecutionRun,
-    recoverRuntime: state.recoverRuntime,
     setDraft: state.setDraft,
     setTheme: state.setTheme,
     setSidebarOpen: state.setSidebarOpen,
     setInspectorOpen: state.setInspectorOpen,
     setDockTab: state.setDockTab,
-    togglePinnedRoom: state.togglePinnedRoom,
-    setInspectorTarget: state.setInspectorTarget,
     clearRoomError: state.clearRoomError,
     clearControlError: state.clearControlError,
     startOperationsSync: state.startOperationsSync,
@@ -742,17 +1109,21 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   })));
   const compactLayout = useCompactLayout();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [sidebarQuery, setSidebarQuery] = useState("");
   const [creatingRoom, setCreatingRoom] = useState(false);
-  const [roomTitle, setRoomTitle] = useState("");
-  const [roomCreateRequestId, setRoomCreateRequestId] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
   const [recoverTarget, setRecoverTarget] = useState<RoomRuntimeRecoverDescriptor | null>(null);
   const [memoryRebuildTarget, setMemoryRebuildTarget] = useState<RoomMemoryRebuildDescriptor | null>(null);
   const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
-  const browserOnline = useBrowserOnline();
+  const selectedRoom = useRoomStore((state) => state.selectedRoomId
+    ? state.rooms.find((room) => room.conversation_id === state.selectedRoomId) ?? null
+    : null);
+  const roomCount = useRoomStore((state) => state.rooms.length);
+  const firstRoomId = useRoomStore((state) => state.rooms[0]?.conversation_id ?? null);
+  const recoverRuntime = useRoomStore((state) => state.recoverRuntime);
+  const rebuildMemoryIndex = useRoomStore((state) => state.rebuildMemoryIndex);
+  const runtimeRecoverPending = useRoomStore((state) => state.runtimeRecoverPending);
+  const memoryRebuildPending = useRoomStore((state) => state.memoryRebuildPending);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const selectedRoom = store.rooms.find((room) => room.conversation_id === store.selectedRoomId) ?? null;
   const cache = useRoomStore(useShallow((state): RoomWorkspaceCache | null => {
     const roomId = state.selectedRoomId;
     const room = roomId ? state.roomsById[roomId] : null;
@@ -769,79 +1140,12 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
       controlError: room.controlError
     };
   }));
-  const executionCache = store.selectedRoomId
-    ? store.executionsByRoom[store.selectedRoomId] ?? null
-    : null;
-  const memoryCache = store.selectedRoomId
-    ? store.memoryByRoom[store.selectedRoomId] ?? null
-    : null;
-  const codexCache = store.selectedRoomId
-    ? store.codexByRoom[store.selectedRoomId] ?? null
-    : null;
-  const codexParticipants = useMemo(
-    () => codexCache?.projection?.participants ?? [],
-    [codexCache?.projection?.participants]
-  );
-  const selectedCodexParticipant = codexParticipants.find(
-    (item) => item.participant.participant_id === codexCache?.selectedParticipantId
-  ) ?? codexParticipants[0] ?? null;
   const projection = cache?.projection ?? null;
   const participants = projection?.participants ?? selectedRoom?.members ?? [];
-  const selectedRoomParticipant = participants.find(
-    (item) => item.participant_id === selectedCodexParticipant?.participant.participant_id
-  );
-  const selectedParticipantId = selectedCodexParticipant?.participant.participant_id;
-  const selectedSkillDecisions = useMemo(() => {
-    const decisions = [
-      selectedRoomParticipant?.frontier?.current_attempt?.skill_decision,
-      selectedRoomParticipant?.last_completed_outcome?.skill_decision,
-      ...(projection?.turns.flatMap((turn) => turn.participants
-        .filter((item) => item.participant_id === selectedParticipantId)
-        .flatMap((item) => [item.root_skill_decision, item.frontier?.current_attempt?.skill_decision, item.latest_outcome?.skill_decision])) ?? [])
-    ].filter((item): item is RoomSkillDecision => Boolean(item));
-    const unique = new Map<string, RoomSkillDecision>();
-    for (const decision of decisions) {
-      unique.set(`${decision.skill_id}:${decision.version}:${decision.context_status}`, decision);
-    }
-    return [...unique.values()].slice(-8);
-  }, [projection?.turns, selectedParticipantId, selectedRoomParticipant]);
   const activeTurns = projection?.turns.filter((turn) => turn.state !== "settled") ?? [];
   const currentTurn = activeTurns.at(-1) ?? projection?.turns.at(-1) ?? null;
   const title = projection?.conversation.title ?? selectedRoom?.title ?? "选择一个房间";
-  const draft = store.selectedRoomId ? store.drafts[store.selectedRoomId] ?? "" : "";
-  const operationsAlert = store.operations?.overall === "blocked"
-    ? { className: "has-alert", label: "运行时阻塞", glyph: "!" }
-    : store.operations?.overall === "attention"
-      ? { className: "has-attention", label: "运行时需要关注", glyph: "·" }
-      : memoryCache?.projection?.degraded || memoryCache?.projection?.pending_candidate_total
-        ? { className: "has-attention", label: "长期记忆需要关注", glyph: "·" }
-        : null;
-  const commandActions = useMemo<CommandPaletteAction[]>(() => [
-    {
-      id: "new-room",
-      label: "新建 Room",
-      detail: "选择 roster 并创建协作空间",
-      run: () => { setCreatingRoom(true); if (compactLayout) setMobileSidebarOpen(true); }
-    },
-    ...store.rooms.slice(0, 8).map((room) => ({
-      id: `room:${room.conversation_id}`,
-      label: room.title,
-      detail: "切换 Room",
-      run: () => onNavigateRoom(room.conversation_id)
-    })),
-    ...codexParticipants.map((participant) => ({
-      id: `agent:${participant.participant.participant_id}`,
-      label: participant.participant.display_name,
-      detail: "打开单 Agent Codex 工作台",
-      run: () => {
-        store.selectCodexParticipant(participant.participant.participant_id);
-        store.setDockTab("agent");
-      }
-    })),
-    { id: "dock-room", label: "Room 控制面", detail: "执行、记忆与因果证据", run: () => store.setDockTab("room") },
-    { id: "dock-runtime", label: "Runtime 状态", detail: "运行事件与恢复", run: () => store.setDockTab("runtime") },
-    { id: "theme", label: "切换主题", detail: store.theme === "dark" ? "切换到浅色" : "切换到深色", run: () => store.setTheme(store.theme === "dark" ? "light" : "dark") }
-  ], [codexParticipants, compactLayout, onNavigateRoom, store]);
+  const draft = useRoomStore((state) => state.selectedRoomId ? state.drafts[state.selectedRoomId] ?? "" : "");
 
   useEffect(() => {
     document.documentElement.dataset.theme = store.theme;
@@ -917,7 +1221,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
 
   async function confirmRecover() {
     if (!recoverTarget) return;
-    const applied = await store.recoverRuntime(recoverTarget);
+    const applied = await recoverRuntime(recoverTarget);
     setWorkspaceNotice(applied ? "Room Runtime 恢复请求已应用；状态将由耐久投影确认。" : "恢复请求未完成，已刷新最新状态。");
     closeRecoverDialog();
   }
@@ -932,49 +1236,9 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
 
   async function confirmMemoryRebuild() {
     if (!memoryRebuildTarget) return;
-    const applied = await store.rebuildMemoryIndex(memoryRebuildTarget);
+    const applied = await rebuildMemoryIndex(memoryRebuildTarget);
     setWorkspaceNotice(applied ? "MemoryOS 重建请求已应用；请等待耐久投影更新。" : "重建请求未完成，已刷新最新状态。");
     closeMemoryRebuildDialog();
-  }
-
-  function handleOperationIncident(incident: RoomOperationsIncident) {
-    if (incident.next_action === "rebuild_memory_index") {
-      const descriptor = store.operations?.actions.rebuild_memory_index;
-      if (descriptor?.available && !descriptor.pending) {
-        returnFocusRef.current = document.activeElement as HTMLElement | null;
-        setMemoryRebuildTarget(descriptor);
-      } else {
-        void store.refreshOperations();
-      }
-      return;
-    }
-    if (incident.next_action === "recover_runtime" || incident.next_action === "repair_then_recover") {
-      const descriptor = store.operations?.actions.recover_runtime;
-      if (descriptor?.available) {
-        returnFocusRef.current = document.activeElement as HTMLElement | null;
-        setRecoverTarget(descriptor);
-      } else {
-        void store.refreshOperations();
-      }
-      return;
-    }
-    if (!incident.conversation_id) return;
-    store.setDockTab("room");
-    store.setInspectorTarget({
-      roomId: incident.conversation_id,
-      observationId: incident.observation_id,
-      incidentId: incident.incident_id
-    });
-    if (incident.conversation_id !== store.selectedRoomId) {
-      onNavigateRoom(incident.conversation_id);
-    }
-  }
-
-  function handleInspectorTargetMissing() {
-    void store.refreshOperations();
-    if (store.selectedRoomId) {
-      void store.refreshRoom(store.selectedRoomId, "incremental");
-    }
   }
 
   return (
@@ -984,62 +1248,28 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           {mobileSidebarOpen ? (
             <button className="room-mobile-scrim" onClick={() => setMobileSidebarOpen(false)} type="button" aria-label="关闭房间栏遮罩" />
           ) : null}
-          <RoomSidebar
-            createRequestId={roomCreateRequestId}
-            createError={store.roomCreateError}
-            createPending={store.roomCreatePending}
+          <WorkspaceSidebar
             creating={creatingRoom}
-            drafts={store.drafts}
-            error={store.roomsError}
-            loading={store.roomsLoading}
-            loaded={store.roomsLoaded}
-            onClose={() => setMobileSidebarOpen(false)}
-            onCreate={async (name, clientRequestId, rosterTemplateId) => {
-              setRoomCreateRequestId(clientRequestId);
-              const id = await store.createRoom(name, clientRequestId, rosterTemplateId);
-              if (id) {
-                setRoomTitle("");
-                setRoomCreateRequestId(null);
-                setCreatingRoom(false);
-                onCreatedRoom(id);
-              }
-              return Boolean(id);
-            }}
+            onCreatedRoom={onCreatedRoom}
             onCreatingChange={setCreatingRoom}
-            onNavigate={(id) => {
-              setMobileSidebarOpen(false);
-              onNavigateRoom(id);
-            }}
-            onQueryChange={setSidebarQuery}
-            onTitleChange={(value) => {
-              setRoomTitle(value);
-              setRoomCreateRequestId(null);
-            }}
-            query={sidebarQuery}
-            pinnedRoomIds={store.pinnedRoomIds}
-            onTogglePinned={store.togglePinnedRoom}
-            readCursors={store.readCursors}
-            rooms={store.rooms}
-            selectedRoomId={store.selectedRoomId}
-            title={roomTitle}
+            onNavigateRoom={onNavigateRoom}
+            onRequestCloseMobile={() => setMobileSidebarOpen(false)}
           />
         </div>
       ) : null}
 
       <main className="room-main">
-        <RoomHeader
+        <WorkspaceHeader
+          cache={cache}
+          compactNavigationOpen={compactLayout ? mobileSidebarOpen : store.sidebarOpen}
           inspectorOpen={store.inspectorOpen}
-          navigationOpen={compactLayout ? mobileSidebarOpen : store.sidebarOpen}
           onToggleInspector={() => store.setInspectorOpen(!store.inspectorOpen)}
           onToggleNavigation={() => {
               if (compactLayout) setMobileSidebarOpen((open) => !open);
               else store.setSidebarOpen(!store.sidebarOpen);
           }}
           onToggleTheme={() => store.setTheme(store.theme === "dark" ? "light" : "dark")}
-          operationsAlert={operationsAlert}
           participants={participants}
-          syncLabel={syncLabel(cache)}
-          syncState={cache?.syncState ?? "idle"}
           theme={store.theme}
           title={title}
         />
@@ -1048,7 +1278,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           <section className="room-fatal-empty" role="alert">
             <strong>找不到这个房间</strong>
             <span>{cache?.error?.message ?? "房间不存在或当前无法读取。"}</span>
-            <button className="room-primary-button" onClick={() => store.rooms[0] && onNavigateRoom(store.rooms[0].conversation_id)} type="button">返回最近房间</button>
+            <button className="room-primary-button" onClick={() => firstRoomId && onNavigateRoom(firstRoomId)} type="button">返回最近房间</button>
           </section>
         ) : unavailableRoom ? (
           <section className="room-fatal-empty" role="alert">
@@ -1092,7 +1322,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
                 <button className="room-icon-button" onClick={() => store.clearRoomError()} type="button" aria-label="关闭错误">×</button>
               </div>
             ) : null}
-            <RoomTimeline cache={cache} roomId={store.selectedRoomId} />
+            <RoomTimeline roomId={store.selectedRoomId} />
             <RoomComposer
               disabled={!projection && cache.loading}
               draft={draft}
@@ -1107,7 +1337,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
               roomId={store.selectedRoomId}
             />
           </>
-        ) : store.roomsError && !store.rooms.length ? (
+        ) : store.roomsError && !roomCount ? (
           <section className="room-fatal-empty" role="alert">
             <strong>无法连接 xmuse</strong>
             <span>{store.roomsError.message}</span>
@@ -1132,119 +1362,26 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
               type="button"
             />
           ) : null}
-          <RoomInspector
-            activeTab={store.dockTab}
-            agentConsoleSection={(
-              <section className="room-agent-console-section" aria-label="Codex Agent Console">
-                <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
-                  {codexParticipants.map((item) => (
-                    <button
-                      aria-label={item.participant.display_name}
-                      aria-selected={item.participant.participant_id === selectedCodexParticipant?.participant.participant_id}
-                      key={item.participant.participant_id}
-                      onClick={() => store.selectCodexParticipant(item.participant.participant_id)}
-                      role="tab"
-                      type="button"
-                    >
-                      <strong>{item.participant.display_name}</strong>
-                      <small>{item.participant.role} · {roomAgentWorkStateLabel(item)}</small>
-                    </button>
-                  ))}
-                </div>
-                {selectedCodexParticipant && codexCache?.projection ? (
-                  <AgentConsole
-                    error={codexCache.actionErrors[selectedCodexParticipant.participant.participant_id]?.message
-                      ?? codexCache.error?.message
-                      ?? null}
-                    key={selectedCodexParticipant.participant.participant_id}
-                    localMode={store.getCodexConsolePreference(selectedCodexParticipant.participant.participant_id)}
-                    nativeEvents={codexCache.projection.native_events.items}
-                    onAction={async (capabilityId, safeRequest, descriptor, confirmed) => {
-                      const result = await store.submitCodexAction(
-                        selectedCodexParticipant.participant.participant_id,
-                        capabilityId,
-                        safeRequest,
-                        descriptor,
-                        confirmed
-                      );
-                      setWorkspaceNotice(result ? "单 Agent Codex 操作已提交；不会生成 Room 发言。" : "Codex 操作未完成，已保留最新投影。");
-                      return result;
-                    }}
-                    onPreferenceChange={(mode) => {
-                      store.setCodexConsolePreference(
-                        selectedCodexParticipant.participant.participant_id,
-                        mode
-                      );
-                    }}
-                    onRefresh={() => void store.refreshCodexAgents()}
-                    participant={selectedCodexParticipant}
-                    skillDecisions={selectedSkillDecisions}
-                    pending={Boolean(codexCache.actionPending[selectedCodexParticipant.participant.participant_id])}
-                  />
-                ) : (
-                  <div className="agent-console agent-console--empty" role="status">
-                    <h3>Agent Console</h3>
-                    <p>{codexCache?.loading ? "正在读取 Codex 原生状态…" : "当前房间没有可用的 Codex Agent 投影。"}</p>
-                    {codexCache?.error ? <button onClick={() => void store.refreshCodexAgents()} type="button">重试</button> : null}
-                  </div>
-                )}
-              </section>
-            )}
-            controlPending={cache?.controlPending ?? null}
-            executionActionError={store.executionActionError}
-            executionActionPending={Boolean(store.executionActionPending)}
-            executionCache={executionCache}
-            memoryActionError={store.memoryActionError}
-            memoryActionPending={Boolean(store.memoryActionPending)}
-            memoryCache={memoryCache}
-            memoryRebuildError={store.memoryRebuildError}
-            memoryRebuildPending={store.memoryRebuildPending}
-            inspectorTarget={store.inspectorTarget}
-            modal={compactLayout}
-            operations={store.operations}
-            operationsError={store.operationsError}
-            operationsLoading={store.operationsLoading}
-            onCancel={(target) => {
+          <TabScopedWorkspaceInspector
+            compact={compactLayout}
+            onIncidentRoom={onNavigateRoom}
+            onNotice={setWorkspaceNotice}
+            onRequestCancel={(target) => {
               returnFocusRef.current = document.activeElement as HTMLElement | null;
               setCancelTarget(target);
             }}
-            onClose={() => store.setInspectorOpen(false)}
-            onTabChange={store.setDockTab}
-            onIncidentAction={handleOperationIncident}
-            onCancelExecutionRun={store.cancelExecutionRun}
-            onDecideExecutionCandidate={store.decideExecutionCandidate}
-            onResolveMemoryCandidate={store.resolveMemoryCandidate}
-            onRebuildMemoryIndex={(descriptor) => {
+            onRequestMemoryRebuild={(descriptor) => {
               returnFocusRef.current = document.activeElement as HTMLElement | null;
               setMemoryRebuildTarget(descriptor);
             }}
-            onRecover={(descriptor) => {
+            onRequestRecover={(descriptor) => {
               returnFocusRef.current = document.activeElement as HTMLElement | null;
               setRecoverTarget(descriptor);
             }}
-            onRetry={(observationId, descriptor) => {
-              void store.controlObservation(observationId, "retry", descriptor);
-            }}
-            onSelectExecutionCandidate={store.selectExecutionCandidate}
-            onTargetResolved={store.setInspectorTarget}
-            onTargetMissing={handleInspectorTargetMissing}
-            onUpdateExecutionPolicy={store.updateExecutionPolicy}
-            participants={participants}
-            recoverError={store.runtimeRecoverError}
-            recoverPending={store.runtimeRecoverPending}
-            selectedRoomId={store.selectedRoomId}
-            targetReady={Boolean(projection) && !cache?.loading}
-            turns={projection?.turns ?? []}
           />
         </>
       ) : null}
-      <WorkspaceStatusRegion
-        message={!browserOnline
-          ? "浏览器离线；Room 与 Runtime 状态暂不更新。"
-          : cache?.controlError?.status === 409 || store.executionActionError?.status === 409 || store.memoryActionError?.status === 409
-            ? "状态已经变化，已刷新耐久投影。"
-            : workspaceNotice}
-      />
+      <WorkspaceStatus notice={workspaceNotice} />
       {cancelTarget ? (
         <CancelObservationDialog
           onClose={closeCancelDialog}
@@ -1257,17 +1394,24 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
         <RoomRuntimeRecoverDialog
           onClose={closeRecoverDialog}
           onConfirm={confirmRecover}
-          pending={store.runtimeRecoverPending}
+          pending={runtimeRecoverPending}
         />
       ) : null}
       {memoryRebuildTarget ? (
         <RoomMemoryRebuildDialog
           onClose={closeMemoryRebuildDialog}
           onConfirm={confirmMemoryRebuild}
-          pending={store.memoryRebuildPending}
+          pending={memoryRebuildPending}
         />
       ) : null}
-      <CommandPalette actions={commandActions} />
+      <WorkspaceCommandPalette
+        onNavigateRoom={onNavigateRoom}
+        onNewRoom={() => {
+          setCreatingRoom(true);
+          if (compactLayout) setMobileSidebarOpen(true);
+          else store.setSidebarOpen(true);
+        }}
+      />
     </div>
   );
 }
