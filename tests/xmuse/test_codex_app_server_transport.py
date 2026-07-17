@@ -226,6 +226,64 @@ async def test_app_server_start_failure_terminates_spawned_process(
     assert process.terminated is True
 
 
+async def test_app_server_restart_discards_confirmed_dead_connection_incarnation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        def __init__(self, returncode: int | None) -> None:
+            self.returncode = returncode
+            self.pid = 5151
+
+    class Connection:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    dead_process = Process(9)
+    replacement_process = Process(None)
+    old_connection = Connection()
+    spawned = 0
+
+    async def create_subprocess_exec(*_command, **_kwargs):
+        nonlocal spawned
+        spawned += 1
+        return replacement_process
+
+    transport = CodexAppServerTransport(
+        god_id="god",
+        role="review",
+        display_name="Reviewer",
+        model="gpt-5.4",
+        worktree=tmp_path,
+    )
+    transport._process = dead_process  # type: ignore[assignment]
+    transport._connection = old_connection  # type: ignore[assignment]
+    transport._thread_id = "thread-dead"
+    old_incarnation = transport._native_incarnation
+    calls: list[str] = []
+
+    async def request(method: str, _params: dict) -> dict[str, object]:
+        assert transport._connection is None
+        assert transport._process is replacement_process
+        calls.append(method)
+        if method == "thread/start":
+            return {"thread": {"id": "thread-replacement"}}
+        return {}
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    monkeypatch.setattr(transport, "_request", request)
+
+    await transport.start()
+
+    assert old_connection.closed is True
+    assert spawned == 1
+    assert calls == ["initialize", "thread/start"]
+    assert transport._thread_id == "thread-replacement"
+    assert transport._native_incarnation != old_incarnation
+
+
 @pytest.mark.parametrize(
     "resume_response",
     [

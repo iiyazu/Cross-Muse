@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  chatApiBaseUrl,
   createConversation,
   fetchRoomOperations,
   fetchRoomProjection,
@@ -12,6 +13,10 @@ import {
 } from "./api";
 
 describe("Room API client", () => {
+  it("defaults browser reads to the Workroom-advertised loopback host", () => {
+    expect(chatApiBaseUrl()).toBe("http://127.0.0.1:8201/api/chat");
+  });
+
   it("uses fixed same-origin routes and stable request ids for browser writes", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({ id: "conv-1" }, { status: 201 })
