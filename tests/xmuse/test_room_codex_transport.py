@@ -109,17 +109,8 @@ class _MemoryRuntime:
     def __init__(self) -> None:
         self.binds: list[dict[str, object]] = []
 
-    async def recall(self, _request):
-        raise AssertionError("transport does not perform recall")
-
-    def record_recall_receipt(self, **_kwargs):
-        raise AssertionError("Host records recall before transport")
-
     def bind_context_receipt(self, **kwargs):
         self.binds.append(kwargs)
-
-    async def pump_once(self):
-        return False
 
 
 class _ControlStore:

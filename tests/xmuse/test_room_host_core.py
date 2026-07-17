@@ -60,21 +60,16 @@ class _Transport:
 
 
 class _UnavailableMemoryRuntime:
+    recall_timeout_s = 0.75
+
     def __init__(self) -> None:
         self.receipts = []
-        self.binds = []
 
     async def recall(self, _request):
         raise OSError("sidecar stopped")
 
     def record_recall_receipt(self, **kwargs):
         self.receipts.append(kwargs)
-
-    def bind_context_receipt(self, **kwargs):
-        self.binds.append(kwargs)
-
-    async def pump_once(self):
-        return False
 
 
 def test_public_contract_types_and_policy_validation():
