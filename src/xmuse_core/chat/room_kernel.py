@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -53,6 +54,64 @@ OUTCOME_PAYLOAD_FIELDS = frozenset(
         "wake_condition",
     }
 )
+
+
+@dataclass(frozen=True)
+class OutcomeTransitionPlan:
+    """Canonical, authority-free input to one durable outcome transition.
+
+    This deliberately contains no Room rows or generated identifiers: those are
+    re-proved after ``BEGIN IMMEDIATE`` and immediately before applying writes.
+    JSON strings make the plan immutable (and make request fingerprints stable)
+    without changing the public wire representation.
+    """
+
+    conversation_id: str
+    participant_id: str
+    caller_identity: str
+    observation_id: str
+    lease_token: str
+    client_request_id: str
+    outcome_type: str
+    normalized_payload_json: str
+    observation_batch_id: str | None
+    reply_to_activity_id: str | None
+    assessments_json: str
+    memory_candidates_json: str
+    max_causal_depth: int
+
+    @property
+    def normalized_payload(self) -> dict[str, Any]:
+        return dict(_decode(self.normalized_payload_json))
+
+    @property
+    def assessment_payloads(self) -> list[dict[str, Any]]:
+        return list(_decode(self.assessments_json))
+
+    @property
+    def memory_candidate_payloads(self) -> list[dict[str, Any]]:
+        return list(_decode(self.memory_candidates_json))
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256(
+            _json(
+                {
+                    "conversation_id": self.conversation_id,
+                    "participant_id": self.participant_id,
+                    "caller_identity": self.caller_identity,
+                    "observation_id": self.observation_id,
+                    "client_request_id": self.client_request_id,
+                    "outcome_type": self.outcome_type,
+                    "outcome_payload": self.normalized_payload,
+                    "observation_batch_id": self.observation_batch_id,
+                    "reply_to_activity_id": self.reply_to_activity_id,
+                    "proposal_assessments": self.assessment_payloads,
+                    "memory_candidates": self.memory_candidate_payloads,
+                    "max_causal_depth": self.max_causal_depth,
+                }
+            ).encode()
+        ).hexdigest()
 
 
 def normalize_participant_outcome(
@@ -130,6 +189,88 @@ def normalize_participant_outcome(
     if outcome_type == "defer":
         return {"wake_condition": text_field("wake_condition")}
     return {}
+
+
+def normalize_outcome_transition_plan(
+    *,
+    conversation_id: str,
+    participant_id: str,
+    caller_identity: str,
+    observation_id: str,
+    lease_token: str,
+    client_request_id: str,
+    outcome_type: str,
+    outcome_payload: dict[str, Any] | None,
+    observation_batch_id: str | None,
+    reply_to_activity_id: str | None,
+    proposal_assessments: list[dict[str, Any]] | None,
+    memory_candidates: list[dict[str, Any]] | None,
+    max_causal_depth: int,
+) -> OutcomeTransitionPlan:
+    """Normalize untrusted provider input without consulting Room authority."""
+
+    fields = (
+        conversation_id,
+        participant_id,
+        caller_identity,
+        observation_id,
+        lease_token,
+        client_request_id,
+    )
+    if any(not isinstance(item, str) or not item.strip() for item in fields):
+        raise ValueError("room_observation_field_required")
+    normalized = normalize_participant_outcome(outcome_type, outcome_payload, max_causal_depth)
+    assessments = normalize_proposal_assessments(proposal_assessments)
+    normalized_memory_inputs = normalize_memory_candidates(memory_candidates)
+    if observation_batch_id is not None and (
+        not isinstance(observation_batch_id, str) or not observation_batch_id.strip()
+    ):
+        raise ValueError("room_observation_batch_id_invalid")
+    if reply_to_activity_id is not None and (
+        not isinstance(reply_to_activity_id, str) or not reply_to_activity_id.strip()
+    ):
+        raise ValueError("room_reply_to_activity_invalid")
+    if reply_to_activity_id is not None and outcome_type not in {"respond", "handoff"}:
+        raise ValueError("room_reply_to_activity_invalid")
+    session, separator, bound = (
+        caller_identity[4:].rpartition(":") if caller_identity.startswith("god:") else ("", "", "")
+    )
+    if not session or not separator or bound != participant_id:
+        raise ValueError("room_observation_actor_forbidden")
+    return OutcomeTransitionPlan(
+        conversation_id=conversation_id,
+        participant_id=participant_id,
+        caller_identity=caller_identity,
+        observation_id=observation_id,
+        lease_token=lease_token,
+        client_request_id=client_request_id,
+        outcome_type=outcome_type,
+        normalized_payload_json=_json(normalized),
+        observation_batch_id=observation_batch_id,
+        reply_to_activity_id=reply_to_activity_id,
+        assessments_json=_json(
+            [
+                {
+                    "proposal_id": item.proposal_id,
+                    "candidate_digest": item.candidate_digest,
+                    "assessment": item.assessment,
+                    "rationale": item.rationale,
+                }
+                for item in assessments
+            ]
+        ),
+        memory_candidates_json=_json(
+            [
+                {
+                    "kind": item.kind,
+                    "content": item.content,
+                    "source_activity_ids": list(item.source_activity_ids),
+                }
+                for item in normalized_memory_inputs
+            ]
+        ),
+        max_causal_depth=max_causal_depth,
+    )
 
 
 def _now() -> str:
@@ -1132,71 +1273,25 @@ class RoomKernelStore:
         now: datetime | None = None,
         max_causal_depth: int = 4,
     ) -> dict[str, Any]:
-        fields = (
-            conversation_id,
-            participant_id,
-            caller_identity,
-            observation_id,
-            lease_token,
-            client_request_id,
+        plan = normalize_outcome_transition_plan(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            caller_identity=caller_identity,
+            observation_id=observation_id,
+            lease_token=lease_token,
+            client_request_id=client_request_id,
+            outcome_type=outcome_type,
+            outcome_payload=outcome_payload,
+            observation_batch_id=observation_batch_id,
+            reply_to_activity_id=reply_to_activity_id,
+            proposal_assessments=proposal_assessments,
+            memory_candidates=memory_candidates,
+            max_causal_depth=max_causal_depth,
         )
-        if any(not isinstance(item, str) or not item.strip() for item in fields):
-            raise ValueError("room_observation_field_required")
-        normalized = normalize_participant_outcome(outcome_type, outcome_payload, max_causal_depth)
-        normalized_assessments = normalize_proposal_assessments(proposal_assessments)
-        normalized_memory_candidates = normalize_memory_candidates(memory_candidates)
-        assessment_payloads = [
-            {
-                "proposal_id": item.proposal_id,
-                "candidate_digest": item.candidate_digest,
-                "assessment": item.assessment,
-                "rationale": item.rationale,
-            }
-            for item in normalized_assessments
-        ]
-        memory_candidate_payloads = [
-            {
-                "kind": item.kind,
-                "content": item.content,
-                "source_activity_ids": list(item.source_activity_ids),
-            }
-            for item in normalized_memory_candidates
-        ]
-        if observation_batch_id is not None and (
-            not isinstance(observation_batch_id, str) or not observation_batch_id.strip()
-        ):
-            raise ValueError("room_observation_batch_id_invalid")
-        if reply_to_activity_id is not None and (
-            not isinstance(reply_to_activity_id, str) or not reply_to_activity_id.strip()
-        ):
-            raise ValueError("room_reply_to_activity_invalid")
-        if reply_to_activity_id is not None and outcome_type not in {"respond", "handoff"}:
-            raise ValueError("room_reply_to_activity_invalid")
-        session, separator, bound = (
-            caller_identity[4:].rpartition(":")
-            if caller_identity.startswith("god:")
-            else ("", "", "")
-        )
-        if not session or not separator or bound != participant_id:
-            raise ValueError("room_observation_actor_forbidden")
-        fingerprint = sha256(
-            _json(
-                {
-                    "conversation_id": conversation_id,
-                    "participant_id": participant_id,
-                    "caller_identity": caller_identity,
-                    "observation_id": observation_id,
-                    "client_request_id": client_request_id,
-                    "outcome_type": outcome_type,
-                    "outcome_payload": normalized,
-                    "observation_batch_id": observation_batch_id,
-                    "reply_to_activity_id": reply_to_activity_id,
-                    "proposal_assessments": assessment_payloads,
-                    "memory_candidates": memory_candidate_payloads,
-                    "max_causal_depth": max_causal_depth,
-                }
-            ).encode()
-        ).hexdigest()
+        normalized = plan.normalized_payload
+        normalized_assessments = normalize_proposal_assessments(plan.assessment_payloads)
+        normalized_memory_candidates = normalize_memory_candidates(plan.memory_candidate_payloads)
+        fingerprint = plan.fingerprint
         current = now or datetime.now(UTC)
         if current.tzinfo is None:
             raise ValueError("room_observation_now_timezone_required")
