@@ -613,7 +613,7 @@ def test_runner_pause_uses_private_binding_when_safe_status_omits_pid(
     assert signals == [(41, signal.SIGSTOP)]
 
 
-def test_runner_binding_uses_status_receipt_fallback_and_rejects_conflict(
+def test_runner_binding_prefers_self_receipt_over_launcher_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -631,7 +631,9 @@ def test_runner_binding_uses_status_receipt_fallback_and_rejects_conflict(
         json.dumps({"pid": 42, "start_identity": "runner-two"}),
         encoding="utf-8",
     )
-    assert soak._runner_process_binding(tmp_path) is None
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
+    (tmp_path / "room-runner-status.json").unlink()
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(42, "runner-two")
 
 
 def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(

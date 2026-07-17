@@ -710,10 +710,13 @@ def _memoryos_process_binding(runtime_root: Path) -> ProcessBinding | None:
 def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
     from xmuse_core.chat.room_runtime import read_process_start_identity
 
-    bindings: set[ProcessBinding] = set()
+    # Prefer the Runner's self-authored receipt.  The supervisor PID receipt may
+    # temporarily describe a launcher/wrapper process, so treating two live
+    # identities as an ambiguity would reject a healthy Runner.  Both candidates
+    # are still accepted only after an exact live start-identity proof.
     for candidate in (
-        runtime_root / "workroom_room_runner.pid.json",
         runtime_root / "room-runner-status.json",
+        runtime_root / "workroom_room_runner.pid.json",
     ):
         try:
             payload = json.loads(candidate.read_text(encoding="utf-8"))
@@ -732,8 +735,8 @@ def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
             or read_process_start_identity(pid) != expected
         ):
             continue
-        bindings.add(ProcessBinding(pid, expected))
-    return next(iter(bindings)) if len(bindings) == 1 else None
+        return ProcessBinding(pid, expected)
+    return None
 
 
 def _default_get_profile(profile_id: str) -> Any:
