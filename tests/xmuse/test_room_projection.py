@@ -1250,6 +1250,106 @@ def test_room_projection_is_bounded_for_ten_thousand_activities(tmp_path, monkey
 def test_room_list_query_count_does_not_grow_with_rooms(tmp_path, monkeypatch):
     path = tmp_path / "chat.db"
     _insert_conversation(path, "conv_list_0", "Room 0")
+
+    def populate_rooms(indices):
+        database = RoomDatabase(path)
+        conversations = []
+        participants = []
+        messages = []
+        activities = []
+        for index in indices:
+            conversation_id = f"conv_list_{index}"
+            created_at = "2026-07-01T00:00:00Z"
+            if index:
+                conversations.append((conversation_id, f"Room {index}", created_at))
+            for participant_index in range(3):
+                participant_id = f"participant_list_{index}_{participant_index}"
+                participants.append(
+                    (
+                        participant_id,
+                        conversation_id,
+                        f"role_{participant_index}",
+                        f"Participant {index}-{participant_index}",
+                        "codex",
+                        "gpt-5",
+                        None,
+                        "active",
+                        None,
+                        None,
+                        None,
+                        created_at,
+                    )
+                )
+            message_id = f"msg_list_{index}"
+            messages.append(
+                (
+                    message_id,
+                    conversation_id,
+                    "Load tester",
+                    "human",
+                    f"latest message {index}",
+                    created_at,
+                    "message",
+                    "{}",
+                    "[]",
+                    None,
+                )
+            )
+            activities.append(
+                (
+                    f"activity_list_{index}",
+                    conversation_id,
+                    1,
+                    "message.posted",
+                    "human",
+                    "human:Load tester",
+                    None,
+                    f"causation_list_{index}",
+                    f"correlation_list_{index}",
+                    "room",
+                    json.dumps({"type": "room", "conversation_id": conversation_id}),
+                    json.dumps({"content": f"latest message {index}", "mentions": []}),
+                    message_id,
+                    0,
+                    None,
+                    "active",
+                    created_at,
+                )
+            )
+        with database.connect() as conn:
+            conn.execute("begin immediate")
+            if conversations:
+                conn.executemany(
+                    "insert into conversations(id, title, created_at) values (?, ?, ?)",
+                    conversations,
+                )
+            conn.executemany(
+                """insert into participants
+                (participant_id, conversation_id, role, display_name, cli_kind, model,
+                 role_template_id, status, last_seen_at, persona_snapshot_json,
+                 persona_snapshot_sha256, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                participants,
+            )
+            conn.executemany(
+                """insert into messages
+                (id, conversation_id, author, role, content, created_at, envelope_type,
+                 envelope_json, mentions_json, reply_to_message_id)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                messages,
+            )
+            conn.executemany(
+                """insert into room_activities
+                (activity_id, conversation_id, seq, activity_type, actor_kind,
+                 actor_identity, actor_participant_id, causation_id, correlation_id,
+                 visibility, audience_json, payload_json, materialized_message_id,
+                 causal_depth, materialized_proposal_id, delivery_mode, created_at)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                activities,
+            )
+            conn.commit()
+
+    populate_rooms(range(1))
     statements: list[str] = []
     original_connect = room_projection_module._connect
 
@@ -1266,17 +1366,7 @@ def test_room_list_query_count_does_not_grow_with_rooms(tmp_path, monkeypatch):
         if statement.lstrip().lower().startswith(("select", "with"))
     ]
     statements.clear()
-    database = RoomDatabase(path)
-    with database.connect() as conn:
-        conn.execute("begin immediate")
-        conn.executemany(
-            "insert into conversations(id, title, created_at) values (?, ?, ?)",
-            [
-                (f"conv_list_{index}", f"Room {index}", "2026-07-01T00:00:00Z")
-                for index in range(1, 24)
-            ],
-        )
-        conn.commit()
+    populate_rooms(range(1, 24))
     projection = build_room_list_projection(tmp_path)
     many_reads = [
         statement
@@ -1285,5 +1375,7 @@ def test_room_list_query_count_does_not_grow_with_rooms(tmp_path, monkeypatch):
     ]
     assert len(first_projection["rooms"]) == 1
     assert len(projection["rooms"]) == 24
+    assert {room["participant_count"] for room in projection["rooms"]} == {3}
+    assert {room["latest_visible_room_seq"] for room in projection["rooms"]} == {1}
     assert len(many_reads) == len(first_reads)
     assert len(many_reads) <= 6

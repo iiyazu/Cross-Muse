@@ -5,10 +5,12 @@ import json
 import subprocess
 import sys
 import tomllib
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 
+from xmuse_core.chat import room_kernel
 from xmuse_core.runtime.paths import default_xmuse_root
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,11 +108,79 @@ def test_room_delivery_surfaces_depend_on_execution_review_ports() -> None:
         CORE_ROOT / "chat" / "room_codex_transport.py",
     )
 
+    privileged_surfaces = (
+        "xmuse_core.chat.room_execution_store",
+        "xmuse_core.chat.room_execution_controller_store",
+        "xmuse_core.chat.room_execution_operator_store",
+        "xmuse_core.chat.room_execution_runtime_store",
+    )
     assert [
-        path.relative_to(PROJECT_ROOT).as_posix()
+        f"{path.relative_to(PROJECT_ROOT).as_posix()}: {surface}"
         for path in guarded
-        if _imports_prefix(path, "xmuse_core.chat.room_execution_store")
+        for surface in privileged_surfaces
+        if _imports_prefix(path, surface)
     ] == []
+
+
+def test_outcome_transition_plan_is_frozen_and_normalized_without_room_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider input is staged before, and independently of, a Room transaction."""
+
+    def no_database_access(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("outcome normalization must not open Room authority")
+
+    monkeypatch.setattr(room_kernel, "RoomDatabase", no_database_access)
+    payload = {"content": "  ready  ", "mentioned_participant_ids": ["p2"]}
+    plan = room_kernel.normalize_outcome_transition_plan(
+        conversation_id="conversation",
+        participant_id="p1",
+        caller_identity="god:session:p1",
+        observation_id="observation",
+        lease_token="lease",
+        client_request_id="request",
+        outcome_type="respond",
+        outcome_payload=payload,
+        observation_batch_id=None,
+        reply_to_activity_id=None,
+        proposal_assessments=None,
+        memory_candidates=None,
+        max_causal_depth=4,
+    )
+
+    payload["content"] = "changed after normalization"
+    assert plan.normalized_payload == {"content": "ready", "mentioned_participant_ids": ["p2"]}
+    with pytest.raises(FrozenInstanceError):
+        plan.outcome_type = "noop"  # type: ignore[misc]
+
+
+def test_execution_conn_helpers_leave_transaction_ownership_to_their_caller() -> None:
+    """Leaf helpers participate in the enclosing durable outcome/review transaction."""
+
+    targets = {
+        CORE_ROOT / "chat" / "room_execution_events.py": {"record_execution_event_conn"},
+        CORE_ROOT / "chat" / "room_execution_candidates.py": {
+            "review_material_for_batch_conn",
+            "bind_review_material_receipt_conn",
+        },
+    }
+    violations: list[str] = []
+    for path, helper_names in targets.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in helper_names:
+                continue
+            if any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr in {"commit", "rollback"}
+                for call in ast.walk(node)
+            ):
+                violations.append(f"{path.name}: {node.name}")
+
+    assert violations == []
 
 
 def test_execution_ledger_views_do_not_own_transactions_or_actions() -> None:
@@ -388,7 +458,7 @@ print(
     }
 
 
-def test_xmuse_root_environment_override(monkeypatch, tmp_path: Path) -> None:
+def test_xmuse_root_environment_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     configured_root = tmp_path / "runtime"
     monkeypatch.setenv("XMUSE_ROOT", str(configured_root))
 
