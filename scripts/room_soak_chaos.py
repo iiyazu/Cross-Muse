@@ -44,6 +44,8 @@ CHAT_API_BASE_URL = "http://127.0.0.1:8201/api/chat"
 LIVE_EVIDENCE_SCHEMA = "room_soak_live_evidence/v1"
 GOAL_MEMORY_PROFILE_ID = "live-goal-memory-soak"
 ENDURANCE_PROFILE_ID = "live-endurance"
+ENDURANCE_SHORT_PROFILE_ID = "live-endurance-short"
+ENDURANCE_PROFILE_IDS = frozenset({ENDURANCE_PROFILE_ID, ENDURANCE_SHORT_PROFILE_ID})
 BROWSER_INPUT_SCHEMA = "room_soak_browser_input/v1"
 BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v1"
 GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
@@ -108,6 +110,15 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         5,
         192,
         minimum_duration_s=7200.0,
+        memory_recovery=True,
+    ),
+    ENDURANCE_SHORT_PROFILE_ID: LiveProfileSpec(
+        ENDURANCE_SHORT_PROFILE_ID,
+        2,
+        2,
+        5,
+        5,
+        56,
         memory_recovery=True,
     ),
     GOAL_MEMORY_PROFILE_ID: LiveProfileSpec(
@@ -2193,7 +2204,7 @@ def _prepare_full_local_memory_cache(
     deterministic preflight blocker rather than a misleading degraded run.
     """
 
-    if config.profile_id not in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
+    if config.profile_id not in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         return
     executable = config.memoryos_executable
     if executable is None:
@@ -2448,11 +2459,11 @@ def _preflight(
     result_path: Path,
 ) -> RepositorySnapshot:
     if (
-        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}
+        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}
         and not config.confirm_provider_cost
     ):
         raise SoakError("soak_provider_cost_confirmation_required", blocked=True)
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         executable = config.memoryos_executable
         if (
             executable is None
@@ -2460,7 +2471,7 @@ def _preflight(
             or not os.access(executable.expanduser().resolve(), os.X_OK)
         ):
             raise SoakError("soak_memoryos_executable_required", blocked=True)
-        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
             assert executable is not None
             try:
                 executable_stat = executable.expanduser().lstat()
@@ -2488,7 +2499,7 @@ def _preflight(
             ("127.0.0.1", 3000, "frontend"),
             ("127.0.0.1", 8201, "chat_api"),
         ]
-        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
             ports.extend(
                 [
                     ("127.0.0.1", 8100, "room_mcp"),
@@ -2545,7 +2556,7 @@ def _start_workroom(
         "--readiness-timeout-s",
         str(config.readiness_timeout_s),
     ]
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         assert config.memoryos_executable is not None
         command.extend(("--memory", "--memoryos-executable", str(config.memoryos_executable)))
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -2627,7 +2638,7 @@ def _post_wave(
             raise SoakError("soak_post_concurrency_barrier_failed") from exc
         started = deps.monotonic()
         category: str | None = None
-        if spec.profile_id == ENDURANCE_PROFILE_ID:
+        if spec.profile_id in ENDURANCE_PROFILE_IDS:
             category, message = ENDURANCE_PROMPT_CATEGORIES[
                 (wave * spec.room_count + index) % len(ENDURANCE_PROMPT_CATEGORIES)
             ]
@@ -4516,7 +4527,7 @@ def _run_live(
             run_started_at=started,
             offset_s=offset,
         )
-        if spec.profile_id == ENDURANCE_PROFILE_ID and wave == 2:
+        if spec.profile_id in ENDURANCE_PROFILE_IDS and wave == 2:
             state.memory_fault_proof = _begin_memoryos_fault(
                 config,
                 deps,
@@ -4535,9 +4546,9 @@ def _run_live(
                 )
             finally:
                 _resume_runner(deps, paused_runner)
-        elif (wave == 1 and spec.memory_recovery and spec.profile_id != ENDURANCE_PROFILE_ID) or (
-            wave == 2 and spec.profile_id == ENDURANCE_PROFILE_ID
-        ):
+        elif (
+            wave == 1 and spec.memory_recovery and spec.profile_id not in ENDURANCE_PROFILE_IDS
+        ) or (wave == 2 and spec.profile_id in ENDURANCE_PROFILE_IDS):
             proof = state.memory_fault_proof
             if proof is None:
                 raise SoakError("soak_memory_recovery_proof_incomplete")
@@ -4563,7 +4574,7 @@ def _run_live(
         else:
             correlations = _post_wave(spec, deps, state, wave=wave)
         wave_event: _PendingChaosEvent | None = None
-        if wave == 0 and (not spec.memory_recovery or spec.profile_id == ENDURANCE_PROFILE_ID):
+        if wave == 0 and (not spec.memory_recovery or spec.profile_id in ENDURANCE_PROFILE_IDS):
             wave_event = _kill_one_provider(
                 config,
                 deps,
@@ -4572,7 +4583,7 @@ def _run_live(
                 env,
                 run_started_at=started,
             )
-        if wave == 1 and (not spec.memory_recovery or spec.profile_id == ENDURANCE_PROFILE_ID):
+        if wave == 1 and (not spec.memory_recovery or spec.profile_id in ENDURANCE_PROFILE_IDS):
             wave_event = _kill_runner_and_wait_recovery(
                 config,
                 deps,
@@ -4582,7 +4593,7 @@ def _run_live(
                 run_started_at=started,
             )
         _wait_wave_settled(config, deps, state, runtime_root, env, correlations)
-        if wave == 3 and spec.profile_id == ENDURANCE_PROFILE_ID:
+        if wave == 3 and spec.profile_id in ENDURANCE_PROFILE_IDS:
             wave_event = _reset_agent_stream_cache_and_wait_recovery(
                 config,
                 deps,
@@ -4615,7 +4626,7 @@ def _run_live(
             if not state.process_samples:
                 raise SoakError("soak_resource_warmup_marker_missing")
             state.warmup_cutoff_ms = state.process_samples[-1].offset_ms
-            if spec.memory_recovery and spec.profile_id != ENDURANCE_PROFILE_ID:
+            if spec.memory_recovery and spec.profile_id not in ENDURANCE_PROFILE_IDS:
                 state.memory_fault_proof = _begin_memoryos_fault(
                     config,
                     deps,
@@ -4636,7 +4647,7 @@ def _run_live(
             run_started_at=started,
             offset_s=spec.minimum_duration_s,
         )
-    if spec.profile_id == ENDURANCE_PROFILE_ID:
+    if spec.profile_id in ENDURANCE_PROFILE_IDS:
         expected_categories = {category for category, _message in ENDURANCE_PROMPT_CATEGORIES}
         if (
             set(state.endurance_prompt_categories) != expected_categories
@@ -5209,6 +5220,7 @@ def build_parser() -> argparse.ArgumentParser:
             "live-short",
             "live-soak",
             ENDURANCE_PROFILE_ID,
+            ENDURANCE_SHORT_PROFILE_ID,
             "memory-recovery",
             GOAL_MEMORY_PROFILE_ID,
         ),

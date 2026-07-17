@@ -183,7 +183,7 @@ def _base_evidence(profile_id: str, *, live: bool) -> dict[str, object]:
                     "recovery_wave_settled": True,
                 },
             ]
-            if profile_id == "live-endurance"
+            if profile.chaos_kinds
             else [
                 {
                     "seq": 1,
@@ -273,6 +273,12 @@ def test_fixed_profiles_match_the_cost_and_transport_contract() -> None:
         "memoryos_sigkill",
         "agent_stream_cache_delete",
     )
+    short = get_soak_profile("live-endurance-short")
+    assert (short.room_count, short.agents_per_room, short.human_turns_per_room) == (2, 2, 5)
+    assert short.max_attempts == 56
+    assert short.minimum_duration_s == 0
+    assert short.provider_cost_confirmation_required is True
+    assert short.chaos_kinds == endurance.chaos_kinds
     with pytest.raises(RoomSoakChaosError) as unknown:
         get_soak_profile("invented")
     assert unknown.value.code == "room_soak_profile_unknown"
@@ -430,6 +436,7 @@ def test_live_soak_requires_explicit_cost_confirmation_duration_and_attempt_budg
 def test_live_endurance_requires_the_strict_four_fault_sequence_and_memory_recovery() -> None:
     passed = _build("live-endurance")
     assert passed["status"] == "passed"
+    assert _build("live-endurance-short")["status"] == "passed"
     assert [event["kind"] for event in passed["chaos_events"]] == list(
         get_soak_profile("live-endurance").chaos_kinds
     )

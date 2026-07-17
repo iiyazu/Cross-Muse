@@ -77,6 +77,23 @@ _PROFILES = {
                 "agent_stream_cache_delete",
             ),
         ),
+        SoakProfile(
+            "live-endurance-short",
+            2,
+            2,
+            5,
+            "codex",
+            56,
+            0,
+            True,
+            True,
+            (
+                "codex_app_server_sigkill",
+                "runner_sigkill",
+                "memoryos_sigkill",
+                "agent_stream_cache_delete",
+            ),
+        ),
     )
 }
 
@@ -681,7 +698,8 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
         topology_complete = bool(events) and all(
             event["runner_count"] == 1 and event["mcp_count"] == 1 for event in events
         )
-        if profile.profile_id == "live-endurance":
+        strict_endurance = len(profile.chaos_kinds) == 4
+        if strict_endurance:
             # The endurance sequence is deliberately more specific than the
             # generic live profiles: provider recovery begins while work is
             # active, Runner recovery begins with two deliveries, MemoryOS is
@@ -719,7 +737,7 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
             )
         recovery_wave_proven = len(events) == len(expected_faults) and (
             all(event["recovery_wave_settled"] is True for event in events)
-            if profile.profile_id == "live-endurance"
+            if strict_endurance
             else events[-1]["recovery_wave_settled"] is True
         )
         rss_growth = resources["rss_growth_bytes"]
@@ -746,11 +764,7 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
                         if len(events) == len(expected_faults)
                         else None
                     ),
-                    (
-                        2
-                        if profile.profile_id == "live-endurance" or not profile.memory_recovery
-                        else 0
-                    ),
+                    (2 if strict_endurance or not profile.memory_recovery else 0),
                 ),
                 _gate(
                     "managed_reconcile_observed",
@@ -795,7 +809,7 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
                 ),
             ]
         )
-        if profile.profile_id == "live-endurance":
+        if strict_endurance:
             provider_precondition = len(events) == 4 and (
                 isinstance(events[0]["active_delivery_count"], int)
                 and int(events[0]["active_delivery_count"]) >= 1

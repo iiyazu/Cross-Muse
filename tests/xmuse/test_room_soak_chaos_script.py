@@ -1828,7 +1828,7 @@ def test_runtime_provider_discovery_owns_only_runner_descendants(
 
 @pytest.mark.parametrize(
     "profile_id",
-    [soak.GOAL_MEMORY_PROFILE_ID, soak.ENDURANCE_PROFILE_ID],
+    [soak.GOAL_MEMORY_PROFILE_ID, soak.ENDURANCE_PROFILE_ID, soak.ENDURANCE_SHORT_PROFILE_ID],
 )
 def test_full_local_preflight_copies_proven_cache_and_runs_offline(
     tmp_path: Path,
@@ -2490,6 +2490,7 @@ def test_profile_matrix_is_fixed_and_live_result_has_no_private_fields() -> None
         "live-soak": (6, 2, 4, 4, 128, 3600.0, False),
         "memory-recovery": (2, 2, 2, 10, None, 0.0, True),
         soak.ENDURANCE_PROFILE_ID: (8, 2, 5, 5, 192, 7200.0, True),
+        soak.ENDURANCE_SHORT_PROFILE_ID: (2, 2, 5, 5, 56, 0.0, True),
         soak.GOAL_MEMORY_PROFILE_ID: (4, 2, 4, 4, 128, 3600.0, True),
     }
     source = Path(soak.__file__).read_text(encoding="utf-8")
@@ -2948,6 +2949,9 @@ def test_goal_guards_are_optional_cli_outer_limits() -> None:
     )
     assert endurance.profile == soak.ENDURANCE_PROFILE_ID
     assert endurance.confirm_provider_cost is True
+    assert soak.build_parser().parse_args([soak.ENDURANCE_SHORT_PROFILE_ID]).profile == (
+        soak.ENDURANCE_SHORT_PROFILE_ID
+    )
 
 
 def test_goal_pause_waits_for_paused_thread_to_become_idle(
