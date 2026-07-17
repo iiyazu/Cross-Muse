@@ -43,6 +43,7 @@ FRONTEND_URL = "http://127.0.0.1:3000"
 CHAT_API_BASE_URL = "http://127.0.0.1:8201/api/chat"
 LIVE_EVIDENCE_SCHEMA = "room_soak_live_evidence/v1"
 GOAL_MEMORY_PROFILE_ID = "live-goal-memory-soak"
+ENDURANCE_PROFILE_ID = "live-endurance"
 BROWSER_INPUT_SCHEMA = "room_soak_browser_input/v1"
 BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v1"
 GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
@@ -99,6 +100,16 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         None,
         memory_recovery=True,
     ),
+    ENDURANCE_PROFILE_ID: LiveProfileSpec(
+        ENDURANCE_PROFILE_ID,
+        8,
+        2,
+        5,
+        5,
+        192,
+        minimum_duration_s=7200.0,
+        memory_recovery=True,
+    ),
     GOAL_MEMORY_PROFILE_ID: LiveProfileSpec(
         GOAL_MEMORY_PROFILE_ID,
         4,
@@ -110,6 +121,45 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         memory_recovery=True,
     ),
 }
+
+
+ENDURANCE_PROMPT_CATEGORIES: tuple[tuple[str, str], ...] = (
+    (
+        "boundary_inventory",
+        "Read-only architecture review: identify one runtime boundary and report only "
+        "evidence-backed observations; do not edit files.",
+    ),
+    (
+        "package_direction",
+        "Read-only architecture review: inspect runtime boundaries and package import "
+        "direction, cite durable evidence, and do not edit files.",
+    ),
+    (
+        "authority_ownership",
+        "Read-only architecture review: inspect boundaries, package direction, and durable "
+        "authority ownership; distinguish infrastructure from Agent decisions and do not "
+        "edit files.",
+    ),
+    (
+        "causality_recovery",
+        "Read-only architecture review: inspect boundaries, direction, authority, causality, "
+        "idempotency, and recovery behavior using only re-provable Room sources; do not "
+        "edit files.",
+    ),
+    (
+        "execution_safety",
+        "Read-only architecture review: inspect boundaries, direction, authority, causality, "
+        "recovery, and exact-patch execution safety; reject claims lacking durable evidence and "
+        "do not edit files.",
+    ),
+    (
+        "adversarial_integration",
+        "Read-only adversarial architecture review: jointly inspect boundaries, import direction, "
+        "authority, causality, idempotency, recovery, memory source proof, and execution gates; "
+        "surface contradictions, submit one concise evidence-backed outcome, and do not edit "
+        "files.",
+    ),
+)
 
 
 class SoakError(RuntimeError):
@@ -841,6 +891,7 @@ class _LiveState:
     verified_memory_evidence: dict[str, int | bool] | None = None
     provider_recovery_proof: _ProviderRecoveryProof | None = None
     goal_memory_evidence: dict[str, Any] = field(default_factory=dict)
+    endurance_prompt_categories: Counter[str] = field(default_factory=Counter)
     browser: dict[str, int] = field(
         default_factory=lambda: {"refreshes": 0, "console_errors": 0, "page_errors": 0}
     )
@@ -2108,7 +2159,7 @@ def _prepare_full_local_memory_cache(
     deterministic preflight blocker rather than a misleading degraded run.
     """
 
-    if config.profile_id != GOAL_MEMORY_PROFILE_ID:
+    if config.profile_id not in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
         return
     executable = config.memoryos_executable
     if executable is None:
@@ -2363,11 +2414,11 @@ def _preflight(
     result_path: Path,
 ) -> RepositorySnapshot:
     if (
-        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID}
+        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}
         and not config.confirm_provider_cost
     ):
         raise SoakError("soak_provider_cost_confirmation_required", blocked=True)
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
         executable = config.memoryos_executable
         if (
             executable is None
@@ -2375,7 +2426,7 @@ def _preflight(
             or not os.access(executable.expanduser().resolve(), os.X_OK)
         ):
             raise SoakError("soak_memoryos_executable_required", blocked=True)
-        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
             assert executable is not None
             try:
                 executable_stat = executable.expanduser().lstat()
@@ -2403,7 +2454,7 @@ def _preflight(
             ("127.0.0.1", 3000, "frontend"),
             ("127.0.0.1", 8201, "chat_api"),
         ]
-        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
             ports.extend(
                 [
                     ("127.0.0.1", 8100, "room_mcp"),
@@ -2460,7 +2511,7 @@ def _start_workroom(
         "--readiness-timeout-s",
         str(config.readiness_timeout_s),
     ]
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, ENDURANCE_PROFILE_ID}:
         assert config.memoryos_executable is not None
         command.extend(("--memory", "--memoryos-executable", str(config.memoryos_executable)))
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -2541,36 +2592,42 @@ def _post_wave(
                 active_posts -= 1
             raise SoakError("soak_post_concurrency_barrier_failed") from exc
         started = deps.monotonic()
-        message = (
-            (
-                "Memory recovery phase 1 anchor XMUSE_MEMORY_RECOVERY_ANCHOR_V1: "
-                "preserve the source-backed durable fact cobalt-orchid-17 for this "
-                f"Room (sample {index + 1}); submit one concise outcome."
+        category: str | None = None
+        if spec.profile_id == ENDURANCE_PROFILE_ID:
+            category, message = ENDURANCE_PROMPT_CATEGORIES[
+                (wave * spec.room_count + index) % len(ENDURANCE_PROMPT_CATEGORIES)
+            ]
+        else:
+            message = (
+                (
+                    "Memory recovery phase 1 anchor XMUSE_MEMORY_RECOVERY_ANCHOR_V1: "
+                    "preserve the source-backed durable fact cobalt-orchid-17 for this "
+                    f"Room (sample {index + 1}); submit one concise outcome."
+                )
+                if spec.profile_id == "memory-recovery" and wave == 0
+                else (
+                    "Memory recovery phase 2: use source-backed archival evidence to recall "
+                    "XMUSE_MEMORY_RECOVERY_ANCHOR_V1 and cobalt-orchid-17 for this Room; "
+                    "submit one concise outcome."
+                )
+                if spec.profile_id == "memory-recovery"
+                else (
+                    "Goal Memory soak wave 1: preserve the source-backed fact "
+                    "G9_COBALT_ORCHID_17 for this Room, independently inspect the runtime "
+                    "boundary, and submit one concise outcome without editing files."
+                )
+                if spec.profile_id == GOAL_MEMORY_PROFILE_ID and wave == 0
+                else (
+                    f"Goal Memory soak wave {wave + 1}: use only re-provable Room or archival "
+                    "sources when relevant, verify runtime recovery state, and submit one "
+                    "concise outcome without editing files."
+                )
+                if spec.profile_id == GOAL_MEMORY_PROFILE_ID
+                else (
+                    f"Soak wave {wave + 1}, item {index + 1}: independently inspect the "
+                    "durable Room state and submit one concise outcome; do not edit files."
+                )
             )
-            if spec.profile_id == "memory-recovery" and wave == 0
-            else (
-                "Memory recovery phase 2: use source-backed archival evidence to recall "
-                "XMUSE_MEMORY_RECOVERY_ANCHOR_V1 and cobalt-orchid-17 for this Room; "
-                "submit one concise outcome."
-            )
-            if spec.profile_id == "memory-recovery"
-            else (
-                "Goal Memory soak wave 1: preserve the source-backed fact "
-                "G9_COBALT_ORCHID_17 for this Room, independently inspect the runtime "
-                "boundary, and submit one concise outcome without editing files."
-            )
-            if spec.profile_id == GOAL_MEMORY_PROFILE_ID and wave == 0
-            else (
-                f"Goal Memory soak wave {wave + 1}: use only re-provable Room or archival "
-                "sources when relevant, verify runtime recovery state, and submit one "
-                "concise outcome without editing files."
-            )
-            if spec.profile_id == GOAL_MEMORY_PROFILE_ID
-            else (
-                f"Soak wave {wave + 1}, item {index + 1}: independently inspect the "
-                "durable Room state and submit one concise outcome; do not edit files."
-            )
-        )
         try:
             response = deps.http_json(
                 "POST",
@@ -2587,6 +2644,9 @@ def _post_wave(
         activity_id = response.payload.get("activity_id") if response.payload else None
         if response.status != 201 or not _safe_id(activity_id):
             raise SoakError("soak_room_post_failed")
+        if category is not None:
+            with meter_lock:
+                state.endurance_prompt_categories[category] += 1
         return _Correlation(room_id, str(activity_id), started)
 
     correlations: list[_Correlation] = []
@@ -3245,6 +3305,177 @@ def _reset_projection_cache_and_wait_recovery(
     return _PendingChaosEvent(
         kind="codex_projection_cache_delete",
         reason_code="codex_projection_cache_rebuilt",
+        started_at=started,
+        run_started_at=run_started_at,
+        recovery_ms=round((deps.monotonic() - started) * 1000),
+        status=recovered,
+        active_delivery_count=0,
+        managed_reconcile=True,
+        runner_count=int(recovered_counts["room_runner"]),
+        mcp_count=int(recovered_counts["room_mcp"]),
+    )
+
+
+def _safe_agent_stream_cache_leaf(runtime_root: Path, candidate: Path) -> None:
+    expected = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    if candidate != expected:
+        raise SoakError("soak_agent_stream_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        parent_stat = candidate.parent.lstat()
+        leaf_stat = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(parent_stat.st_mode)
+        or not stat.S_ISDIR(parent_stat.st_mode)
+        or candidate.parent.resolve() != expected.parent
+        or stat.S_ISLNK(leaf_stat.st_mode)
+        or not stat.S_ISREG(leaf_stat.st_mode)
+        or leaf_stat.st_nlink != 1
+        or leaf_stat.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_agent_stream_cache_unsafe")
+
+
+def _safe_agent_stream_cache_sidecar(runtime_root: Path, candidate: Path) -> None:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    if candidate not in {
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    }:
+        raise SoakError("soak_agent_stream_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        item = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(item.st_mode)
+        or not stat.S_ISREG(item.st_mode)
+        or item.st_nlink != 1
+        or item.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_agent_stream_cache_unsafe")
+
+
+def _agent_stream_cache_epoch(runtime_root: Path) -> str:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    _safe_agent_stream_cache_leaf(runtime_root, cache)
+    try:
+        with _connect_readonly(cache) as conn:
+            row = conn.execute(
+                "select schema_version, epoch from stream_meta where singleton = 1"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if row is None or row["schema_version"] != "room_agent_stream_cache/v1":
+        raise SoakError("soak_agent_stream_cache_unavailable")
+    epoch = row["epoch"]
+    if not _safe_id(epoch):
+        raise SoakError("soak_agent_stream_cache_epoch_invalid")
+    return str(epoch)
+
+
+def _unlink_agent_stream_cache(runtime_root: Path) -> None:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    _safe_agent_stream_cache_leaf(runtime_root, cache)
+    for candidate in (
+        cache,
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    ):
+        if candidate != cache and not candidate.exists():
+            continue
+        if candidate == cache:
+            _safe_agent_stream_cache_leaf(runtime_root, candidate)
+        else:
+            _safe_agent_stream_cache_sidecar(runtime_root, candidate)
+        candidate.unlink()
+
+
+def _reset_agent_stream_cache_and_wait_recovery(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    env: Mapping[str, str],
+    *,
+    run_started_at: float,
+) -> _PendingChaosEvent:
+    from xmuse.chat_api_runtime import (
+        _locked_workroom_runtime_start,
+        _stop_workroom_room_runtime_locked,
+        _workroom_room_runtime_config,
+    )
+
+    status = _workroom_status(config, deps, runtime_root, env)
+    runner = _service(status, "room_runner")
+    binding = deps.runner_process_binding(runtime_root)
+    boot = runner.get("boot_id")
+    if (
+        binding is None
+        or runner.get("pid") != binding.pid
+        or not _safe_id(boot)
+        or _active_deliveries(status) != 0
+        or deps.process_start_identity(binding.pid) != binding.start_identity
+    ):
+        raise SoakError("soak_agent_stream_cache_fault_identity_unavailable")
+    epoch_before = _agent_stream_cache_epoch(runtime_root)
+    started = deps.monotonic()
+    with _locked_workroom_runtime_start(runtime_root):
+        current_status = _workroom_status(config, deps, runtime_root, env)
+        current_runner = _service(current_status, "room_runner")
+        current_binding = deps.runner_process_binding(runtime_root)
+        if (
+            current_binding != binding
+            or current_runner.get("boot_id") != boot
+            or current_runner.get("pid") != binding.pid
+            or _active_deliveries(current_status) != 0
+            or deps.process_start_identity(binding.pid) != binding.start_identity
+        ):
+            raise SoakError("soak_agent_stream_cache_fault_identity_lost")
+        runtime_config = _workroom_room_runtime_config(runtime_root, config.repo_root)
+        stopped = _stop_workroom_room_runtime_locked(
+            runtime_root,
+            generation=runtime_config.generation,
+        )
+        if stopped.get("state") != "stopped":
+            raise SoakError("soak_agent_stream_cache_runner_stop_failed")
+        if deps.process_start_identity(binding.pid) == binding.start_identity:
+            raise SoakError("soak_agent_stream_cache_runner_still_live")
+        _unlink_agent_stream_cache(runtime_root)
+    deadline = started + MAX_FAULT_RECOVERY_MS / 1000
+    recovered: dict[str, Any] | None = None
+    recovered_counts: Mapping[str, int] | None = None
+    while deps.monotonic() < deadline:
+        try:
+            candidate = _workroom_status(config, deps, runtime_root, env)
+            current = _service(candidate, "room_runner")
+            owned_counts = deps.runtime_service_counts(runtime_root)
+            current_binding = deps.runner_process_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_binding is not None
+                and current_binding != binding
+                and current.get("pid") == current_binding.pid
+                and deps.process_start_identity(current_binding.pid)
+                == current_binding.start_identity
+                and current.get("boot_id") != boot
+                and _agent_stream_cache_epoch(runtime_root) != epoch_before
+            ):
+                recovered = candidate
+                recovered_counts = owned_counts
+                break
+        except SoakError:
+            pass
+        _sample_runtime(config, deps, state, runtime_root, env)
+        deps.sleep(0.25)
+    if recovered is None or recovered_counts is None:
+        raise SoakError("soak_agent_stream_cache_recovery_timeout")
+    return _PendingChaosEvent(
+        kind="agent_stream_cache_delete",
+        reason_code="agent_stream_cache_epoch_rotated",
         started_at=started,
         run_started_at=run_started_at,
         recovery_ms=round((deps.monotonic() - started) * 1000),
@@ -4243,10 +4474,17 @@ def _run_live(
     state.run_started_monotonic = started
     _start_workroom(config, deps, state, runtime_root, env)
     _create_rooms(spec, deps, state)
-    offsets = [
-        (spec.minimum_duration_s * index / (spec.wave_count - 1)) if spec.wave_count > 1 else 0.0
-        for index in range(spec.wave_count)
-    ]
+    if spec.profile_id == ENDURANCE_PROFILE_ID:
+        # Fault waves are fixed at 0/24/48/72/96 minutes.  The system then
+        # remains under observation until the 120-minute duration boundary.
+        offsets = [index * 24.0 * 60.0 for index in range(spec.wave_count)]
+    else:
+        offsets = [
+            (spec.minimum_duration_s * index / (spec.wave_count - 1))
+            if spec.wave_count > 1
+            else 0.0
+            for index in range(spec.wave_count)
+        ]
     memory_event: _PendingChaosEvent | None = None
     for wave, offset in enumerate(offsets):
         _wait_for_wave_offset(
@@ -4258,6 +4496,15 @@ def _run_live(
             run_started_at=started,
             offset_s=offset,
         )
+        if spec.profile_id == ENDURANCE_PROFILE_ID and wave == 2:
+            state.memory_fault_proof = _begin_memoryos_fault(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
         if wave == 0:
             paused_runner = _pause_runner(config, deps, runtime_root, env)
             try:
@@ -4268,7 +4515,9 @@ def _run_live(
                 )
             finally:
                 _resume_runner(deps, paused_runner)
-        elif wave == 1 and spec.memory_recovery:
+        elif (wave == 1 and spec.memory_recovery and spec.profile_id != ENDURANCE_PROFILE_ID) or (
+            wave == 2 and spec.profile_id == ENDURANCE_PROFILE_ID
+        ):
             proof = state.memory_fault_proof
             if proof is None:
                 raise SoakError("soak_memory_recovery_proof_incomplete")
@@ -4294,7 +4543,7 @@ def _run_live(
         else:
             correlations = _post_wave(spec, deps, state, wave=wave)
         wave_event: _PendingChaosEvent | None = None
-        if wave == 0 and not spec.memory_recovery:
+        if wave == 0 and (not spec.memory_recovery or spec.profile_id == ENDURANCE_PROFILE_ID):
             wave_event = _kill_one_provider(
                 config,
                 deps,
@@ -4303,7 +4552,7 @@ def _run_live(
                 env,
                 run_started_at=started,
             )
-        if wave == 1 and not spec.memory_recovery:
+        if wave == 1 and (not spec.memory_recovery or spec.profile_id == ENDURANCE_PROFILE_ID):
             wave_event = _kill_runner_and_wait_recovery(
                 config,
                 deps,
@@ -4313,13 +4562,22 @@ def _run_live(
                 run_started_at=started,
             )
         _wait_wave_settled(config, deps, state, runtime_root, env, correlations)
+        if wave == 3 and spec.profile_id == ENDURANCE_PROFILE_ID:
+            wave_event = _reset_agent_stream_cache_and_wait_recovery(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
         if wave_event is not None:
             _record_chaos(
                 state,
                 event=wave_event,
                 recovery_wave_settled=True,
             )
-        if wave == 1 and memory_event is not None:
+        if wave in {1, 2} and memory_event is not None:
             _record_chaos(
                 state,
                 event=memory_event,
@@ -4337,7 +4595,7 @@ def _run_live(
             if not state.process_samples:
                 raise SoakError("soak_resource_warmup_marker_missing")
             state.warmup_cutoff_ms = state.process_samples[-1].offset_ms
-            if spec.memory_recovery:
+            if spec.memory_recovery and spec.profile_id != ENDURANCE_PROFILE_ID:
                 state.memory_fault_proof = _begin_memoryos_fault(
                     config,
                     deps,
@@ -4358,6 +4616,15 @@ def _run_live(
             run_started_at=started,
             offset_s=spec.minimum_duration_s,
         )
+    if spec.profile_id == ENDURANCE_PROFILE_ID:
+        expected_categories = {category for category, _message in ENDURANCE_PROMPT_CATEGORIES}
+        if (
+            set(state.endurance_prompt_categories) != expected_categories
+            or sum(state.endurance_prompt_categories.values())
+            != spec.room_count * spec.human_turns_per_room
+            or any(count <= 0 for count in state.endurance_prompt_categories.values())
+        ):
+            raise SoakError("soak_endurance_prompt_coverage_incomplete")
     if spec.memory_recovery:
         _wait_for_memory_evidence(config, deps, state, runtime_root, env)
     _verify_browser(config, deps, state, artifact_dir, env)
@@ -4921,6 +5188,7 @@ def build_parser() -> argparse.ArgumentParser:
             "ci-sim",
             "live-short",
             "live-soak",
+            ENDURANCE_PROFILE_ID,
             "memory-recovery",
             GOAL_MEMORY_PROFILE_ID,
         ),

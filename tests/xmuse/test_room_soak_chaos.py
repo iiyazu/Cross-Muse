@@ -95,8 +95,8 @@ def _base_evidence(profile_id: str, *, live: bool) -> dict[str, object]:
         violations["provider_orphans"] = 0
         evidence.update(
             {
-                "provider_cost_confirmed": profile_id == "live-soak",
-                "monotonic_elapsed_ms": 3_600_000,
+                "provider_cost_confirmed": profile.provider_cost_confirmation_required,
+                "monotonic_elapsed_ms": max(3_600_000, profile.minimum_duration_s * 1000),
                 "resources": {
                     "rss_warmup_median_bytes": 256 * 1024 * 1024,
                     "rss_steady_state_max_bytes": 384 * 1024 * 1024,
@@ -134,6 +134,57 @@ def _base_evidence(profile_id: str, *, live: bool) -> dict[str, object]:
         )
         evidence["chaos_events"] = (
             [
+                {
+                    "seq": 1,
+                    "kind": "codex_app_server_sigkill",
+                    "reason_code": "codex_app_server_cleanup_confirmed",
+                    "offset_ms": 1_000,
+                    "recovery_ms": 10_000,
+                    "runner_count": 1,
+                    "mcp_count": 1,
+                    "active_delivery_count": 1,
+                    "managed_reconcile": False,
+                    "recovery_wave_settled": True,
+                },
+                {
+                    "seq": 2,
+                    "kind": "runner_sigkill",
+                    "reason_code": "runner_reconciled",
+                    "offset_ms": 1_440_000,
+                    "recovery_ms": 45_000,
+                    "runner_count": 1,
+                    "mcp_count": 1,
+                    "active_delivery_count": 2,
+                    "managed_reconcile": True,
+                    "recovery_wave_settled": True,
+                },
+                {
+                    "seq": 3,
+                    "kind": "memoryos_sigkill",
+                    "reason_code": "memoryos_reconciled",
+                    "offset_ms": 2_880_000,
+                    "recovery_ms": 45_000,
+                    "runner_count": 1,
+                    "mcp_count": 1,
+                    "active_delivery_count": 1,
+                    "managed_reconcile": True,
+                    "recovery_wave_settled": True,
+                },
+                {
+                    "seq": 4,
+                    "kind": "agent_stream_cache_delete",
+                    "reason_code": "agent_stream_cache_epoch_rotated",
+                    "offset_ms": 4_320_000,
+                    "recovery_ms": 45_000,
+                    "runner_count": 1,
+                    "mcp_count": 1,
+                    "active_delivery_count": 0,
+                    "managed_reconcile": True,
+                    "recovery_wave_settled": True,
+                },
+            ]
+            if profile_id == "live-endurance"
+            else [
                 {
                     "seq": 1,
                     "kind": "memoryos_sigkill",
@@ -180,7 +231,7 @@ def _base_evidence(profile_id: str, *, live: bool) -> dict[str, object]:
 
 def _build(profile_id: str, evidence: dict[str, object] | None = None) -> dict:
     profile = get_soak_profile(profile_id)
-    duration = 3_600 if profile.minimum_duration_s else 120
+    duration = profile.minimum_duration_s if profile.minimum_duration_s else 120
     return build_soak_result(
         profile=profile,
         evidence=evidence or _base_evidence(profile_id, live=profile.transport == "codex"),
@@ -207,6 +258,21 @@ def test_fixed_profiles_match_the_cost_and_transport_contract() -> None:
         10,
     )
     assert memory.memory_recovery is True
+    endurance = get_soak_profile("live-endurance")
+    assert (endurance.room_count, endurance.agents_per_room, endurance.human_turns_per_room) == (
+        8,
+        2,
+        5,
+    )
+    assert endurance.max_attempts == 192
+    assert endurance.minimum_duration_s == 7200
+    assert endurance.provider_cost_confirmation_required is True
+    assert endurance.chaos_kinds == (
+        "codex_app_server_sigkill",
+        "runner_sigkill",
+        "memoryos_sigkill",
+        "agent_stream_cache_delete",
+    )
     with pytest.raises(RoomSoakChaosError) as unknown:
         get_soak_profile("invented")
     assert unknown.value.code == "room_soak_profile_unknown"
@@ -359,6 +425,49 @@ def test_live_soak_requires_explicit_cost_confirmation_duration_and_attempt_budg
     counts["attempts"] = 129
     over_budget = _build("live-soak", evidence)
     assert "attempt_budget" in evaluate_soak_result(over_budget)[1]
+
+
+def test_live_endurance_requires_the_strict_four_fault_sequence_and_memory_recovery() -> None:
+    passed = _build("live-endurance")
+    assert passed["status"] == "passed"
+    assert [event["kind"] for event in passed["chaos_events"]] == list(
+        get_soak_profile("live-endurance").chaos_kinds
+    )
+    assert passed["memory"]["enabled"] is True
+    assert passed["memory"]["outbox_delivered"] > 0
+    assert passed["memory"]["recall_source_refs"] > 0
+    assert {
+        "endurance_provider_fault_precondition",
+        "endurance_runner_fault_precondition",
+        "endurance_memory_managed",
+        "endurance_stream_cache_precondition",
+        "minimum_duration",
+        "attempt_budget",
+        "memory_outbox_replayed",
+        "memory_recall_observed",
+    }.isdisjoint(set(evaluate_soak_result(passed)[1]))
+
+    wrong = _base_evidence("live-endurance", live=True)
+    events = wrong["chaos_events"]
+    assert isinstance(events, list) and isinstance(events[3], dict)
+    events[3]["active_delivery_count"] = 1
+    result = _build("live-endurance", wrong)
+    assert "fault_preconditions" in evaluate_soak_result(result)[1]
+
+    reordered = _base_evidence("live-endurance", live=True)
+    events = reordered["chaos_events"]
+    assert isinstance(events, list) and isinstance(events[2], dict)
+    events[2]["kind"] = "agent_stream_cache_delete"
+    events[2]["reason_code"] = "agent_stream_cache_epoch_rotated"
+    result = _build("live-endurance", reordered)
+    assert "fault_sequence" in evaluate_soak_result(result)[1]
+
+    unsettled_recovery = _base_evidence("live-endurance", live=True)
+    events = unsettled_recovery["chaos_events"]
+    assert isinstance(events, list) and isinstance(events[0], dict)
+    events[0]["recovery_wave_settled"] = False
+    result = _build("live-endurance", unsettled_recovery)
+    assert "recovery_wave_settled" in evaluate_soak_result(result)[1]
 
 
 def test_memory_recovery_requires_replay_recall_and_exact_fault_evidence() -> None:
