@@ -191,6 +191,10 @@ class _StreamingGodLayer(_GodLayer):
                 "method": "turn/completed",
                 "params": {"turn": {"id": "turn-1", "status": "completed"}},
             },
+            {
+                "method": "item/agentMessage/delta",
+                "params": {"turnId": "turn-1", "delta": " late stale delta"},
+            },
         ):
             self.stream.queue.put_nowait(event)
 
@@ -1134,6 +1138,54 @@ def test_terminal_eof_records_identity_bound_provider_cleanup(tmp_path: Path) ->
     assert controls.cleanup_calls[-1]["reason_code"] == (
         "room_codex_session_closed:abort_succeeded"
     )
+
+
+def test_native_session_rebind_fences_terminal_and_never_aborts_replacement(
+    tmp_path: Path,
+) -> None:
+    db, _, conversation_id, participant, record = _room(tmp_path)
+    record = replace(
+        record,
+        provider_session_id="provider-session-fenced",
+        provider_session_kind="codex_app_server_thread",
+        provider_binding_status="active",
+    )
+    delivery = replace(_delivery(db, conversation_id, participant), attempt_id="attempt-fenced")
+
+    class RebindingLayer(_GodLayer):
+        def __init__(self) -> None:
+            super().__init__(
+                record,
+                [
+                    StdoutMessage(
+                        type="result",
+                        request_id=delivery.transport_request_id,
+                        status="success",
+                    )
+                ],
+            )
+            self.incarnation = 1
+
+        def native_session_incarnation(self, _god_session_id: str) -> int:
+            return self.incarnation
+
+        async def receive_message(self, god_session_id: str):
+            self.incarnation = 2
+            return await super().receive_message(god_session_id)
+
+    layer = RebindingLayer()
+    controls = _ControlStore()
+    result = asyncio.run(
+        CodexRoomObservationTransport(
+            layer,
+            worktree=tmp_path,
+            control_store=controls,  # type: ignore[arg-type]
+        ).deliver(delivery, timeout_s=3)
+    )
+
+    assert (result.status, result.reason) == ("failed", "room_codex_session_fenced")
+    assert layer.abort_calls == []
+    assert controls.cleanup_calls[-1]["reason_code"] == "room_codex_session_fenced:session_fenced"
 
 
 def test_timeout_and_cancellation_abort_the_active_session(tmp_path: Path) -> None:

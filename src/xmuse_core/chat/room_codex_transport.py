@@ -16,6 +16,7 @@ import json
 import math
 from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,21 @@ from xmuse_core.providers.models import ProviderId
 _PROVIDER_SESSION_KIND = "codex_app_server_thread"
 _DIAGNOSTIC_LIMIT = 16_000
 _MAX_XMUSE_CONTEXT_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True)
+class _CodexSessionProof:
+    """The exact provider attachment authorized for one Room delivery.
+
+    ``god_session_id`` is durable participant identity, not a process identity.
+    The optional native incarnation prevents a late callback from an aborted
+    app-server attachment being treated as belonging to a replacement attached
+    under the same durable God identity.
+    """
+
+    god_session_id: str
+    provider_session_id: str | None
+    native_incarnation: int | None
 
 
 class CodexRoomObservationTransport:
@@ -158,12 +174,23 @@ class CodexRoomObservationTransport:
         ):
             return RoomTransportResult("failed", "room_codex_binding_identity_mismatch")
         provider_session_id = _text(record.provider_session_id)
+        try:
+            session_proof = _CodexSessionProof(
+                god_session_id=record.god_session_id,
+                provider_session_id=provider_session_id,
+                native_incarnation=_native_session_incarnation(
+                    self._god_session_layer, record.god_session_id
+                ),
+            )
+        except Exception as exc:
+            return _failed("room_codex_session_fenced", exc)
         if self._controls is not None:
             if not delivery.attempt_id or provider_session_id is None:
                 await self._abort_delivery_session(
                     record.god_session_id,
                     delivery,
                     reason_code="room_codex_attempt_binding_missing",
+                    session_proof=session_proof,
                 )
                 return RoomTransportResult("failed", "room_codex_attempt_binding_missing")
             try:
@@ -180,6 +207,7 @@ class CodexRoomObservationTransport:
                     record.god_session_id,
                     delivery,
                     reason_code="room_codex_attempt_binding_failed",
+                    session_proof=session_proof,
                 )
                 return _failed("room_codex_attempt_binding_failed", exc)
 
@@ -199,6 +227,7 @@ class CodexRoomObservationTransport:
                 record.god_session_id,
                 delivery,
                 reason_code="room_skill_context_too_large",
+                session_proof=session_proof,
             )
             return RoomTransportResult("failed", "room_skill_context_too_large")
         prompt = (
@@ -287,6 +316,9 @@ class CodexRoomObservationTransport:
                                 preview_stream,
                                 projector=self._stream_projector,
                                 stream_id=preview_id,
+                                session_is_current=lambda: _session_proof_is_current(
+                                    self._god_session_layer, session_proof
+                                ),
                             ),
                             name=f"room-agent-preview:{participant.participant_id}",
                         )
@@ -297,6 +329,8 @@ class CodexRoomObservationTransport:
 
         try:
             async with asyncio.timeout(float(timeout_s)):
+                if not _session_proof_is_current(self._god_session_layer, session_proof):
+                    return RoomTransportResult("failed", "room_codex_session_fenced")
                 await self._god_session_layer.send_message(
                     record.god_session_id,
                     "room_observation",
@@ -323,6 +357,7 @@ class CodexRoomObservationTransport:
                             record.god_session_id,
                             delivery,
                             reason_code=exc.code,
+                            session_proof=session_proof,
                         )
                         return _failed(exc.code, exc)
                     except Exception as exc:
@@ -330,6 +365,7 @@ class CodexRoomObservationTransport:
                             record.god_session_id,
                             delivery,
                             reason_code="room_execution_review_receipt_failed",
+                            session_proof=session_proof,
                         )
                         return _failed("room_execution_review_receipt_failed", exc)
                 if self._skill_decisions is not None:
@@ -345,17 +381,27 @@ class CodexRoomObservationTransport:
                             record.god_session_id,
                             delivery,
                             reason_code=exc.code,
+                            session_proof=session_proof,
                         )
                         return _failed(exc.code, exc)
                 terminal = await self._receive_terminal(
                     record.god_session_id,
                     request_id=delivery.transport_request_id,
                 )
+                if not _session_proof_is_current(self._god_session_layer, session_proof):
+                    await self._abort_delivery_session(
+                        record.god_session_id,
+                        delivery,
+                        reason_code="room_codex_session_fenced",
+                        session_proof=session_proof,
+                    )
+                    return RoomTransportResult("failed", "room_codex_session_fenced")
                 if terminal.status == "failed":
                     await self._abort_delivery_session(
                         record.god_session_id,
                         delivery,
                         reason_code=terminal.reason or "room_codex_terminal_failed",
+                        session_proof=session_proof,
                     )
                 await _finalize_room_preview(
                     preview_task,
@@ -371,6 +417,7 @@ class CodexRoomObservationTransport:
                 record.god_session_id,
                 delivery,
                 reason_code="room_codex_turn_timeout",
+                session_proof=session_proof,
             )
             return _failed("room_codex_turn_timeout", exc)
         except asyncio.CancelledError:
@@ -378,6 +425,7 @@ class CodexRoomObservationTransport:
                 record.god_session_id,
                 delivery,
                 reason_code="room_codex_turn_cancelled",
+                session_proof=session_proof,
             )
             raise
         except Exception as exc:
@@ -385,6 +433,7 @@ class CodexRoomObservationTransport:
                 record.god_session_id,
                 delivery,
                 reason_code="room_codex_transport_error",
+                session_proof=session_proof,
             )
             return _failed("room_codex_transport_error", exc)
         finally:
@@ -564,8 +613,22 @@ class CodexRoomObservationTransport:
         if attempt.get("provider_phase") == "cleanup_succeeded":
             return True
         god_session_id = _text(attempt.get("god_session_id"))
-        if god_session_id is None:
+        provider_session_id = _text(attempt.get("provider_session_id"))
+        if god_session_id is None or provider_session_id is None:
             return False
+        binding_state = getattr(self._god_session_layer, "provider_binding_process_state", None)
+        if callable(binding_state):
+            try:
+                state = binding_state(
+                    god_session_id=god_session_id,
+                    provider_session_id=provider_session_id,
+                )
+            except Exception:
+                return False
+            # A new thread/process may share the durable God identity.  A
+            # missing outcome must never abort that replacement generation.
+            if state == "superseded":
+                return False
         try:
             async with asyncio.timeout(float(timeout_s)):
                 return await self._abort_delivery_session(
@@ -582,7 +645,23 @@ class CodexRoomObservationTransport:
         delivery: RoomObservationDelivery,
         *,
         reason_code: str,
+        session_proof: _CodexSessionProof | None = None,
     ) -> bool:
+        # Never use a durable God identity to terminate a replacement native
+        # attachment.  The ledger cleanup remains pending for reconciliation.
+        if session_proof is not None and not _session_proof_is_current(
+            self._god_session_layer, session_proof
+        ):
+            if self._controls is not None and delivery.attempt_id:
+                with suppress(RoomControlError):
+                    self._controls.mark_provider_cleanup(
+                        observation_id=delivery.observation["observation_id"],
+                        attempt_id=delivery.attempt_id,
+                        delivery_generation=delivery.attempt_id,
+                        succeeded=False,
+                        reason_code=f"{reason_code}:session_fenced",
+                    )
+            return False
         if self._controls is not None and delivery.attempt_id:
             try:
                 self._controls.mark_provider_cleanup(
@@ -659,11 +738,38 @@ class CodexRoomObservationTransport:
                 )
 
 
+def _native_session_incarnation(layer: object, god_session_id: str) -> int | None:
+    """Read the narrow native-process fence when the layer exposes one.
+
+    Older test doubles and non-native implementations deliberately do not grow a
+    provider facade just for this transport, so absence is compatible. A present
+    but malformed fence is an authority failure, not a value to coerce.
+    """
+
+    getter = getattr(layer, "native_session_incarnation", None)
+    if not callable(getter):
+        return None
+    value = getter(god_session_id)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise RuntimeError("native Codex session incarnation invalid")
+    return value
+
+
+def _session_proof_is_current(layer: object, proof: _CodexSessionProof) -> bool:
+    if proof.native_incarnation is None:
+        return True
+    try:
+        return _native_session_incarnation(layer, proof.god_session_id) == proof.native_incarnation
+    except Exception:
+        return False
+
+
 async def _pump_room_preview(
     event_stream: object,
     *,
     projector: RoomAgentStreamProjector,
     stream_id: str,
+    session_is_current: Callable[[], bool] | None = None,
 ) -> None:
     receive = getattr(event_stream, "receive", None)
     if not callable(receive):
@@ -674,6 +780,9 @@ async def _pump_room_preview(
     try:
         while True:
             event = await receive()
+            if session_is_current is not None and not session_is_current():
+                await projector.invalidate(stream_id)
+                return
             if not isinstance(event, dict):
                 continue
             method = event.get("method")
