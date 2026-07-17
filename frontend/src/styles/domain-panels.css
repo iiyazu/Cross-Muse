@@ -782,3 +782,119 @@
   cursor: wait;
   opacity: 0.6;
 }
+
+/* Workbench domain panels stay intentionally quieter than the Room timeline. */
+.room-inspector {
+  border-left-color: var(--border-subtle);
+  background: color-mix(in oklab, var(--surface), var(--bg) 5%);
+}
+
+.room-inspector > header,
+.room-inspector > section,
+.room-advanced-proof {
+  border-color: var(--border-subtle);
+}
+
+.room-inspector > section,
+.room-advanced-proof {
+  padding: var(--space-3);
+}
+
+.room-operations-counts span,
+.room-memory-summary span {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--surface-raised), transparent 24%);
+}
+
+:is(
+  .room-operation-incident,
+  .room-inspector-turn,
+  .room-execution-policy,
+  .room-execution-detail,
+  .room-memory-recalls > article,
+  .room-memory-candidates > article,
+  .room-memory-confirm
+) {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--surface-raised), transparent 34%);
+}
+
+.room-operation-incident,
+.room-execution-candidate {
+  transition: border-color var(--motion-fast) var(--ease-enter), background-color var(--motion-fast) var(--ease-enter), transform var(--motion-fast) var(--ease-move);
+}
+
+.room-operation-incident:hover,
+.room-execution-candidate:hover {
+  border-color: var(--border);
+  background: color-mix(in oklab, var(--surface-raised), transparent 12%);
+  transform: translateY(-1px);
+}
+
+.room-execution-candidate,
+.room-execution-votes > article,
+.room-execution-gate,
+.room-skill-evidence,
+.room-batch-evidence {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.room-skill-status,
+.room-execution-state {
+  background: color-mix(in oklab, var(--surface-raised), transparent 18%);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-execution-candidate[aria-current="true"] {
+  border-color: color-mix(in oklab, var(--accent), var(--border) 55%);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.room-advanced-proof {
+  color: var(--muted);
+}
+
+.room-advanced-proof summary {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  color: var(--muted-strong);
+}
+
+.room-dialog-scrim,
+.agent-console__scrim {
+  animation: domain-scrim-in var(--motion-fast) var(--ease-enter) both;
+}
+
+.room-confirm-dialog {
+  border-color: color-mix(in oklab, var(--danger), var(--border-subtle) 58%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  animation: domain-dialog-in var(--motion-normal) var(--ease-enter) both;
+}
+
+@keyframes domain-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes domain-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-operation-incident,
+  .room-execution-candidate {
+    transition: none;
+  }
+
+  .room-dialog-scrim,
+  .agent-console__scrim,
+  .room-confirm-dialog {
+    animation: none;
+  }
+}

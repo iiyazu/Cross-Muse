@@ -21,7 +21,7 @@
     width: min(86vw, 320px);
     pointer-events: none;
     transform: translateX(-105%);
-    transition: transform 160ms ease;
+    transition: transform var(--motion-normal) var(--ease-enter);
   }
 
   .room-sidebar-slot.is-mobile-open .room-sidebar {
@@ -48,7 +48,7 @@
     inset: 0 0 0 auto;
     z-index: 35;
     width: min(94vw, 440px);
-    box-shadow: -18px 0 50px rgba(0, 0, 0, 0.28);
+    box-shadow: var(--shadow-overlay);
   }
 
   .room-inspector-scrim {

@@ -18,7 +18,7 @@
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% -20%, color-mix(in oklab, var(--accent), transparent 94%), transparent 40%),
+    radial-gradient(circle at 50% -20%, color-mix(in oklab, var(--accent), transparent 96%), transparent 42%),
     var(--bg);
 }
 
@@ -52,8 +52,8 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-  background: color-mix(in oklab, var(--surface), var(--bg) 18%);
+  border-right: 1px solid var(--border-subtle);
+  background: color-mix(in oklab, var(--surface), var(--bg) 12%);
 }
 
 .room-sidebar__brand,
@@ -66,9 +66,9 @@
 }
 
 .room-sidebar__brand {
-  min-height: 60px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .room-sidebar__brand > div,
@@ -92,10 +92,10 @@
 }
 
 .room-sidebar__actions {
-  padding: 12px;
+  padding: var(--space-3);
   display: grid;
-  gap: 9px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .room-search,
@@ -103,8 +103,8 @@
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
   color: var(--fg);
   padding: 9px 10px;
   outline: none;
@@ -119,11 +119,11 @@
 
 .room-create-form {
   display: grid;
-  gap: 7px;
-  padding: 10px;
+  gap: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
 }
 
 .room-create-form label {
@@ -158,7 +158,7 @@
 .room-load-older,
 .room-new-messages {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg);
   cursor: pointer;
@@ -204,7 +204,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-2);
   display: grid;
   align-content: start;
   gap: 4px;
@@ -215,11 +215,11 @@
   width: 100%;
   min-width: 0;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--fg);
   cursor: pointer;
-  padding: 10px;
+  padding: 10px var(--space-3);
   text-align: left;
   display: grid;
   gap: 7px;
@@ -227,11 +227,12 @@
 
 .room-list-item:hover,
 .room-list-item.is-active {
-  background: color-mix(in oklab, var(--surface-2), transparent 12%);
+  background: color-mix(in oklab, var(--surface-raised), transparent 10%);
 }
 
 .room-list-item.is-active {
-  border-color: color-mix(in oklab, var(--accent), var(--border) 56%);
+  border-color: color-mix(in oklab, var(--accent), var(--border) 64%);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent), transparent 20%);
 }
 
 .room-list-item__top,
@@ -338,15 +339,16 @@
 .room-main {
   display: flex;
   flex-direction: column;
-  background: color-mix(in oklab, var(--bg), var(--surface) 4%);
+  background: color-mix(in oklab, var(--bg), var(--surface) 3%);
 }
 
 .room-header {
-  min-height: 60px;
+  min-height: 64px;
   flex: 0 0 auto;
   padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--surface), transparent 10%);
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in oklab, var(--surface), var(--bg) 8%);
+  box-shadow: var(--shadow-subtle);
 }
 
 .room-header__leading,
@@ -403,8 +405,8 @@
 .room-turn-empty {
   flex: 0 0 auto;
   padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--surface-2), transparent 38%);
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in oklab, var(--surface-2), transparent 48%);
 }
 
 .room-turn-status {
@@ -444,7 +446,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 9px 4px 5px;
-  background: var(--surface);
+  background: color-mix(in oklab, var(--surface), transparent 4%);
 }
 
 .room-agent-state > span {
