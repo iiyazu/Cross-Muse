@@ -35,6 +35,7 @@ from xmuse_core.chat.room_execution_sandbox import (
     RoomExecutionSandboxError,
     build_repository_manifest_digest,
     build_toolchain_capability_digest,
+    discover_python_extension_artifacts,
 )
 from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_kernel import RoomKernelStore
@@ -96,13 +97,7 @@ def _git(root: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            env={
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "LANG": "C.UTF-8",
-                "LC_ALL": "C.UTF-8",
-                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            },
+            env=_git_environment(),
         )
     except OSError as exc:
         raise AcceptanceError("acceptance_git_unavailable") from exc
@@ -194,6 +189,73 @@ def _require_source_guard(root: Path, expected: SourceGuard) -> None:
         raise AcceptanceError("acceptance_source_guard_changed")
 
 
+def _git_environment() -> dict[str, str]:
+    """Return the fixed environment used for non-interactive local Git operations."""
+
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+
+
+def _require_full_object_id(value: str, *, kind: str) -> None:
+    if len(value) != 40 or any(character not in "0123456789abcdef" for character in value):
+        raise AcceptanceError(f"acceptance_frozen_{kind}_invalid")
+
+
+def _clone_frozen_commit(
+    source: Path,
+    destination: Path,
+    *,
+    frozen_commit: str,
+    frozen_tree: str,
+) -> None:
+    """Clone and detach at an exact commit whose tree was frozen by the caller.
+
+    The source working tree is deliberately not inspected: both proofs come from Git's
+    object database, and clone uses ``--no-checkout`` before the exact detached checkout.
+    """
+
+    _require_full_object_id(frozen_commit, kind="commit")
+    _require_full_object_id(frozen_tree, kind="tree")
+    source_commit = _git(source, "rev-parse", f"{frozen_commit}^{{commit}}")
+    if source_commit.decode("ascii").strip() != frozen_commit:
+        raise AcceptanceError("acceptance_frozen_commit_mismatch")
+    source_tree = _git(source, "rev-parse", f"{frozen_commit}^{{tree}}")
+    if source_tree.decode("ascii").strip() != frozen_tree:
+        raise AcceptanceError("acceptance_frozen_tree_mismatch")
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--no-hardlinks",
+                str(source),
+                str(destination),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=_git_environment(),
+        )
+    except OSError as exc:
+        raise AcceptanceError("acceptance_clone_failed") from exc
+    if result.returncode != 0:
+        raise AcceptanceError("acceptance_clone_failed")
+    _git(destination, "checkout", "-q", "--detach", frozen_commit)
+    if _git(destination, "rev-parse", "HEAD").decode("ascii").strip() != frozen_commit:
+        raise AcceptanceError("acceptance_clone_commit_mismatch")
+    if _git(destination, "rev-parse", "HEAD^{tree}").decode("ascii").strip() != frozen_tree:
+        raise AcceptanceError("acceptance_clone_tree_mismatch")
+    if _git(destination, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
+        raise AcceptanceError("acceptance_clone_dirty")
+
+
 def _copy_working_snapshot(source: Path, destination: Path) -> None:
     destination.mkdir(parents=True)
     for value in _snapshot_paths(source):
@@ -223,6 +285,7 @@ def _clone_no_hardlinks(source: Path, destination: Path) -> None:
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=_git_environment(),
         )
     except OSError as exc:
         raise AcceptanceError("acceptance_clone_failed") from exc
@@ -238,6 +301,17 @@ def _link_dependencies(target: Path, source: Path, *, frontend: bool) -> None:
     if not python.is_dir():
         raise AcceptanceError("acceptance_python_dependencies_missing")
     os.symlink(python.resolve(strict=True), target / ".venv", target_is_directory=True)
+    try:
+        artifacts = discover_python_extension_artifacts(source)
+    except RoomExecutionSandboxError as exc:
+        raise AcceptanceError("acceptance_python_dependencies_invalid") from exc
+    for artifact, relative_value, digest in artifacts:
+        relative = Path(relative_value)
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(artifact, destination, follow_symlinks=False)
+        if _file_digest(destination) != digest:
+            raise AcceptanceError("acceptance_python_dependencies_invalid")
     if frontend:
         node_modules = source / "frontend" / "node_modules"
         if not node_modules.is_dir():
@@ -279,6 +353,31 @@ def _fixture_candidate_patch(
     if _git(root, "status", "--porcelain=v1", "--untracked-files=normal"):
         raise AcceptanceError("acceptance_fixture_mutated_preimage")
     return fixture, originals
+
+
+def _expected_patch_digests(root: Path, paths: tuple[str, ...], patch: str) -> dict[str, str]:
+    """Prove the exact post-patch bytes without leaving the validation clone dirty."""
+
+    _git(root, "apply", "--check", input_bytes=patch.encode("utf-8"))
+    _git(root, "apply", input_bytes=patch.encode("utf-8"))
+    try:
+        if _working_tree_changed_paths(root) != tuple(sorted(paths)):
+            raise AcceptanceError("acceptance_patch_paths_mismatch")
+        expected = {value: _file_digest(root / value) for value in paths}
+    finally:
+        _git(root, "apply", "--reverse", input_bytes=patch.encode("utf-8"))
+    if _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
+        raise AcceptanceError("acceptance_patch_preimage_restore_failed")
+    return expected
+
+
+def _sentinel_path(root: Path, changed_paths: tuple[str, ...]) -> Path:
+    changed = frozenset(changed_paths)
+    for value in _snapshot_paths(root):
+        path = root / value
+        if value not in changed and path.is_file() and not path.is_symlink():
+            return path
+    raise AcceptanceError("acceptance_sentinel_missing")
 
 
 def _authorize_run(
@@ -413,24 +512,27 @@ def _run_scenario(
     profile_id: str,
     paths: tuple[str, ...],
     fixture_patch: str | None = None,
+    link_dependencies: bool = True,
 ) -> dict[str, Any]:
-    _link_dependencies(
-        repository,
-        dependency_source,
-        frontend=(
-            profile_id == "xmuse-monorepo/v2"
-            or any(value.startswith("frontend/") for value in paths)
-        ),
-    )
+    if link_dependencies:
+        _link_dependencies(
+            repository,
+            dependency_source,
+            frontend=(
+                profile_id == "xmuse-monorepo/v2"
+                or any(value.startswith("frontend/") for value in paths)
+            ),
+        )
     head = _git(repository, "rev-parse", "HEAD").decode("ascii").strip()
     worktrees = _digest(_git(repository, "worktree", "list", "--porcelain", "-z"))
-    sentinel = repository / "README.md"
+    sentinel = _sentinel_path(repository, paths)
     sentinel_digest = _file_digest(sentinel)
     patch, originals = (
         _fixture_candidate_patch(repository, paths, fixture_patch)
         if fixture_patch is not None
         else _candidate_patch(repository, paths)
     )
+    expected_digests = _expected_patch_digests(repository, paths, patch)
     store, config, expected_gates = _authorize_run(
         runtime=runtime,
         repository=repository,
@@ -457,6 +559,8 @@ def _run_scenario(
                 raise AcceptanceError("acceptance_patch_not_promoted")
         elif target.read_text(encoding="utf-8") == original:
             raise AcceptanceError("acceptance_patch_not_promoted")
+        if _file_digest(target) != expected_digests[value]:
+            raise AcceptanceError("acceptance_promoted_bytes_mismatch")
     evidence = result.get("evidence_digest")
     if not isinstance(evidence, str) or not evidence.startswith("sha256:"):
         raise AcceptanceError("acceptance_evidence_missing")
@@ -466,14 +570,24 @@ def _run_scenario(
         "gate_count": len(expected_gates),
         "changed_file_count": len(paths),
         "evidence_digest": evidence,
+        "execution_started": True,
+        "promotion_applied": True,
+        "target_bytes_exact": True,
+        "sandbox_boundary_preserved": True,
     }
 
 
-def _run_expected_blocked_scenario(repository: Path) -> dict[str, Any]:
+def _run_expected_blocked_scenario(
+    repository: Path,
+    *,
+    name: str = "unknown-repository",
+    profile_id: str = "xmuse-monorepo/v2",
+    expected_reason: str | None = None,
+) -> dict[str, Any]:
     head = _git(repository, "rev-parse", "HEAD").decode("ascii").strip()
     status = _digest(_git(repository, "status", "--porcelain=v1", "-z", "--untracked-files=normal"))
     worktrees = _digest(_git(repository, "worktree", "list", "--porcelain", "-z"))
-    profile = get_execution_gate_profile("xmuse-monorepo/v2")
+    profile = get_execution_gate_profile(profile_id)
     try:
         build_repository_manifest_digest(repository, profile)
         build_toolchain_capability_digest(repository, profile, gate_ids=profile.gate_ids)
@@ -487,6 +601,8 @@ def _run_expected_blocked_scenario(repository: Path) -> dict[str, Any]:
         "execution_backend_dependencies_unavailable",
         "execution_frontend_dependencies_unavailable",
     }:
+        raise AcceptanceError("acceptance_unknown_repository_wrong_blocker")
+    if expected_reason is not None and reason_code != expected_reason:
         raise AcceptanceError("acceptance_unknown_repository_wrong_blocker")
     if (
         _git(repository, "rev-parse", "HEAD").decode("ascii").strip() != head
@@ -504,10 +620,26 @@ def _run_expected_blocked_scenario(repository: Path) -> dict[str, Any]:
     ):
         raise AcceptanceError("acceptance_blocked_repository_changed")
     return {
-        "name": "unknown-repository",
+        "name": name,
         "status": "expected_blocked",
         "reason_code": reason_code,
         "changed_file_count": 0,
+        "gate_count": 0,
+        "execution_started": False,
+        "promotion_applied": False,
+        "target_bytes_exact": True,
+        "sandbox_boundary_preserved": True,
+        "evidence_digest": _digest(
+            json.dumps(
+                {
+                    "name": name,
+                    "profile_id": profile_id,
+                    "reason_code": reason_code,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ),
     }
 
 
