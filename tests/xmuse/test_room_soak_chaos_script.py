@@ -761,6 +761,72 @@ def test_endurance_posts_cover_six_fixed_read_only_categories_without_public_evi
     assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
 
 
+def test_endurance_retries_each_exhausted_observation_once_through_fixed_proxy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "chat.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        create table room_activities(activity_id text primary key, correlation_id text);
+        create table room_observations(
+            conversation_id text, observation_id text, activity_id text, control_state text
+        );
+        insert into room_activities values('activity-one', 'correlation-one');
+        insert into room_observations
+        values('conv-one', 'observation-one', 'activity-one', 'exhausted');
+        """
+    )
+    connection.commit()
+    connection.close()
+    descriptor = {
+        "available": True,
+        "href": "/api/chat/operator/room-observations/observation-one/retry",
+        "expected_state": "exhausted",
+        "expected_attempt_count": 3,
+        "expected_control_seq": 1,
+    }
+    monkeypatch.setattr(
+        soak,
+        "_room_projection",
+        lambda *args, **kwargs: {
+            "participants": [
+                {
+                    "frontier": {
+                        "observation_id": "observation-one",
+                        "actions": {"retry": descriptor},
+                    }
+                }
+            ]
+        },
+    )
+    requests: list[tuple[str, Mapping[str, Any]]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, timeout_s
+        requests.append((url, payload))
+        return soak.HttpJsonResponse(200, {"status": "succeeded"})
+
+    state = soak._LiveState()
+    correlation = soak._Correlation("conv-one", "activity-one", 0.0)
+    deps = soak.SoakDependencies(http_json=http_json)
+    soak._retry_exhausted_endurance_observations(deps, state, database, [correlation])
+    soak._retry_exhausted_endurance_observations(deps, state, database, [correlation])
+
+    assert [url for url, _payload in requests] == [
+        f"{soak.FRONTEND_URL}/api/room-observations/observation-one/retry"
+    ]
+    assert requests[0][1]["expected_state"] == "exhausted"
+    assert state.endurance_retried_observations == {"observation-one"}
+
+
 def test_memory_recovery_uses_old_archival_anchor_across_two_phases(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     system = _FakeSystem(repo)

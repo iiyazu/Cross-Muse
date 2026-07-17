@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -940,6 +940,7 @@ class _LiveState:
     provider_recovery_proof: _ProviderRecoveryProof | None = None
     goal_memory_evidence: dict[str, Any] = field(default_factory=dict)
     endurance_prompt_categories: Counter[str] = field(default_factory=Counter)
+    endurance_retried_observations: set[str] = field(default_factory=set)
     browser: dict[str, int] = field(
         default_factory=lambda: {"refreshes": 0, "console_errors": 0, "page_errors": 0}
     )
@@ -2975,6 +2976,68 @@ def _wait_until(
     raise SoakError(code)
 
 
+def _retry_exhausted_endurance_observations(
+    deps: SoakDependencies,
+    state: _LiveState,
+    database: Path,
+    correlations: Sequence[_Correlation],
+) -> None:
+    correlation_ids = set(_correlation_ids(database, correlations).values())
+    if not correlation_ids:
+        return
+    placeholders = ",".join("?" for _ in correlation_ids)
+    with _connect_readonly(database) as conn:
+        rows = conn.execute(
+            f"""select o.conversation_id, o.observation_id
+                  from room_observations o
+                  join room_activities a on a.activity_id = o.activity_id
+                 where a.correlation_id in ({placeholders})
+                   and o.control_state = 'exhausted'""",
+            tuple(sorted(correlation_ids)),
+        ).fetchall()
+    by_room: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        observation_id = str(row["observation_id"])
+        if observation_id not in state.endurance_retried_observations:
+            by_room[str(row["conversation_id"])].add(observation_id)
+    for conversation_id, expected_observations in by_room.items():
+        projection = _room_projection(deps, conversation_id)
+        for participant in _mapping_records(projection.get("participants")):
+            frontier = participant.get("frontier")
+            if not isinstance(frontier, Mapping):
+                continue
+            raw_observation_id = frontier.get("observation_id")
+            actions = frontier.get("actions")
+            retry = actions.get("retry") if isinstance(actions, Mapping) else None
+            if (
+                not isinstance(raw_observation_id, str)
+                or raw_observation_id not in expected_observations
+                or not isinstance(retry, Mapping)
+                or retry.get("available") is not True
+                or retry.get("href")
+                != f"/api/chat/operator/room-observations/{raw_observation_id}/retry"
+            ):
+                continue
+            observation_id = raw_observation_id
+            payload = {
+                "client_action_id": "soak_retry_"
+                + hashlib.sha256(observation_id.encode()).hexdigest()[:24],
+                "expected_state": retry.get("expected_state"),
+                "expected_attempt_count": retry.get("expected_attempt_count"),
+                "expected_control_seq": retry.get("expected_control_seq"),
+            }
+            response = deps.http_json(
+                "POST",
+                f"{FRONTEND_URL}/api/room-observations/{observation_id}/retry",
+                payload,
+                timeout_s=30.0,
+            )
+            if response.status in {200, 201, 202}:
+                state.endurance_retried_observations.add(observation_id)
+            elif response.status != 409:
+                raise SoakError("soak_endurance_retry_failed")
+
+
 def _wait_wave_settled(
     config: SoakConfig,
     deps: SoakDependencies,
@@ -2988,6 +3051,8 @@ def _wait_wave_settled(
     def settled() -> bool:
         claimed = _claimed_rooms(database, correlations)
         state.rooms_first_claimed.update(claimed)
+        if config.profile_id in ENDURANCE_PROFILE_IDS:
+            _retry_exhausted_endurance_observations(deps, state, database, correlations)
         complete, attempts = _correlations_settled(database, correlations)
         if (
             len(state.rooms_first_claimed) == len(state.room_ids)
