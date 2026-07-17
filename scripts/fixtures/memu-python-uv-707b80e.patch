@@ -1,0 +1,19 @@
+diff --git a/tests/test_references.py b/tests/test_references.py
+index 330a04dd8b6193189e093a79149963d5d249edc0..70ba0851ec9ecd97ea31a25236ef3546e5685ae1 100644
+--- a/tests/test_references.py
++++ b/tests/test_references.py
+@@ -120,6 +120,14 @@ class TestFormatReferencesAsCitations:
+         assert "[1] abc" in result
+         assert "[2] def" in result
+ 
++    def test_grouped_and_repeated_citations_keep_stable_numbers(self):
++        """Should reuse one number per item across grouped and repeated references."""
++        text = "Drinks [ref:tea,coffee]. More tea [ref:tea]."
++
++        result = format_references_as_citations(text)
++
++        assert result == "Drinks [1,2]. More tea [1].\n\nReferences:\n[1] tea\n[2] coffee"
++
+     def test_format_empty_text(self):
+         """Should handle empty text."""
+         assert format_references_as_citations("") == ""

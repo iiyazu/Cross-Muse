@@ -1,0 +1,22 @@
+diff --git a/tests/test_budget.py b/tests/test_budget.py
+index 8846200..2694cb3 100644
+--- a/tests/test_budget.py
++++ b/tests/test_budget.py
+@@ -52,3 +52,17 @@ def test_never_below_floor():
+     budget = DynamicBudget(settings, TokenEstimator())
+     result = budget.compute([], [], "")
+     assert result >= 500
++
++
++def test_combined_pressure_remains_deterministic_below_ceiling():
++    settings = Settings(rot_safe_budget=2400, hard_limit=8000)
++    budget = DynamicBudget(settings, TokenEstimator())
++
++    result = budget.compute(
++        [_make_message() for _ in range(3)],
++        [_make_page() for _ in range(2)],
++        "release qualification",
++    )
++
++    expected_task_pressure = min(TokenEstimator().count("release qualification"), 500)
++    assert result == 2400 + 400 + expected_task_pressure + 60

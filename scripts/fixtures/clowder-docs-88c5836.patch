@@ -1,0 +1,13 @@
+diff --git a/docs/features/F151-xiaoyi-channel-gateway.md b/docs/features/F151-xiaoyi-channel-gateway.md
+index 0c7442380870025f09f2bd7fea3e025005378ca4..db35ac37e4b3595856f4d7ea2d5ce96726d6fdf6 100644
+--- a/docs/features/F151-xiaoyi-channel-gateway.md
++++ b/docs/features/F151-xiaoyi-channel-gateway.md
+@@ -260,7 +260,7 @@ onDeliveryBatchDone(chainDone=true):
+ - **Related**: F132 (DingTalk/WeCom)，DingTalk Stream 模式是最接近的参考实现
+ - **Related**: F143 (Hostable Agent Runtime)，统一 adapter 接口
+ - **External**: 华为小艺开放平台 OpenClaw 模式、HAG WebSocket 端点
+-- **ADR**: [ADR-014](/decisions/014-xiaoyi-connector-gateway.md) — 完整架构设计、核心 ID、双服务器 HA、流式输出
++- **ADR**: [ADR-014](../decisions/014-xiaoyi-connector-gateway.md) — 完整架构设计、核心 ID、双服务器 HA、流式输出
+ 
+ ## Risk
+ 
