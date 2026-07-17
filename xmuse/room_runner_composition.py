@@ -16,7 +16,11 @@ from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_ports import ExecutionReviewPort
 from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
-from xmuse_core.chat.room_memory_runtime import RoomMemoryRuntime
+from xmuse_core.chat.room_memory_runtime import (
+    RoomMemoryContextReceiptPort,
+    RoomMemoryDeliveryPumpPort,
+    RoomMemoryRecallPort,
+)
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.skills.catalog import SkillCatalog
 
@@ -27,8 +31,7 @@ class RoomRuntimeComposition:
     session_layer: GodSessionLayer
     native_runtime: RoomCodexNativeRuntime
     stream_projector: RoomAgentStreamProjector
-    memory_runtime: RoomMemoryRuntime
-    memory_enabled: bool
+    memory_delivery_pump: RoomMemoryDeliveryPumpPort | None
 
 
 def compose_room_runtime(
@@ -45,8 +48,9 @@ def compose_room_runtime(
     cleanup_grace_s: float,
     runner_generation: str,
     runner_boot_id: str,
-    memory_runtime: RoomMemoryRuntime,
-    memory_enabled: bool = False,
+    memory_recall: RoomMemoryRecallPort,
+    memory_context_receipts: RoomMemoryContextReceiptPort,
+    memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks."""
 
@@ -74,7 +78,7 @@ def compose_room_runtime(
             control_store=controls,
             skill_decision_store=skill_decisions,
             execution_store=execution_store,
-            memory_runtime=memory_runtime,
+            memory_runtime=memory_context_receipts,
             stream_projector=stream_projector,
         ),
         policy=RoomHostPolicy(
@@ -87,7 +91,7 @@ def compose_room_runtime(
         skill_catalog=skill_catalog,
         skill_decision_store=skill_decisions,
         execution_store=execution_store,
-        memory_runtime=memory_runtime,
+        memory_runtime=memory_recall,
         runner_generation=runner_generation,
         runner_boot_id=runner_boot_id,
         delivery_gate=native_runtime.accepts_delivery,
@@ -97,6 +101,5 @@ def compose_room_runtime(
         session_layer=session_layer,
         native_runtime=native_runtime,
         stream_projector=stream_projector,
-        memory_runtime=memory_runtime,
-        memory_enabled=memory_enabled,
+        memory_delivery_pump=memory_delivery_pump,
     )

@@ -15,7 +15,6 @@ from xmuse.memoryos_adapter import MemoryOSAdapterError
 from xmuse.memoryos_delivery_pump import MemoryOSDeliveryPump
 from xmuse.memoryos_evidence import MemoryOSEvidenceDecoder
 from xmuse.memoryos_recall_runtime import MemoryOSRecallRuntime
-from xmuse.memoryos_runtime_adapter import MemoryOSRoomMemoryRuntime
 from xmuse_core.chat.room_memory_runtime import RoomMemoryRecallInput
 
 
@@ -319,22 +318,23 @@ class FakeAdapter:
         return []
 
 
-def _runtime(store: FakeStore, adapter: FakeAdapter) -> MemoryOSRoomMemoryRuntime:
-    return MemoryOSRoomMemoryRuntime(
-        MemoryOSRecallRuntime(
-            source_store=store,
-            receipt_store=store,
-            advisory_store=store,
-            client=adapter,
-            decoder=MemoryOSEvidenceDecoder(store),
-        ),
-        MemoryOSDeliveryPump(
-            binding_store=store,
-            message_store=store,
-            document_store=store,
-            client=adapter,
-            worker_id="memory-worker-1",
-        ),
+def _recall_runtime(store: FakeStore, adapter: FakeAdapter) -> MemoryOSRecallRuntime:
+    return MemoryOSRecallRuntime(
+        source_store=store,
+        receipt_store=store,
+        advisory_store=store,
+        client=adapter,
+        decoder=MemoryOSEvidenceDecoder(store),
+    )
+
+
+def _delivery_pump(store: FakeStore, adapter: FakeAdapter) -> MemoryOSDeliveryPump:
+    return MemoryOSDeliveryPump(
+        binding_store=store,
+        message_store=store,
+        document_store=store,
+        client=adapter,
+        worker_id="memory-worker-1",
     )
 
 
@@ -350,7 +350,7 @@ def _request() -> RoomMemoryRecallInput:
 
 def test_v3_archival_recall_is_source_resolved_and_receipt_is_two_stage() -> None:
     store = FakeStore()
-    runtime = _runtime(store, FakeAdapter(_v3_payload(_v3_item())))
+    runtime = _recall_runtime(store, FakeAdapter(_v3_payload(_v3_item())))
 
     evidence = asyncio.run(runtime.recall(_request()))
 
@@ -385,7 +385,9 @@ def test_recall_timeout_is_bounded_and_returns_degraded_empty_evidence() -> None
             return self.payload
 
     store = FakeStore()
-    evidence = asyncio.run(_runtime(store, SlowAdapter(_v3_payload(_v3_item()))).recall(_request()))
+    evidence = asyncio.run(
+        _recall_runtime(store, SlowAdapter(_v3_payload(_v3_item()))).recall(_request())
+    )
 
     assert evidence.status == "timeout"
     assert evidence.reason_code == "room_memory_timeout"
@@ -398,7 +400,7 @@ def test_full_local_v2_message_source_is_reproved_to_room_activity() -> None:
     adapter = FakeAdapter(_v2_payload(_v2_message_item()))
     adapter.profile = "full-local"
 
-    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(store, adapter).recall(_request()))
 
     assert evidence.status == "ok"
     assert evidence.schema_version == "memoryos_source_evidence/v2"
@@ -414,7 +416,7 @@ def test_full_local_v2_derived_message_text_uses_complete_source_refs_not_excerp
     adapter = FakeAdapter(_v2_payload(item))
     adapter.profile = "full-local"
 
-    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(store, adapter).recall(_request()))
 
     assert evidence.status == "ok"
     assert evidence.items[0].derived is True
@@ -445,7 +447,7 @@ def test_full_local_v2_archival_candidate_uses_explicit_document_identity() -> N
     adapter = FakeAdapter(_v2_payload(_v2_archival_candidate_item()))
     adapter.profile = "full-local"
 
-    evidence = asyncio.run(_runtime(store, adapter).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(store, adapter).recall(_request()))
 
     assert evidence.status == "ok"
     assert evidence.items[0].source_activity_ids == ("activity-source-1",)
@@ -458,7 +460,7 @@ def test_full_local_v2_archival_requires_explicit_document_identity() -> None:
     adapter = FakeAdapter(_v2_payload(item))
     adapter.profile = "full-local"
 
-    evidence = asyncio.run(_runtime(FakeStore(), adapter).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), adapter).recall(_request()))
 
     assert evidence.status == "source_rejected"
     assert evidence.reason_code == "room_memory_source_rejected"
@@ -470,7 +472,7 @@ def test_full_local_v2_message_source_rejects_missing_session_scope() -> None:
     adapter = FakeAdapter(_v2_payload(item))
     adapter.profile = "full-local"
 
-    evidence = asyncio.run(_runtime(FakeStore(), adapter).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), adapter).recall(_request()))
 
     assert evidence.status == "unavailable"
     assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
@@ -479,7 +481,7 @@ def test_full_local_v2_message_source_rejects_missing_session_scope() -> None:
 def test_full_local_v2_rejects_unknown_envelope_fields() -> None:
     payload = _v2_payload(_v2_message_item())
     payload["unexpected"] = "must fail closed"
-    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
 
     assert evidence.status == "unavailable"
     assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
@@ -495,7 +497,7 @@ def test_full_local_v2_rejects_unknown_envelope_fields() -> None:
 def test_recall_rejects_non_v3_or_top_level_simplified_text(
     payload: Mapping[str, Any], expected: str
 ) -> None:
-    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
     assert evidence.status == expected
     assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
     assert evidence.items == ()
@@ -503,7 +505,7 @@ def test_recall_rejects_non_v3_or_top_level_simplified_text(
 
 def test_recall_rejects_forged_text_and_filters_current_correlation() -> None:
     forged = asyncio.run(
-        _runtime(
+        _recall_runtime(
             FakeStore(),
             FakeAdapter(_v3_payload(_v3_item(text="forged memory text"))),
         ).recall(_request())
@@ -512,7 +514,9 @@ def test_recall_rejects_forged_text_and_filters_current_correlation() -> None:
 
     store = FakeStore()
     store.source_correlation = "correlation-current"
-    filtered = asyncio.run(_runtime(store, FakeAdapter(_v3_payload(_v3_item()))).recall(_request()))
+    filtered = asyncio.run(
+        _recall_runtime(store, FakeAdapter(_v3_payload(_v3_item()))).recall(_request())
+    )
     assert filtered.status == "empty"
     assert filtered.items == ()
 
@@ -536,7 +540,7 @@ def test_compact_wire_accepts_extensions_and_full_eight_item_budget() -> None:
     payload = _compact_payload(*items)
     payload["future_top_level_field"] = "ignored"
 
-    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
 
     assert evidence.status == "ok"
     assert len(evidence.items) == 8
@@ -552,7 +556,7 @@ def test_compact_rank_and_truncation_are_not_positional_or_derived() -> None:
     payload.update({"truncated": True, "omitted_count": 0})
     _resign(payload)
 
-    evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+    evidence = asyncio.run(_recall_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
 
     assert evidence.status == "ok"
     assert len(evidence.items) == 2
@@ -631,7 +635,9 @@ def test_compact_wire_drift_fails_closed_before_source_reproof() -> None:
     mutations.append(semantic_oversize)
 
     for payload in mutations:
-        evidence = asyncio.run(_runtime(FakeStore(), FakeAdapter(payload)).recall(_request()))
+        evidence = asyncio.run(
+            _recall_runtime(FakeStore(), FakeAdapter(payload)).recall(_request())
+        )
         assert evidence.status == "unavailable"
         assert evidence.reason_code == "memoryos_source_evidence_capability_drift"
         assert evidence.items == ()
@@ -643,7 +649,7 @@ def test_missing_compact_capability_is_stable_attention_not_room_failure() -> No
             raise MemoryOSAdapterError("memoryos_source_evidence_unsupported")
 
     evidence = asyncio.run(
-        _runtime(FakeStore(), _UnsupportedAdapter(_compact_payload())).recall(_request())
+        _recall_runtime(FakeStore(), _UnsupportedAdapter(_compact_payload())).recall(_request())
     )
 
     assert evidence.status == "unavailable"
@@ -667,7 +673,7 @@ def test_attachment_uses_real_document_source_ref_contract() -> None:
     ]
     adapter = FakeAdapter(_v3_payload(_v3_item()))
 
-    assert asyncio.run(_runtime(store, adapter).pump_once()) is True
+    assert asyncio.run(_delivery_pump(store, adapter).pump_once()) is True
 
     source_ref = adapter.attach_calls[0]["source_refs"][0]
     assert source_ref == {
@@ -696,7 +702,7 @@ def test_transient_ingest_failure_stays_failed_until_health_gated_durable_reopen
     }
     adapter = FakeAdapter(_v3_payload(_v3_item()))
     adapter.ingest_error = MemoryOSAdapterError("memoryos_unavailable")
-    runtime = _runtime(store, adapter)
+    runtime = _delivery_pump(store, adapter)
 
     with pytest.raises(MemoryOSAdapterError):
         asyncio.run(runtime.pump_once())
@@ -744,7 +750,7 @@ def test_full_local_pump_delivers_message_ledger_before_archive_ledger() -> None
     adapter = FakeAdapter(_compact_payload())
     adapter.profile = "full-local"
 
-    assert asyncio.run(_runtime(store, adapter).pump_once()) is True
+    assert asyncio.run(_delivery_pump(store, adapter).pump_once()) is True
     assert adapter.message_calls[0]["external_id"] == "xmuse-room-message-activity-1"
     assert store.completions[-1]["status"] == "delivered"
 
@@ -986,7 +992,9 @@ def test_final_memory_evidence_stays_within_eight_kib_and_oversize_fails_closed(
     item = _v3_item(text=too_large)
     item["estimated_tokens"] = 200
 
-    evidence = asyncio.run(_runtime(store, FakeAdapter(_v3_payload(item))).recall(_request()))
+    evidence = asyncio.run(
+        _recall_runtime(store, FakeAdapter(_v3_payload(item))).recall(_request())
+    )
 
     assert evidence.status == "oversize"
     assert evidence.items == ()
@@ -999,7 +1007,7 @@ def test_final_memory_evidence_stays_within_eight_kib_and_oversize_fails_closed(
     item_two = {**item_one, "item_id": "memory-item-2"}
     item_two["rank"] = 2
     payload = _compact_payload(item_one, item_two)
-    bounded = asyncio.run(_runtime(store, FakeAdapter(payload)).recall(_request()))
+    bounded = asyncio.run(_recall_runtime(store, FakeAdapter(payload)).recall(_request()))
     assert bounded.status == "ok"
     assert len(bounded.items) == 1
     encoded = json.dumps(

@@ -184,7 +184,7 @@ async def run_room_runner(
                 raise RoomRunnerError("room_runner_chat_db_unavailable") from exc
             readiness["chat_db"] = True
 
-            memory_runtime, memory_enabled = compose_room_runner_memory(
+            memory_capabilities = compose_room_runner_memory(
                 root / "chat.db",
                 worker_id=f"room-memory-{boot_id}",
             )
@@ -237,8 +237,9 @@ async def run_room_runner(
                     skill_decisions=skill_decisions,
                     skill_catalog=skill_catalog,
                     execution_store=execution_store,
-                    memory_runtime=memory_runtime,
-                    memory_enabled=memory_enabled,
+                    memory_recall=memory_capabilities.recall,
+                    memory_context_receipts=memory_capabilities.context_receipts,
+                    memory_delivery_pump=memory_capabilities.delivery_pump,
                     max_concurrent_rooms=max_concurrent_rooms,
                     delivery_timeout_s=delivery_timeout_s,
                     cleanup_grace_s=cleanup_grace_s,
@@ -300,10 +301,10 @@ async def run_room_runner(
                     raise RoomRunnerError("room_runner_host_loop_failed") from exc
                 raise RoomRunnerError("room_runner_host_loop_stopped")
             readiness["host_loop"] = True
-            if composition.memory_enabled:
+            if composition.memory_delivery_pump is not None:
                 memory_task = asyncio.create_task(
                     run_room_memory_pump(
-                        composition.memory_runtime,
+                        composition.memory_delivery_pump,
                         report_attention=composition.host.set_memory_runtime_attention,
                         stop=stop,
                     ),
