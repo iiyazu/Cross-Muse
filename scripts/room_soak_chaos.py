@@ -2667,22 +2667,28 @@ def _pause_runner(
     deps: SoakDependencies,
     runtime_root: Path,
     env: Mapping[str, str],
-) -> int:
+) -> ProcessBinding:
     status = _workroom_status(config, deps, runtime_root, env)
     runner = _service(status, "room_runner")
     binding = deps.runner_process_binding(runtime_root)
-    if binding is None or runner.get("pid") != binding.pid or runner.get("ready") is not True:
+    if (
+        binding is None
+        or runner.get("ready") is not True
+        or deps.process_start_identity(binding.pid) != binding.start_identity
+    ):
         raise SoakError("soak_runner_pause_identity_unavailable")
     try:
         deps.signal_pid(binding.pid, signal.SIGSTOP)
     except OSError as exc:
         raise SoakError("soak_runner_pause_failed") from exc
-    return binding.pid
+    return binding
 
 
-def _resume_runner(deps: SoakDependencies, pid: int) -> None:
+def _resume_runner(deps: SoakDependencies, binding: ProcessBinding) -> None:
+    if deps.process_start_identity(binding.pid) != binding.start_identity:
+        raise SoakError("soak_runner_resume_identity_lost")
     try:
-        deps.signal_pid(pid, signal.SIGCONT)
+        deps.signal_pid(binding.pid, signal.SIGCONT)
     except OSError as exc:
         raise SoakError("soak_runner_resume_failed") from exc
 
@@ -3126,7 +3132,7 @@ def _kill_runner_and_wait_recovery(
     runner = _service(status, "room_runner")
     binding = deps.runner_process_binding(runtime_root)
     boot = runner.get("boot_id")
-    if binding is None or runner.get("pid") != binding.pid or not _safe_id(boot):
+    if binding is None or not _safe_id(boot):
         raise SoakError("soak_runner_fault_identity_unavailable")
     if deps.process_start_identity(binding.pid) != binding.start_identity:
         raise SoakError("soak_runner_fault_identity_unavailable")
@@ -3143,7 +3149,15 @@ def _kill_runner_and_wait_recovery(
             candidate = _workroom_status(config, deps, runtime_root, env)
             current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            if _required_runtime_ready(candidate, owned_counts) and current.get("boot_id") != boot:
+            current_binding = deps.runner_process_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_binding is not None
+                and current_binding != binding
+                and deps.process_start_identity(current_binding.pid)
+                == current_binding.start_identity
+                and current.get("boot_id") != boot
+            ):
                 recovered = candidate
                 recovered_counts = owned_counts
                 break
@@ -3250,7 +3264,6 @@ def _reset_projection_cache_and_wait_recovery(
     boot = runner.get("boot_id")
     if (
         binding is None
-        or runner.get("pid") != binding.pid
         or not _safe_id(boot)
         or _active_deliveries(status) != 0
         or deps.process_start_identity(binding.pid) != binding.start_identity
@@ -3264,7 +3277,6 @@ def _reset_projection_cache_and_wait_recovery(
         if (
             current_binding != binding
             or current_runner.get("boot_id") != boot
-            or current_runner.get("pid") != binding.pid
             or _active_deliveries(current_status) != 0
             or deps.process_start_identity(binding.pid) != binding.start_identity
         ):
@@ -3292,7 +3304,15 @@ def _reset_projection_cache_and_wait_recovery(
             candidate = _workroom_status(config, deps, runtime_root, env)
             current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            if _required_runtime_ready(candidate, owned_counts) and current.get("boot_id") != boot:
+            current_binding = deps.runner_process_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_binding is not None
+                and current_binding != binding
+                and deps.process_start_identity(current_binding.pid)
+                == current_binding.start_identity
+                and current.get("boot_id") != boot
+            ):
                 recovered = candidate
                 recovered_counts = owned_counts
                 break
@@ -3415,7 +3435,6 @@ def _reset_agent_stream_cache_and_wait_recovery(
     boot = runner.get("boot_id")
     if (
         binding is None
-        or runner.get("pid") != binding.pid
         or not _safe_id(boot)
         or _active_deliveries(status) != 0
         or deps.process_start_identity(binding.pid) != binding.start_identity
@@ -3430,7 +3449,6 @@ def _reset_agent_stream_cache_and_wait_recovery(
         if (
             current_binding != binding
             or current_runner.get("boot_id") != boot
-            or current_runner.get("pid") != binding.pid
             or _active_deliveries(current_status) != 0
             or deps.process_start_identity(binding.pid) != binding.start_identity
         ):
@@ -3458,7 +3476,6 @@ def _reset_agent_stream_cache_and_wait_recovery(
                 _required_runtime_ready(candidate, owned_counts)
                 and current_binding is not None
                 and current_binding != binding
-                and current.get("pid") == current_binding.pid
                 and deps.process_start_identity(current_binding.pid)
                 == current_binding.start_identity
                 and current.get("boot_id") != boot

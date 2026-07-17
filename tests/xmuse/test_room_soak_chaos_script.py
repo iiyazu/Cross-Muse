@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sqlite3
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -576,6 +577,40 @@ def test_live_endurance_schedules_four_faults_then_steady_wave(
     ]
     assert [item["recovery_wave_settled"] for item in state.chaos_events] == [True] * 4
     assert "endurance_prompt_categories" not in evidence
+
+
+def test_runner_pause_uses_private_binding_when_safe_status_omits_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[tuple[int, signal.Signals]] = []
+    identities = {41: "runner-start"}
+    monkeypatch.setattr(
+        soak,
+        "_workroom_status",
+        lambda *args, **kwargs: {
+            "services": [{"service": "room_runner", "ready": True, "boot_id": "boot-one"}]
+        },
+    )
+    deps = soak.SoakDependencies(
+        runner_process_binding=lambda _root: soak.ProcessBinding(41, "runner-start"),
+        process_start_identity=identities.get,
+        signal_pid=lambda pid, sig: signals.append((pid, sig)),
+    )
+
+    binding = soak._pause_runner(
+        soak.SoakConfig(repo_root=tmp_path, profile_id="live-short"),
+        deps,
+        tmp_path,
+        {},
+    )
+    assert binding == soak.ProcessBinding(41, "runner-start")
+    assert signals == [(41, signal.SIGSTOP)]
+
+    identities[41] = "reused-process"
+    with pytest.raises(soak.SoakError, match="soak_runner_resume_identity_lost"):
+        soak._resume_runner(deps, binding)
+    assert signals == [(41, signal.SIGSTOP)]
 
 
 def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(
@@ -2031,11 +2066,16 @@ def test_projection_cache_reset_fences_runner_before_unlink_and_uses_managed_rec
         assert runtime_lock_held[0] is False
         clock[0] += seconds
         boot[0] = "boot-after"
+        identity[42] = "runner-after"
 
     deps = soak.SoakDependencies(
         monotonic=lambda: clock[0],
         sleep=sleep,
-        runner_process_binding=lambda _root: soak.ProcessBinding(41, "runner-start"),
+        runner_process_binding=lambda _root: (
+            soak.ProcessBinding(41, "runner-start")
+            if boot[0] == "boot-before"
+            else soak.ProcessBinding(42, "runner-after")
+        ),
         process_start_identity=identity.get,
         runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
     )
