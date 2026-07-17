@@ -18,7 +18,6 @@ from xmuse.memoryos_http_client import (
 from xmuse.memoryos_recall_runtime import MemoryOSRecallRuntime
 from xmuse.memoryos_runtime_adapter import (
     DisabledRoomMemoryRuntime,
-    MemoryOSRoomMemoryRuntime,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "MemoryOSDeliveryPump",
     "MemoryOSEvidenceDecoder",
     "MemoryOSRecallRuntime",
-    "MemoryOSRoomMemoryRuntime",
 ]

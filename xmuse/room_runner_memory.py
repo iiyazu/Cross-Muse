@@ -1,8 +1,8 @@
 """Optional MemoryOS composition for the isolated Room Runner.
 
 This is the only Room Runner module that knows the MemoryOS HTTP adapter,
-environment configuration, and concrete memory stores.  The process entrypoint
-receives one runtime capability and a boolean lifecycle flag.
+environment configuration, and concrete memory stores.  Consumers receive only
+the recall, context-receipt, or delivery capability they actually use.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
@@ -17,14 +18,29 @@ from xmuse.memoryos_delivery_pump import MemoryOSDeliveryPump
 from xmuse.memoryos_evidence import MemoryOSEvidenceDecoder
 from xmuse.memoryos_http_client import MemoryOSArchiveAdapter
 from xmuse.memoryos_recall_runtime import MemoryOSRecallRuntime
-from xmuse.memoryos_runtime_adapter import DisabledRoomMemoryRuntime, MemoryOSRoomMemoryRuntime
+from xmuse.memoryos_runtime_adapter import DisabledRoomMemoryRuntime
 from xmuse_core.chat.room_memory_advisory_store import RoomMemoryAdvisoryStore
 from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
 from xmuse_core.chat.room_memory_message_outbox_store import RoomMemoryMessageOutboxStore
 from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
 from xmuse_core.chat.room_memory_recall_source_store import RoomMemoryRecallSourceStore
-from xmuse_core.chat.room_memory_runtime import RoomMemoryRuntime
+from xmuse_core.chat.room_memory_runtime import (
+    RoomMemoryContextReceiptPort,
+    RoomMemoryDeliveryPumpPort,
+    RoomMemoryRecallPort,
+)
+
+
+@dataclass(frozen=True)
+class RoomRunnerMemoryCapabilities:
+    recall: RoomMemoryRecallPort
+    context_receipts: RoomMemoryContextReceiptPort
+    delivery_pump: RoomMemoryDeliveryPumpPort | None
+
+    @property
+    def enabled(self) -> bool:
+        return self.delivery_pump is not None
 
 
 def compose_room_runner_memory(
@@ -32,7 +48,7 @@ def compose_room_runner_memory(
     *,
     worker_id: str,
     environ: Mapping[str, str] | None = None,
-) -> tuple[RoomMemoryRuntime, bool]:
+) -> RoomRunnerMemoryCapabilities:
     """Build optional derived memory without making it a Runner prerequisite."""
 
     binding_store = RoomMemoryBindingStore(db_path)
@@ -52,34 +68,35 @@ def compose_room_runner_memory(
                 api_key=api_key,
                 profile=cast(Literal["archive-only", "full-local"], profile),
             )
-            return (
-                MemoryOSRoomMemoryRuntime(
-                    MemoryOSRecallRuntime(
-                        source_store=source_store,
-                        receipt_store=receipt_store,
-                        advisory_store=advisory_store,
-                        client=client,
-                        decoder=MemoryOSEvidenceDecoder(source_store),
-                    ),
-                    MemoryOSDeliveryPump(
-                        binding_store=binding_store,
-                        message_store=message_store,
-                        document_store=document_store,
-                        client=client,
-                        worker_id=worker_id,
-                    ),
+            recall_runtime = MemoryOSRecallRuntime(
+                source_store=source_store,
+                receipt_store=receipt_store,
+                advisory_store=advisory_store,
+                client=client,
+                decoder=MemoryOSEvidenceDecoder(source_store),
+            )
+            return RoomRunnerMemoryCapabilities(
+                recall=recall_runtime,
+                context_receipts=recall_runtime,
+                delivery_pump=MemoryOSDeliveryPump(
+                    binding_store=binding_store,
+                    message_store=message_store,
+                    document_store=document_store,
+                    client=client,
+                    worker_id=worker_id,
                 ),
-                True,
             )
         except Exception:
             # Memory is derived and optional. Invalid sidecar configuration must
             # not prevent the isolated Room Host from starting.
-            return DisabledRoomMemoryRuntime(receipt_store), False
-    return DisabledRoomMemoryRuntime(receipt_store), False
+            disabled = DisabledRoomMemoryRuntime(receipt_store)
+            return RoomRunnerMemoryCapabilities(disabled, disabled, None)
+    disabled = DisabledRoomMemoryRuntime(receipt_store)
+    return RoomRunnerMemoryCapabilities(disabled, disabled, None)
 
 
 async def run_room_memory_pump(
-    runtime: RoomMemoryRuntime,
+    runtime: RoomMemoryDeliveryPumpPort,
     *,
     report_attention: Callable[[str | None], None],
     stop: asyncio.Event,

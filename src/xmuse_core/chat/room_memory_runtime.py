@@ -94,7 +94,7 @@ class RoomMemoryEvidence:
         }
 
 
-class RoomMemoryRuntime(Protocol):
+class RoomMemoryRecallPort(Protocol):
     @property
     def recall_timeout_s(self) -> float: ...
 
@@ -107,6 +107,8 @@ class RoomMemoryRuntime(Protocol):
         evidence: RoomMemoryEvidence,
     ) -> None: ...
 
+
+class RoomMemoryContextReceiptPort(Protocol):
     def bind_context_receipt(
         self,
         *,
@@ -116,6 +118,8 @@ class RoomMemoryRuntime(Protocol):
         included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None: ...
 
+
+class RoomMemoryDeliveryPumpPort(Protocol):
     async def pump_once(self) -> bool: ...
 
 

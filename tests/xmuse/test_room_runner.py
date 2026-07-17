@@ -372,7 +372,7 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
     db_path = tmp_path / "chat.db"
     RoomDatabase(db_path).initialize()
     execution_store = RoomExecutionStore(db_path)
-    memory_runtime, memory_enabled = room_runner_memory.compose_room_runner_memory(
+    memory = room_runner_memory.compose_room_runner_memory(
         db_path,
         worker_id="memory-composition-test",
         environ={},
@@ -391,34 +391,39 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
         cleanup_grace_s=1,
         runner_generation="generation-execution-store",
         runner_boot_id="boot-execution-store",
-        memory_runtime=memory_runtime,
-        memory_enabled=memory_enabled,
+        memory_recall=memory.recall,
+        memory_context_receipts=memory.context_receipts,
+        memory_delivery_pump=memory.delivery_pump,
     )
 
     assert composition.host._execution_store is execution_store
     assert composition.host._transport._execution_store is execution_store
+    assert composition.host._memory_runtime is memory.recall
+    assert composition.host._transport._memory_runtime is memory.context_receipts
+    assert composition.memory_delivery_pump is memory.delivery_pump
 
 
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
     tmp_path: Path,
 ) -> None:
-    from xmuse.memoryos_runtime_adapter import (
-        DisabledRoomMemoryRuntime,
-        MemoryOSRoomMemoryRuntime,
-    )
+    from xmuse.memoryos_delivery_pump import MemoryOSDeliveryPump
+    from xmuse.memoryos_recall_runtime import MemoryOSRecallRuntime
+    from xmuse.memoryos_runtime_adapter import DisabledRoomMemoryRuntime
 
     db_path = tmp_path / "chat.db"
     RoomDatabase(db_path).initialize()
 
-    disabled, enabled = room_runner_memory.compose_room_runner_memory(
+    disabled = room_runner_memory.compose_room_runner_memory(
         db_path,
         worker_id="memory-worker-disabled",
         environ={},
     )
-    assert enabled is False
-    assert isinstance(disabled, DisabledRoomMemoryRuntime)
+    assert disabled.enabled is False
+    assert isinstance(disabled.recall, DisabledRoomMemoryRuntime)
+    assert disabled.context_receipts is disabled.recall
+    assert disabled.delivery_pump is None
 
-    active, enabled = room_runner_memory.compose_room_runner_memory(
+    active = room_runner_memory.compose_room_runner_memory(
         db_path,
         worker_id="memory-worker-enabled",
         environ={
@@ -426,10 +431,12 @@ def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
             "XMUSE_MEMORYOS_API_KEY": "memory-server-secret",
         },
     )
-    assert enabled is True
-    assert isinstance(active, MemoryOSRoomMemoryRuntime)
+    assert active.enabled is True
+    assert isinstance(active.recall, MemoryOSRecallRuntime)
+    assert active.context_receipts is active.recall
+    assert isinstance(active.delivery_pump, MemoryOSDeliveryPump)
     assert "memory-server-secret" not in repr(active)
-    assert "memory-server-secret" not in repr(active._delivery_pump._client)
+    assert "memory-server-secret" not in repr(active.delivery_pump._client)
 
 
 def test_memory_pump_failure_only_marks_host_attention(tmp_path: Path) -> None:

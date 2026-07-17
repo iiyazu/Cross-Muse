@@ -8,13 +8,13 @@ from typing import Any, cast
 from xmuse.memoryos_delivery_pump import MemoryOSDeliveryClient, MemoryOSDeliveryPump
 from xmuse.memoryos_runtime_adapter import (
     DisabledRoomMemoryRuntime,
-    MemoryDeliveryCapability,
-    MemoryOSRoomMemoryRuntime,
-    MemoryRecallCapability,
 )
 from xmuse_core.chat.room_memory_runtime import (
+    RoomMemoryContextReceiptPort,
+    RoomMemoryDeliveryPumpPort,
     RoomMemoryEvidence,
     RoomMemoryRecallInput,
+    RoomMemoryRecallPort,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -152,23 +152,22 @@ def _request() -> RoomMemoryRecallInput:
     )
 
 
-def test_host_runtime_delegates_without_receiving_a_store() -> None:
+def test_split_runtime_capabilities_operate_without_a_wide_facade() -> None:
     recall = _Recall()
     pump = _Pump()
-    runtime = MemoryOSRoomMemoryRuntime(
-        cast(MemoryRecallCapability, recall),
-        cast(MemoryDeliveryCapability, pump),
-    )
+    recall_port = cast(RoomMemoryRecallPort, recall)
+    context_port = cast(RoomMemoryContextReceiptPort, recall)
+    delivery_port = cast(RoomMemoryDeliveryPumpPort, pump)
 
-    evidence = asyncio.run(runtime.recall(_request()))
-    runtime.record_recall_receipt(attempt_id="attempt-1", evidence=evidence)
-    runtime.bind_context_receipt(
+    evidence = asyncio.run(recall_port.recall(_request()))
+    recall_port.record_recall_receipt(attempt_id="attempt-1", evidence=evidence)
+    context_port.bind_context_receipt(
         attempt_id="attempt-1",
         evidence_sha256=evidence.evidence_sha256,
         context_payload_sha256="sha256:" + "1" * 64,
     )
 
-    assert asyncio.run(runtime.pump_once()) is True
+    assert asyncio.run(delivery_port.pump_once()) is True
     assert (recall.receipts, recall.binds, pump.calls) == (1, 1, 1)
 
 
@@ -199,7 +198,6 @@ def test_disabled_runtime_needs_only_receipt_context_authority() -> None:
 
     assert evidence.status == "disabled"
     assert len(store.receipts) == len(store.binds) == 1
-    assert asyncio.run(runtime.pump_once()) is False
 
 
 class _BindingEmpty:

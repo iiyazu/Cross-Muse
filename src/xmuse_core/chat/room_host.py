@@ -28,7 +28,7 @@ from xmuse_core.chat.room_memory_runtime import (
     ROOM_MEMORY_RECALL_TIMEOUT_S,
     RoomMemoryEvidence,
     RoomMemoryRecallInput,
-    RoomMemoryRuntime,
+    RoomMemoryRecallPort,
     disabled_memory_evidence,
 )
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
@@ -254,7 +254,7 @@ class RoomParticipantHost:
         skill_catalog: SkillCatalog | None = None,
         skill_decision_store: RoomAttemptSkillDecisionStore | None = None,
         execution_store: ExecutionReviewMaterialReader | None = None,
-        memory_runtime: RoomMemoryRuntime | None = None,
+        memory_runtime: RoomMemoryRecallPort | None = None,
         runner_generation: str | None = None,
         runner_boot_id: str | None = None,
         delivery_gate: Callable[[str], bool] | None = None,
@@ -1517,7 +1517,7 @@ class RoomParticipantHost:
         correlation_id = str(source.get("correlation_id") or "")
         causal_ids = self._memory_excluded_activity_ids(delivery)
         task = self._memory_retrieval_task(delivery)
-        timeout_s = float(getattr(runtime, "recall_timeout_s", ROOM_MEMORY_RECALL_TIMEOUT_S))
+        timeout_s = float(runtime.recall_timeout_s)
         if not 0.1 <= timeout_s <= 10.0:
             timeout_s = ROOM_MEMORY_RECALL_TIMEOUT_S
         try:

@@ -38,7 +38,7 @@ from xmuse_core.chat.room_host import (
     RoomObservationDelivery,
     RoomTransportResult,
 )
-from xmuse_core.chat.room_memory_runtime import RoomMemoryRuntime
+from xmuse_core.chat.room_memory_runtime import RoomMemoryContextReceiptPort
 from xmuse_core.chat.room_skill_decisions import (
     RoomAttemptSkillDecisionStore,
     RoomSkillDecisionError,
@@ -76,7 +76,7 @@ class CodexRoomObservationTransport:
         control_store: RoomObservationControlStore | None = None,
         skill_decision_store: RoomAttemptSkillDecisionStore | None = None,
         execution_store: ExecutionReviewReceiptWriter | None = None,
-        memory_runtime: RoomMemoryRuntime | None = None,
+        memory_runtime: RoomMemoryContextReceiptPort | None = None,
         stream_projector: RoomAgentStreamProjector | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
