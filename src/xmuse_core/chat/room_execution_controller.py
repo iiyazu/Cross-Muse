@@ -724,51 +724,64 @@ def run_execution_controller(store: ExecutionStore, config: ControllerConfig) ->
                         stage=staged.stage,
                         execution_root=config.execution_root,
                         gate_ids=gate_plan.gate_ids,
+                        profile=get_execution_gate_profile(gate_plan.profile_id),
+                        expected_toolchain_capability_digest=(
+                            gate_plan.toolchain_capability_digest
+                        ),
                     )
                     resource_monitor = GateResourceMonitor(staged.stage)
-                    probe_sandbox_capability(layout, resource_sampler=resource_monitor)
-                    for gate_id in gate_plan.gate_ids:
-                        started_at = _utc_now()
-                        running_digest = _running_gate_digest(gate_id, started_at)
-                        run = _record_gate(
-                            store,
-                            config,
-                            run,
-                            gate_id=gate_id,
-                            status="running",
-                            evidence_digest=running_digest,
-                            started_at=started_at,
-                        )
-                        result = run_gate(
-                            layout,
-                            gate_id,
-                            cancel_requested=lambda: _cancel_requested(store, config),
-                            resource_sampler=resource_monitor,
-                        )
-                        cancelled = result.status == "cancelled" or _cancel_requested(store, config)
-                        if cancelled:
-                            run = _bound_material(store, config, execution_generation)
-                        run = _record_gate(
-                            store,
-                            config,
-                            run,
-                            gate_id=gate_id,
-                            status=("cancelled" if cancelled else cast_gate_status(result.status)),
-                            evidence_digest=result.evidence_digest,
-                            started_at=started_at,
-                            finished_at=_utc_now(),
-                            reason_code=(
-                                "execution_cancelled" if cancelled else result.reason_code
-                            ),
-                        )
-                        completed_gates.append(gate_id)
-                        if cancelled:
-                            raise ExecutionCancelled()
-                        gate_results.append(result)
-                        if result.status != "passed":
-                            raise RoomExecutionControllerError(
-                                result.reason_code or "execution_gate_failed"
+                    try:
+                        probe_sandbox_capability(layout, resource_sampler=resource_monitor)
+                        for gate_id in gate_plan.gate_ids:
+                            started_at = _utc_now()
+                            running_digest = _running_gate_digest(gate_id, started_at)
+                            run = _record_gate(
+                                store,
+                                config,
+                                run,
+                                gate_id=gate_id,
+                                status="running",
+                                evidence_digest=running_digest,
+                                started_at=started_at,
                             )
+                            result = run_gate(
+                                layout,
+                                gate_id,
+                                cancel_requested=lambda: _cancel_requested(store, config),
+                                resource_sampler=resource_monitor,
+                            )
+                            cancelled = result.status == "cancelled" or _cancel_requested(
+                                store, config
+                            )
+                            if cancelled:
+                                run = _bound_material(store, config, execution_generation)
+                            run = _record_gate(
+                                store,
+                                config,
+                                run,
+                                gate_id=gate_id,
+                                status=(
+                                    "cancelled" if cancelled else cast_gate_status(result.status)
+                                ),
+                                evidence_digest=result.evidence_digest,
+                                started_at=started_at,
+                                finished_at=_utc_now(),
+                                reason_code=(
+                                    "execution_cancelled" if cancelled else result.reason_code
+                                ),
+                            )
+                            completed_gates.append(gate_id)
+                            if cancelled:
+                                raise ExecutionCancelled()
+                            gate_results.append(result)
+                            if result.status != "passed":
+                                raise RoomExecutionControllerError(
+                                    result.reason_code or "execution_gate_failed"
+                                )
+                    finally:
+                        close_layout = getattr(layout, "close", None)
+                        if close_layout is not None:
+                            close_layout()
                     verify_stage_unchanged(staged)
                     _raise_if_cancelled(store, config, run)
                     run = _advance(store, config, run, target_state="ready_to_promote")

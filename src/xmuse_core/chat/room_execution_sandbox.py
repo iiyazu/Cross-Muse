@@ -9,6 +9,7 @@ bounded process metadata leave this boundary.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import tempfile
 import time
 import tomllib
 from collections.abc import Callable, Iterable, Mapping
@@ -41,6 +43,10 @@ _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
 _MAX_EVIDENCE_FILE_BYTES = 32 * _MIB
 _MAX_PROFILE_MARKER_BYTES = 2 * _MIB
+_MAX_PYTHON_EXTENSION_ARTIFACTS = 16
+_MAX_PYTHON_EXTENSION_BYTES = 256 * _MIB
+_MAX_PYTHON_EXTENSION_PATH_BYTES = 4096
+_SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 class RoomExecutionSandboxError(RuntimeError):
@@ -102,6 +108,27 @@ class SandboxLayout:
     node: Path | None
     frontend_node_modules: Path | None
     bwrap: Path
+    python_extension_artifacts: tuple[tuple[Path, str], ...] = ()
+    artifact_snapshot_root: Path | None = None
+
+    def close(self) -> None:
+        if self.artifact_snapshot_root is None:
+            return
+        for path, _relative in self.python_extension_artifacts:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        try:
+            self.artifact_snapshot_root.rmdir()
+        except OSError:
+            pass
+
+    def __enter__(self) -> SandboxLayout:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 GATE_SPECS: Mapping[str, GateSpec] = {
@@ -196,6 +223,8 @@ def discover_sandbox_layout(
     execution_root: Path,
     gate_ids: Iterable[str] = (),
     bwrap_path: str | Path | None = None,
+    profile: ExecutionGateProfile | None = None,
+    expected_toolchain_capability_digest: str | None = None,
 ) -> SandboxLayout:
     """Resolve trusted dependency paths without consulting candidate content."""
 
@@ -206,11 +235,15 @@ def discover_sandbox_layout(
         raise RoomExecutionSandboxError("execution_sandbox_unavailable")
 
     selected = tuple(gate_ids)
+    if (profile is None) != (expected_toolchain_capability_digest is None):
+        raise RoomExecutionSandboxError("execution_gate_plan_invalid")
     unknown = set(selected).difference(GATE_SPECS)
     if unknown:
         raise RoomExecutionSandboxError("execution_gate_unknown")
     needs_python = any(_gate_uses_python(value) for value in selected)
     needs_frontend = any(value.startswith("frontend_") for value in selected)
+    capability_gate_ids = profile.gate_ids if profile is not None else selected
+    capability_needs_python = any(_gate_uses_python(value) for value in capability_gate_ids)
 
     git_common = _git_path(root, "--git-common-dir")
     git_dir = _git_path(worktree, "--git-dir")
@@ -224,13 +257,36 @@ def discover_sandbox_layout(
         python_root = python.parent.parent
         site_packages = dependency_root.resolve(strict=True)
         ruff = ruff_entry.resolve(strict=True)
+    extension_artifacts: tuple[tuple[Path, str], ...] = ()
+    artifact_snapshot_root: Path | None = None
+    if capability_needs_python:
+        opened: list[tuple[Path, str]] = []
+        try:
+            artifacts = discover_python_extension_artifacts(root)
+            if artifacts:
+                artifact_snapshot_root = Path(
+                    tempfile.mkdtemp(prefix=".xmuse-python-artifacts-", dir=worktree.parent)
+                )
+                artifact_snapshot_root.chmod(0o700)
+            for index, (path, relative, digest) in enumerate(artifacts):
+                assert artifact_snapshot_root is not None
+                snapshot = artifact_snapshot_root / f"artifact-{index}.so"
+                _snapshot_artifact(path, snapshot, digest)
+                opened.append((snapshot, relative))
+        except Exception:
+            for snapshot, _relative in opened:
+                snapshot.unlink(missing_ok=True)
+            if artifact_snapshot_root is not None:
+                artifact_snapshot_root.rmdir()
+            raise
+        extension_artifacts = tuple(opened)
     node_modules = root / "frontend" / "node_modules"
     if needs_frontend and not node_modules.is_dir():
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     node = Path(shutil.which("node") or "")
     if needs_frontend and not node.is_file():
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
-    return SandboxLayout(
+    layout = SandboxLayout(
         stage=worktree,
         git_common_dir=git_common,
         git_dir=git_dir,
@@ -240,7 +296,31 @@ def discover_sandbox_layout(
         node=(node.resolve(strict=True) if needs_frontend else None),
         frontend_node_modules=(node_modules.resolve(strict=True) if needs_frontend else None),
         bwrap=bwrap.resolve(strict=True),
+        python_extension_artifacts=extension_artifacts,
+        artifact_snapshot_root=artifact_snapshot_root,
     )
+    if profile is not None and expected_toolchain_capability_digest is not None:
+        snapshot_evidence = tuple(
+            (
+                relative,
+                _trusted_executable_digest(
+                    path,
+                    error_code="execution_backend_dependencies_unavailable",
+                ),
+            )
+            for path, relative in layout.python_extension_artifacts
+        )
+        observed = build_toolchain_capability_digest(
+            root,
+            profile,
+            gate_ids=profile.gate_ids,
+            bwrap_path=bwrap,
+            python_extension_evidence=snapshot_evidence,
+        )
+        if not hmac.compare_digest(observed, expected_toolchain_capability_digest):
+            layout.close()
+            raise RoomExecutionSandboxError("execution_toolchain_capability_drift")
+    return layout
 
 
 def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGateProfile) -> str:
@@ -282,6 +362,7 @@ def build_toolchain_capability_digest(
     *,
     gate_ids: Iterable[str] | None = None,
     bwrap_path: str | Path | None = None,
+    python_extension_evidence: Iterable[tuple[str, str]] | None = None,
 ) -> str:
     """Digest trusted local capabilities for the exact selected fixed gates."""
 
@@ -310,12 +391,39 @@ def build_toolchain_capability_digest(
             or not (site_packages / "pytest").is_dir()
         ):
             raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
-        facts["python"] = _trusted_file_digest(python)
-        facts["ruff"] = _trusted_file_digest(ruff_entry.resolve(strict=True))
+        facts["python"] = _trusted_executable_digest(
+            python, error_code="execution_backend_dependencies_unavailable"
+        )
+        facts["ruff"] = _trusted_executable_digest(
+            ruff_entry.resolve(strict=True),
+            error_code="execution_backend_dependencies_unavailable",
+        )
         facts["pyvenv"] = _trusted_file_digest(venv_config)
         facts["python_dependencies"] = _dependency_metadata_digest(
             site_packages, ("mypy", "pytest")
         )
+        if python_extension_evidence is None:
+            extension_evidence = tuple(
+                (relative, digest)
+                for _path, relative, digest in discover_python_extension_artifacts(root)
+            )
+        else:
+            extension_evidence = tuple(python_extension_evidence)
+            if extension_evidence != tuple(sorted(extension_evidence)):
+                raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+            for relative, digest in extension_evidence:
+                pure = PurePosixPath(relative)
+                if (
+                    not relative.startswith("src/")
+                    or pure.suffix != ".so"
+                    or pure.is_absolute()
+                    or ".." in pure.parts
+                    or _SHA256_RE.fullmatch(digest) is None
+                ):
+                    raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+        facts["python_extension_artifacts"] = [
+            {"path": relative, "digest": digest} for relative, digest in extension_evidence
+        ]
     if any(value.startswith("frontend_") for value in selected):
         node_modules = root / "frontend" / "node_modules"
         if not node_modules.is_dir():
@@ -327,7 +435,10 @@ def build_toolchain_capability_digest(
         facts["frontend_dependencies"] = _trusted_file_digest(installed_lock)
         facts["frontend_gate_entries"] = _frontend_gate_entry_digest(root, selected)
         facts["node"] = {
-            "digest": _trusted_node_digest(node.resolve(strict=True)),
+            "digest": _trusted_executable_digest(
+                node.resolve(strict=True),
+                error_code="execution_frontend_dependencies_unavailable",
+            ),
             "version": _tool_version(node, "--version"),
         }
     return _canonical_digest(facts)
@@ -510,8 +621,6 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
         "--cap-drop",
         "ALL",
         "--clearenv",
-        "--proc",
-        "/proc",
         "--dev",
         "/dev",
         "--dir",
@@ -566,6 +675,8 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
                 "/tools/ruff",
             )
         )
+        for artifact, relative in layout.python_extension_artifacts:
+            command.extend(("--ro-bind", str(artifact), f"/workspace/{relative}"))
     if layout.frontend_node_modules is not None:
         if layout.node is None:
             raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
@@ -581,6 +692,7 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
                 "/workspace/frontend/node_modules",
             )
         )
+    command.extend(("--proc", "/proc"))
     git_dir_in_sandbox = _sandbox_git_dir(layout)
     safe_environment = {
         "CI": "1",
@@ -966,20 +1078,20 @@ def _trusted_file_digest(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def _trusted_node_digest(path: Path) -> str:
-    """Hash the trusted Node executable without applying marker-size limits."""
+def _trusted_executable_digest(path: Path, *, error_code: str) -> str:
+    """Hash a stable trusted executable without applying marker-size limits."""
 
     try:
         before = path.stat()
         if not path.is_file() or before.st_size > 256 * 1024 * 1024:
-            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+            raise RoomExecutionSandboxError(error_code)
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             while chunk := handle.read(1024 * 1024):
                 digest.update(chunk)
         after = path.stat()
     except OSError as exc:
-        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable") from exc
+        raise RoomExecutionSandboxError(error_code) from exc
     if (
         after.st_dev != before.st_dev
         or after.st_ino != before.st_ino
@@ -987,8 +1099,166 @@ def _trusted_node_digest(path: Path) -> str:
         or after.st_mtime_ns != before.st_mtime_ns
         or after.st_ctime_ns != before.st_ctime_ns
     ):
-        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        raise RoomExecutionSandboxError(error_code)
     return f"sha256:{digest.hexdigest()}"
+
+
+def _stop_bounded_discovery(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
+def _ignored_python_extension_paths(root: Path) -> tuple[str, ...]:
+    """Stream at most the bounded ignored extension path set from Git."""
+
+    try:
+        process = subprocess.Popen(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "-z",
+                "--",
+                ":(glob)src/**/*.so",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+    assert process.stdout is not None
+    pending = bytearray()
+    paths: list[str] = []
+    try:
+        while chunk := process.stdout.read(8192):
+            pending.extend(chunk)
+            while (separator := pending.find(0)) >= 0:
+                raw = bytes(pending[:separator])
+                del pending[: separator + 1]
+                if not raw or len(raw) > _MAX_PYTHON_EXTENSION_PATH_BYTES:
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+                try:
+                    relative = raw.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as exc:
+                    raise RoomExecutionSandboxError(
+                        "execution_backend_dependencies_unavailable"
+                    ) from exc
+                pure = PurePosixPath(relative)
+                if (
+                    pure.is_absolute()
+                    or ".." in pure.parts
+                    or pure.as_posix() != relative
+                    or not relative.startswith("src/")
+                    or pure.suffix != ".so"
+                ):
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+                paths.append(relative)
+                if len(paths) > _MAX_PYTHON_EXTENSION_ARTIFACTS:
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+            if len(pending) > _MAX_PYTHON_EXTENSION_PATH_BYTES:
+                raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+        if pending or process.wait(timeout=1.0) != 0:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+    finally:
+        process.stdout.close()
+        _stop_bounded_discovery(process)
+    return tuple(sorted(paths))
+
+
+def discover_python_extension_artifacts(root: Path) -> tuple[tuple[Path, str, str], ...]:
+    """Return bounded, ignored local extension builds as frozen toolchain inputs."""
+
+    source = root / "src"
+    if not source.is_dir():
+        return ()
+    artifacts: list[tuple[Path, str, str]] = []
+    total_size = 0
+    for relative in _ignored_python_extension_paths(root):
+        candidate = root / relative
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+            total_size += candidate.stat().st_size
+        except OSError as exc:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+        if total_size > _MAX_PYTHON_EXTENSION_BYTES:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+        artifacts.append(
+            (
+                candidate.resolve(strict=True),
+                relative,
+                _trusted_executable_digest(
+                    candidate,
+                    error_code="execution_backend_dependencies_unavailable",
+                ),
+            )
+        )
+    return tuple(artifacts)
+
+
+def _snapshot_artifact(path: Path, snapshot: Path, expected_digest: str) -> None:
+    """Copy proved extension bytes outside the writable candidate worktree."""
+
+    source_descriptor = -1
+    destination_descriptor = -1
+    try:
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+        source_descriptor = os.open(
+            path,
+            os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0),
+        )
+        before = os.fstat(source_descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 256 * 1024 * 1024:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+        destination_descriptor = os.open(
+            snapshot,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow | getattr(os, "O_CLOEXEC", 0),
+            0o400,
+        )
+        digest = hashlib.sha256()
+        while chunk := os.read(source_descriptor, 1024 * 1024):
+            digest.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(destination_descriptor, view)
+                view = view[written:]
+        os.fsync(destination_descriptor)
+        after = os.fstat(source_descriptor)
+        if (
+            after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+            or f"sha256:{digest.hexdigest()}" != expected_digest
+        ):
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+    except (OSError, RoomExecutionSandboxError) as exc:
+        snapshot.unlink(missing_ok=True)
+        if isinstance(exc, RoomExecutionSandboxError):
+            raise
+        raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+    finally:
+        if destination_descriptor >= 0:
+            os.close(destination_descriptor)
+        if source_descriptor >= 0:
+            os.close(source_descriptor)
 
 
 def _bounded_marker_bytes(path: Path) -> bytes:
