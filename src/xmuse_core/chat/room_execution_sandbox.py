@@ -43,6 +43,9 @@ _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
 _MAX_EVIDENCE_FILE_BYTES = 32 * _MIB
 _MAX_PROFILE_MARKER_BYTES = 2 * _MIB
+_MAX_PYTHON_EXTENSION_ARTIFACTS = 16
+_MAX_PYTHON_EXTENSION_BYTES = 256 * _MIB
+_MAX_PYTHON_EXTENSION_PATH_BYTES = 4096
 _SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
@@ -239,6 +242,8 @@ def discover_sandbox_layout(
         raise RoomExecutionSandboxError("execution_gate_unknown")
     needs_python = any(_gate_uses_python(value) for value in selected)
     needs_frontend = any(value.startswith("frontend_") for value in selected)
+    capability_gate_ids = profile.gate_ids if profile is not None else selected
+    capability_needs_python = any(_gate_uses_python(value) for value in capability_gate_ids)
 
     git_common = _git_path(root, "--git-common-dir")
     git_dir = _git_path(worktree, "--git-dir")
@@ -254,10 +259,10 @@ def discover_sandbox_layout(
         ruff = ruff_entry.resolve(strict=True)
     extension_artifacts: tuple[tuple[Path, str], ...] = ()
     artifact_snapshot_root: Path | None = None
-    if needs_python:
+    if capability_needs_python:
         opened: list[tuple[Path, str]] = []
         try:
-            artifacts = _python_extension_artifacts(root)
+            artifacts = discover_python_extension_artifacts(root)
             if artifacts:
                 artifact_snapshot_root = Path(
                     tempfile.mkdtemp(prefix=".xmuse-python-artifacts-", dir=worktree.parent)
@@ -308,7 +313,7 @@ def discover_sandbox_layout(
         observed = build_toolchain_capability_digest(
             root,
             profile,
-            gate_ids=selected,
+            gate_ids=profile.gate_ids,
             bwrap_path=bwrap,
             python_extension_evidence=snapshot_evidence,
         )
@@ -399,7 +404,8 @@ def build_toolchain_capability_digest(
         )
         if python_extension_evidence is None:
             extension_evidence = tuple(
-                (relative, digest) for _path, relative, digest in _python_extension_artifacts(root)
+                (relative, digest)
+                for _path, relative, digest in discover_python_extension_artifacts(root)
             )
         else:
             extension_evidence = tuple(python_extension_evidence)
@@ -1097,7 +1103,83 @@ def _trusted_executable_digest(path: Path, *, error_code: str) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def _python_extension_artifacts(root: Path) -> tuple[tuple[Path, str, str], ...]:
+def _stop_bounded_discovery(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
+def _ignored_python_extension_paths(root: Path) -> tuple[str, ...]:
+    """Stream at most the bounded ignored extension path set from Git."""
+
+    try:
+        process = subprocess.Popen(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "-z",
+                "--",
+                ":(glob)src/**/*.so",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+    assert process.stdout is not None
+    pending = bytearray()
+    paths: list[str] = []
+    try:
+        while chunk := process.stdout.read(8192):
+            pending.extend(chunk)
+            while (separator := pending.find(0)) >= 0:
+                raw = bytes(pending[:separator])
+                del pending[: separator + 1]
+                if not raw or len(raw) > _MAX_PYTHON_EXTENSION_PATH_BYTES:
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+                try:
+                    relative = raw.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as exc:
+                    raise RoomExecutionSandboxError(
+                        "execution_backend_dependencies_unavailable"
+                    ) from exc
+                pure = PurePosixPath(relative)
+                if (
+                    pure.is_absolute()
+                    or ".." in pure.parts
+                    or pure.as_posix() != relative
+                    or not relative.startswith("src/")
+                    or pure.suffix != ".so"
+                ):
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+                paths.append(relative)
+                if len(paths) > _MAX_PYTHON_EXTENSION_ARTIFACTS:
+                    raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+            if len(pending) > _MAX_PYTHON_EXTENSION_PATH_BYTES:
+                raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+        if pending or process.wait(timeout=1.0) != 0:
+            raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
+    finally:
+        process.stdout.close()
+        _stop_bounded_discovery(process)
+    return tuple(sorted(paths))
+
+
+def discover_python_extension_artifacts(root: Path) -> tuple[tuple[Path, str, str], ...]:
     """Return bounded, ignored local extension builds as frozen toolchain inputs."""
 
     source = root / "src"
@@ -1105,25 +1187,15 @@ def _python_extension_artifacts(root: Path) -> tuple[tuple[Path, str, str], ...]
         return ()
     artifacts: list[tuple[Path, str, str]] = []
     total_size = 0
-    for candidate in sorted(source.rglob("*.so")):
+    for relative in _ignored_python_extension_paths(root):
+        candidate = root / relative
         try:
-            relative = candidate.relative_to(root).as_posix()
             if candidate.is_symlink() or not candidate.is_file():
                 raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
-            ignored = subprocess.run(
-                ["git", "-C", str(root), "check-ignore", "-q", "--", relative],
-                check=False,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/bin:/bin"},
-            )
-            if ignored.returncode != 0:
-                continue
             total_size += candidate.stat().st_size
         except OSError as exc:
             raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable") from exc
-        if len(artifacts) >= 16 or total_size > 256 * 1024 * 1024:
+        if total_size > _MAX_PYTHON_EXTENSION_BYTES:
             raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
         artifacts.append(
             (

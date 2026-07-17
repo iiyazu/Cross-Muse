@@ -121,7 +121,7 @@ def test_bwrap_mounts_digest_bound_ignored_python_extensions_read_only(
         handle.write("\n*.so\n")
     subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ignore build"], check=True)
-    artifacts = sandbox._python_extension_artifacts(repo)
+    artifacts = sandbox.discover_python_extension_artifacts(repo)
 
     assert len(artifacts) == 1
     assert artifacts[0][1] == "src/demo/_core.abi3.so"
@@ -152,6 +152,84 @@ def test_bwrap_mounts_digest_bound_ignored_python_extensions_read_only(
     finally:
         layout.close()
     assert not snapshot_root.exists()
+
+
+def test_extension_discovery_excludes_tracked_and_unignored_artifacts(tmp_path: Path) -> None:
+    repo = _marker_repository(tmp_path)
+    source = repo / "src" / "generated"
+    source.mkdir(parents=True)
+    tracked = source / "tracked.so"
+    tracked.write_bytes(b"tracked")
+    subprocess.run(["git", "-C", str(repo), "add", "src/generated/tracked.so"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "tracked extension"], check=True)
+    (source / "unignored.so").write_bytes(b"unignored")
+
+    assert sandbox.discover_python_extension_artifacts(repo) == ()
+
+
+def test_extension_discovery_returns_stable_relative_order(tmp_path: Path) -> None:
+    repo = _marker_repository(tmp_path)
+    source = repo / "src" / "generated"
+    source.mkdir(parents=True)
+    with (repo / ".gitignore").open("a", encoding="utf-8") as handle:
+        handle.write("\n*.so\n")
+    (source / "z.so").write_bytes(b"z")
+    (source / "a.so").write_bytes(b"a")
+
+    artifacts = sandbox.discover_python_extension_artifacts(repo)
+
+    assert tuple(relative for _path, relative, _digest in artifacts) == (
+        "src/generated/a.so",
+        "src/generated/z.so",
+    )
+
+
+def test_extension_discovery_rejects_more_than_bounded_ignored_artifacts(
+    tmp_path: Path,
+) -> None:
+    repo = _marker_repository(tmp_path)
+    source = repo / "src" / "generated"
+    source.mkdir(parents=True)
+    with (repo / ".gitignore").open("a", encoding="utf-8") as handle:
+        handle.write("\n*.so\n")
+    for index in range(17):
+        (source / f"artifact-{index}.so").write_bytes(b"native")
+
+    with pytest.raises(RoomExecutionSandboxError) as error:
+        sandbox.discover_python_extension_artifacts(repo)
+
+    assert error.value.code == "execution_backend_dependencies_unavailable"
+
+
+def test_extension_discovery_rejects_aggregate_size_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _marker_repository(tmp_path)
+    source = repo / "src" / "generated"
+    source.mkdir(parents=True)
+    (repo / ".gitignore").write_text("*.so\n", encoding="utf-8")
+    (source / "artifact.so").write_bytes(b"too-large")
+    monkeypatch.setattr(sandbox, "_MAX_PYTHON_EXTENSION_BYTES", 1)
+
+    with pytest.raises(RoomExecutionSandboxError) as error:
+        sandbox.discover_python_extension_artifacts(repo)
+
+    assert error.value.code == "execution_backend_dependencies_unavailable"
+
+
+def test_extension_discovery_rejects_ignored_symlink(tmp_path: Path) -> None:
+    repo = _marker_repository(tmp_path)
+    source = repo / "src" / "generated"
+    source.mkdir(parents=True)
+    (repo / ".gitignore").write_text("*.so\n", encoding="utf-8")
+    target = source / "target.bin"
+    target.write_bytes(b"target")
+    (source / "artifact.so").symlink_to(target.name)
+
+    with pytest.raises(RoomExecutionSandboxError) as error:
+        sandbox.discover_python_extension_artifacts(repo)
+
+    assert error.value.code == "execution_backend_dependencies_unavailable"
 
 
 def test_internal_spec_rejects_workdir_escape(tmp_path: Path) -> None:
@@ -681,6 +759,47 @@ def test_discovery_rejects_extension_bytes_changed_after_authorization(
         )
     assert error.value.code == "execution_toolchain_capability_drift"
     assert not tuple(tmp_path.glob(".xmuse-python-artifacts-*"))
+
+
+def test_discovery_reproves_complete_profile_for_path_selected_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _marker_repository(tmp_path)
+    (repo / "frontend" / "node_modules").mkdir(parents=True)
+    profile = get_execution_gate_profile("xmuse-monorepo/v2")
+    selected = ("patch_diff_check", "frontend_typecheck")
+    observed_gate_ids: list[tuple[str, ...]] = []
+
+    def capability(
+        _root: Path,
+        _profile,
+        *,
+        gate_ids,
+        bwrap_path,
+        python_extension_evidence,
+    ) -> str:
+        del bwrap_path, python_extension_evidence
+        observed_gate_ids.append(tuple(gate_ids))
+        return "sha256:" + "a" * 64
+
+    monkeypatch.setattr(sandbox, "build_toolchain_capability_digest", capability)
+    monkeypatch.setattr(
+        sandbox.shutil,
+        "which",
+        lambda name: "/usr/bin/true" if name in {"bwrap", "node"} else None,
+    )
+
+    with sandbox.discover_sandbox_layout(
+        stage=repo,
+        execution_root=repo,
+        gate_ids=selected,
+        bwrap_path="/usr/bin/true",
+        profile=profile,
+        expected_toolchain_capability_digest="sha256:" + "a" * 64,
+    ):
+        pass
+
+    assert observed_gate_ids == [profile.gate_ids]
 
 
 def test_frontend_toolchain_requires_every_fixed_gate_entry(tmp_path: Path) -> None:

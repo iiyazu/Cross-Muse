@@ -35,6 +35,7 @@ from xmuse_core.chat.room_execution_sandbox import (
     RoomExecutionSandboxError,
     build_repository_manifest_digest,
     build_toolchain_capability_digest,
+    discover_python_extension_artifacts,
 )
 from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_kernel import RoomKernelStore
@@ -300,13 +301,17 @@ def _link_dependencies(target: Path, source: Path, *, frontend: bool) -> None:
     if not python.is_dir():
         raise AcceptanceError("acceptance_python_dependencies_missing")
     os.symlink(python.resolve(strict=True), target / ".venv", target_is_directory=True)
-    for artifact in sorted((source / "src").rglob("*.so")):
-        if artifact.is_symlink() or not artifact.is_file():
-            raise AcceptanceError("acceptance_python_dependencies_invalid")
-        relative = artifact.relative_to(source)
+    try:
+        artifacts = discover_python_extension_artifacts(source)
+    except RoomExecutionSandboxError as exc:
+        raise AcceptanceError("acceptance_python_dependencies_invalid") from exc
+    for artifact, relative_value, digest in artifacts:
+        relative = Path(relative_value)
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(artifact, destination, follow_symlinks=False)
+        if _file_digest(destination) != digest:
+            raise AcceptanceError("acceptance_python_dependencies_invalid")
     if frontend:
         node_modules = source / "frontend" / "node_modules"
         if not node_modules.is_dir():
