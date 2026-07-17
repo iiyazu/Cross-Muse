@@ -16,6 +16,7 @@ from typing import Any, Literal, Protocol
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE, Participant, ParticipantStore
 from xmuse_core.chat.room_context_selection import (
+    RoomContextSelection,
     memory_excluded_activity_ids,
     select_room_context,
 )
@@ -206,6 +207,39 @@ class _ActiveDelivery:
     participant_id: str
     control_seq: int
     task: asyncio.Task[RoomHostDeliveryOutcome]
+
+
+# These are deliberately private, small stage results rather than a second host
+# facade.  A pump has several legitimate non-delivery exits; spelling them out
+# keeps the scheduling loop from treating a deferred claim, a failed setup, and
+# a transport retained for cleanup as interchangeable "no work".
+@dataclass(frozen=True)
+class _PumpNoWork:
+    pass
+
+
+@dataclass(frozen=True)
+class _PumpDeferred:
+    deferral: RoomHostDeferral
+
+
+@dataclass(frozen=True)
+class _PumpScheduled:
+    task: asyncio.Task[RoomHostDeliveryOutcome]
+
+
+@dataclass(frozen=True)
+class _PumpBlocked:
+    outcome: RoomHostDeliveryOutcome
+
+
+@dataclass(frozen=True)
+class _PumpCleanupResult:
+    status: Literal["settled", "retained"]
+    interrupted: bool
+
+
+_PumpStageResult = _PumpNoWork | _PumpDeferred | _PumpScheduled | _PumpBlocked
 
 
 class RoomParticipantHost:
@@ -748,6 +782,13 @@ class RoomParticipantHost:
             )
         candidates.sort(key=lambda item: item[:3])
 
+        # The recovery/control stage has found no participant frontier.  Keep
+        # this distinct from a frontier that was deferred below: callers see
+        # the same empty public outcome, while the pump keeps its control flow
+        # explicit.
+        if isinstance(self._recovery_control_stage(candidates), _PumpNoWork):
+            return RoomHostBatchOutcome(conversation_id, (), ())
+
         owner = f"room-host:{self._boot_uuid}:{uuid.uuid4().hex}"
         delivery_tasks: list[asyncio.Task[RoomHostDeliveryOutcome]] = []
         setup_outcomes: list[RoomHostDeliveryOutcome] = []
@@ -757,12 +798,13 @@ class RoomParticipantHost:
                 if self._skill_runtime_unhealthy_reason is not None:
                     break
                 if self._delivery_gate is not None and not self._delivery_gate(participant_id):
-                    deferrals.append(
+                    deferred = _PumpDeferred(
                         self._defer(participant_id, candidate, "native_hold", True, None)
                     )
+                    deferrals.append(deferred.deferral)
                     continue
                 if candidate.get("control_state") == "exhausted":
-                    deferrals.append(
+                    deferred = _PumpDeferred(
                         self._defer(
                             participant_id,
                             candidate,
@@ -771,16 +813,18 @@ class RoomParticipantHost:
                             None,
                         )
                     )
+                    deferrals.append(deferred.deferral)
                     continue
                 if len(delivery_tasks) >= self._policy.max_batch_size:
-                    deferrals.append(
+                    deferred = _PumpDeferred(
                         self._defer(participant_id, candidate, "batch_budget", True, None)
                     )
+                    deferrals.append(deferred.deferral)
                     continue
                 raw_expires_at = candidate.get("expires_at")
                 expires = _when(raw_expires_at)
                 if candidate["status"] == "claimed" and expires is not None and expires > now:
-                    deferrals.append(
+                    deferred = _PumpDeferred(
                         self._defer(
                             participant_id,
                             candidate,
@@ -789,6 +833,7 @@ class RoomParticipantHost:
                             raw_expires_at,
                         )
                     )
+                    deferrals.append(deferred.deferral)
                     continue
                 completed_at = [
                     parsed
@@ -802,9 +847,10 @@ class RoomParticipantHost:
                     retry_at_dt = latest + timedelta(seconds=self._policy.participant_cooldown_s)
                     retry_at = retry_at_dt.isoformat().replace("+00:00", "Z")
                     if retry_at_dt > now:
-                        deferrals.append(
+                        deferred = _PumpDeferred(
                             self._defer(participant_id, candidate, "cooldown", True, retry_at)
                         )
+                        deferrals.append(deferred.deferral)
                         continue
                 effective_attempt_limit = self._policy.max_attempts_per_observation + int(
                     candidate.get("manual_retry_budget", 0)
@@ -822,7 +868,7 @@ class RoomParticipantHost:
                             "room_observation_not_exhausted",
                         }:
                             raise
-                    deferrals.append(
+                    deferred = _PumpDeferred(
                         self._defer(
                             participant_id,
                             candidate,
@@ -831,11 +877,12 @@ class RoomParticipantHost:
                             None,
                         )
                     )
+                    deferrals.append(deferred.deferral)
                     continue
 
                 # Waiting rooms hold no durable lease. The shared permit is
                 # acquired first, then transferred to exactly one delivery.
-                await self._delivery_slots.acquire()
+                await self._permit_stage()
                 permit = _DeliveryPermit(self._delivery_slots)
                 transferred = False
                 try:
@@ -848,17 +895,16 @@ class RoomParticipantHost:
                             "runner_generation": self._runner_generation,
                             "runner_boot_id": self._runner_boot_id,
                         }
-                    claimed = kernel.claim_next_observation_batch(
+                    claimed = self._claim_stage(
+                        kernel=kernel,
                         conversation_id=conversation_id,
                         participant_id=participant_id,
-                        lease_owner=owner,
-                        lease_ttl_s=self._policy.lease_ttl_s,
-                        base_attempt_limit=self._policy.max_attempts_per_observation,
+                        owner=owner,
                         now=claim_now,
-                        **runner_identity,
+                        runner_identity=runner_identity,
                     )
                     if claimed is None:
-                        deferrals.append(
+                        deferred = _PumpDeferred(
                             self._defer(
                                 participant_id,
                                 candidate,
@@ -867,6 +913,7 @@ class RoomParticipantHost:
                                 raw_expires_at,
                             )
                         )
+                        deferrals.append(deferred.deferral)
                         continue
                     observation = claimed["observation"]
                     attempt = claimed["attempt"]
@@ -887,28 +934,26 @@ class RoomParticipantHost:
                         code = str(getattr(exc, "code", "room_skill_catalog_invalid"))
                         if code == "room_skill_catalog_drift":
                             self._skill_runtime_unhealthy_reason = code
-                        setup_outcomes.append(
-                            self._fail_unstarted_setup(
-                                observation=observation,
-                                attempt_id=attempt["attempt_id"],
-                                reason_code=code,
-                                now=claim_now,
-                            )
+                        blocked = self._setup_failure_stage(
+                            observation=observation,
+                            attempt_id=attempt["attempt_id"],
+                            reason_code=code,
+                            now=claim_now,
                         )
+                        setup_outcomes.append(blocked.outcome)
                         if self._skill_runtime_unhealthy_reason is not None:
                             break
                         continue
                     try:
                         outcome_policy = kernel.get_outcome_policy(observation["observation_id"])
                     except Exception:
-                        setup_outcomes.append(
-                            self._fail_unstarted_setup(
-                                observation=observation,
-                                attempt_id=attempt["attempt_id"],
-                                reason_code="room_outcome_policy_unavailable",
-                                now=claim_now,
-                            )
+                        blocked = self._setup_failure_stage(
+                            observation=observation,
+                            attempt_id=attempt["attempt_id"],
+                            reason_code="room_outcome_policy_unavailable",
+                            now=claim_now,
                         )
+                        setup_outcomes.append(blocked.outcome)
                         continue
                     active_meta = tuple(
                         {
@@ -935,7 +980,7 @@ class RoomParticipantHost:
                         for member in batch_members
                         if isinstance(member, dict) and isinstance(member.get("activity"), dict)
                     ]
-                    selected_context = select_room_context(
+                    selected_context = self._context_stage(
                         source_activity=source,
                         member_activities=member_activities,
                         activities=activities,
@@ -986,41 +1031,24 @@ class RoomParticipantHost:
                             now=claim_now,
                         )
                     except Exception as exc:
-                        setup_outcomes.append(
-                            self._fail_unstarted_setup(
-                                observation=observation,
-                                attempt_id=attempt["attempt_id"],
-                                reason_code=str(getattr(exc, "code", "room_skill_binding_lost")),
-                                now=claim_now,
-                            )
+                        blocked = self._setup_failure_stage(
+                            observation=observation,
+                            attempt_id=attempt["attempt_id"],
+                            reason_code=str(getattr(exc, "code", "room_skill_binding_lost")),
+                            now=claim_now,
                         )
+                        setup_outcomes.append(blocked.outcome)
                         continue
-                    delivery_task = asyncio.create_task(
-                        self._deliver(
-                            kernel,
-                            observation,
-                            attempt["attempt_id"],
-                            delivery,
-                            permit,
-                        ),
-                        name=f"room-host:{delivery.transport_request_id}",
-                    )
-                    delivery_task.add_done_callback(permit.release_if_unstarted)
-                    active_delivery = _ActiveDelivery(
-                        observation_id=observation["observation_id"],
+                    delivery_task = self._schedule_stage(
+                        kernel=kernel,
+                        observation=observation,
                         attempt_id=attempt["attempt_id"],
                         participant_id=participant_id,
-                        control_seq=int(observation.get("control_seq", 0)),
-                        task=delivery_task,
+                        delivery=delivery,
+                        permit=permit,
                     )
-                    self._active_deliveries[observation["observation_id"]] = active_delivery
-                    delivery_task.add_done_callback(
-                        partial(
-                            self._active_delivery_done,
-                            str(observation["observation_id"]),
-                        )
-                    )
-                    delivery_tasks.append(delivery_task)
+                    scheduled = _PumpScheduled(delivery_task)
+                    delivery_tasks.append(scheduled.task)
                     transferred = True
                 finally:
                     if not transferred:
@@ -1041,6 +1069,106 @@ class RoomParticipantHost:
             tuple(setup_outcomes) + tuple(results),
             tuple(deferrals),
         )
+
+    @staticmethod
+    def _recovery_control_stage(candidates: list[Any]) -> _PumpNoWork | None:
+        """Classify the control frontier without reopening durable work here."""
+
+        return _PumpNoWork() if not candidates else None
+
+    async def _permit_stage(self) -> None:
+        """Reserve one host-wide slot before claiming durable work."""
+
+        await self._delivery_slots.acquire()
+
+    def _claim_stage(
+        self,
+        *,
+        kernel: RoomKernelStore,
+        conversation_id: str,
+        participant_id: str,
+        owner: str,
+        now: datetime,
+        runner_identity: dict[str, str],
+    ) -> dict[str, Any] | None:
+        return kernel.claim_next_observation_batch(
+            conversation_id=conversation_id,
+            participant_id=participant_id,
+            lease_owner=owner,
+            lease_ttl_s=self._policy.lease_ttl_s,
+            base_attempt_limit=self._policy.max_attempts_per_observation,
+            now=now,
+            **runner_identity,
+        )
+
+    def _context_stage(
+        self,
+        *,
+        source_activity: dict[str, Any],
+        member_activities: list[dict[str, Any]],
+        activities: dict[str, dict[str, Any]],
+        batch: dict[str, Any] | None,
+        batch_members: list[dict[str, Any]],
+        participant_directory: dict[str, Participant],
+        fallback_observation: dict[str, Any],
+        recent_activity_limit: int,
+        max_payload_chars: int,
+    ) -> RoomContextSelection:
+        return select_room_context(
+            source_activity=source_activity,
+            member_activities=member_activities,
+            activities=activities,
+            batch=batch,
+            batch_members=batch_members,
+            participant_directory=participant_directory,
+            fallback_observation=fallback_observation,
+            recent_activity_limit=recent_activity_limit,
+            max_payload_chars=max_payload_chars,
+        )
+
+    def _setup_failure_stage(
+        self,
+        *,
+        observation: dict[str, Any],
+        attempt_id: str,
+        reason_code: str,
+        now: datetime,
+    ) -> _PumpBlocked:
+        return _PumpBlocked(
+            self._fail_unstarted_setup(
+                observation=observation,
+                attempt_id=attempt_id,
+                reason_code=reason_code,
+                now=now,
+            )
+        )
+
+    def _schedule_stage(
+        self,
+        *,
+        kernel: RoomKernelStore,
+        observation: dict[str, Any],
+        attempt_id: str,
+        participant_id: str,
+        delivery: RoomObservationDelivery,
+        permit: _DeliveryPermit,
+    ) -> asyncio.Task[RoomHostDeliveryOutcome]:
+        task = asyncio.create_task(
+            self._deliver(kernel, observation, attempt_id, delivery, permit),
+            name=f"room-host:{delivery.transport_request_id}",
+        )
+        task.add_done_callback(permit.release_if_unstarted)
+        self._active_deliveries[observation["observation_id"]] = _ActiveDelivery(
+            observation_id=observation["observation_id"],
+            attempt_id=attempt_id,
+            participant_id=participant_id,
+            control_seq=int(observation.get("control_seq", 0)),
+            task=task,
+        )
+        task.add_done_callback(
+            partial(self._active_delivery_done, str(observation["observation_id"]))
+        )
+        return task
 
     def _fail_unstarted_setup(
         self,
@@ -1203,18 +1331,18 @@ class RoomParticipantHost:
                 else:
                     task.cancel()
                     timed_out = True
-                    settled, interrupted = await self._cleanup_transport_task(
+                    cleanup = await self._cleanup_transport_task(
                         task,
                         loop.time() + self._policy.cleanup_grace_s,
                         permit,
                     )
-                    if not settled:
+                    if cleanup.status == "retained":
                         release_permit_on_exit = False
-                    if interrupted:
+                    if cleanup.interrupted:
                         raise asyncio.CancelledError
                     transport_status, reason, diagnostic = (
                         None,
-                        ("delivery_timeout" if settled else "cleanup_timeout"),
+                        ("delivery_timeout" if cleanup.status == "settled" else "cleanup_timeout"),
                         None,
                     )
             except asyncio.CancelledError:
@@ -1226,7 +1354,7 @@ class RoomParticipantHost:
                     "cancel_pending",
                 }
                 task.cancel()
-                settled, _interrupted = await self._cleanup_transport_task(
+                cleanup = await self._cleanup_transport_task(
                     task,
                     loop.time() + self._policy.cleanup_grace_s,
                     permit,
@@ -1234,7 +1362,7 @@ class RoomParticipantHost:
                     if operator_cancel
                     else None,
                 )
-                if not settled:
+                if cleanup.status == "retained":
                     release_permit_on_exit = False
                 if not operator_cancel:
                     raise
@@ -1256,7 +1384,11 @@ class RoomParticipantHost:
                     "not_started",
                     "cleanup_succeeded",
                 }
-                if settled and cleanup_proven and current_control["control_state"] != "cancelled":
+                if (
+                    cleanup.status == "settled"
+                    and cleanup_proven
+                    and current_control["control_state"] != "cancelled"
+                ):
                     try:
                         updated_control = self._controls.mark_cancelled(
                             observation_id=observation["observation_id"],
@@ -1477,7 +1609,7 @@ class RoomParticipantHost:
         deadline: float,
         permit: _DeliveryPermit,
         control: tuple[str, str] | None = None,
-    ) -> tuple[bool, bool]:
+    ) -> _PumpCleanupResult:
         interrupted = False
         try:
             done, _ = await asyncio.wait(
@@ -1494,13 +1626,13 @@ class RoomParticipantHost:
                 done = set()
         if done:
             self._task_result(task)
-            return True, interrupted
+            return _PumpCleanupResult(status="settled", interrupted=interrupted)
         self._retained_tasks.add(task)
         self._retained_permits[task] = permit
         if control is not None:
             self._retained_controls[task] = control
         task.add_done_callback(self._retain_done)
-        return False, interrupted
+        return _PumpCleanupResult(status="retained", interrupted=interrupted)
 
     def _retain_done(self, task: asyncio.Task[RoomTransportResult]) -> None:
         self._task_result(task)
