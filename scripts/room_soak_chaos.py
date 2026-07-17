@@ -2390,6 +2390,26 @@ def _required_runtime_ready(
         return False
 
 
+def _wait_for_runtime_idle(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    deadline = deps.monotonic() + min(120.0, config.settle_timeout_s)
+    while deps.monotonic() < deadline:
+        status = _workroom_status(config, deps, runtime_root, env)
+        owned_counts = deps.runtime_service_counts(runtime_root)
+        if not _required_runtime_ready(status, owned_counts):
+            raise SoakError("soak_runtime_idle_readiness_lost")
+        if _active_deliveries(status) == 0:
+            return status
+        _sample_runtime(config, deps, state, runtime_root, env, status=status)
+        deps.sleep(0.25)
+    raise SoakError("soak_runtime_idle_timeout")
+
+
 def _wait_ready(
     config: SoakConfig,
     deps: SoakDependencies,
@@ -3303,7 +3323,7 @@ def _reset_projection_cache_and_wait_recovery(
         _workroom_room_runtime_config,
     )
 
-    status = _workroom_status(config, deps, runtime_root, env)
+    status = _wait_for_runtime_idle(config, deps, state, runtime_root, env)
     private = deps.runner_runtime_binding(runtime_root)
     if private is None or _active_deliveries(status) != 0:
         raise SoakError("soak_projection_cache_fault_identity_unavailable")
@@ -3460,7 +3480,7 @@ def _reset_agent_stream_cache_and_wait_recovery(
         _workroom_room_runtime_config,
     )
 
-    status = _workroom_status(config, deps, runtime_root, env)
+    status = _wait_for_runtime_idle(config, deps, state, runtime_root, env)
     private = deps.runner_runtime_binding(runtime_root)
     if private is None or _active_deliveries(status) != 0:
         raise SoakError("soak_agent_stream_cache_fault_identity_unavailable")
