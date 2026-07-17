@@ -123,6 +123,15 @@ def test_all_hard_gate_categories_fail_stably() -> None:
     }.issubset(failures)
 
 
+def test_non_matching_topology_is_a_failed_gate_not_an_invalid_contract() -> None:
+    evidence = _evidence()
+    evidence["configuration"] = {"room_count": 2, "agents_per_room": 0}
+    built = build_memory_recall_dogfood_result(evidence=_evidence_digest(evidence))
+
+    assert built["status"] == "failed"
+    assert evaluate_memory_recall_dogfood_result(built) == (False, ("room_topology",))
+
+
 def _evidence_digest(evidence: dict[str, object]) -> dict[str, object]:
     import hashlib
     import json

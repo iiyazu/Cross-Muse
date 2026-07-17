@@ -184,6 +184,71 @@ def _outbox_backlog(conn: sqlite3.Connection, room_ids: Sequence[str]) -> tuple[
     return int(documents), int(messages)
 
 
+def _room_topology(conn: sqlite3.Connection, room_ids: Sequence[str]) -> tuple[int, int]:
+    placeholders = ",".join("?" for _ in room_ids)
+    room_count = int(
+        conn.execute(
+            f"select count(*) from conversations where id in ({placeholders})",
+            tuple(room_ids),
+        ).fetchone()[0]
+    )
+    rows = _rows(
+        conn,
+        f"""select conversation_id, count(*) participant_count
+               from participants
+              where conversation_id in ({placeholders})
+                and status = 'active' and cli_kind = 'codex'
+              group by conversation_id""",
+        tuple(room_ids),
+    )
+    counts = {str(row["conversation_id"]): int(row["participant_count"]) for row in rows}
+    agents_per_room = 4 if all(counts.get(room_id) == 4 for room_id in room_ids) else 0
+    return room_count, agents_per_room
+
+
+def _derived_message_item_reproved(
+    conn: sqlite3.Connection,
+    *,
+    item: Mapping[str, Any],
+    conversation_id: str,
+    source_activity_ids: set[str],
+) -> bool:
+    if item.get("proof_source_type") != "message":
+        return False
+    proof_session_id = item.get("proof_session_id")
+    proof_source_ids = item.get("proof_source_ids")
+    if (
+        not isinstance(proof_session_id, str)
+        or not proof_session_id
+        or not isinstance(proof_source_ids, list)
+        or not proof_source_ids
+        or any(not isinstance(value, str) or not value for value in proof_source_ids)
+    ):
+        return False
+    if not source_activity_ids:
+        return False
+    placeholders = ",".join("?" for _ in source_activity_ids)
+    rows = _rows(
+        conn,
+        f"""select o.activity_id, d.memoryos_message_id, d.memoryos_session_id
+               from room_memory_message_outbox o
+               join room_memory_message_deliveries d
+                 on d.message_outbox_id = o.message_outbox_id
+              where o.conversation_id = ? and o.state = 'delivered'
+                and d.state = 'delivered'
+                and o.activity_id in ({placeholders})""",
+        (conversation_id, *sorted(source_activity_ids)),
+    )
+    proof_ids = set(proof_source_ids)
+    matched_sources = {
+        str(row["activity_id"])
+        for row in rows
+        if row["memoryos_session_id"] == proof_session_id
+        and row["memoryos_message_id"] in proof_ids
+    }
+    return matched_sources == source_activity_ids
+
+
 def _attempt_context(conn: sqlite3.Connection, attempt_id: str) -> sqlite3.Row:
     row = conn.execute(
         """select t.attempt_id, t.conversation_id, t.observation_id, o.activity_id,
@@ -269,6 +334,7 @@ def collect_recall_evidence(
         conn.execute("pragma query_only = on")
         room_a = normalized["room_a_id"]
         room_b = normalized["room_b_id"]
+        room_count, agents_per_room = _room_topology(conn, (room_a, room_b))
         candidate = conn.execute(
             """select c.*, o.document_id, o.state outbox_state
                    from room_memory_candidates c
@@ -366,6 +432,8 @@ def collect_recall_evidence(
         )
         derived_ok = bool(
             derived_receipt
+            and derived_attempt["conversation_id"] == room_a
+            and derived_receipt["conversation_id"] == room_a
             and derived_receipt["status"] == "ok"
             and int(derived_receipt["item_count"]) >= 1
             and witness_sources.issubset(set(derived_sources))
@@ -375,6 +443,12 @@ def collect_recall_evidence(
                 and item.get("derived") is True
                 and item.get("context_included") is True
                 and witness_sources.issubset(set(item.get("source_activity_ids", [])))
+                and _derived_message_item_reproved(
+                    conn,
+                    item=item,
+                    conversation_id=room_a,
+                    source_activity_ids=witness_sources,
+                )
                 for item in derived_item_refs
             )
         )
@@ -449,7 +523,10 @@ def collect_recall_evidence(
         evidence: dict[str, Any] = {
             "schema_version": "room_memory_recall_dogfood_evidence/v1",
             "run_ref": run_ref,
-            "configuration": {"room_count": 2, "agents_per_room": 4},
+            "configuration": {
+                "room_count": room_count,
+                "agents_per_room": agents_per_room,
+            },
             "counts": {
                 "room_a_correlations": room_a_correlations,
                 "room_a_tail_visible_activities": room_a_tail,

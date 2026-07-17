@@ -41,6 +41,10 @@ def _create_db(root: Path) -> None:
           conversation_id text, scope_type text, archive_id text, session_id text,
           session_state text, attachment_state text
         );
+        create table conversations (id text primary key);
+        create table participants (
+          participant_id text primary key, conversation_id text, status text, cli_kind text
+        );
         create table room_memory_candidates (
           candidate_id text, conversation_id text, author_participant_id text,
           kind text, target_scope text, approval_state text, approval_mode text,
@@ -49,7 +53,14 @@ def _create_db(root: Path) -> None:
         create table room_memory_outbox (
           candidate_id text, conversation_id text, document_id text, state text
         );
-        create table room_memory_message_outbox (conversation_id text, state text);
+        create table room_memory_message_outbox (
+          message_outbox_id text, conversation_id text, activity_id text,
+          current_delivery_id text, state text
+        );
+        create table room_memory_message_deliveries (
+          delivery_id text, message_outbox_id text, memoryos_message_id text,
+          memoryos_session_id text, state text
+        );
         create table room_observation_attempts (
           attempt_id text, conversation_id text, observation_id text
         );
@@ -71,6 +82,11 @@ def _create_db(root: Path) -> None:
         """
     )
     for room in ("room-a-private", "room-b-private"):
+        conn.execute("insert into conversations values (?)", (room,))
+        conn.executemany(
+            "insert into participants values (?, ?, 'active', 'codex')",
+            [(f"participant-{room}-{index}", room) for index in range(4)],
+        )
         conn.executemany(
             "insert into room_memory_bindings values (?, ?, ?, ?, 'bound', 'attached')",
             [
@@ -83,7 +99,24 @@ def _create_db(root: Path) -> None:
                 for scope in ("room", "local_user", "project")
             ],
         )
-        conn.execute("insert into room_memory_message_outbox values (?, 'delivered')", (room,))
+        conn.execute(
+            "insert into room_memory_message_outbox values (?, ?, ?, ?, 'delivered')",
+            (
+                f"message-outbox-{room}",
+                room,
+                "activity-a-source-private" if room == "room-a-private" else "activity-b-1",
+                f"message-delivery-{room}",
+            ),
+        )
+        conn.execute(
+            "insert into room_memory_message_deliveries values (?, ?, ?, ?, 'delivered')",
+            (
+                f"message-delivery-{room}",
+                f"message-outbox-{room}",
+                f"memory-message-{room}",
+                f"session-{room}",
+            ),
+        )
     conn.execute(
         """insert into room_memory_candidates
            values (?, ?, 'participant-author', 'project_rule', 'project', 'approved',
@@ -157,6 +190,9 @@ def _create_db(root: Path) -> None:
                             "layer": "recall",
                             "derived": True,
                             "context_included": True,
+                            "proof_source_type": "message",
+                            "proof_session_id": "session-room-a-private",
+                            "proof_source_ids": ["memory-message-room-a-private"],
                             "source_activity_ids": ["activity-a-source-private"],
                         }
                     ]
@@ -217,6 +253,71 @@ def test_collects_failed_candidate_gate_without_trusting_private_manifest(tmp_pa
 
     assert evidence["proofs"]["candidate_approved"] is False
     assert evidence["counts"]["delivered_project_candidates"] == 0
+
+
+def test_topology_is_reproved_from_active_codex_participants(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    _create_db(root)
+    conn = sqlite3.connect(root / "chat.db")
+    conn.execute("delete from participants where participant_id = 'participant-room-b-private-3'")
+    conn.commit()
+    conn.close()
+
+    evidence = dogfood.collect_recall_evidence(root=root, manifest=_manifest(), run_salt="topology")
+    result = build_memory_recall_dogfood_result(evidence=evidence)
+
+    assert evidence["configuration"] == {"room_count": 2, "agents_per_room": 0}
+    assert result["status"] == "failed"
+    assert (
+        next(gate for gate in result["gates"] if gate["gate_id"] == "room_topology")["status"]
+        == "failed"
+    )
+
+
+def test_derived_receipt_requires_room_a_message_delivery_proof(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    _create_db(root)
+    conn = sqlite3.connect(root / "chat.db")
+    row = conn.execute(
+        "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
+        ("attempt-a-derived-private",),
+    ).fetchone()
+    item_refs = json.loads(row[0])
+    item_refs[0].pop("proof_source_type")
+    conn.execute(
+        "update room_memory_attempt_receipts set item_refs_json = ? where attempt_id = ?",
+        (json.dumps(item_refs), "attempt-a-derived-private"),
+    )
+    conn.commit()
+    conn.close()
+
+    evidence = dogfood.collect_recall_evidence(
+        root=root, manifest=_manifest(), run_salt="missing-message-proof"
+    )
+
+    assert evidence["proofs"]["derived_layer_present"] is False
+
+
+def test_derived_attempt_must_belong_to_room_a(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    _create_db(root)
+    conn = sqlite3.connect(root / "chat.db")
+    conn.execute(
+        "update room_observation_attempts set conversation_id = 'room-b-private' "
+        "where attempt_id = 'attempt-a-derived-private'"
+    )
+    conn.execute(
+        "update room_memory_attempt_receipts set conversation_id = 'room-b-private' "
+        "where attempt_id = 'attempt-a-derived-private'"
+    )
+    conn.commit()
+    conn.close()
+
+    evidence = dogfood.collect_recall_evidence(
+        root=root, manifest=_manifest(), run_salt="wrong-derived-room"
+    )
+
+    assert evidence["proofs"]["derived_layer_present"] is False
 
 
 def test_cross_room_receipt_does_not_require_room_b_local_history_omission(

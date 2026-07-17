@@ -139,8 +139,6 @@ def _normalize_evidence(payload: Mapping[str, Any]) -> dict[str, Any]:
     if raw.get("schema_version") != EVIDENCE_SCHEMA:
         raise RecallDogfoodContractError("evidence_invalid")
     configuration = _exact(raw.get("configuration"), _CONFIGURATION, "evidence_invalid")
-    if configuration.get("room_count") != 2 or configuration.get("agents_per_room") != 4:
-        raise RecallDogfoodContractError("evidence_invalid")
     counts = _exact(raw.get("counts"), _COUNTS, "evidence_invalid")
     proofs = _exact(raw.get("proofs"), _PROOFS, "evidence_invalid")
     digests = _exact(raw.get("digests"), _DIGESTS, "evidence_invalid")
