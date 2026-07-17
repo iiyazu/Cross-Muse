@@ -622,7 +622,7 @@ def test_runner_binding_prefers_self_receipt_over_launcher_receipt(
         lambda pid: {41: "runner-one", 42: "runner-two"}.get(pid),
     )
     (tmp_path / "room-runner-status.json").write_text(
-        json.dumps({"pid": 41, "start_identity": "runner-one"}),
+        json.dumps({"pid": 41, "start_identity": "runner-one", "boot_id": "boot-one"}),
         encoding="utf-8",
     )
     assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
@@ -634,6 +634,58 @@ def test_runner_binding_prefers_self_receipt_over_launcher_receipt(
     assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
     (tmp_path / "room-runner-status.json").unlink()
     assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(42, "runner-two")
+
+
+def test_runner_fault_uses_private_boot_and_reproves_new_incarnation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    killed = [False]
+    safe_status = {
+        "state": "ready",
+        "services": [
+            {"service": "frontend", "ready": True},
+            {"service": "chat_api", "ready": True},
+            {
+                "service": "room_runner",
+                "ready": True,
+                "host": {"active_delivery_count": 2},
+            },
+            {"service": "room_mcp", "ready": True},
+        ],
+    }
+    monkeypatch.setattr(
+        soak,
+        "_wait_for_active_deliveries",
+        lambda *args, **kwargs: safe_status,
+    )
+    monkeypatch.setattr(soak, "_workroom_status", lambda *args, **kwargs: safe_status)
+    monkeypatch.setattr(soak, "_sample_runtime", lambda *args, **kwargs: None)
+
+    old = soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-one"), "boot-one")
+    new = soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-two"), "boot-two")
+    deps = soak.SoakDependencies(
+        monotonic=lambda: clock[0],
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        signal_pid=lambda pid, sig: killed.__setitem__(0, (pid, sig) == (41, signal.SIGKILL)),
+        process_start_identity=lambda pid: {41: "runner-one", 42: "runner-two"}.get(pid),
+        runner_runtime_binding=lambda _root: new if killed[0] else old,
+        runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
+    )
+
+    event = soak._kill_runner_and_wait_recovery(
+        soak.SoakConfig(repo_root=tmp_path, profile_id=soak.ENDURANCE_PROFILE_ID),
+        deps,
+        soak._LiveState(),
+        tmp_path,
+        {},
+        run_started_at=0.0,
+    )
+    assert killed[0] is True
+    assert event.kind == "runner_sigkill"
+    assert event.active_delivery_count == 2
+    assert event.runner_count == event.mcp_count == 1
 
 
 def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(
@@ -2099,6 +2151,11 @@ def test_projection_cache_reset_fences_runner_before_unlink_and_uses_managed_rec
             if boot[0] == "boot-before"
             else soak.ProcessBinding(42, "runner-after")
         ),
+        runner_runtime_binding=lambda _root: (
+            soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-start"), "boot-before")
+            if boot[0] == "boot-before"
+            else soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-after"), "boot-after")
+        ),
         process_start_identity=identity.get,
         runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
     )
@@ -2198,6 +2255,11 @@ def test_agent_stream_cache_reset_requires_owned_runner_stop_and_rotates_epoch(
             soak.ProcessBinding(41, "runner-start")
             if boot[0] == "boot-before"
             else soak.ProcessBinding(42, "runner-after")
+        ),
+        runner_runtime_binding=lambda _root: (
+            soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-start"), "boot-before")
+            if boot[0] == "boot-before"
+            else soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-after"), "boot-after")
         ),
         process_start_identity=identity.get,
         runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},

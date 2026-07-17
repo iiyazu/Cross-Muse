@@ -220,6 +220,12 @@ class ProcessBinding:
 
 
 @dataclass(frozen=True)
+class RunnerRuntimeBinding:
+    process: ProcessBinding
+    boot_id: str
+
+
+@dataclass(frozen=True)
 class BrowserVerificationRequest:
     repo_root: Path
     frontend_url: str
@@ -708,35 +714,55 @@ def _memoryos_process_binding(runtime_root: Path) -> ProcessBinding | None:
 
 
 def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
+    private = _runner_runtime_binding(runtime_root)
+    if private is not None:
+        return private.process
     from xmuse_core.chat.room_runtime import read_process_start_identity
 
-    # Prefer the Runner's self-authored receipt.  The supervisor PID receipt may
-    # temporarily describe a launcher/wrapper process, so treating two live
-    # identities as an ambiguity would reject a healthy Runner.  Both candidates
-    # are still accepted only after an exact live start-identity proof.
-    for candidate in (
-        runtime_root / "room-runner-status.json",
-        runtime_root / "workroom_room_runner.pid.json",
+    candidate = runtime_root / "workroom_room_runner.pid.json"
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    pid = payload.get("pid")
+    expected = payload.get("start_identity")
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(expected, str)
+        or not expected
+        or read_process_start_identity(pid) != expected
     ):
-        try:
-            payload = json.loads(candidate.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, Mapping):
-            continue
-        pid = payload.get("pid")
-        expected = payload.get("start_identity")
-        if (
-            not isinstance(pid, int)
-            or isinstance(pid, bool)
-            or pid <= 0
-            or not isinstance(expected, str)
-            or not expected
-            or read_process_start_identity(pid) != expected
-        ):
-            continue
-        return ProcessBinding(pid, expected)
-    return None
+        return None
+    return ProcessBinding(pid, expected)
+
+
+def _runner_runtime_binding(runtime_root: Path) -> RunnerRuntimeBinding | None:
+    from xmuse_core.chat.room_runtime import read_process_start_identity
+
+    try:
+        payload = json.loads((runtime_root / "room-runner-status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    pid = payload.get("pid")
+    expected = payload.get("start_identity")
+    boot_id = payload.get("boot_id")
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(expected, str)
+        or not expected
+        or not _safe_id(boot_id)
+        or read_process_start_identity(pid) != expected
+    ):
+        return None
+    return RunnerRuntimeBinding(ProcessBinding(pid, expected), str(boot_id))
 
 
 def _default_get_profile(profile_id: str) -> Any:
@@ -815,6 +841,7 @@ class SoakDependencies:
     process_start_identity: Callable[[int], str | None] = _process_start_identity
     memoryos_process_binding: Callable[[Path], ProcessBinding | None] = _memoryos_process_binding
     runner_process_binding: Callable[[Path], ProcessBinding | None] = _runner_process_binding
+    runner_runtime_binding: Callable[[Path], RunnerRuntimeBinding | None] = _runner_runtime_binding
     get_profile: Callable[[str], Any] = _default_get_profile
     build_result: Callable[..., dict[str, Any]] = _default_build_result
     validate_result: Callable[[Mapping[str, Any]], dict[str, Any]] = _default_validate_result
@@ -3136,11 +3163,11 @@ def _kill_runner_and_wait_recovery(
     run_started_at: float,
 ) -> _PendingChaosEvent:
     status = _wait_for_active_deliveries(config, deps, state, runtime_root, env, 2)
-    runner = _service(status, "room_runner")
-    binding = deps.runner_process_binding(runtime_root)
-    boot = runner.get("boot_id")
-    if binding is None or not _safe_id(boot):
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None:
         raise SoakError("soak_runner_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
     if deps.process_start_identity(binding.pid) != binding.start_identity:
         raise SoakError("soak_runner_fault_identity_unavailable")
     started = deps.monotonic()
@@ -3154,16 +3181,13 @@ def _kill_runner_and_wait_recovery(
     while deps.monotonic() < deadline:
         try:
             candidate = _workroom_status(config, deps, runtime_root, env)
-            current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            current_binding = deps.runner_process_binding(runtime_root)
+            current_private = deps.runner_runtime_binding(runtime_root)
             if (
                 _required_runtime_ready(candidate, owned_counts)
-                and current_binding is not None
-                and current_binding != binding
-                and deps.process_start_identity(current_binding.pid)
-                == current_binding.start_identity
-                and current.get("boot_id") != boot
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
             ):
                 recovered = candidate
                 recovered_counts = owned_counts
@@ -3266,27 +3290,16 @@ def _reset_projection_cache_and_wait_recovery(
     )
 
     status = _workroom_status(config, deps, runtime_root, env)
-    runner = _service(status, "room_runner")
-    binding = deps.runner_process_binding(runtime_root)
-    boot = runner.get("boot_id")
-    if (
-        binding is None
-        or not _safe_id(boot)
-        or _active_deliveries(status) != 0
-        or deps.process_start_identity(binding.pid) != binding.start_identity
-    ):
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None or _active_deliveries(status) != 0:
         raise SoakError("soak_projection_cache_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
     started = deps.monotonic()
     with _locked_workroom_runtime_start(runtime_root):
         current_status = _workroom_status(config, deps, runtime_root, env)
-        current_runner = _service(current_status, "room_runner")
-        current_binding = deps.runner_process_binding(runtime_root)
-        if (
-            current_binding != binding
-            or current_runner.get("boot_id") != boot
-            or _active_deliveries(current_status) != 0
-            or deps.process_start_identity(binding.pid) != binding.start_identity
-        ):
+        current_private = deps.runner_runtime_binding(runtime_root)
+        if current_private != private or _active_deliveries(current_status) != 0:
             raise SoakError("soak_projection_cache_fault_identity_lost")
         runtime_config = _workroom_room_runtime_config(
             runtime_root,
@@ -3309,16 +3322,13 @@ def _reset_projection_cache_and_wait_recovery(
     while deps.monotonic() < deadline:
         try:
             candidate = _workroom_status(config, deps, runtime_root, env)
-            current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            current_binding = deps.runner_process_binding(runtime_root)
+            current_private = deps.runner_runtime_binding(runtime_root)
             if (
                 _required_runtime_ready(candidate, owned_counts)
-                and current_binding is not None
-                and current_binding != binding
-                and deps.process_start_identity(current_binding.pid)
-                == current_binding.start_identity
-                and current.get("boot_id") != boot
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
             ):
                 recovered = candidate
                 recovered_counts = owned_counts
@@ -3437,28 +3447,17 @@ def _reset_agent_stream_cache_and_wait_recovery(
     )
 
     status = _workroom_status(config, deps, runtime_root, env)
-    runner = _service(status, "room_runner")
-    binding = deps.runner_process_binding(runtime_root)
-    boot = runner.get("boot_id")
-    if (
-        binding is None
-        or not _safe_id(boot)
-        or _active_deliveries(status) != 0
-        or deps.process_start_identity(binding.pid) != binding.start_identity
-    ):
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None or _active_deliveries(status) != 0:
         raise SoakError("soak_agent_stream_cache_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
     epoch_before = _agent_stream_cache_epoch(runtime_root)
     started = deps.monotonic()
     with _locked_workroom_runtime_start(runtime_root):
         current_status = _workroom_status(config, deps, runtime_root, env)
-        current_runner = _service(current_status, "room_runner")
-        current_binding = deps.runner_process_binding(runtime_root)
-        if (
-            current_binding != binding
-            or current_runner.get("boot_id") != boot
-            or _active_deliveries(current_status) != 0
-            or deps.process_start_identity(binding.pid) != binding.start_identity
-        ):
+        current_private = deps.runner_runtime_binding(runtime_root)
+        if current_private != private or _active_deliveries(current_status) != 0:
             raise SoakError("soak_agent_stream_cache_fault_identity_lost")
         runtime_config = _workroom_room_runtime_config(runtime_root, config.repo_root)
         stopped = _stop_workroom_room_runtime_locked(
@@ -3476,16 +3475,13 @@ def _reset_agent_stream_cache_and_wait_recovery(
     while deps.monotonic() < deadline:
         try:
             candidate = _workroom_status(config, deps, runtime_root, env)
-            current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            current_binding = deps.runner_process_binding(runtime_root)
+            current_private = deps.runner_runtime_binding(runtime_root)
             if (
                 _required_runtime_ready(candidate, owned_counts)
-                and current_binding is not None
-                and current_binding != binding
-                and deps.process_start_identity(current_binding.pid)
-                == current_binding.start_identity
-                and current.get("boot_id") != boot
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
                 and _agent_stream_cache_epoch(runtime_root) != epoch_before
             ):
                 recovered = candidate
