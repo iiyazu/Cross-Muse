@@ -61,7 +61,7 @@ export class XmuseApiError extends Error implements XmuseApiErrorShape {
 }
 
 const DEFAULT_CHAT_API_BASE_URL =
-  process.env.NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL ?? "http://localhost:8201/api/chat";
+  process.env.NEXT_PUBLIC_XMUSE_CHAT_API_BASE_URL ?? "http://127.0.0.1:8201/api/chat";
 
 function trimSlash(value: string): string {
   return value.replace(/\/+$/, "");

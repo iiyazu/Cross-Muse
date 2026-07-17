@@ -144,7 +144,7 @@ async function installRoomFixture(
     }
   });
 
-  await page.route("http://localhost:8201/api/chat/**", async (route) => {
+  await page.route("http://127.0.0.1:8201/api/chat/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (request.method() === "OPTIONS") {
@@ -997,7 +997,7 @@ test("Room Agent preview streams snapshots and yields to one durable message", a
         schedule(2100, () => this.emit("projection", snapshot(3, "streaming", "第一段 第二段 第三段 ")));
         schedule(2800, () => this.emit("projection", snapshot(4, "committing", "第一段 第二段 第三段 ")));
         schedule(3500, () => {
-          void fetch("http://localhost:8201/api/chat/conversations/conv-1/fixture-stream-commit")
+          void fetch("http://127.0.0.1:8201/api/chat/conversations/conv-1/fixture-stream-commit")
             .then(() => this.emit("projection", snapshot(5, "resolved", "第一段 第二段 第三段 ")));
         });
       }

@@ -326,6 +326,8 @@ class CodexAppServerTransport:
     async def start(self) -> None:
         if self._process is not None and self._process.returncode is None:
             return
+        if self._process is not None:
+            await self._discard_dead_incarnation()
         self._mcp_startup_done.clear()
         self._mcp_ready = False
         self._mcp_failure_code = None
@@ -389,6 +391,23 @@ class CodexAppServerTransport:
             except BaseException:
                 pass
             raise
+
+    async def _discard_dead_incarnation(self) -> None:
+        """Fence connection state that belongs to a confirmed-dead process."""
+
+        connection, self._connection = self._connection, None
+        self._clear_active_turn()
+        if connection is not None:
+            await connection.close()
+        if self._native_state_task is not None:
+            await asyncio.gather(self._native_state_task, return_exceptions=True)
+            self._native_state_task = None
+        if self._native_state_stream is not None:
+            self._native_state_stream.close()
+            self._native_state_stream = None
+        self._thread_id = None
+        self._native_catalog = None
+        self._native_incarnation = secrets.token_hex(16)
 
     async def _start_thread(self) -> None:
         response = await self._request(
