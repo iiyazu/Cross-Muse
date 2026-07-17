@@ -365,6 +365,8 @@ def test_v3_archival_recall_is_source_resolved_and_receipt_is_two_stage() -> Non
             "source_activity_ids": ["activity-prior"],
             "content_sha256": _sha("prior durable fact"),
             "text": "prior durable fact",
+            "layer": "archival",
+            "derived": False,
         }
     ]
     assert store.binds == []

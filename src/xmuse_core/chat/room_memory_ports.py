@@ -177,6 +177,7 @@ class RoomMemoryRecallReceiptContextPort(Protocol):
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]: ...
 

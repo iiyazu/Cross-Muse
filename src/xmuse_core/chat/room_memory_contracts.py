@@ -55,6 +55,11 @@ class MemoryReceiptItem:
     source_activity_ids: tuple[str, ...]
     content_sha256: str
     text: str
+    layer: Literal["recall", "page", "core", "archival"] = "archival"
+    derived: bool = False
+    proof_source_type: Literal["document", "message"] = "document"
+    proof_session_id: str | None = None
+    proof_source_ids: tuple[str, ...] = ()
 
 
 def canonical_json(value: Any) -> str:
@@ -134,13 +139,66 @@ def normalize_receipt_items(value: object) -> tuple[MemoryReceiptItem, ...]:
     result: list[MemoryReceiptItem] = []
     seen: set[str] = set()
     for raw in value:
-        if not isinstance(raw, dict) or set(raw) != {
-            "item_id",
-            "document_id",
-            "source_activity_ids",
-            "content_sha256",
-            "text",
+        if not isinstance(raw, dict) or set(raw) not in {
+            frozenset(
+                {
+                    "item_id",
+                    "document_id",
+                    "source_activity_ids",
+                    "content_sha256",
+                    "text",
+                }
+            ),
+            frozenset(
+                {
+                    "item_id",
+                    "document_id",
+                    "source_activity_ids",
+                    "content_sha256",
+                    "text",
+                    "layer",
+                    "derived",
+                }
+            ),
+            frozenset(
+                {
+                    "item_id",
+                    "document_id",
+                    "source_activity_ids",
+                    "content_sha256",
+                    "text",
+                    "layer",
+                    "derived",
+                    "proof_source_type",
+                    "proof_session_id",
+                    "proof_source_ids",
+                }
+            ),
         }:
+            raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+        layer = raw.get("layer", "archival")
+        derived = raw.get("derived", False)
+        if layer not in {"recall", "page", "core", "archival"} or not isinstance(derived, bool):
+            raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+        if derived != (layer in {"recall", "page"}):
+            raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+        proof_source_type = raw.get("proof_source_type", "document")
+        proof_session_id = raw.get("proof_session_id")
+        proof_source_ids = raw.get("proof_source_ids", [])
+        if proof_source_type not in {"document", "message"} or not isinstance(
+            proof_source_ids, list
+        ):
+            raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+        clean_proof_source_ids = tuple(
+            _identifier(value, "room_memory_receipt_item_invalid") for value in proof_source_ids
+        )
+        if len(set(clean_proof_source_ids)) != len(clean_proof_source_ids):
+            raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+        if proof_source_type == "message":
+            if not isinstance(proof_session_id, str) or not clean_proof_source_ids:
+                raise RoomMemoryContractError("room_memory_receipt_item_invalid")
+            proof_session_id = _identifier(proof_session_id, "room_memory_receipt_item_invalid")
+        elif proof_session_id is not None or clean_proof_source_ids:
             raise RoomMemoryContractError("room_memory_receipt_item_invalid")
         item_id = _identifier(raw["item_id"], "room_memory_receipt_item_invalid")
         if item_id in seen:
@@ -170,6 +228,11 @@ def normalize_receipt_items(value: object) -> tuple[MemoryReceiptItem, ...]:
                 ),
                 content_sha256=content_sha256,
                 text=text,
+                layer=cast(Literal["recall", "page", "core", "archival"], layer),
+                derived=derived,
+                proof_source_type=cast(Literal["document", "message"], proof_source_type),
+                proof_session_id=proof_session_id,
+                proof_source_ids=clean_proof_source_ids,
             )
         )
     return tuple(result)

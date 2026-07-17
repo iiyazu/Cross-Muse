@@ -344,6 +344,13 @@ class CodexRoomObservationTransport:
                             attempt_id=delivery.attempt_id,
                             evidence_sha256=delivery.memory_evidence.evidence_sha256,
                             context_payload_sha256=payload_sha256,
+                            included_items=tuple(
+                                item
+                                for item in context_payload["room_context"]["memory_evidence"].get(
+                                    "items", []
+                                )
+                                if isinstance(item, dict) and isinstance(item.get("item_id"), str)
+                            ),
                         )
                 if self._execution_store is not None:
                     try:

@@ -304,6 +304,9 @@ class MemoryOSEvidenceDecoder:
             content_sha256=wire.content_sha256,
             layer=wire.layer,
             derived=wire.derived,
+            proof_source_type=wire.source_type,
+            proof_session_id=(wire.source_session_id if wire.source_type == "message" else None),
+            proof_source_ids=(wire.source_ids if wire.source_type == "message" else ()),
         )
 
 

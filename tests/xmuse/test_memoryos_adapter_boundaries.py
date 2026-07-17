@@ -116,8 +116,10 @@ class _Recall:
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items=(),
     ) -> None:
         assert attempt_id and evidence_sha256 and context_payload_sha256
+        assert included_items == ()
         self.binds += 1
 
 

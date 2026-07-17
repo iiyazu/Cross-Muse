@@ -7,8 +7,9 @@ bounded attention evidence and never change Room outcome authority.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 ROOM_MEMORY_EVIDENCE_SCHEMA = "room_memory_evidence/v1"
 ROOM_MEMORY_RECALL_TIMEOUT_S = 0.75
@@ -52,6 +53,9 @@ class RoomMemoryEvidenceItem:
     content_sha256: str
     layer: Literal["recall", "page", "core", "archival"] = "archival"
     derived: bool = False
+    proof_source_type: Literal["document", "message"] = "document"
+    proof_session_id: str | None = None
+    proof_source_ids: tuple[str, ...] = ()
 
     def context_payload(self) -> dict[str, object]:
         return {
@@ -109,6 +113,7 @@ class RoomMemoryRuntime(Protocol):
         attempt_id: str,
         evidence_sha256: str,
         context_payload_sha256: str,
+        included_items: Sequence[Mapping[str, Any]] = (),
     ) -> None: ...
 
     async def pump_once(self) -> bool: ...
