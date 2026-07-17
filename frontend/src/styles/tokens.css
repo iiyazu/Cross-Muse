@@ -1,17 +1,39 @@
 :root {
+  /* Semantic surfaces keep the shell calm while leaving status colours explicit. */
   --bg: #0f1011;
   --surface: #161719;
   --surface-2: #1d1f22;
+  --surface-raised: #222429;
+  --surface-inset: #111214;
   --fg: #f4f4f4;
   --muted: #a3a3a3;
+  --muted-strong: #c3c3c3;
   --border: #2b2d31;
+  --border-subtle: #222428;
   --accent: #d0925d;
   --accent-2: #9b8cff;
   --success: #55a36a;
   --warn: #d6a84f;
   --danger: #d96a6a;
-  --radius: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius: var(--radius-md);
+  --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.16);
   --shadow-raised: 0 18px 60px rgba(0, 0, 0, 0.24);
+  --shadow-overlay: 0 20px 72px rgba(0, 0, 0, 0.32);
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 240ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-move: cubic-bezier(0.2, 0, 0, 1);
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
 }
@@ -20,9 +42,13 @@
   --bg: #fafafa;
   --surface: #ffffff;
   --surface-2: #f0f0f0;
+  --surface-raised: #ffffff;
+  --surface-inset: #f6f6f6;
   --fg: #111111;
   --muted: #5f5f5f;
+  --muted-strong: #414141;
   --border: #dedede;
+  --border-subtle: #e8e8e8;
   --accent: #1f5fbd;
   --accent-2: #6b5cff;
   --success: #17813d;

@@ -6,37 +6,44 @@
   z-index: 2;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 3px;
-  margin: 10px 12px 4px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--bg), var(--surface) 40%);
+  gap: 2px;
+  margin: var(--space-3) var(--space-3) var(--space-1);
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--surface-inset), var(--surface) 35%);
   backdrop-filter: blur(10px);
 }
 
 .workspace-dock-tabs button {
   min-height: 34px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   background: transparent;
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
+  transition: color var(--motion-fast) var(--ease-enter), background-color var(--motion-fast) var(--ease-enter), transform var(--motion-fast) var(--ease-move);
 }
 
 .workspace-dock-tabs button.is-active {
   color: var(--fg);
-  background: var(--surface-2);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-subtle);
+}
+
+.workspace-dock-tabs button:not(.is-active):hover {
+  color: var(--muted-strong);
+  transform: translateY(-1px);
 }
 
 .workspace-dock-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 18px;
+  padding: 0 var(--space-1) var(--space-4);
+  overscroll-behavior: contain;
 }
 
 .room-sidebar__brand {
@@ -124,10 +131,11 @@
   max-height: min(760px, calc(100dvh - 28px));
   overflow-y: auto;
   padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-overlay);
+  animation: workbench-overlay-in var(--motion-normal) var(--ease-enter) both;
 }
 
 .room-create-dialog > header {
@@ -179,9 +187,14 @@
   display: flex;
   gap: 10px;
   padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
   cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-enter), background-color var(--motion-fast) var(--ease-enter), transform var(--motion-fast) var(--ease-move);
+}
+
+.room-roster-options > label:hover {
+  transform: translateY(-1px);
 }
 
 .room-roster-options > label.is-selected {
@@ -275,6 +288,8 @@
 .agent-console__bridge-disclosure {
   margin: 10px 12px;
   color: var(--muted);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-2);
 }
 
 .agent-console__bridge-disclosure > summary {
@@ -325,12 +340,13 @@
 
 .workspace-status-region.has-message {
   padding: 10px 13px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2);
-  box-shadow: var(--shadow-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-overlay);
   color: var(--fg);
   font-size: 13px;
+  animation: workbench-status-in var(--motion-normal) var(--ease-enter) both;
 }
 
 .agent-console__command-menu {
@@ -367,12 +383,18 @@
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   color: var(--muted);
   background: color-mix(in oklab, var(--surface), transparent 4%);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-raised);
   cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-enter), background-color var(--motion-fast) var(--ease-enter), transform var(--motion-fast) var(--ease-move);
+}
+
+.command-palette-trigger:hover {
+  color: var(--fg);
+  transform: translateY(-1px);
 }
 
 .command-palette-trigger span {
@@ -390,10 +412,11 @@
   z-index: 1;
   width: min(620px, calc(100vw - 24px));
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-overlay);
+  animation: workbench-overlay-in var(--motion-normal) var(--ease-enter) both;
 }
 
 .command-palette > header {
@@ -434,7 +457,31 @@
 
 .command-palette-list button:hover,
 .command-palette-list button:focus-visible {
-  background: var(--surface-2);
+  background: var(--surface-raised);
+}
+
+@keyframes workbench-overlay-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes workbench-status-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-create-dialog,
+  .workspace-status-region.has-message,
+  .command-palette {
+    animation: none;
+  }
+
+  .workspace-dock-tabs button,
+  .room-roster-options > label,
+  .command-palette-trigger {
+    transition: none;
+  }
 }
 
 .command-palette-list span,
