@@ -219,6 +219,59 @@ def test_collects_failed_candidate_gate_without_trusting_private_manifest(tmp_pa
     assert evidence["counts"]["delivered_project_candidates"] == 0
 
 
+def test_cross_room_receipt_does_not_require_room_b_local_history_omission(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    _create_db(root)
+    conn = sqlite3.connect(root / "chat.db")
+    conn.execute(
+        "update room_observations set activity_id = 'activity-b-1' "
+        "where observation_id = 'obs-b-private'"
+    )
+    conn.execute("delete from room_activities where conversation_id = 'room-b-private' and seq > 1")
+    conn.commit()
+    conn.close()
+
+    evidence = dogfood.collect_recall_evidence(
+        root=root, manifest=_manifest(), run_salt="short-room-b"
+    )
+
+    assert evidence["proofs"]["source_excluded_from_recent_burst"] is True
+    assert evidence["proofs"]["context_coverage_omits_source"] is True
+    assert build_memory_recall_dogfood_result(evidence=evidence)["status"] == "passed"
+
+
+def test_main_returns_nonzero_after_writing_failed_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(_manifest()), encoding="utf-8")
+    result = tmp_path / "result.json"
+    monkeypatch.setattr(dogfood, "collect_recall_evidence", lambda **_kwargs: {"proof": False})
+    monkeypatch.setattr(
+        dogfood,
+        "_build_result",
+        lambda _evidence: {"schema_version": "result/v1", "status": "failed"},
+    )
+
+    status = dogfood.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--manifest",
+            str(manifest),
+            "--run-salt",
+            "failed-run",
+            "--result",
+            str(result),
+        ]
+    )
+
+    assert status == 1
+    assert json.loads(result.read_text(encoding="utf-8"))["status"] == "failed"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

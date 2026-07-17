@@ -344,7 +344,7 @@ def collect_recall_evidence(
             and skill
             and skill["context_payload_sha256"] == receipt["context_payload_sha256"]
         )
-        envelope_ids, omitted = _causal_envelope_ids(conn, attempt)
+        envelope_ids, _room_b_omitted = _causal_envelope_ids(conn, attempt)
         target_excluded = normalized["target_source_activity_id"] not in envelope_ids
         derived_attempt = _attempt_context(conn, normalized["derived_attempt_id"])
         derived_receipt = conn.execute(
@@ -379,6 +379,9 @@ def collect_recall_evidence(
             )
         )
         derived_envelope_ids, derived_omitted = _causal_envelope_ids(conn, derived_attempt)
+        target_excluded_from_derived = (
+            normalized["target_source_activity_id"] not in derived_envelope_ids
+        )
         derived_sources_excluded = bool(
             witness_sources
             and witness_sources.isdisjoint(derived_envelope_ids)
@@ -480,8 +483,15 @@ def collect_recall_evidence(
                 "cross_room_project_source_reproved": receipt_ok and source_in_room_a,
                 "source_excluded_from_current_correlation": target_not_current,
                 "source_excluded_from_causal_envelope": target_excluded,
-                "source_excluded_from_recent_burst": (target_excluded and derived_sources_excluded),
-                "context_coverage_omits_source": omitted > 0 and derived_omitted > 0,
+                "source_excluded_from_recent_burst": (
+                    target_excluded and target_excluded_from_derived and derived_sources_excluded
+                ),
+                # The long-context proof belongs to Room A, where the approved
+                # source originated and later derived recall was exercised.  A
+                # cross-Room source can never be part of Room B's local recent
+                # burst, so requiring Room B to have already truncated local
+                # history would conflate two independent proof boundaries.
+                "context_coverage_omits_source": derived_omitted > 0,
                 "receipt_evidence_context_bound": context_bound,
                 "derived_layer_present": derived_ok,
                 "all_target_correlations_settled": settled >= 7,
@@ -649,7 +659,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_private_result(args.result, result)
     except RecallDogfoodCollectorError as exc:
         parser.error(exc.code)
-    return 0
+    return 0 if result.get("status") == "passed" else 1
 
 
 if __name__ == "__main__":  # pragma: no cover
