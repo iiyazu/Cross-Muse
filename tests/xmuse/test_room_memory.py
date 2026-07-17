@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -372,6 +373,103 @@ def test_derived_message_recall_proves_ledger_sources_without_claiming_exact_tex
     assert exact.value.code == "room_memory_recall_source_rejected"
 
 
+def test_derived_receipt_reproves_message_delivery_and_binds_fitted_item(
+    tmp_path: Path,
+) -> None:
+    db, registry, conversation_id, records, first_root, first_claims = root_and_claims(tmp_path)
+    binding = RoomMemoryBindingStore(db)
+    _setup_memory_session(binding, conversation_id)
+    messages = RoomMemoryMessageOutboxStore(db)
+    message_claim = messages.claim_next_message_outbox(worker_id="message-worker")
+    assert message_claim is not None
+    session_id = f"session-{conversation_id}"
+    messages.complete_message_delivery(
+        message_outbox_id=message_claim["outbox"]["message_outbox_id"],
+        delivery_id=message_claim["delivery"]["delivery_id"],
+        lease_token=message_claim["delivery"]["lease_token"],
+        status="delivered",
+        request_digest=message_claim["delivery"]["request_digest"],
+        response_digest=DIGEST,
+        memoryos_message_id="memoryos-message-derived",
+        memoryos_session_id=session_id,
+    )
+    for participant, provider_session in records:
+        submit(
+            db,
+            registry,
+            conversation_id,
+            participant,
+            provider_session,
+            first_claims[participant.participant_id],
+            f"settle-{participant.participant_id}",
+            outcome_type="noop",
+            outcome_payload={},
+        )
+    second = RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="recall prior context",
+        client_request_id="human-derived-2",
+    )
+    participant = records[0][0]
+    claim = RoomKernelStore(db).claim_next_observation(
+        conversation_id=conversation_id,
+        participant_id=participant.participant_id,
+        lease_owner="derived-receipt-host",
+    )
+    assert claim is not None
+    assert claim["activity"]["activity_id"] == second["activity"]["activity_id"]
+    attempt_id = claim["attempt"]["attempt_id"]
+    source_id = first_root["activity"]["activity_id"]
+    derived_text = "derived historical summary"
+    store = RoomMemoryRecallReceiptStore(db)
+    store.record_attempt_memory_receipt(
+        attempt_id=attempt_id,
+        status="ok",
+        schema_version="memoryos_source_evidence/v2",
+        latency_ms=7,
+        items=[
+            {
+                "item_id": "item-derived",
+                "document_id": f"xmuse-room-activity-{source_id}",
+                "source_activity_ids": [source_id],
+                "content_sha256": _sha(derived_text),
+                "text": derived_text,
+                "layer": "recall",
+                "derived": True,
+                "proof_source_type": "message",
+                "proof_session_id": session_id,
+                "proof_source_ids": ["memoryos-message-derived"],
+            }
+        ],
+        evidence_sha256=DIGEST,
+    )
+    store.bind_attempt_memory_context(
+        attempt_id=attempt_id,
+        evidence_sha256=DIGEST,
+        context_payload_sha256="sha256:" + "4" * 64,
+        included_items=[
+            {
+                "item_id": "item-derived",
+                "source_activity_ids": [source_id],
+                "text": derived_text,
+                "layer": "recall",
+                "derived": True,
+            }
+        ],
+    )
+    with sqlite3.connect(db) as conn:
+        refs = json.loads(
+            conn.execute(
+                "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()[0]
+        )
+    assert refs[0]["context_included"] is True
+    assert refs[0]["proof_source_type"] == "message"
+    assert refs[0]["proof_session_id"] == session_id
+
+
 def test_candidate_authority_source_guards_approval_and_no_content_spread(
     tmp_path: Path,
 ) -> None:
@@ -580,8 +678,36 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
         attempt_id=attempt_id,
         evidence_sha256=DIGEST,
         context_payload_sha256="sha256:" + "2" * 64,
+        included_items=[
+            {
+                "item_id": "item_valid",
+                "source_activity_ids": [activity_id],
+                "text": "ell",
+                "layer": "archival",
+                "derived": False,
+            }
+        ],
     )
     assert bound["context_submitted_at"] is not None
+    with sqlite3.connect(db) as conn:
+        internal = json.loads(
+            conn.execute(
+                "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()[0]
+        )
+    assert internal == [
+        {
+            "content_sha256": _sha("ell"),
+            "context_included": True,
+            "derived": False,
+            "document_id": f"xmuse-room-activity-{activity_id}",
+            "item_id": "item_valid",
+            "layer": "archival",
+            "source_activity_ids": [activity_id],
+        }
+    ]
+    assert "context_included" not in bound["item_refs"][0]
 
 
 def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(

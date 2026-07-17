@@ -26,6 +26,7 @@ from xmuse_core.chat.room_host import (
     RoomParticipantHost,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.chat.room_memory_runtime import RoomMemoryEvidence, RoomMemoryEvidenceItem
 
 
 class _GodLayer:
@@ -487,6 +488,26 @@ def test_memory_context_hash_binds_only_after_provider_submission(tmp_path: Path
     delivery = replace(
         _delivery(db, conversation_id, participant),
         attempt_id="attempt-memory-success",
+        memory_evidence=RoomMemoryEvidence(
+            status="ok",
+            reason_code="ok",
+            schema_version="memoryos_source_evidence/v2",
+            latency_ms=4,
+            evidence_sha256="sha256:" + "a" * 64,
+            items=(
+                RoomMemoryEvidenceItem(
+                    item_id="memory-item-included",
+                    document_id="xmuse-room-activity-prior",
+                    text="derived prior evidence",
+                    estimated_tokens=4,
+                    source_activity_ids=("activity-prior",),
+                    content_sha256="sha256:"
+                    + hashlib.sha256(b"derived prior evidence").hexdigest(),
+                    layer="page",
+                    derived=True,
+                ),
+            ),
+        ),
     )
     memory = _MemoryRuntime()
     success = _GodLayer(
@@ -513,6 +534,17 @@ def test_memory_context_hash_binds_only_after_provider_submission(tmp_path: Path
     assert len(memory.binds) == 1
     assert memory.binds[0]["attempt_id"] == delivery.attempt_id
     assert str(memory.binds[0]["context_payload_sha256"]).startswith("sha256:")
+    assert memory.binds[0]["included_items"] == (
+        {
+            "item_id": "memory-item-included",
+            "text": "derived prior evidence",
+            "estimated_tokens": 4,
+            "source_activity_ids": ["activity-prior"],
+            "layer": "page",
+            "derived": True,
+            "proof_boundary": "untrusted_memory_evidence",
+        },
+    )
 
     db2, _, conversation_id2, participant2, record2 = _room(tmp_path / "failed")
     failed_delivery = replace(
