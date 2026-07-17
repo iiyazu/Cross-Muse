@@ -710,26 +710,30 @@ def _memoryos_process_binding(runtime_root: Path) -> ProcessBinding | None:
 def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
     from xmuse_core.chat.room_runtime import read_process_start_identity
 
-    try:
-        payload = json.loads(
-            (runtime_root / "workroom_room_runner.pid.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    pid = payload.get("pid")
-    expected = payload.get("start_identity")
-    if (
-        not isinstance(pid, int)
-        or isinstance(pid, bool)
-        or pid <= 0
-        or not isinstance(expected, str)
-        or not expected
-        or read_process_start_identity(pid) != expected
+    bindings: set[ProcessBinding] = set()
+    for candidate in (
+        runtime_root / "workroom_room_runner.pid.json",
+        runtime_root / "room-runner-status.json",
     ):
-        return None
-    return ProcessBinding(pid, expected)
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        pid = payload.get("pid")
+        expected = payload.get("start_identity")
+        if (
+            not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 0
+            or not isinstance(expected, str)
+            or not expected
+            or read_process_start_identity(pid) != expected
+        ):
+            continue
+        bindings.add(ProcessBinding(pid, expected))
+    return next(iter(bindings)) if len(bindings) == 1 else None
 
 
 def _default_get_profile(profile_id: str) -> Any:

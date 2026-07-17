@@ -613,6 +613,27 @@ def test_runner_pause_uses_private_binding_when_safe_status_omits_pid(
     assert signals == [(41, signal.SIGSTOP)]
 
 
+def test_runner_binding_uses_status_receipt_fallback_and_rejects_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "xmuse_core.chat.room_runtime.read_process_start_identity",
+        lambda pid: {41: "runner-one", 42: "runner-two"}.get(pid),
+    )
+    (tmp_path / "room-runner-status.json").write_text(
+        json.dumps({"pid": 41, "start_identity": "runner-one"}),
+        encoding="utf-8",
+    )
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
+
+    (tmp_path / "workroom_room_runner.pid.json").write_text(
+        json.dumps({"pid": 42, "start_identity": "runner-two"}),
+        encoding="utf-8",
+    )
+    assert soak._runner_process_binding(tmp_path) is None
+
+
 def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(
     tmp_path: Path,
 ) -> None:
