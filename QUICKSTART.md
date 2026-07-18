@@ -18,9 +18,9 @@ repository `.env` file.
 Linux x86_64 / WSL release assets are self-contained and offline after download:
 
 ```bash
-python3.11 xmuse-setup.pyz install --bundle xmuse-0.2.0-linux-x86_64.tar.gz
+python3.11 xmuse-setup.pyz install --bundle xmuse-0.3.1-linux-x86_64.tar.gz
 python3.11 xmuse-setup.pyz install-memory \
-  --bundle memoryos-0.2.0-linux-x86_64.tar.gz  # optional
+  --bundle xmuse-memoryos-companion-0.3.1-linux-x86_64.tar.gz  # optional
 export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
 xmuse-setup verify
 xmuse-workroom launch
