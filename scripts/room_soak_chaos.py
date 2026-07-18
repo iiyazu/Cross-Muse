@@ -2661,6 +2661,7 @@ def _post_wave(
                 active_posts -= 1
             raise SoakError("soak_post_concurrency_barrier_failed") from exc
         started = deps.monotonic()
+        client_request_id = f"soak_post_{uuid.uuid4().hex}"
         category: str | None = None
         if spec.profile_id in ENDURANCE_PROFILE_IDS:
             category, message = ENDURANCE_PROMPT_CATEGORIES[
@@ -2698,14 +2699,11 @@ def _post_wave(
                 )
             )
         try:
-            response = deps.http_json(
-                "POST",
-                f"{FRONTEND_URL}/api/rooms/{room_id}/messages",
-                {
-                    "message": message,
-                    "client_request_id": f"soak_post_{uuid.uuid4().hex}",
-                },
-                timeout_s=30.0,
+            response = _post_room_message_with_replay(
+                deps,
+                room_id=room_id,
+                message=message,
+                client_request_id=client_request_id,
             )
         finally:
             with meter_lock:
@@ -2725,6 +2723,45 @@ def _post_wave(
             correlations.append(future.result())
     state.correlations.extend(correlations)
     return correlations
+
+
+def _post_room_message_with_replay(
+    deps: SoakDependencies,
+    *,
+    room_id: str,
+    message: str,
+    client_request_id: str,
+) -> HttpJsonResponse:
+    """Resolve one ambiguous proxy failure through the durable idempotency key.
+
+    The Room write may commit before the fixed Next proxy returns its receipt.  A
+    bounded replay with the *same* request ID recovers that receipt without
+    creating another Human activity.  Definitive client/guard failures are not
+    replayed, and a second ambiguous failure remains a hard soak failure.
+    """
+    payload = {"message": message, "client_request_id": client_request_id}
+    ambiguous_statuses = {499, 502, 503, 504}
+    for replay in range(2):
+        try:
+            response = deps.http_json(
+                "POST",
+                f"{FRONTEND_URL}/api/rooms/{room_id}/messages",
+                payload,
+                timeout_s=30.0,
+            )
+        except SoakError as exc:
+            if replay == 0 and exc.code == "soak_http_unavailable":
+                deps.sleep(0.25)
+                continue
+            raise
+        activity_id = response.payload.get("activity_id") if response.payload else None
+        if response.status == 201 and _safe_id(activity_id):
+            return response
+        if replay == 0 and response.status in ambiguous_statuses:
+            deps.sleep(0.25)
+            continue
+        return response
+    raise AssertionError("bounded Room message replay did not terminate")
 
 
 def _safe_id(value: object) -> bool:

@@ -761,6 +761,68 @@ def test_endurance_posts_cover_six_fixed_read_only_categories_without_public_evi
     assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
 
 
+def test_room_post_replays_ambiguous_proxy_result_with_same_id() -> None:
+    requests: list[Mapping[str, Any]] = []
+    responses = iter(
+        (
+            soak.HttpJsonResponse(504, {"detail": {"code": "room_message_upstream_timeout"}}),
+            soak.HttpJsonResponse(201, {"activity_id": "activity-one"}),
+        )
+    )
+    sleeps: list[float] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        requests.append(dict(payload))
+        return next(responses)
+
+    response = soak._post_room_message_with_replay(
+        soak.SoakDependencies(http_json=http_json, sleep=sleeps.append),
+        room_id="conv-one",
+        message="one durable Human message",
+        client_request_id="stable-request",
+    )
+
+    assert response.status == 201
+    assert response.payload == {"activity_id": "activity-one"}
+    assert requests == [
+        {"message": "one durable Human message", "client_request_id": "stable-request"},
+        {"message": "one durable Human message", "client_request_id": "stable-request"},
+    ]
+    assert sleeps == [0.25]
+
+
+def test_room_post_does_not_replay_definitive_rejection() -> None:
+    requests: list[Mapping[str, Any]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        requests.append(dict(payload))
+        return soak.HttpJsonResponse(409, {"detail": {"code": "idempotency_conflict"}})
+
+    response = soak._post_room_message_with_replay(
+        soak.SoakDependencies(http_json=http_json),
+        room_id="conv-one",
+        message="conflicting message",
+        client_request_id="stable-request",
+    )
+
+    assert response.status == 409
+    assert len(requests) == 1
+
+
 def test_endurance_retries_each_exhausted_observation_once_through_fixed_proxy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
