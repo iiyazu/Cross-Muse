@@ -362,6 +362,7 @@ def start_workroom(
     memory_enabled: bool = False,
     memoryos_executable: Path | None = None,
     memory_profile: str = "full-local",
+    memory_disabled_code: str | None = None,
 ) -> int:
     controller = deps.shutdown_controller_factory()
     services = WorkroomServicesCoordinator(paths, deps)
@@ -431,7 +432,7 @@ def start_workroom(
                 memory_runtime.reconcile_optional(lifecycle_locked=True)
                 memory_binding = memory_runtime.chat_api_binding()
             else:
-                record_memoryos_disabled(manifest, paths, deps)
+                record_memoryos_disabled(manifest, paths, deps, code=memory_disabled_code)
 
             def record_service(name: str, record: dict[str, Any]) -> None:
                 assert manifest is not None

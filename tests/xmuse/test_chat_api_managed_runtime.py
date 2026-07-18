@@ -78,6 +78,7 @@ print(
         "/health",
         "/api/chat/conversations",
         "/api/chat/rooms",
+        "/api/chat/bootstrap",
         "/api/chat/room-setup-options",
         "/api/chat/conversations/{conversation_id}/room-projection",
         "/api/chat/conversations/{conversation_id}/agent-streams",

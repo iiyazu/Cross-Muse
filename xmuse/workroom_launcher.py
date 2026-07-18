@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from xmuse.memoryos_companion import managed_companion_executable
 from xmuse.workroom import COMMAND_SCHEMA_VERSION, workroom_status
 from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 
@@ -99,7 +100,10 @@ class WorkroomLaunchDependencies:
         lambda paths, dependencies: workroom_status(paths, dependencies, emit=False)
     )
     open_browser: Callable[[str], bool] = webbrowser.open
-    resolve_managed_memoryos: Callable[[], Path | None] = _managed_memoryos_executable
+    # The default resolver is installer-owned and verifies the companion receipt;
+    # the legacy field remains injectable for compatibility tests and source runs.
+    resolve_managed_memoryos: Callable[[], Path | None] = managed_companion_executable
+    resolve_managed_memoryos_auto: Callable[[], Path | None] = managed_companion_executable
     prepare_managed_memoryos_cache: Callable[[Path, Path], None] = _prepare_managed_memoryos_cache
     sleep: Callable[[float], None] = time.sleep
     monotonic: Callable[[], float] = time.monotonic
@@ -114,6 +118,7 @@ class WorkroomLaunchRequest:
     workspace: Path | None = None
     execution_profile: str | None = None
     memory: bool = False
+    memory_mode: str = "auto"
     memoryos_executable: Path | None = None
     memory_profile: str | None = None
     open_browser: bool = True
@@ -136,8 +141,22 @@ def _start_argv(
     request: WorkroomLaunchRequest,
     dependencies: WorkroomLaunchDependencies,
 ) -> tuple[tuple[str, ...] | None, tuple[int, dict[str, object]] | None]:
+    if request.memory_mode not in {"auto", "on", "off"}:
+        return None, _error("memory_mode_invalid", "memory mode must be auto, on, or off")
+    if request.memory_mode == "off" and (request.memory or request.memoryos_executable is not None):
+        return None, _error("memory_mode_conflict", "memory off cannot be combined with --memory")
+    if (
+        request.memory_mode == "auto"
+        and not request.memory
+        and request.memoryos_executable is not None
+    ):
+        return None, _error(
+            "memory_mode_conflict",
+            "an explicit MemoryOS executable requires memory mode on",
+        )
     memoryos = request.memoryos_executable
-    if request.memory:
+    explicit_memory = request.memory or request.memory_mode == "on"
+    if explicit_memory:
         memoryos = memoryos or dependencies.resolve_managed_memoryos()
         if memoryos is None:
             return None, _error(
@@ -166,9 +185,13 @@ def _start_argv(
         argv.extend(("--workspace", str(request.workspace)))
     if request.execution_profile is not None:
         argv.extend(("--execution-profile", request.execution_profile))
-    if request.memory:
+    if explicit_memory:
         assert memoryos is not None
         argv.extend(("--memory", "--memoryos-executable", str(memoryos)))
+    elif request.memory_mode == "off":
+        argv.extend(("--memory-mode", "off"))
+    else:
+        argv.extend(("--memory-mode", "auto"))
     if request.memory_profile is not None:
         argv.extend(("--memory-profile", request.memory_profile))
     return tuple(argv), None
@@ -225,7 +248,7 @@ def launch_workroom(
         return argument_error
     assert argv is not None
     if (
-        request.memory
+        (request.memory or request.memory_mode == "on")
         and request.memoryos_executable is None
         and request.memory_profile != "archive-only"
     ):

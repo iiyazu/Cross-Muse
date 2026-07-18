@@ -416,6 +416,7 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/conversations", "POST"),
         ("/api/chat/room-setup-options", "GET"),
         ("/api/chat/rooms", "GET"),
+        ("/api/chat/bootstrap", "GET"),
         ("/api/chat/conversations/{conversation_id}/room-projection", "GET"),
         ("/api/chat/conversations/{conversation_id}/agent-streams", "GET"),
         ("/api/chat/conversations/{conversation_id}/events", "GET"),
