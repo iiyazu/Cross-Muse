@@ -92,6 +92,20 @@ optional source-backed memory
 - This remains a loopback-only, single-user application. Managed writes use a server-only
   `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
+## v0.3.1 release
+
+The `v0.3.1` release adds production evidence for the existing Room-first product. A
+source-backed MemoryOS run proved non-recent, cross-Room recall with an approved project
+source re-proved from `chat.db`; the Exact-patch Harness promoted fixed patches in memU,
+Clowder, and MemoryOS while fail-closing incompatible Letta and mem0 inputs. Memory runtime
+consumers now receive only their recall, context-receipt, or delivery-pump capability.
+
+A 120-minute full-local endurance run settled 40/40 Human correlations across eight Rooms in
+172 attempts. It recovered identity-fenced Codex, Runner, MemoryOS, and stream-cache faults
+with no duplicate outcome, cross-Room identity/causality leak, provider orphan, or runtime
+residue. Safe aggregate evidence and digests are recorded in
+`docs/releases/v0.3.1.md`; raw Room/provider artifacts remain outside the release.
+
 ## v0.3.0 release
 
 The `v0.3.0` release makes the local Workroom installable outside a source checkout and
@@ -132,9 +146,9 @@ bundle ABI; installation is offline and verifies every payload digest before act
 
 ```bash
 python3.11 xmuse-setup.pyz install \
-  --bundle xmuse-0.3.0-linux-x86_64.tar.gz
+  --bundle xmuse-0.3.1-linux-x86_64.tar.gz
 python3.11 xmuse-setup.pyz install-memory \
-  --bundle memoryos-0.3.0-linux-x86_64.tar.gz   # optional
+  --bundle xmuse-memoryos-companion-0.3.1-linux-x86_64.tar.gz   # optional
 
 export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
 xmuse-setup verify
@@ -150,8 +164,9 @@ Install a newer base bundle to create and atomically activate a separate version
 or remove an inactive version explicitly:
 
 ```bash
-xmuse-setup activate 0.3.0
-xmuse-setup uninstall 0.2.0
+xmuse-setup activate 0.3.0  # roll back
+xmuse-setup activate 0.3.1
+xmuse-setup uninstall 0.3.0
 ```
 
 The active version cannot be uninstalled. Native Windows and macOS bundles are not provided;
@@ -277,11 +292,6 @@ so a passing receipt proves archival MemoryOS evidence instead of duplicating Ro
 flag is mandatory. Results use `room_soak_chaos_result/v1` and contain only aggregate
 counts, percentiles, stable reason codes, resource totals, and digests. Room/provider text,
 tokens, process identities, bindings, and local paths are rejected by the result contract.
-
-Release maintainers additionally use the fixed `live-goal-memory-soak` profile. Its
-`room_goal_memory_soak_result/v1` evidence combines multi-Room provider recovery, MemoryOS
-recall, guarded native Codex actions, three browser viewports, and workspace-integrity proof;
-it is intentionally not part of ordinary CI.
 
 Release maintainers additionally use the fixed `live-goal-memory-soak` profile. Its
 `room_goal_memory_soak_result/v1` evidence combines multi-Room provider recovery, MemoryOS
