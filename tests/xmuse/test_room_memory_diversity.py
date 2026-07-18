@@ -112,14 +112,28 @@ def test_missing_topic_or_recovery_is_a_failed_gate() -> None:
     assert {"lexical_and_semantic", "memoryos_recovery"}.issubset(failures)
 
 
+def _unknown_top_level(value: dict[str, object]) -> dict[str, object]:
+    value["path"] = "/private/root"
+    return value
+
+
+def _unknown_count(value: dict[str, object]) -> dict[str, object]:
+    value["counts"]["provider_output"] = 1
+    return value
+
+
+def _unknown_proof(value: dict[str, object]) -> dict[str, object]:
+    value["proofs"]["trace"] = True
+    return value
+
+
+def _unknown_digest(value: dict[str, object]) -> dict[str, object]:
+    value["digests"]["message_id"] = _digest("f")
+    return value
+
+
 @pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda value: value.update({"path": "/private/root"}),
-        lambda value: value["counts"].update({"provider_output": 1}),
-        lambda value: value["proofs"].update({"trace": True}),
-        lambda value: value["digests"].update({"message_id": _digest("f")}),
-    ],
+    "mutate", [_unknown_top_level, _unknown_count, _unknown_proof, _unknown_digest]
 )
 def test_uncontracted_or_sensitive_fields_fail_closed(mutate) -> None:
     with pytest.raises(MemoryDiversityContractError):
