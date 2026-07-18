@@ -43,6 +43,34 @@ _PYTHON_ROOT_FILES = frozenset(
         ".ruff.toml",
     }
 )
+_NODE_SOURCE_PREFIXES = ("src/", "lib/", "test/", "tests/", "packages/", "apps/")
+_NODE_SOURCE_SUFFIXES = frozenset(
+    {
+        ".cjs",
+        ".cts",
+        ".css",
+        ".html",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".mts",
+        ".scss",
+        ".ts",
+        ".tsx",
+    }
+)
+_NODE_TOOLING_FILENAMES = frozenset(
+    {
+        "biome.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "tsconfig.json",
+        "vite.config.ts",
+        "vite.config.mts",
+        "vitest.config.ts",
+        "vitest.config.mts",
+    }
+)
 _XMUSE_BACKEND_PREFIXES = ("xmuse/", *_PYTHON_PREFIXES)
 _XMUSE_BACKEND_FILES = frozenset({*_PYTHON_ROOT_FILES, "AGENTS.md"})
 
@@ -154,6 +182,39 @@ _PROFILE_SPECS = (
         "xmuse_monorepo_paths/v3",
         "xmuse_monorepo_markers/v1",
     ),
+    _ProfileSpec(
+        "python-uv-ty/v1",
+        1,
+        ("patch_diff_check", "python_uv_ruff", "python_uv_ty", "python_uv_pytest"),
+        "python_uv_paths/v2",
+        "python_uv_markers/v1",
+    ),
+    _ProfileSpec(
+        "node-pnpm-library/v1",
+        1,
+        (
+            "patch_diff_check",
+            "node_pnpm_prettier",
+            "node_pnpm_typecheck",
+            "node_pnpm_jest",
+            "node_pnpm_tsup",
+        ),
+        "node_pnpm_paths/v1",
+        "node_pnpm_markers/v1",
+    ),
+    _ProfileSpec(
+        "node-pnpm-next-workspace/v1",
+        1,
+        (
+            "patch_diff_check",
+            "node_pnpm_biome",
+            "node_pnpm_workspace_typecheck",
+            "node_pnpm_workspace_vitest",
+            "node_pnpm_next_build",
+        ),
+        "node_pnpm_workspace_paths/v1",
+        "node_pnpm_workspace_markers/v1",
+    ),
 )
 
 
@@ -227,10 +288,14 @@ def _classify_paths(profile_id: str, paths: tuple[str, ...]) -> str:
             path = canonical_execution_path(raw)
         except ValueError as exc:
             raise RoomExecutionProfileError("room_execution_gate_path_invalid") from exc
-        if profile_id == "python-uv/v1" and (
+        if profile_id in {"python-uv/v1", "python-uv-ty/v1"} and (
             path in _PYTHON_ROOT_FILES or path.startswith(_PYTHON_PREFIXES)
         ):
             backend.append(path)
+        elif profile_id in {"node-pnpm-library/v1", "node-pnpm-next-workspace/v1"} and (
+            _is_node_candidate_path(path)
+        ):
+            frontend.append(path)
         elif profile_id == "xmuse-monorepo/v2" and (
             path in _XMUSE_BACKEND_FILES or path.startswith(_XMUSE_BACKEND_PREFIXES)
         ):
@@ -263,7 +328,9 @@ def gate_ids_for_profile_paths(profile_id: str, paths: tuple[str, ...]) -> tuple
     kind = _classify_paths(profile_id, paths)
     if kind == "docs":
         return ("patch_diff_check",) if profile_id == "docs/v1" else profile.gate_ids
-    if profile_id == "python-uv/v1":
+    if profile_id in {"python-uv/v1", "python-uv-ty/v1"}:
+        return profile.gate_ids
+    if profile_id in {"node-pnpm-library/v1", "node-pnpm-next-workspace/v1"}:
         return profile.gate_ids
     backend = ("backend_ruff", "backend_mypy", "backend_pytest")
     frontend = (
@@ -279,6 +346,24 @@ def gate_ids_for_profile_paths(profile_id: str, paths: tuple[str, ...]) -> tuple
     if kind == "mixed":
         return ("patch_diff_check", *backend, *frontend)
     raise RoomExecutionProfileError("room_execution_gate_path_uncovered")
+
+
+def _is_node_candidate_path(path: str) -> bool:
+    """Accept ordinary source/docs changes, never package or tool configuration.
+
+    Fixed profiles prove package, lock and tool configuration before authorization.
+    A candidate that changes one of those files must be rejected rather than changing
+    what a subsequently fixed direct-entrypoint gate would execute.
+    """
+
+    pure = PurePosixPath(path)
+    if pure.name in _NODE_TOOLING_FILENAMES or pure.name.startswith("next.config."):
+        return False
+    if _is_documentation_path(path):
+        return True
+    return (
+        path.startswith(_NODE_SOURCE_PREFIXES) and pure.suffix.casefold() in _NODE_SOURCE_SUFFIXES
+    )
 
 
 def build_execution_gate_plan(

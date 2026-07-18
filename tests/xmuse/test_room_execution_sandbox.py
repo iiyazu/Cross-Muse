@@ -109,6 +109,29 @@ def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(tmp_path: Path
         frontend.index(str(layout.node)) - 1 : frontend.index(str(layout.node)) + 2
     ]
 
+    pnpm_modules = tmp_path / "pnpm-node-modules"
+    pnpm_modules.mkdir()
+    node_profile_layout = SandboxLayout(
+        **{
+            **layout.__dict__,
+            "frontend_node_modules": None,
+            "node_modules": pnpm_modules,
+            "node_modules_mount_path": "/workspace/node_modules",
+        }
+    )
+    pnpm = build_bwrap_command(node_profile_layout, GATE_SPECS["node_pnpm_jest"])
+    assert "/usr/bin/npm" not in pnpm
+    assert "/usr/bin/pnpm" not in pnpm
+    assert "/bin/sh" not in pnpm
+    assert pnpm[-6:] == [
+        "--chdir",
+        "/workspace",
+        "--",
+        "/tools/node",
+        "/workspace/node_modules/jest/bin/jest.js",
+        "--runInBand",
+    ]
+
 
 def test_bwrap_mounts_digest_bound_ignored_python_extensions_read_only(
     tmp_path: Path,

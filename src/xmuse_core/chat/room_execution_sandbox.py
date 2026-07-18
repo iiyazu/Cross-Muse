@@ -108,6 +108,8 @@ class SandboxLayout:
     node: Path | None
     frontend_node_modules: Path | None
     bwrap: Path
+    node_modules: Path | None = None
+    node_modules_mount_path: str | None = None
     python_extension_artifacts: tuple[tuple[Path, str], ...] = ()
     artifact_snapshot_root: Path | None = None
 
@@ -168,6 +170,12 @@ GATE_SPECS: Mapping[str, GateSpec] = {
         "/workspace",
         600.0,
     ),
+    "python_uv_ty": GateSpec(
+        "python_uv_ty",
+        ("/opt/python/bin/python3", "-m", "ty", "check", "src"),
+        "/workspace",
+        600.0,
+    ),
     "python_uv_pytest": GateSpec(
         "python_uv_pytest",
         ("/opt/python/bin/python3", "-m", "pytest", "-q"),
@@ -214,6 +222,71 @@ GATE_SPECS: Mapping[str, GateSpec] = {
         "/workspace/frontend",
         1_200.0,
     ),
+    "node_pnpm_prettier": GateSpec(
+        "node_pnpm_prettier",
+        ("/tools/node", "/workspace/node_modules/prettier/bin/prettier.cjs", "--check", "."),
+        "/workspace",
+        600.0,
+    ),
+    "node_pnpm_typecheck": GateSpec(
+        "node_pnpm_typecheck",
+        ("/tools/node", "/workspace/node_modules/typescript/bin/tsc", "--noEmit"),
+        "/workspace",
+        600.0,
+    ),
+    "node_pnpm_jest": GateSpec(
+        "node_pnpm_jest",
+        ("/tools/node", "/workspace/node_modules/jest/bin/jest.js", "--runInBand"),
+        "/workspace",
+        900.0,
+    ),
+    "node_pnpm_tsup": GateSpec(
+        "node_pnpm_tsup",
+        ("/tools/node", "/workspace/node_modules/tsup/dist/cli-default.js"),
+        "/workspace",
+        900.0,
+    ),
+    "node_pnpm_biome": GateSpec(
+        "node_pnpm_biome",
+        ("/tools/node", "/workspace/node_modules/@biomejs/biome/bin/biome", "check", "."),
+        "/workspace",
+        900.0,
+    ),
+    "node_pnpm_workspace_typecheck": GateSpec(
+        "node_pnpm_workspace_typecheck",
+        (
+            "/tools/node",
+            "/workspace/node_modules/typescript/bin/tsc",
+            "--noEmit",
+            "-p",
+            "packages/web/tsconfig.json",
+        ),
+        "/workspace",
+        900.0,
+    ),
+    "node_pnpm_workspace_vitest": GateSpec(
+        "node_pnpm_workspace_vitest",
+        (
+            "/tools/node",
+            "/workspace/node_modules/vitest/vitest.mjs",
+            "run",
+            "--config",
+            "packages/web/vitest.config.ts",
+        ),
+        "/workspace",
+        1_200.0,
+    ),
+    "node_pnpm_next_build": GateSpec(
+        "node_pnpm_next_build",
+        (
+            "/tools/node",
+            "/workspace/node_modules/next/dist/bin/next",
+            "build",
+            "packages/web",
+        ),
+        "/workspace",
+        1_200.0,
+    ),
 }
 
 
@@ -242,6 +315,7 @@ def discover_sandbox_layout(
         raise RoomExecutionSandboxError("execution_gate_unknown")
     needs_python = any(_gate_uses_python(value) for value in selected)
     needs_frontend = any(value.startswith("frontend_") for value in selected)
+    needs_node = any(_gate_uses_node(value) for value in selected)
     capability_gate_ids = profile.gate_ids if profile is not None else selected
     capability_needs_python = any(_gate_uses_python(value) for value in capability_gate_ids)
 
@@ -284,8 +358,15 @@ def discover_sandbox_layout(
     if needs_frontend and not node_modules.is_dir():
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     node = Path(shutil.which("node") or "")
-    if needs_frontend and not node.is_file():
+    if needs_node and not node.is_file():
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+    profile_node_modules: Path | None = None
+    profile_node_modules_mount_path: str | None = None
+    if needs_node and not needs_frontend:
+        profile_node_modules = root / "node_modules"
+        profile_node_modules_mount_path = "/workspace/node_modules"
+        if not profile_node_modules.is_dir():
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     layout = SandboxLayout(
         stage=worktree,
         git_common_dir=git_common,
@@ -293,9 +374,11 @@ def discover_sandbox_layout(
         python_root=python_root,
         site_packages=site_packages,
         ruff=ruff,
-        node=(node.resolve(strict=True) if needs_frontend else None),
+        node=(node.resolve(strict=True) if needs_node else None),
         frontend_node_modules=(node_modules.resolve(strict=True) if needs_frontend else None),
         bwrap=bwrap.resolve(strict=True),
+        node_modules=(profile_node_modules.resolve(strict=True) if profile_node_modules else None),
+        node_modules_mount_path=profile_node_modules_mount_path,
         python_extension_artifacts=extension_artifacts,
         artifact_snapshot_root=artifact_snapshot_root,
     )
@@ -332,7 +415,7 @@ def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGat
     marker_names: tuple[str, ...]
     if trusted.profile_id == "docs/v1":
         marker_names = ()
-    elif trusted.profile_id == "python-uv/v1":
+    elif trusted.profile_id in {"python-uv/v1", "python-uv-ty/v1"}:
         marker_names = ("pyproject.toml", "uv.lock")
     elif trusted.profile_id == "xmuse-monorepo/v2":
         marker_names = (
@@ -340,6 +423,17 @@ def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGat
             "uv.lock",
             "frontend/package.json",
             "frontend/package-lock.json",
+        )
+    elif trusted.profile_id == "node-pnpm-library/v1":
+        marker_names = ("package.json", "pnpm-lock.yaml")
+    elif trusted.profile_id == "node-pnpm-next-workspace/v1":
+        marker_names = (
+            "package.json",
+            "pnpm-lock.yaml",
+            "biome.json",
+            "packages/web/package.json",
+            "packages/web/tsconfig.json",
+            "packages/web/vitest.config.ts",
         )
     else:  # pragma: no cover - registry exhaustiveness fence
         raise RoomExecutionSandboxError("execution_gate_profile_unknown")
@@ -385,10 +479,9 @@ def build_toolchain_capability_digest(
     }
     if any(_gate_uses_python(value) for value in selected):
         _python_entry, python, ruff_entry, site_packages, venv_config = _target_python_layout(root)
-        if (
-            not site_packages.is_dir()
-            or not (site_packages / "mypy").is_dir()
-            or not (site_packages / "pytest").is_dir()
+        dependency_names = _python_gate_dependency_names(selected)
+        if not site_packages.is_dir() or any(
+            not (site_packages / name.replace("-", "_")).is_dir() for name in dependency_names
         ):
             raise RoomExecutionSandboxError("execution_backend_dependencies_unavailable")
         facts["python"] = _trusted_executable_digest(
@@ -399,9 +492,7 @@ def build_toolchain_capability_digest(
             error_code="execution_backend_dependencies_unavailable",
         )
         facts["pyvenv"] = _trusted_file_digest(venv_config)
-        facts["python_dependencies"] = _dependency_metadata_digest(
-            site_packages, ("mypy", "pytest")
-        )
+        facts["python_dependencies"] = _dependency_metadata_digest(site_packages, dependency_names)
         if python_extension_evidence is None:
             extension_evidence = tuple(
                 (relative, digest)
@@ -424,16 +515,18 @@ def build_toolchain_capability_digest(
         facts["python_extension_artifacts"] = [
             {"path": relative, "digest": digest} for relative, digest in extension_evidence
         ]
-    if any(value.startswith("frontend_") for value in selected):
-        node_modules = root / "frontend" / "node_modules"
+    if any(_gate_uses_node(value) for value in selected):
+        is_xmuse_frontend = any(value.startswith("frontend_") for value in selected)
+        node_modules = root / ("frontend/node_modules" if is_xmuse_frontend else "node_modules")
         if not node_modules.is_dir():
             raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
         node = Path(shutil.which("node") or "")
         if not node.is_file():
             raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
-        installed_lock = node_modules / ".package-lock.json"
+        installed_lock_name = ".package-lock.json" if is_xmuse_frontend else ".modules.yaml"
+        installed_lock = node_modules / installed_lock_name
         facts["frontend_dependencies"] = _trusted_file_digest(installed_lock)
-        facts["frontend_gate_entries"] = _frontend_gate_entry_digest(root, selected)
+        facts["frontend_gate_entries"] = _node_gate_entry_digest(root, selected)
         facts["node"] = {
             "digest": _trusted_executable_digest(
                 node.resolve(strict=True),
@@ -502,9 +595,11 @@ def run_gate(
         raise RoomExecutionSandboxError("execution_gate_unknown") from exc
     assert spec is not None
     _validate_spec(spec)
+    if _gate_uses_node(spec.gate_id) and layout.node is None:
+        raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     if spec.gate_id.startswith("frontend_") and layout.frontend_node_modules is None:
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
-    if spec.gate_id.startswith("frontend_") and layout.node is None:
+    if spec.gate_id.startswith("node_pnpm_") and layout.node_modules is None:
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
 
     command = build_bwrap_command(layout, spec)
@@ -692,6 +787,21 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
                 "/workspace/frontend/node_modules",
             )
         )
+    if layout.node_modules is not None:
+        if layout.node is None or layout.node_modules_mount_path is None:
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        command.extend(
+            (
+                "--ro-bind",
+                str(layout.node),
+                "/tools/node",
+                "--dir",
+                layout.node_modules_mount_path,
+                "--ro-bind",
+                str(layout.node_modules),
+                layout.node_modules_mount_path,
+            )
+        )
     command.extend(("--proc", "/proc"))
     git_dir_in_sandbox = _sandbox_git_dir(layout)
     safe_environment = {
@@ -768,7 +878,7 @@ def resource_limits_for_gate(gate_id: str) -> GateResourceLimits:
 
 
 def _resource_limits_for_spec(spec: GateSpec) -> GateResourceLimits:
-    if spec.gate_id.startswith("frontend_"):
+    if _gate_uses_node(spec.gate_id):
         return GateResourceLimits(4 * _GIB, 128, 2 * _GIB)
     return GateResourceLimits(2 * _GIB, 64, _GIB)
 
@@ -1047,6 +1157,24 @@ def _resource_limit_reason(sample: GateResourceSample, limits: GateResourceLimit
 
 def _gate_uses_python(gate_id: str) -> bool:
     return gate_id.startswith(("backend_", "python_uv_"))
+
+
+def _gate_uses_node(gate_id: str) -> bool:
+    return gate_id.startswith(("frontend_", "node_pnpm_"))
+
+
+def _python_gate_dependency_names(gate_ids: Iterable[str]) -> tuple[str, ...]:
+    """Return the exact installed distributions required by selected fixed gates."""
+
+    required: set[str] = set()
+    for gate_id in gate_ids:
+        if gate_id in {"backend_mypy", "python_uv_mypy"}:
+            required.add("mypy")
+        elif gate_id == "python_uv_ty":
+            required.add("ty")
+        elif gate_id in {"backend_pytest", "python_uv_pytest"}:
+            required.add("pytest")
+    return tuple(sorted(required))
 
 
 def _trusted_profile(profile: ExecutionGateProfile) -> ExecutionGateProfile:
@@ -1386,6 +1514,40 @@ def _frontend_marker_contract(root: Path) -> dict[str, object]:
     }
 
 
+def _node_pnpm_marker_contract(root: Path) -> dict[str, object]:
+    """Prove a bounded pnpm root without accepting repository-provided commands."""
+
+    package = _json_marker(root / "package.json")
+    package_name = _marker_name(package.get("name"))
+    package_manager = package.get("packageManager")
+    if not isinstance(package_manager, str) or not package_manager.startswith("pnpm@"):
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    lock = _bounded_marker_bytes(root / "pnpm-lock.yaml")
+    try:
+        lock_text = lock.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid") from exc
+    first_line = lock_text.splitlines()[0] if lock_text else ""
+    if first_line != "lockfileVersion: '9.0'" and first_line != "lockfileVersion: 9.0":
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    return {
+        "package_name": package_name,
+        "package_manager": package_manager,
+        "lockfile_format": "pnpm/9",
+    }
+
+
+def _node_pnpm_workspace_marker_contract(root: Path) -> dict[str, object]:
+    web = _json_marker(root / "packages" / "web" / "package.json")
+    web_name = _marker_name(web.get("name"))
+    # The config files are marker evidence only.  Gate argv remains fixed and never
+    # comes from their contents.
+    _bounded_marker_bytes(root / "biome.json")
+    _bounded_marker_bytes(root / "packages" / "web" / "tsconfig.json")
+    _bounded_marker_bytes(root / "packages" / "web" / "vitest.config.ts")
+    return {"web_package_name": web_name, "web_workspace_path": "packages/web"}
+
+
 def _validated_repository_marker_contract(
     root: Path,
     profile: ExecutionGateProfile,
@@ -1396,15 +1558,22 @@ def _validated_repository_marker_contract(
     }
     if profile.profile_id == "docs/v1":
         return result
-    python = _python_marker_contract(root)
-    if profile.profile_id == "python-uv/v1":
-        result["python"] = python
+    if profile.profile_id in {"python-uv/v1", "python-uv-ty/v1"}:
+        result["python"] = _python_marker_contract(root)
         return result
     if profile.profile_id == "xmuse-monorepo/v2":
+        python = _python_marker_contract(root)
         if python["project_name"] != "xmuse":
             raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
         result["python"] = python
         result["frontend"] = _frontend_marker_contract(root)
+        return result
+    if profile.profile_id == "node-pnpm-library/v1":
+        result["node"] = _node_pnpm_marker_contract(root)
+        return result
+    if profile.profile_id == "node-pnpm-next-workspace/v1":
+        result["node"] = _node_pnpm_marker_contract(root)
+        result["workspace"] = _node_pnpm_workspace_marker_contract(root)
         return result
     raise RoomExecutionSandboxError("execution_gate_profile_unknown")
 
@@ -1419,19 +1588,30 @@ def _dependency_metadata_digest(site_packages: Path, names: tuple[str, ...]) -> 
     return _canonical_digest(values)
 
 
-def _frontend_gate_entry_digest(root: Path, gate_ids: tuple[str, ...]) -> str:
+def _node_gate_entry_digest(root: Path, gate_ids: tuple[str, ...]) -> str:
     relative_by_gate = {
         "frontend_typecheck": "typescript/bin/tsc",
         "frontend_lint": "eslint/bin/eslint.js",
         "frontend_vitest": "vitest/vitest.mjs",
         "frontend_build": "next/dist/bin/next",
+        "node_pnpm_prettier": "prettier/bin/prettier.cjs",
+        "node_pnpm_typecheck": "typescript/bin/tsc",
+        "node_pnpm_jest": "jest/bin/jest.js",
+        "node_pnpm_tsup": "tsup/dist/cli-default.js",
+        "node_pnpm_biome": "@biomejs/biome/bin/biome",
+        "node_pnpm_workspace_typecheck": "typescript/bin/tsc",
+        "node_pnpm_workspace_vitest": "vitest/vitest.mjs",
+        "node_pnpm_next_build": "next/dist/bin/next",
     }
     values: list[dict[str, str]] = []
     for gate_id in gate_ids:
         relative = relative_by_gate.get(gate_id)
         if relative is None:
             continue
-        entry = root / "frontend" / "node_modules" / relative
+        node_modules = root / (
+            "frontend/node_modules" if gate_id.startswith("frontend_") else "node_modules"
+        )
+        entry = node_modules / relative
         try:
             digest = _trusted_file_digest(entry)
         except RoomExecutionSandboxError as exc:

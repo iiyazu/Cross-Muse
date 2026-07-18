@@ -10,25 +10,26 @@ from scripts import room_execution_repository_matrix as matrix
 def test_fixed_matrix_pins_expected_repositories_profiles_and_blockers() -> None:
     assert tuple(item.scenario_id for item in matrix.REPOSITORIES) == (
         "memu-python",
-        "clowder-docs",
+        "clowder-next-probe",
         "memoryos-control",
-        "letta-blocked",
-        "mem0-blocked",
+        "letta-ty-probe",
+        "mem0-ts-probe",
     )
     assert tuple(item.profile_id for item in matrix.REPOSITORIES) == (
         "python-uv/v1",
-        "docs/v1",
+        "node-pnpm-next-workspace/v1",
         "python-uv/v1",
-        "python-uv/v1",
-        "python-uv/v1",
+        "python-uv-ty/v1",
+        "node-pnpm-library/v1",
     )
     assert matrix.REPOSITORIES[3].expected_reason == ("execution_backend_dependencies_unavailable")
-    assert matrix.REPOSITORIES[4].expected_reason == ("execution_gate_profile_marker_missing")
+    assert matrix.REPOSITORIES[4].expected_reason == ("execution_frontend_dependencies_unavailable")
+    assert matrix.REPOSITORIES[4].workspace_subdir == "mem0-ts"
     assert all(len(item.commit) == 40 and len(item.tree) == 40 for item in matrix.REPOSITORIES)
 
 
 def test_fixtures_are_digest_pinned_and_apply_to_only_allowed_paths() -> None:
-    for spec in matrix.REPOSITORIES[:3]:
+    for spec in (item for item in matrix.REPOSITORIES if item.fixture_name is not None):
         fixture = matrix._fixture(spec)
         assert fixture.startswith("diff --git ")
         assert all(f" b/{path}" in fixture for path in spec.paths)
