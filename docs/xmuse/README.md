@@ -70,6 +70,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_memory_ports.py` | Narrow persistence ports consumed by optional memory adapters. |
 | `src/xmuse_core/chat/room_memory_runtime.py` | Sidecar-neutral Host evidence protocol. |
 | `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` safe read model. |
+| `src/xmuse_core/chat/room_memory_diversity.py` | Bounded multi-topic recall dogfood result contract. |
 | `src/xmuse_core/chat/memoryos_supervisor.py` | Optional sidecar command, environment, receipt, and safe status. |
 | `src/xmuse_core/chat/room_soak_chaos.py` | Fixed soak profiles, strict aggregate evidence, and `room_soak_chaos_result/v1` gates. |
 | `src/xmuse_core/chat/room_soak_ci.py` | Deterministic 12-Room production Kernel/Host CI simulation. |
