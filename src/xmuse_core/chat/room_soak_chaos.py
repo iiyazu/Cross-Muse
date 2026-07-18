@@ -47,6 +47,10 @@ class SoakProfile:
     minimum_duration_s: int
     provider_cost_confirmation_required: bool
     memory_recovery: bool
+    # This is an internal profile contract rather than result payload data.  The
+    # result remains v1 while the evaluator can still prove the exact fault
+    # order for a profile that has a stricter chaos contract.
+    chaos_kinds: tuple[str, ...] = ()
 
 
 _PROFILES = {
@@ -56,6 +60,40 @@ _PROFILES = {
         SoakProfile("live-short", 4, 2, 2, "codex", 48, 0, False, False),
         SoakProfile("live-soak", 6, 2, 4, "codex", 128, 3600, True, False),
         SoakProfile("memory-recovery", 2, 2, 10, "codex", None, 0, False, True),
+        SoakProfile(
+            "live-endurance",
+            8,
+            2,
+            5,
+            "codex",
+            192,
+            7200,
+            True,
+            True,
+            (
+                "codex_app_server_sigkill",
+                "runner_sigkill",
+                "memoryos_sigkill",
+                "agent_stream_cache_delete",
+            ),
+        ),
+        SoakProfile(
+            "live-endurance-short",
+            2,
+            2,
+            5,
+            "codex",
+            56,
+            0,
+            True,
+            True,
+            (
+                "codex_app_server_sigkill",
+                "runner_sigkill",
+                "memoryos_sigkill",
+                "agent_stream_cache_delete",
+            ),
+        ),
     )
 }
 
@@ -139,6 +177,7 @@ _EVENT_REASON_BY_KIND = {
     "codex_app_server_sigkill": "codex_app_server_cleanup_confirmed",
     "runner_sigkill": "runner_reconciled",
     "memoryos_sigkill": "memoryos_reconciled",
+    "agent_stream_cache_delete": "agent_stream_cache_epoch_rotated",
 }
 _LATENCY_SAMPLE_KEYS = frozenset({"ordinal", "latency_ms"})
 
@@ -644,7 +683,7 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
 
     live = profile.transport == "codex"
     if live:
-        expected_faults = (
+        expected_faults = profile.chaos_kinds or (
             ("memoryos_sigkill",)
             if profile.memory_recovery
             else ("codex_app_server_sigkill", "runner_sigkill")
@@ -659,24 +698,47 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
         topology_complete = bool(events) and all(
             event["runner_count"] == 1 and event["mcp_count"] == 1 for event in events
         )
-        fault_preconditions = (
-            len(events) == len(expected_faults)
-            and all(event["active_delivery_count"] is not None for event in events)
-            and (
-                profile.memory_recovery
-                or (
-                    int(events[0]["active_delivery_count"]) >= 1
-                    and int(events[1]["active_delivery_count"]) >= 2
+        strict_endurance = len(profile.chaos_kinds) == 4
+        if strict_endurance:
+            # The endurance sequence is deliberately more specific than the
+            # generic live profiles: provider recovery begins while work is
+            # active, Runner recovery begins with two deliveries, MemoryOS is
+            # managed, and stream-cache epoch invalidation happens idle.
+            fault_preconditions = (
+                len(events) == len(expected_faults)
+                and all(event["active_delivery_count"] is not None for event in events)
+                and int(events[0]["active_delivery_count"]) >= 1
+                and int(events[1]["active_delivery_count"]) >= 2
+                and int(events[3]["active_delivery_count"]) == 0
+            )
+            reconcile_proven = len(events) == len(expected_faults) and (
+                events[0]["managed_reconcile"] is False
+                and events[1]["managed_reconcile"] is True
+                and events[2]["managed_reconcile"] is True
+                and events[3]["managed_reconcile"] is True
+            )
+        else:
+            fault_preconditions = (
+                len(events) == len(expected_faults)
+                and all(event["active_delivery_count"] is not None for event in events)
+                and (
+                    profile.memory_recovery
+                    or (
+                        int(events[0]["active_delivery_count"]) >= 1
+                        and int(events[1]["active_delivery_count"]) >= 2
+                    )
                 )
             )
-        )
-        reconcile_proven = len(events) == len(expected_faults) and (
-            events[0]["managed_reconcile"] is True
-            if profile.memory_recovery
-            else events[0]["managed_reconcile"] is False and events[1]["managed_reconcile"] is True
-        )
-        recovery_wave_proven = (
-            len(events) == len(expected_faults) and events[-1]["recovery_wave_settled"] is True
+            reconcile_proven = len(events) == len(expected_faults) and (
+                events[0]["managed_reconcile"] is True
+                if profile.memory_recovery
+                else events[0]["managed_reconcile"] is False
+                and events[1]["managed_reconcile"] is True
+            )
+        recovery_wave_proven = len(events) == len(expected_faults) and (
+            all(event["recovery_wave_settled"] is True for event in events)
+            if strict_endurance
+            else events[-1]["recovery_wave_settled"] is True
         )
         rss_growth = resources["rss_growth_bytes"]
         rss_limit = resources["rss_growth_limit_bytes"]
@@ -702,7 +764,7 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
                         if len(events) == len(expected_faults)
                         else None
                     ),
-                    2 if not profile.memory_recovery else 0,
+                    (2 if strict_endurance or not profile.memory_recovery else 0),
                 ),
                 _gate(
                     "managed_reconcile_observed",
@@ -747,6 +809,51 @@ def _gates(result: Mapping[str, Any]) -> list[dict[str, Any]]:
                 ),
             ]
         )
+        if strict_endurance:
+            provider_precondition = len(events) == 4 and (
+                isinstance(events[0]["active_delivery_count"], int)
+                and int(events[0]["active_delivery_count"]) >= 1
+                and events[0]["managed_reconcile"] is False
+            )
+            runner_precondition = len(events) == 4 and (
+                isinstance(events[1]["active_delivery_count"], int)
+                and int(events[1]["active_delivery_count"]) >= 2
+                and events[1]["managed_reconcile"] is True
+            )
+            memory_managed = len(events) == 4 and events[2]["managed_reconcile"] is True
+            stream_cache_precondition = len(events) == 4 and (
+                isinstance(events[3]["active_delivery_count"], int)
+                and int(events[3]["active_delivery_count"]) == 0
+                and events[3]["managed_reconcile"] is True
+            )
+            gates.extend(
+                [
+                    _gate(
+                        "endurance_provider_fault_precondition",
+                        provider_precondition,
+                        int(provider_precondition),
+                        1,
+                    ),
+                    _gate(
+                        "endurance_runner_fault_precondition",
+                        runner_precondition,
+                        int(runner_precondition),
+                        1,
+                    ),
+                    _gate(
+                        "endurance_memory_managed",
+                        memory_managed,
+                        int(memory_managed),
+                        1,
+                    ),
+                    _gate(
+                        "endurance_stream_cache_precondition",
+                        stream_cache_precondition,
+                        int(stream_cache_precondition),
+                        1,
+                    ),
+                ]
+            )
         if profile.memory_recovery:
             gates.extend(
                 [

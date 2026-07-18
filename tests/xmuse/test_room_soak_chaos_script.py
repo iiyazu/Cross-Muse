@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import sqlite3
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -251,6 +252,35 @@ def test_live_soak_cost_confirmation_fails_before_start(tmp_path: Path) -> None:
     assert not any("codex" in command for command in system.commands)
 
 
+def test_live_endurance_requires_cost_then_memory_executable_before_start(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+
+    missing_cost = soak.run_soak(
+        soak.SoakConfig(
+            repo_root=repo,
+            profile_id=soak.ENDURANCE_PROFILE_ID,
+            runtime_root=tmp_path / "runtime-cost",
+            result_path=tmp_path / "result-cost.json",
+        ),
+        dependencies=system.dependencies(),
+    )
+    assert missing_cost["reason_code"] == "soak_provider_cost_confirmation_required"
+
+    missing_memory = soak.run_soak(
+        soak.SoakConfig(
+            repo_root=repo,
+            profile_id=soak.ENDURANCE_PROFILE_ID,
+            runtime_root=tmp_path / "runtime-memory",
+            result_path=tmp_path / "result-memory.json",
+            confirm_provider_cost=True,
+        ),
+        dependencies=system.dependencies(),
+    )
+    assert missing_memory["reason_code"] == "soak_memoryos_executable_required"
+    assert system.spawned is False
+
+
 def test_memory_recovery_requires_executable_before_start(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     system = _FakeSystem(repo)
@@ -419,6 +449,245 @@ def test_live_soak_distributes_four_waves_across_full_hour(
     assert fault_order == ["codex_app_server_sigkill", "runner_sigkill"]
 
 
+def test_live_endurance_schedules_four_faults_then_steady_wave(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    spec = soak.LIVE_PROFILES[soak.ENDURANCE_PROFILE_ID]
+    state = soak._LiveState(
+        manager=system.process,
+        room_ids=[f"conv_{index:08d}" for index in range(spec.room_count)],
+        host_delivery_evidence_seen=True,
+    )
+    post_times: list[float] = []
+    fault_order: list[str] = []
+    before = system.snapshot(repo)
+    proof = soak._MemoryFaultProof(
+        binding=soak.ProcessBinding(61, "memory-start"),
+        status_before={},
+        started_at=0.0,
+        run_started_at=0.0,
+        cutoff_by_room={room_id: 1 for room_id in state.room_ids},
+        wave0_activity_ids={"activity-anchor"},
+        fault_window_activity_ids={"activity-backlog"},
+        backlog_observed=True,
+    )
+
+    monkeypatch.setattr(soak, "_start_workroom", lambda *args, **kwargs: {})
+    monkeypatch.setattr(soak, "_create_rooms", lambda *args, **kwargs: None)
+
+    def post_wave(*args: Any, **kwargs: Any) -> list[soak._Correlation]:
+        del args, kwargs
+        post_times.append(deps.monotonic())
+        if not state.endurance_prompt_categories:
+            for index, (category, _message) in enumerate(soak.ENDURANCE_PROMPT_CATEGORIES):
+                state.endurance_prompt_categories[category] = 7 if index < 4 else 6
+        return []
+
+    def event(kind: str, reason: str) -> soak._PendingChaosEvent:
+        fault_order.append(kind)
+        return soak._PendingChaosEvent(
+            kind=kind,
+            reason_code=reason,
+            started_at=deps.monotonic(),
+            run_started_at=0.0,
+            recovery_ms=1,
+            status={},
+            active_delivery_count=0,
+            managed_reconcile=kind != "codex_app_server_sigkill",
+            runner_count=1,
+            mcp_count=1,
+        )
+
+    monkeypatch.setattr(soak, "_post_wave", post_wave)
+    monkeypatch.setattr(soak, "_wait_wave_settled", lambda *args, **kwargs: None)
+    monkeypatch.setattr(soak, "_pause_runner", lambda *args, **kwargs: 50)
+    monkeypatch.setattr(soak, "_resume_runner", lambda *args, **kwargs: None)
+    monkeypatch.setattr(soak, "_pending_correlation_count", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(soak, "_begin_memoryos_fault", lambda *args, **kwargs: proof)
+    monkeypatch.setattr(soak, "_assert_memory_fault_active", lambda *args, **kwargs: None)
+    monkeypatch.setattr(soak, "_record_memory_fault_backlog", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        soak,
+        "_kill_one_provider",
+        lambda *args, **kwargs: event(
+            "codex_app_server_sigkill", "codex_app_server_cleanup_confirmed"
+        ),
+    )
+    monkeypatch.setattr(
+        soak,
+        "_kill_runner_and_wait_recovery",
+        lambda *args, **kwargs: event("runner_sigkill", "runner_reconciled"),
+    )
+    monkeypatch.setattr(
+        soak,
+        "_wait_memoryos_recovery",
+        lambda *args, **kwargs: event("memoryos_sigkill", "memoryos_reconciled"),
+    )
+    monkeypatch.setattr(
+        soak,
+        "_reset_agent_stream_cache_and_wait_recovery",
+        lambda *args, **kwargs: event(
+            "agent_stream_cache_delete", "agent_stream_cache_epoch_rotated"
+        ),
+    )
+
+    def memory_evidence(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        state.verified_memory_evidence = {
+            "enabled": True,
+            "restart_count": 1,
+            "outbox_delivered": 40,
+            "outbox_pending": 0,
+            "outbox_conflict": 0,
+            "recall_receipts": 1,
+            "recall_source_refs": 1,
+        }
+
+    monkeypatch.setattr(soak, "_wait_for_memory_evidence", memory_evidence)
+    monkeypatch.setattr(soak, "_verify_browser", lambda *args, **kwargs: None)
+    monkeypatch.setattr(soak, "_attempt_concurrency_peak", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(
+        soak,
+        "_database_evidence",
+        lambda *args, **kwargs: {"profile_id": "", "configuration": {}, "violations": {}},
+    )
+
+    evidence = soak._run_live(
+        soak.SoakConfig(repo_root=repo, profile_id=soak.ENDURANCE_PROFILE_ID),
+        deps,
+        spec,
+        tmp_path / "runtime",
+        tmp_path / "artifacts",
+        {},
+        before,
+        state,
+    )
+
+    assert post_times == pytest.approx([0.0, 1440.0, 2880.0, 4320.0, 5760.0], abs=1.0)
+    assert system.clock >= 7200.0
+    assert fault_order == [
+        "codex_app_server_sigkill",
+        "runner_sigkill",
+        "memoryos_sigkill",
+        "agent_stream_cache_delete",
+    ]
+    assert [item["recovery_wave_settled"] for item in state.chaos_events] == [True] * 4
+    assert "endurance_prompt_categories" not in evidence
+
+
+def test_runner_pause_uses_private_binding_when_safe_status_omits_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[tuple[int, signal.Signals]] = []
+    identities = {41: "runner-start"}
+    monkeypatch.setattr(
+        soak,
+        "_workroom_status",
+        lambda *args, **kwargs: {
+            "services": [{"service": "room_runner", "ready": True, "boot_id": "boot-one"}]
+        },
+    )
+    deps = soak.SoakDependencies(
+        runner_process_binding=lambda _root: soak.ProcessBinding(41, "runner-start"),
+        process_start_identity=identities.get,
+        signal_pid=lambda pid, sig: signals.append((pid, sig)),
+    )
+
+    binding = soak._pause_runner(
+        soak.SoakConfig(repo_root=tmp_path, profile_id="live-short"),
+        deps,
+        tmp_path,
+        {},
+    )
+    assert binding == soak.ProcessBinding(41, "runner-start")
+    assert signals == [(41, signal.SIGSTOP)]
+
+    identities[41] = "reused-process"
+    with pytest.raises(soak.SoakError, match="soak_runner_resume_identity_lost"):
+        soak._resume_runner(deps, binding)
+    assert signals == [(41, signal.SIGSTOP)]
+
+
+def test_runner_binding_prefers_self_receipt_over_launcher_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "xmuse_core.chat.room_runtime.read_process_start_identity",
+        lambda pid: {41: "runner-one", 42: "runner-two"}.get(pid),
+    )
+    (tmp_path / "room-runner-status.json").write_text(
+        json.dumps({"pid": 41, "start_identity": "runner-one", "boot_id": "boot-one"}),
+        encoding="utf-8",
+    )
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
+
+    (tmp_path / "workroom_room_runner.pid.json").write_text(
+        json.dumps({"pid": 42, "start_identity": "runner-two"}),
+        encoding="utf-8",
+    )
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(41, "runner-one")
+    (tmp_path / "room-runner-status.json").unlink()
+    assert soak._runner_process_binding(tmp_path) == soak.ProcessBinding(42, "runner-two")
+
+
+def test_runner_fault_uses_private_boot_and_reproves_new_incarnation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    killed = [False]
+    safe_status = {
+        "state": "ready",
+        "services": [
+            {"service": "frontend", "ready": True},
+            {"service": "chat_api", "ready": True},
+            {
+                "service": "room_runner",
+                "ready": True,
+                "host": {"active_delivery_count": 2},
+            },
+            {"service": "room_mcp", "ready": True},
+        ],
+    }
+    monkeypatch.setattr(
+        soak,
+        "_wait_for_active_deliveries",
+        lambda *args, **kwargs: safe_status,
+    )
+    monkeypatch.setattr(soak, "_workroom_status", lambda *args, **kwargs: safe_status)
+    monkeypatch.setattr(soak, "_sample_runtime", lambda *args, **kwargs: None)
+
+    old = soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-one"), "boot-one")
+    new = soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-two"), "boot-two")
+    deps = soak.SoakDependencies(
+        monotonic=lambda: clock[0],
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        signal_pid=lambda pid, sig: killed.__setitem__(0, (pid, sig) == (41, signal.SIGKILL)),
+        process_start_identity=lambda pid: {41: "runner-one", 42: "runner-two"}.get(pid),
+        runner_runtime_binding=lambda _root: new if killed[0] else old,
+        runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
+    )
+
+    event = soak._kill_runner_and_wait_recovery(
+        soak.SoakConfig(repo_root=tmp_path, profile_id=soak.ENDURANCE_PROFILE_ID),
+        deps,
+        soak._LiveState(),
+        tmp_path,
+        {},
+        run_started_at=0.0,
+    )
+    assert killed[0] is True
+    assert event.kind == "runner_sigkill"
+    assert event.active_delivery_count == 2
+    assert event.runner_count == event.mcp_count == 1
+
+
 def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(
     tmp_path: Path,
 ) -> None:
@@ -455,6 +724,169 @@ def test_post_waves_overlap_first_room_without_exceeding_fixed_turn_budget(
     assert len(state.correlations) == spec.room_count * spec.human_turns_per_room == 24
     assert set(by_room.values()) == {spec.wave_count}
     assert state.max_active_posts == spec.room_count + 1
+
+
+def test_endurance_posts_cover_six_fixed_read_only_categories_without_public_evidence(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    messages: list[str] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        messages.append(str(payload["message"]))
+        return soak.HttpJsonResponse(201, {"activity_id": f"activity_{len(messages):08d}"})
+
+    deps.http_json = http_json
+    spec = soak.LIVE_PROFILES[soak.ENDURANCE_PROFILE_ID]
+    state = soak._LiveState(room_ids=[f"conv_{index:08d}" for index in range(spec.room_count)])
+    for wave in range(spec.wave_count):
+        soak._post_wave(spec, deps, state, wave=wave)
+
+    category_messages = dict(soak.ENDURANCE_PROMPT_CATEGORIES)
+    assert len(messages) == spec.room_count * spec.human_turns_per_room == 40
+    assert set(state.endurance_prompt_categories) == set(category_messages)
+    assert sum(state.endurance_prompt_categories.values()) == 40
+    assert all(count > 0 for count in state.endurance_prompt_categories.values())
+    assert set(messages) == set(category_messages.values())
+    assert all("Read-only" in message and "do not edit files" in message for message in messages)
+    assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
+
+
+def test_room_post_replays_ambiguous_proxy_result_with_same_id() -> None:
+    requests: list[Mapping[str, Any]] = []
+    responses = iter(
+        (
+            soak.HttpJsonResponse(504, {"detail": {"code": "room_message_upstream_timeout"}}),
+            soak.HttpJsonResponse(201, {"activity_id": "activity-one"}),
+        )
+    )
+    sleeps: list[float] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        requests.append(dict(payload))
+        return next(responses)
+
+    response = soak._post_room_message_with_replay(
+        soak.SoakDependencies(http_json=http_json, sleep=sleeps.append),
+        room_id="conv-one",
+        message="one durable Human message",
+        client_request_id="stable-request",
+    )
+
+    assert response.status == 201
+    assert response.payload == {"activity_id": "activity-one"}
+    assert requests == [
+        {"message": "one durable Human message", "client_request_id": "stable-request"},
+        {"message": "one durable Human message", "client_request_id": "stable-request"},
+    ]
+    assert sleeps == [0.25]
+
+
+def test_room_post_does_not_replay_definitive_rejection() -> None:
+    requests: list[Mapping[str, Any]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        requests.append(dict(payload))
+        return soak.HttpJsonResponse(409, {"detail": {"code": "idempotency_conflict"}})
+
+    response = soak._post_room_message_with_replay(
+        soak.SoakDependencies(http_json=http_json),
+        room_id="conv-one",
+        message="conflicting message",
+        client_request_id="stable-request",
+    )
+
+    assert response.status == 409
+    assert len(requests) == 1
+
+
+def test_endurance_retries_each_exhausted_observation_once_through_fixed_proxy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "chat.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        create table room_activities(activity_id text primary key, correlation_id text);
+        create table room_observations(
+            conversation_id text, observation_id text, activity_id text, control_state text
+        );
+        insert into room_activities values('activity-one', 'correlation-one');
+        insert into room_observations
+        values('conv-one', 'observation-one', 'activity-one', 'exhausted');
+        """
+    )
+    connection.commit()
+    connection.close()
+    descriptor = {
+        "available": True,
+        "href": "/api/chat/operator/room-observations/observation-one/retry",
+        "expected_state": "exhausted",
+        "expected_attempt_count": 3,
+        "expected_control_seq": 1,
+    }
+    monkeypatch.setattr(
+        soak,
+        "_room_projection",
+        lambda *args, **kwargs: {
+            "participants": [
+                {
+                    "frontier": {
+                        "observation_id": "observation-one",
+                        "actions": {"retry": descriptor},
+                    }
+                }
+            ]
+        },
+    )
+    requests: list[tuple[str, Mapping[str, Any]]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, timeout_s
+        requests.append((url, payload))
+        return soak.HttpJsonResponse(200, {"status": "succeeded"})
+
+    state = soak._LiveState()
+    correlation = soak._Correlation("conv-one", "activity-one", 0.0)
+    deps = soak.SoakDependencies(http_json=http_json)
+    soak._retry_exhausted_endurance_observations(deps, state, database, [correlation])
+    soak._retry_exhausted_endurance_observations(deps, state, database, [correlation])
+
+    assert [url for url, _payload in requests] == [
+        f"{soak.FRONTEND_URL}/api/room-observations/observation-one/retry"
+    ]
+    assert requests[0][1]["expected_state"] == "exhausted"
+    assert state.endurance_retried_observations == {"observation-one"}
 
 
 def test_memory_recovery_uses_old_archival_anchor_across_two_phases(tmp_path: Path) -> None:
@@ -1523,7 +1955,14 @@ def test_runtime_provider_discovery_owns_only_runner_descendants(
     assert soak._runtime_provider_pids(tmp_path) == (150, 201, 202)
 
 
-def test_full_local_preflight_copies_proven_cache_and_runs_offline(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "profile_id",
+    [soak.GOAL_MEMORY_PROFILE_ID, soak.ENDURANCE_PROFILE_ID, soak.ENDURANCE_SHORT_PROFILE_ID],
+)
+def test_full_local_preflight_copies_proven_cache_and_runs_offline(
+    tmp_path: Path,
+    profile_id: str,
+) -> None:
     source = tmp_path / "proven-cache"
     blobs = source / "models--qdrant--bge-small-en-v1.5-onnx-q" / "blobs"
     snapshot = source / "models--qdrant--bge-small-en-v1.5-onnx-q" / "snapshots" / "revision"
@@ -1547,7 +1986,7 @@ def test_full_local_preflight_copies_proven_cache_and_runs_offline(tmp_path: Pat
     soak._prepare_full_local_memory_cache(
         soak.SoakConfig(
             repo_root=tmp_path,
-            profile_id=soak.GOAL_MEMORY_PROFILE_ID,
+            profile_id=profile_id,
             memoryos_executable=executable,
         ),
         soak.SoakDependencies(run=run),
@@ -1831,11 +2270,21 @@ def test_projection_cache_reset_fences_runner_before_unlink_and_uses_managed_rec
         assert runtime_lock_held[0] is False
         clock[0] += seconds
         boot[0] = "boot-after"
+        identity[42] = "runner-after"
 
     deps = soak.SoakDependencies(
         monotonic=lambda: clock[0],
         sleep=sleep,
-        runner_process_binding=lambda _root: soak.ProcessBinding(41, "runner-start"),
+        runner_process_binding=lambda _root: (
+            soak.ProcessBinding(41, "runner-start")
+            if boot[0] == "boot-before"
+            else soak.ProcessBinding(42, "runner-after")
+        ),
+        runner_runtime_binding=lambda _root: (
+            soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-start"), "boot-before")
+            if boot[0] == "boot-before"
+            else soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-after"), "boot-after")
+        ),
         process_start_identity=identity.get,
         runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
     )
@@ -1852,6 +2301,131 @@ def test_projection_cache_reset_fences_runner_before_unlink_and_uses_managed_rec
     assert not cache.exists()
     assert event.kind == "codex_projection_cache_delete"
     assert event.runner_count == event.mcp_count == 1
+
+
+def test_agent_stream_cache_reset_requires_owned_runner_stop_and_rotates_epoch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime-root"
+    cache = runtime / "runtime" / "room-agent-streams.sqlite3"
+    cache.parent.mkdir(parents=True)
+
+    def initialize(epoch: str) -> None:
+        connection = sqlite3.connect(cache)
+        connection.executescript(
+            "create table stream_meta(singleton integer primary key, schema_version text, "
+            "epoch text, next_seq integer);"
+        )
+        connection.execute(
+            "insert into stream_meta values(1, 'room_agent_stream_cache/v1', ?, 1)",
+            (epoch,),
+        )
+        connection.commit()
+        connection.close()
+
+    initialize("epoch-before")
+    identity = {41: "runner-start"}
+    clock = [0.0]
+    boot = ["boot-before"]
+
+    def status(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "state": "ready",
+            "services": [
+                {"service": "frontend", "ready": True},
+                {"service": "chat_api", "ready": True},
+                {
+                    "service": "room_runner",
+                    "ready": True,
+                    "pid": 41 if boot[0] == "boot-before" else 42,
+                    "boot_id": boot[0],
+                    "host": {"active_delivery_count": 0},
+                },
+                {"service": "room_mcp", "ready": True},
+            ],
+        }
+
+    monkeypatch.setattr(soak, "_workroom_status", status)
+    monkeypatch.setattr(soak, "_sample_runtime", lambda *args, **kwargs: None)
+    from xmuse import chat_api_runtime
+
+    @contextmanager
+    def runtime_lock(*args: Any, **kwargs: Any):
+        del args, kwargs
+        yield
+
+    monkeypatch.setattr(chat_api_runtime, "_locked_workroom_runtime_start", runtime_lock)
+    monkeypatch.setattr(
+        chat_api_runtime,
+        "_workroom_room_runtime_config",
+        lambda *args, **kwargs: type("RuntimeConfig", (), {"generation": "generation"})(),
+    )
+
+    def stop(*args: Any, **kwargs: Any) -> dict[str, str]:
+        del args, kwargs
+        identity.pop(41)
+        return {"state": "stopped"}
+
+    monkeypatch.setattr(chat_api_runtime, "_stop_workroom_room_runtime_locked", stop)
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+        boot[0] = "boot-after"
+        identity[42] = "runner-after"
+        if not cache.exists():
+            initialize("epoch-after")
+
+    deps = soak.SoakDependencies(
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+        runner_process_binding=lambda _root: (
+            soak.ProcessBinding(41, "runner-start")
+            if boot[0] == "boot-before"
+            else soak.ProcessBinding(42, "runner-after")
+        ),
+        runner_runtime_binding=lambda _root: (
+            soak.RunnerRuntimeBinding(soak.ProcessBinding(41, "runner-start"), "boot-before")
+            if boot[0] == "boot-before"
+            else soak.RunnerRuntimeBinding(soak.ProcessBinding(42, "runner-after"), "boot-after")
+        ),
+        process_start_identity=identity.get,
+        runtime_service_counts=lambda _root: {"room_runner": 1, "room_mcp": 1},
+    )
+    event = soak._reset_agent_stream_cache_and_wait_recovery(
+        soak.SoakConfig(repo_root=tmp_path, profile_id=soak.ENDURANCE_PROFILE_ID),
+        deps,
+        soak._LiveState(),
+        runtime,
+        {},
+        run_started_at=0.0,
+    )
+
+    assert soak._agent_stream_cache_epoch(runtime) == "epoch-after"
+    assert event.kind == "agent_stream_cache_delete"
+    assert event.reason_code == "agent_stream_cache_epoch_rotated"
+    assert event.active_delivery_count == 0
+    assert event.managed_reconcile is True
+
+
+def test_agent_stream_cache_delete_rejects_symlink_and_hardlink(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime-root"
+    cache_dir = runtime / "runtime"
+    cache_dir.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_text("cache", encoding="utf-8")
+    cache = cache_dir / "room-agent-streams.sqlite3"
+    cache.symlink_to(outside)
+    with pytest.raises(soak.SoakError, match="soak_agent_stream_cache_unsafe"):
+        soak._unlink_agent_stream_cache(runtime)
+    cache.unlink()
+    cache.write_text("cache", encoding="utf-8")
+    hardlink = tmp_path / "cache-hardlink"
+    hardlink.hardlink_to(cache)
+    with pytest.raises(soak.SoakError, match="soak_agent_stream_cache_unsafe"):
+        soak._unlink_agent_stream_cache(runtime)
+    assert cache.exists()
 
 
 def test_cleanup_incomplete_preserves_auto_runtime_root(
@@ -2044,6 +2618,8 @@ def test_profile_matrix_is_fixed_and_live_result_has_no_private_fields() -> None
         "live-short": (4, 2, 2, 2, 48, 0.0, False),
         "live-soak": (6, 2, 4, 4, 128, 3600.0, False),
         "memory-recovery": (2, 2, 2, 10, None, 0.0, True),
+        soak.ENDURANCE_PROFILE_ID: (8, 2, 5, 5, 192, 7200.0, True),
+        soak.ENDURANCE_SHORT_PROFILE_ID: (2, 2, 5, 5, 56, 0.0, True),
         soak.GOAL_MEMORY_PROFILE_ID: (4, 2, 4, 4, 128, 3600.0, True),
     }
     source = Path(soak.__file__).read_text(encoding="utf-8")
@@ -2492,6 +3068,19 @@ def test_goal_guards_are_optional_cli_outer_limits() -> None:
     )
     assert args.goal_guard_wall_s == 3600.0
     assert args.goal_guard_idle_s == 900.0
+    endurance = soak.build_parser().parse_args(
+        [
+            soak.ENDURANCE_PROFILE_ID,
+            "--confirm-provider-cost",
+            "--memoryos-executable",
+            "/tmp/memoryos",
+        ]
+    )
+    assert endurance.profile == soak.ENDURANCE_PROFILE_ID
+    assert endurance.confirm_provider_cost is True
+    assert soak.build_parser().parse_args([soak.ENDURANCE_SHORT_PROFILE_ID]).profile == (
+        soak.ENDURANCE_SHORT_PROFILE_ID
+    )
 
 
 def test_goal_pause_waits_for_paused_thread_to_become_idle(

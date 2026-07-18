@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -43,6 +43,9 @@ FRONTEND_URL = "http://127.0.0.1:3000"
 CHAT_API_BASE_URL = "http://127.0.0.1:8201/api/chat"
 LIVE_EVIDENCE_SCHEMA = "room_soak_live_evidence/v1"
 GOAL_MEMORY_PROFILE_ID = "live-goal-memory-soak"
+ENDURANCE_PROFILE_ID = "live-endurance"
+ENDURANCE_SHORT_PROFILE_ID = "live-endurance-short"
+ENDURANCE_PROFILE_IDS = frozenset({ENDURANCE_PROFILE_ID, ENDURANCE_SHORT_PROFILE_ID})
 BROWSER_INPUT_SCHEMA = "room_soak_browser_input/v1"
 BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v1"
 GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
@@ -99,6 +102,25 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         None,
         memory_recovery=True,
     ),
+    ENDURANCE_PROFILE_ID: LiveProfileSpec(
+        ENDURANCE_PROFILE_ID,
+        8,
+        2,
+        5,
+        5,
+        192,
+        minimum_duration_s=7200.0,
+        memory_recovery=True,
+    ),
+    ENDURANCE_SHORT_PROFILE_ID: LiveProfileSpec(
+        ENDURANCE_SHORT_PROFILE_ID,
+        2,
+        2,
+        5,
+        5,
+        56,
+        memory_recovery=True,
+    ),
     GOAL_MEMORY_PROFILE_ID: LiveProfileSpec(
         GOAL_MEMORY_PROFILE_ID,
         4,
@@ -110,6 +132,48 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         memory_recovery=True,
     ),
 }
+
+
+ENDURANCE_OUTCOME_REQUIREMENT = (
+    " Submit exactly one concise durable Room outcome through the allowed Room outcome tool; "
+    "do not end with provider text alone."
+)
+ENDURANCE_PROMPT_CATEGORIES: tuple[tuple[str, str], ...] = (
+    (
+        "boundary_inventory",
+        "Read-only architecture review: identify one runtime boundary and report only "
+        "evidence-backed observations; do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+    (
+        "package_direction",
+        "Read-only architecture review: inspect runtime boundaries and package import "
+        "direction, cite durable evidence, and do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+    (
+        "authority_ownership",
+        "Read-only architecture review: inspect boundaries, package direction, and durable "
+        "authority ownership; distinguish infrastructure from Agent decisions and do not "
+        "edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+    (
+        "causality_recovery",
+        "Read-only architecture review: inspect boundaries, direction, authority, causality, "
+        "idempotency, and recovery behavior using only re-provable Room sources; do not "
+        "edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+    (
+        "execution_safety",
+        "Read-only architecture review: inspect boundaries, direction, authority, causality, "
+        "recovery, and exact-patch execution safety; reject claims lacking durable evidence and "
+        "do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+    (
+        "adversarial_integration",
+        "Read-only adversarial architecture review: jointly inspect boundaries, import direction, "
+        "authority, causality, idempotency, recovery, memory source proof, and execution gates; "
+        "surface contradictions and do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+)
 
 
 class SoakError(RuntimeError):
@@ -167,6 +231,12 @@ class ProcessSample:
 class ProcessBinding:
     pid: int
     start_identity: str
+
+
+@dataclass(frozen=True)
+class RunnerRuntimeBinding:
+    process: ProcessBinding
+    boot_id: str
 
 
 @dataclass(frozen=True)
@@ -658,12 +728,14 @@ def _memoryos_process_binding(runtime_root: Path) -> ProcessBinding | None:
 
 
 def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
+    private = _runner_runtime_binding(runtime_root)
+    if private is not None:
+        return private.process
     from xmuse_core.chat.room_runtime import read_process_start_identity
 
+    candidate = runtime_root / "workroom_room_runner.pid.json"
     try:
-        payload = json.loads(
-            (runtime_root / "workroom_room_runner.pid.json").read_text(encoding="utf-8")
-        )
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, Mapping):
@@ -680,6 +752,31 @@ def _runner_process_binding(runtime_root: Path) -> ProcessBinding | None:
     ):
         return None
     return ProcessBinding(pid, expected)
+
+
+def _runner_runtime_binding(runtime_root: Path) -> RunnerRuntimeBinding | None:
+    from xmuse_core.chat.room_runtime import read_process_start_identity
+
+    try:
+        payload = json.loads((runtime_root / "room-runner-status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    pid = payload.get("pid")
+    expected = payload.get("start_identity")
+    boot_id = payload.get("boot_id")
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or not isinstance(expected, str)
+        or not expected
+        or not _safe_id(boot_id)
+        or read_process_start_identity(pid) != expected
+    ):
+        return None
+    return RunnerRuntimeBinding(ProcessBinding(pid, expected), str(boot_id))
 
 
 def _default_get_profile(profile_id: str) -> Any:
@@ -758,6 +855,7 @@ class SoakDependencies:
     process_start_identity: Callable[[int], str | None] = _process_start_identity
     memoryos_process_binding: Callable[[Path], ProcessBinding | None] = _memoryos_process_binding
     runner_process_binding: Callable[[Path], ProcessBinding | None] = _runner_process_binding
+    runner_runtime_binding: Callable[[Path], RunnerRuntimeBinding | None] = _runner_runtime_binding
     get_profile: Callable[[str], Any] = _default_get_profile
     build_result: Callable[..., dict[str, Any]] = _default_build_result
     validate_result: Callable[[Mapping[str, Any]], dict[str, Any]] = _default_validate_result
@@ -841,6 +939,8 @@ class _LiveState:
     verified_memory_evidence: dict[str, int | bool] | None = None
     provider_recovery_proof: _ProviderRecoveryProof | None = None
     goal_memory_evidence: dict[str, Any] = field(default_factory=dict)
+    endurance_prompt_categories: Counter[str] = field(default_factory=Counter)
+    endurance_retried_observations: set[str] = field(default_factory=set)
     browser: dict[str, int] = field(
         default_factory=lambda: {"refreshes": 0, "console_errors": 0, "page_errors": 0}
     )
@@ -2108,7 +2208,7 @@ def _prepare_full_local_memory_cache(
     deterministic preflight blocker rather than a misleading degraded run.
     """
 
-    if config.profile_id != GOAL_MEMORY_PROFILE_ID:
+    if config.profile_id not in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         return
     executable = config.memoryos_executable
     if executable is None:
@@ -2291,6 +2391,26 @@ def _required_runtime_ready(
         return False
 
 
+def _wait_for_runtime_idle(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    deadline = deps.monotonic() + min(120.0, config.settle_timeout_s)
+    while deps.monotonic() < deadline:
+        status = _workroom_status(config, deps, runtime_root, env)
+        owned_counts = deps.runtime_service_counts(runtime_root)
+        if not _required_runtime_ready(status, owned_counts):
+            raise SoakError("soak_runtime_idle_readiness_lost")
+        if _active_deliveries(status) == 0:
+            return status
+        _sample_runtime(config, deps, state, runtime_root, env, status=status)
+        deps.sleep(0.25)
+    raise SoakError("soak_runtime_idle_timeout")
+
+
 def _wait_ready(
     config: SoakConfig,
     deps: SoakDependencies,
@@ -2363,11 +2483,11 @@ def _preflight(
     result_path: Path,
 ) -> RepositorySnapshot:
     if (
-        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID}
+        config.profile_id in {"live-soak", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}
         and not config.confirm_provider_cost
     ):
         raise SoakError("soak_provider_cost_confirmation_required", blocked=True)
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         executable = config.memoryos_executable
         if (
             executable is None
@@ -2375,7 +2495,7 @@ def _preflight(
             or not os.access(executable.expanduser().resolve(), os.X_OK)
         ):
             raise SoakError("soak_memoryos_executable_required", blocked=True)
-        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
             assert executable is not None
             try:
                 executable_stat = executable.expanduser().lstat()
@@ -2403,7 +2523,7 @@ def _preflight(
             ("127.0.0.1", 3000, "frontend"),
             ("127.0.0.1", 8201, "chat_api"),
         ]
-        if config.profile_id == GOAL_MEMORY_PROFILE_ID:
+        if config.profile_id in {GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
             ports.extend(
                 [
                     ("127.0.0.1", 8100, "room_mcp"),
@@ -2460,7 +2580,7 @@ def _start_workroom(
         "--readiness-timeout-s",
         str(config.readiness_timeout_s),
     ]
-    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID}:
+    if config.profile_id in {"memory-recovery", GOAL_MEMORY_PROFILE_ID, *ENDURANCE_PROFILE_IDS}:
         assert config.memoryos_executable is not None
         command.extend(("--memory", "--memoryos-executable", str(config.memoryos_executable)))
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -2541,45 +2661,49 @@ def _post_wave(
                 active_posts -= 1
             raise SoakError("soak_post_concurrency_barrier_failed") from exc
         started = deps.monotonic()
-        message = (
-            (
-                "Memory recovery phase 1 anchor XMUSE_MEMORY_RECOVERY_ANCHOR_V1: "
-                "preserve the source-backed durable fact cobalt-orchid-17 for this "
-                f"Room (sample {index + 1}); submit one concise outcome."
+        client_request_id = f"soak_post_{uuid.uuid4().hex}"
+        category: str | None = None
+        if spec.profile_id in ENDURANCE_PROFILE_IDS:
+            category, message = ENDURANCE_PROMPT_CATEGORIES[
+                (wave * spec.room_count + index) % len(ENDURANCE_PROMPT_CATEGORIES)
+            ]
+        else:
+            message = (
+                (
+                    "Memory recovery phase 1 anchor XMUSE_MEMORY_RECOVERY_ANCHOR_V1: "
+                    "preserve the source-backed durable fact cobalt-orchid-17 for this "
+                    f"Room (sample {index + 1}); submit one concise outcome."
+                )
+                if spec.profile_id == "memory-recovery" and wave == 0
+                else (
+                    "Memory recovery phase 2: use source-backed archival evidence to recall "
+                    "XMUSE_MEMORY_RECOVERY_ANCHOR_V1 and cobalt-orchid-17 for this Room; "
+                    "submit one concise outcome."
+                )
+                if spec.profile_id == "memory-recovery"
+                else (
+                    "Goal Memory soak wave 1: preserve the source-backed fact "
+                    "G9_COBALT_ORCHID_17 for this Room, independently inspect the runtime "
+                    "boundary, and submit one concise outcome without editing files."
+                )
+                if spec.profile_id == GOAL_MEMORY_PROFILE_ID and wave == 0
+                else (
+                    f"Goal Memory soak wave {wave + 1}: use only re-provable Room or archival "
+                    "sources when relevant, verify runtime recovery state, and submit one "
+                    "concise outcome without editing files."
+                )
+                if spec.profile_id == GOAL_MEMORY_PROFILE_ID
+                else (
+                    f"Soak wave {wave + 1}, item {index + 1}: independently inspect the "
+                    "durable Room state and submit one concise outcome; do not edit files."
+                )
             )
-            if spec.profile_id == "memory-recovery" and wave == 0
-            else (
-                "Memory recovery phase 2: use source-backed archival evidence to recall "
-                "XMUSE_MEMORY_RECOVERY_ANCHOR_V1 and cobalt-orchid-17 for this Room; "
-                "submit one concise outcome."
-            )
-            if spec.profile_id == "memory-recovery"
-            else (
-                "Goal Memory soak wave 1: preserve the source-backed fact "
-                "G9_COBALT_ORCHID_17 for this Room, independently inspect the runtime "
-                "boundary, and submit one concise outcome without editing files."
-            )
-            if spec.profile_id == GOAL_MEMORY_PROFILE_ID and wave == 0
-            else (
-                f"Goal Memory soak wave {wave + 1}: use only re-provable Room or archival "
-                "sources when relevant, verify runtime recovery state, and submit one "
-                "concise outcome without editing files."
-            )
-            if spec.profile_id == GOAL_MEMORY_PROFILE_ID
-            else (
-                f"Soak wave {wave + 1}, item {index + 1}: independently inspect the "
-                "durable Room state and submit one concise outcome; do not edit files."
-            )
-        )
         try:
-            response = deps.http_json(
-                "POST",
-                f"{FRONTEND_URL}/api/rooms/{room_id}/messages",
-                {
-                    "message": message,
-                    "client_request_id": f"soak_post_{uuid.uuid4().hex}",
-                },
-                timeout_s=30.0,
+            response = _post_room_message_with_replay(
+                deps,
+                room_id=room_id,
+                message=message,
+                client_request_id=client_request_id,
             )
         finally:
             with meter_lock:
@@ -2587,6 +2711,9 @@ def _post_wave(
         activity_id = response.payload.get("activity_id") if response.payload else None
         if response.status != 201 or not _safe_id(activity_id):
             raise SoakError("soak_room_post_failed")
+        if category is not None:
+            with meter_lock:
+                state.endurance_prompt_categories[category] += 1
         return _Correlation(room_id, str(activity_id), started)
 
     correlations: list[_Correlation] = []
@@ -2598,6 +2725,45 @@ def _post_wave(
     return correlations
 
 
+def _post_room_message_with_replay(
+    deps: SoakDependencies,
+    *,
+    room_id: str,
+    message: str,
+    client_request_id: str,
+) -> HttpJsonResponse:
+    """Resolve one ambiguous proxy failure through the durable idempotency key.
+
+    The Room write may commit before the fixed Next proxy returns its receipt.  A
+    bounded replay with the *same* request ID recovers that receipt without
+    creating another Human activity.  Definitive client/guard failures are not
+    replayed, and a second ambiguous failure remains a hard soak failure.
+    """
+    payload = {"message": message, "client_request_id": client_request_id}
+    ambiguous_statuses = {499, 502, 503, 504}
+    for replay in range(2):
+        try:
+            response = deps.http_json(
+                "POST",
+                f"{FRONTEND_URL}/api/rooms/{room_id}/messages",
+                payload,
+                timeout_s=30.0,
+            )
+        except SoakError as exc:
+            if replay == 0 and exc.code == "soak_http_unavailable":
+                deps.sleep(0.25)
+                continue
+            raise
+        activity_id = response.payload.get("activity_id") if response.payload else None
+        if response.status == 201 and _safe_id(activity_id):
+            return response
+        if replay == 0 and response.status in ambiguous_statuses:
+            deps.sleep(0.25)
+            continue
+        return response
+    raise AssertionError("bounded Room message replay did not terminate")
+
+
 def _safe_id(value: object) -> bool:
     return isinstance(value, str) and 1 <= len(value.strip()) <= 256
 
@@ -2607,22 +2773,28 @@ def _pause_runner(
     deps: SoakDependencies,
     runtime_root: Path,
     env: Mapping[str, str],
-) -> int:
+) -> ProcessBinding:
     status = _workroom_status(config, deps, runtime_root, env)
     runner = _service(status, "room_runner")
     binding = deps.runner_process_binding(runtime_root)
-    if binding is None or runner.get("pid") != binding.pid or runner.get("ready") is not True:
+    if (
+        binding is None
+        or runner.get("ready") is not True
+        or deps.process_start_identity(binding.pid) != binding.start_identity
+    ):
         raise SoakError("soak_runner_pause_identity_unavailable")
     try:
         deps.signal_pid(binding.pid, signal.SIGSTOP)
     except OSError as exc:
         raise SoakError("soak_runner_pause_failed") from exc
-    return binding.pid
+    return binding
 
 
-def _resume_runner(deps: SoakDependencies, pid: int) -> None:
+def _resume_runner(deps: SoakDependencies, binding: ProcessBinding) -> None:
+    if deps.process_start_identity(binding.pid) != binding.start_identity:
+        raise SoakError("soak_runner_resume_identity_lost")
     try:
-        deps.signal_pid(pid, signal.SIGCONT)
+        deps.signal_pid(binding.pid, signal.SIGCONT)
     except OSError as exc:
         raise SoakError("soak_runner_resume_failed") from exc
 
@@ -2841,6 +3013,68 @@ def _wait_until(
     raise SoakError(code)
 
 
+def _retry_exhausted_endurance_observations(
+    deps: SoakDependencies,
+    state: _LiveState,
+    database: Path,
+    correlations: Sequence[_Correlation],
+) -> None:
+    correlation_ids = set(_correlation_ids(database, correlations).values())
+    if not correlation_ids:
+        return
+    placeholders = ",".join("?" for _ in correlation_ids)
+    with _connect_readonly(database) as conn:
+        rows = conn.execute(
+            f"""select o.conversation_id, o.observation_id
+                  from room_observations o
+                  join room_activities a on a.activity_id = o.activity_id
+                 where a.correlation_id in ({placeholders})
+                   and o.control_state = 'exhausted'""",
+            tuple(sorted(correlation_ids)),
+        ).fetchall()
+    by_room: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        observation_id = str(row["observation_id"])
+        if observation_id not in state.endurance_retried_observations:
+            by_room[str(row["conversation_id"])].add(observation_id)
+    for conversation_id, expected_observations in by_room.items():
+        projection = _room_projection(deps, conversation_id)
+        for participant in _mapping_records(projection.get("participants")):
+            frontier = participant.get("frontier")
+            if not isinstance(frontier, Mapping):
+                continue
+            raw_observation_id = frontier.get("observation_id")
+            actions = frontier.get("actions")
+            retry = actions.get("retry") if isinstance(actions, Mapping) else None
+            if (
+                not isinstance(raw_observation_id, str)
+                or raw_observation_id not in expected_observations
+                or not isinstance(retry, Mapping)
+                or retry.get("available") is not True
+                or retry.get("href")
+                != f"/api/chat/operator/room-observations/{raw_observation_id}/retry"
+            ):
+                continue
+            observation_id = raw_observation_id
+            payload = {
+                "client_action_id": "soak_retry_"
+                + hashlib.sha256(observation_id.encode()).hexdigest()[:24],
+                "expected_state": retry.get("expected_state"),
+                "expected_attempt_count": retry.get("expected_attempt_count"),
+                "expected_control_seq": retry.get("expected_control_seq"),
+            }
+            response = deps.http_json(
+                "POST",
+                f"{FRONTEND_URL}/api/room-observations/{observation_id}/retry",
+                payload,
+                timeout_s=30.0,
+            )
+            if response.status in {200, 201, 202}:
+                state.endurance_retried_observations.add(observation_id)
+            elif response.status != 409:
+                raise SoakError("soak_endurance_retry_failed")
+
+
 def _wait_wave_settled(
     config: SoakConfig,
     deps: SoakDependencies,
@@ -2854,6 +3088,8 @@ def _wait_wave_settled(
     def settled() -> bool:
         claimed = _claimed_rooms(database, correlations)
         state.rooms_first_claimed.update(claimed)
+        if config.profile_id in ENDURANCE_PROFILE_IDS:
+            _retry_exhausted_endurance_observations(deps, state, database, correlations)
         complete, attempts = _correlations_settled(database, correlations)
         if (
             len(state.rooms_first_claimed) == len(state.room_ids)
@@ -3063,11 +3299,11 @@ def _kill_runner_and_wait_recovery(
     run_started_at: float,
 ) -> _PendingChaosEvent:
     status = _wait_for_active_deliveries(config, deps, state, runtime_root, env, 2)
-    runner = _service(status, "room_runner")
-    binding = deps.runner_process_binding(runtime_root)
-    boot = runner.get("boot_id")
-    if binding is None or runner.get("pid") != binding.pid or not _safe_id(boot):
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None:
         raise SoakError("soak_runner_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
     if deps.process_start_identity(binding.pid) != binding.start_identity:
         raise SoakError("soak_runner_fault_identity_unavailable")
     started = deps.monotonic()
@@ -3081,9 +3317,14 @@ def _kill_runner_and_wait_recovery(
     while deps.monotonic() < deadline:
         try:
             candidate = _workroom_status(config, deps, runtime_root, env)
-            current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            if _required_runtime_ready(candidate, owned_counts) and current.get("boot_id") != boot:
+            current_private = deps.runner_runtime_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
+            ):
                 recovered = candidate
                 recovered_counts = owned_counts
                 break
@@ -3184,30 +3425,17 @@ def _reset_projection_cache_and_wait_recovery(
         _workroom_room_runtime_config,
     )
 
-    status = _workroom_status(config, deps, runtime_root, env)
-    runner = _service(status, "room_runner")
-    binding = deps.runner_process_binding(runtime_root)
-    boot = runner.get("boot_id")
-    if (
-        binding is None
-        or runner.get("pid") != binding.pid
-        or not _safe_id(boot)
-        or _active_deliveries(status) != 0
-        or deps.process_start_identity(binding.pid) != binding.start_identity
-    ):
+    status = _wait_for_runtime_idle(config, deps, state, runtime_root, env)
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None or _active_deliveries(status) != 0:
         raise SoakError("soak_projection_cache_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
     started = deps.monotonic()
     with _locked_workroom_runtime_start(runtime_root):
         current_status = _workroom_status(config, deps, runtime_root, env)
-        current_runner = _service(current_status, "room_runner")
-        current_binding = deps.runner_process_binding(runtime_root)
-        if (
-            current_binding != binding
-            or current_runner.get("boot_id") != boot
-            or current_runner.get("pid") != binding.pid
-            or _active_deliveries(current_status) != 0
-            or deps.process_start_identity(binding.pid) != binding.start_identity
-        ):
+        current_private = deps.runner_runtime_binding(runtime_root)
+        if current_private != private or _active_deliveries(current_status) != 0:
             raise SoakError("soak_projection_cache_fault_identity_lost")
         runtime_config = _workroom_room_runtime_config(
             runtime_root,
@@ -3230,9 +3458,14 @@ def _reset_projection_cache_and_wait_recovery(
     while deps.monotonic() < deadline:
         try:
             candidate = _workroom_status(config, deps, runtime_root, env)
-            current = _service(candidate, "room_runner")
             owned_counts = deps.runtime_service_counts(runtime_root)
-            if _required_runtime_ready(candidate, owned_counts) and current.get("boot_id") != boot:
+            current_private = deps.runner_runtime_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
+            ):
                 recovered = candidate
                 recovered_counts = owned_counts
                 break
@@ -3245,6 +3478,160 @@ def _reset_projection_cache_and_wait_recovery(
     return _PendingChaosEvent(
         kind="codex_projection_cache_delete",
         reason_code="codex_projection_cache_rebuilt",
+        started_at=started,
+        run_started_at=run_started_at,
+        recovery_ms=round((deps.monotonic() - started) * 1000),
+        status=recovered,
+        active_delivery_count=0,
+        managed_reconcile=True,
+        runner_count=int(recovered_counts["room_runner"]),
+        mcp_count=int(recovered_counts["room_mcp"]),
+    )
+
+
+def _safe_agent_stream_cache_leaf(runtime_root: Path, candidate: Path) -> None:
+    expected = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    if candidate != expected:
+        raise SoakError("soak_agent_stream_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        parent_stat = candidate.parent.lstat()
+        leaf_stat = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(parent_stat.st_mode)
+        or not stat.S_ISDIR(parent_stat.st_mode)
+        or candidate.parent.resolve() != expected.parent
+        or stat.S_ISLNK(leaf_stat.st_mode)
+        or not stat.S_ISREG(leaf_stat.st_mode)
+        or leaf_stat.st_nlink != 1
+        or leaf_stat.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_agent_stream_cache_unsafe")
+
+
+def _safe_agent_stream_cache_sidecar(runtime_root: Path, candidate: Path) -> None:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    if candidate not in {
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    }:
+        raise SoakError("soak_agent_stream_cache_path_invalid")
+    try:
+        root_stat = runtime_root.stat()
+        item = candidate.lstat()
+    except OSError as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if (
+        stat.S_ISLNK(item.st_mode)
+        or not stat.S_ISREG(item.st_mode)
+        or item.st_nlink != 1
+        or item.st_uid != root_stat.st_uid
+    ):
+        raise SoakError("soak_agent_stream_cache_unsafe")
+
+
+def _agent_stream_cache_epoch(runtime_root: Path) -> str:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    _safe_agent_stream_cache_leaf(runtime_root, cache)
+    try:
+        with _connect_readonly(cache) as conn:
+            row = conn.execute(
+                "select schema_version, epoch from stream_meta where singleton = 1"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise SoakError("soak_agent_stream_cache_unavailable") from exc
+    if row is None or row["schema_version"] != "room_agent_stream_cache/v1":
+        raise SoakError("soak_agent_stream_cache_unavailable")
+    epoch = row["epoch"]
+    if not _safe_id(epoch):
+        raise SoakError("soak_agent_stream_cache_epoch_invalid")
+    return str(epoch)
+
+
+def _unlink_agent_stream_cache(runtime_root: Path) -> None:
+    cache = runtime_root / "runtime" / "room-agent-streams.sqlite3"
+    _safe_agent_stream_cache_leaf(runtime_root, cache)
+    for candidate in (
+        cache,
+        cache.with_name(f"{cache.name}-wal"),
+        cache.with_name(f"{cache.name}-shm"),
+    ):
+        if candidate != cache and not candidate.exists():
+            continue
+        if candidate == cache:
+            _safe_agent_stream_cache_leaf(runtime_root, candidate)
+        else:
+            _safe_agent_stream_cache_sidecar(runtime_root, candidate)
+        candidate.unlink()
+
+
+def _reset_agent_stream_cache_and_wait_recovery(
+    config: SoakConfig,
+    deps: SoakDependencies,
+    state: _LiveState,
+    runtime_root: Path,
+    env: Mapping[str, str],
+    *,
+    run_started_at: float,
+) -> _PendingChaosEvent:
+    from xmuse.chat_api_runtime import (
+        _locked_workroom_runtime_start,
+        _stop_workroom_room_runtime_locked,
+        _workroom_room_runtime_config,
+    )
+
+    status = _wait_for_runtime_idle(config, deps, state, runtime_root, env)
+    private = deps.runner_runtime_binding(runtime_root)
+    if private is None or _active_deliveries(status) != 0:
+        raise SoakError("soak_agent_stream_cache_fault_identity_unavailable")
+    binding = private.process
+    boot = private.boot_id
+    epoch_before = _agent_stream_cache_epoch(runtime_root)
+    started = deps.monotonic()
+    with _locked_workroom_runtime_start(runtime_root):
+        current_status = _workroom_status(config, deps, runtime_root, env)
+        current_private = deps.runner_runtime_binding(runtime_root)
+        if current_private != private or _active_deliveries(current_status) != 0:
+            raise SoakError("soak_agent_stream_cache_fault_identity_lost")
+        runtime_config = _workroom_room_runtime_config(runtime_root, config.repo_root)
+        stopped = _stop_workroom_room_runtime_locked(
+            runtime_root,
+            generation=runtime_config.generation,
+        )
+        if stopped.get("state") != "stopped":
+            raise SoakError("soak_agent_stream_cache_runner_stop_failed")
+        if deps.process_start_identity(binding.pid) == binding.start_identity:
+            raise SoakError("soak_agent_stream_cache_runner_still_live")
+        _unlink_agent_stream_cache(runtime_root)
+    deadline = started + MAX_FAULT_RECOVERY_MS / 1000
+    recovered: dict[str, Any] | None = None
+    recovered_counts: Mapping[str, int] | None = None
+    while deps.monotonic() < deadline:
+        try:
+            candidate = _workroom_status(config, deps, runtime_root, env)
+            owned_counts = deps.runtime_service_counts(runtime_root)
+            current_private = deps.runner_runtime_binding(runtime_root)
+            if (
+                _required_runtime_ready(candidate, owned_counts)
+                and current_private is not None
+                and current_private.process != binding
+                and current_private.boot_id != boot
+                and _agent_stream_cache_epoch(runtime_root) != epoch_before
+            ):
+                recovered = candidate
+                recovered_counts = owned_counts
+                break
+        except SoakError:
+            pass
+        _sample_runtime(config, deps, state, runtime_root, env)
+        deps.sleep(0.25)
+    if recovered is None or recovered_counts is None:
+        raise SoakError("soak_agent_stream_cache_recovery_timeout")
+    return _PendingChaosEvent(
+        kind="agent_stream_cache_delete",
+        reason_code="agent_stream_cache_epoch_rotated",
         started_at=started,
         run_started_at=run_started_at,
         recovery_ms=round((deps.monotonic() - started) * 1000),
@@ -4243,10 +4630,17 @@ def _run_live(
     state.run_started_monotonic = started
     _start_workroom(config, deps, state, runtime_root, env)
     _create_rooms(spec, deps, state)
-    offsets = [
-        (spec.minimum_duration_s * index / (spec.wave_count - 1)) if spec.wave_count > 1 else 0.0
-        for index in range(spec.wave_count)
-    ]
+    if spec.profile_id == ENDURANCE_PROFILE_ID:
+        # Fault waves are fixed at 0/24/48/72/96 minutes.  The system then
+        # remains under observation until the 120-minute duration boundary.
+        offsets = [index * 24.0 * 60.0 for index in range(spec.wave_count)]
+    else:
+        offsets = [
+            (spec.minimum_duration_s * index / (spec.wave_count - 1))
+            if spec.wave_count > 1
+            else 0.0
+            for index in range(spec.wave_count)
+        ]
     memory_event: _PendingChaosEvent | None = None
     for wave, offset in enumerate(offsets):
         _wait_for_wave_offset(
@@ -4258,6 +4652,15 @@ def _run_live(
             run_started_at=started,
             offset_s=offset,
         )
+        if spec.profile_id in ENDURANCE_PROFILE_IDS and wave == 2:
+            state.memory_fault_proof = _begin_memoryos_fault(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
         if wave == 0:
             paused_runner = _pause_runner(config, deps, runtime_root, env)
             try:
@@ -4268,7 +4671,9 @@ def _run_live(
                 )
             finally:
                 _resume_runner(deps, paused_runner)
-        elif wave == 1 and spec.memory_recovery:
+        elif (
+            wave == 1 and spec.memory_recovery and spec.profile_id not in ENDURANCE_PROFILE_IDS
+        ) or (wave == 2 and spec.profile_id in ENDURANCE_PROFILE_IDS):
             proof = state.memory_fault_proof
             if proof is None:
                 raise SoakError("soak_memory_recovery_proof_incomplete")
@@ -4294,7 +4699,7 @@ def _run_live(
         else:
             correlations = _post_wave(spec, deps, state, wave=wave)
         wave_event: _PendingChaosEvent | None = None
-        if wave == 0 and not spec.memory_recovery:
+        if wave == 0 and (not spec.memory_recovery or spec.profile_id in ENDURANCE_PROFILE_IDS):
             wave_event = _kill_one_provider(
                 config,
                 deps,
@@ -4303,7 +4708,7 @@ def _run_live(
                 env,
                 run_started_at=started,
             )
-        if wave == 1 and not spec.memory_recovery:
+        if wave == 1 and (not spec.memory_recovery or spec.profile_id in ENDURANCE_PROFILE_IDS):
             wave_event = _kill_runner_and_wait_recovery(
                 config,
                 deps,
@@ -4313,13 +4718,22 @@ def _run_live(
                 run_started_at=started,
             )
         _wait_wave_settled(config, deps, state, runtime_root, env, correlations)
+        if wave == 3 and spec.profile_id in ENDURANCE_PROFILE_IDS:
+            wave_event = _reset_agent_stream_cache_and_wait_recovery(
+                config,
+                deps,
+                state,
+                runtime_root,
+                env,
+                run_started_at=started,
+            )
         if wave_event is not None:
             _record_chaos(
                 state,
                 event=wave_event,
                 recovery_wave_settled=True,
             )
-        if wave == 1 and memory_event is not None:
+        if wave in {1, 2} and memory_event is not None:
             _record_chaos(
                 state,
                 event=memory_event,
@@ -4337,7 +4751,7 @@ def _run_live(
             if not state.process_samples:
                 raise SoakError("soak_resource_warmup_marker_missing")
             state.warmup_cutoff_ms = state.process_samples[-1].offset_ms
-            if spec.memory_recovery:
+            if spec.memory_recovery and spec.profile_id not in ENDURANCE_PROFILE_IDS:
                 state.memory_fault_proof = _begin_memoryos_fault(
                     config,
                     deps,
@@ -4358,6 +4772,15 @@ def _run_live(
             run_started_at=started,
             offset_s=spec.minimum_duration_s,
         )
+    if spec.profile_id in ENDURANCE_PROFILE_IDS:
+        expected_categories = {category for category, _message in ENDURANCE_PROMPT_CATEGORIES}
+        if (
+            set(state.endurance_prompt_categories) != expected_categories
+            or sum(state.endurance_prompt_categories.values())
+            != spec.room_count * spec.human_turns_per_room
+            or any(count <= 0 for count in state.endurance_prompt_categories.values())
+        ):
+            raise SoakError("soak_endurance_prompt_coverage_incomplete")
     if spec.memory_recovery:
         _wait_for_memory_evidence(config, deps, state, runtime_root, env)
     _verify_browser(config, deps, state, artifact_dir, env)
@@ -4921,6 +5344,8 @@ def build_parser() -> argparse.ArgumentParser:
             "ci-sim",
             "live-short",
             "live-soak",
+            ENDURANCE_PROFILE_ID,
+            ENDURANCE_SHORT_PROFILE_ID,
             "memory-recovery",
             GOAL_MEMORY_PROFILE_ID,
         ),
