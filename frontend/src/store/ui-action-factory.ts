@@ -94,6 +94,16 @@ export function createUiDomainActions({
           : [roomId, ...state.pinnedRoomIds].slice(0, 50)
       }));
       persistUiState(get());
+    },
+
+    completeOnboarding() {
+      set({ onboardingCompleted: true, onboardingDismissed: false });
+      persistUiState(get());
+    },
+
+    dismissOnboarding() {
+      set({ onboardingDismissed: true });
+      persistUiState(get());
     }
   };
 }

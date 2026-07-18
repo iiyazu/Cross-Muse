@@ -55,6 +55,7 @@ import {
 } from "./room-header";
 import { RoomMessage, RoomPendingBubble } from "./room-message";
 import { RoomAgentPreview } from "./room-agent-preview";
+import { RoomOnboarding } from "./room-onboarding";
 import { RoomInspector as RoomInspectorShell } from "./room-inspector";
 import { WorkspaceSidebar } from "./room-workspace-sidebar";
 import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
@@ -1250,7 +1251,10 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           ) : null}
           <WorkspaceSidebar
             creating={creatingRoom}
-            onCreatedRoom={onCreatedRoom}
+            onCreatedRoom={(roomId) => {
+              useRoomStore.getState().completeOnboarding();
+              onCreatedRoom(roomId);
+            }}
             onCreatingChange={setCreatingRoom}
             onNavigateRoom={onNavigateRoom}
             onRequestCloseMobile={() => setMobileSidebarOpen(false)}
@@ -1344,10 +1348,14 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             <button className="room-primary-button" onClick={() => void store.loadRooms()} type="button">重新连接</button>
           </section>
         ) : (
-          <section className="room-fatal-empty">
-            <strong>{store.roomsLoading && !store.roomsLoaded ? "正在连接 xmuse…" : "还没有房间"}</strong>
-            <span>创建房间后，活跃 Agent 会共同观察其中的活动。</span>
-          </section>
+          store.roomsLoading && !store.roomsLoaded ? (
+            <section className="room-fatal-empty">
+              <strong>正在连接 xmuse…</strong>
+              <span>正在读取本地 Workroom 能力。</span>
+            </section>
+          ) : (
+            <RoomOnboarding onCreateRoom={() => setCreatingRoom(true)} />
+          )
         )}
       </main>
 

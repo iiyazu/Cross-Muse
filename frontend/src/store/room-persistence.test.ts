@@ -23,7 +23,10 @@ describe("room UI persistence", () => {
       inspectorOpen: false,
       dockTab: "room",
       pinnedRoomIds: [],
-      selectedParticipants: {}
+      selectedParticipants: {},
+      onboardingVersion: 1,
+      onboardingCompleted: false,
+      onboardingDismissed: false
     });
     localStorage.setItem(LOCAL_STATE_KEY, "not-json");
     expect(readRoomUiState(localStorage).readCursors).toEqual({});
@@ -44,7 +47,10 @@ describe("room UI persistence", () => {
       inspectorOpen: true,
       dockTab: "room",
       pinnedRoomIds: ["room-54"],
-      selectedParticipants: { "room-54": "participant-1" }
+      selectedParticipants: { "room-54": "participant-1" },
+      onboardingVersion: 1,
+      onboardingCompleted: false,
+      onboardingDismissed: false
     });
 
     const raw = JSON.parse(localStorage.getItem(LOCAL_STATE_KEY) ?? "{}");
