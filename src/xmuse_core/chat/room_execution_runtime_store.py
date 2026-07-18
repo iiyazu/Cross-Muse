@@ -12,7 +12,7 @@ from xmuse_core.chat.room_execution_contracts import (
     ExecutionWorkspaceGuard,
 )
 from xmuse_core.chat.room_execution_profiles import ExecutionGatePlan
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_store import _ExecutionLedger
 
 
 class ExecutionRuntimeStore(Protocol):
@@ -42,7 +42,7 @@ class RoomExecutionRuntimeStore:
     """Expose consensus discovery and controller recovery to the long-lived runtime."""
 
     def __init__(self, db_path: Path | str) -> None:
-        self._ledger = RoomExecutionStore(db_path)
+        self._ledger = _ExecutionLedger(db_path)
 
     def get_candidate(
         self, candidate_id: str, *, include_patch: bool = False
