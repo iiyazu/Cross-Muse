@@ -1016,7 +1016,7 @@ describe("Room store", () => {
     useRoomStore.getState().markRead("conv-1", 18);
 
     expect(sessionStorage.getItem("xmuse.room-draft/v1:conv-1")).toBe("未发送草稿");
-    const local = JSON.parse(localStorage.getItem("xmuse.room-ui/v2") ?? "{}");
+    const local = JSON.parse(localStorage.getItem("xmuse.room-ui/v3") ?? "{}");
     expect(local.readCursors["conv-1"]).toBe(18);
     expect(local).not.toHaveProperty("drafts");
   });

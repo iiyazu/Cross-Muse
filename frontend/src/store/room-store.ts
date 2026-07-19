@@ -185,7 +185,8 @@ function browserStorage(kind: "local" | "session"): Storage | null {
 function readLocalState(): Pick<
   RoomState,
   "readCursors" | "scrollAnchors" | "theme" | "sidebarOpen" | "inspectorOpen" |
-  "dockTab" | "pinnedRoomIds" | "selectedParticipants"
+  "dockTab" | "pinnedRoomIds" | "selectedParticipants" | "onboardingVersion" |
+  "onboardingCompleted" | "onboardingDismissed"
 > {
   return readRoomUiState(browserStorage("local"));
 }
@@ -355,6 +356,10 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   dockTab: "room",
   pinnedRoomIds: [],
   selectedParticipants: {},
+  onboardingVersion: 1,
+  onboardingCompleted: false,
+  onboardingDismissed: false,
+  onboardingOpen: false,
   operations: null,
   operationsLoading: false,
   operationsError: null,

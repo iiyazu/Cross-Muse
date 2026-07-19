@@ -7,10 +7,12 @@ import { CommandPalette, type CommandPaletteAction } from "./command-palette";
 
 export function WorkspaceCommandPalette({
   onNavigateRoom,
-  onNewRoom
+  onNewRoom,
+  onOpenOnboarding
 }: {
   onNavigateRoom: (roomId: string) => void;
   onNewRoom: () => void;
+  onOpenOnboarding: () => void;
 }) {
   const rooms = useRoomStore((state) => state.rooms);
   const selectedRoomId = useRoomStore((state) => state.selectedRoomId);
@@ -30,7 +32,8 @@ export function WorkspaceCommandPalette({
     })),
     { id: "dock-room", label: "Room 控制面", detail: "执行、记忆与因果证据", run: () => setDockTab("room") },
     { id: "dock-runtime", label: "Runtime 状态", detail: "运行事件与恢复", run: () => setDockTab("runtime") },
+    { id: "onboarding", label: "开始使用 xmuse", detail: "重新打开本地能力与 Workbench 引导", run: onOpenOnboarding },
     { id: "theme", label: "切换主题", detail: theme === "dark" ? "切换到浅色" : "切换到深色", run: () => setTheme(theme === "dark" ? "light" : "dark") }
-  ], [codexCache?.projection?.participants, onNavigateRoom, onNewRoom, rooms, selectCodexParticipant, setDockTab, setTheme, theme]);
+  ], [codexCache?.projection?.participants, onNavigateRoom, onNewRoom, onOpenOnboarding, rooms, selectCodexParticipant, setDockTab, setTheme, theme]);
   return <CommandPalette actions={actions} />;
 }
