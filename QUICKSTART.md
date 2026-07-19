@@ -30,7 +30,9 @@ The bootstrap validates Linux/x86_64, the exact CPython ABI, normalized archive 
 file digests. `launch` uses the installed Next standalone assets, starts one detached instance
 of the existing Workroom manager, waits for real readiness and opens the browser. Use
 `xmuse-workroom status` and `xmuse-workroom stop` for the same runtime generation. With the
-optional companion installed, `xmuse-workroom launch --memory` automatically selects it.
+optional companion installed, plain `xmuse-workroom launch` automatically selects it. Use
+`launch --no-memory` to opt out; `launch --memory` remains the explicit compatibility alias
+for `--memory-mode on`.
 
 ## Build the local application
 
@@ -89,15 +91,18 @@ to the LAN or Internet.
 ## Optional source-backed memory
 
 Start the same Workroom with MemoryOS explicitly enabled. Full-local hybrid retrieval is the
-default profile; archive-only remains available only as a compatibility profile:
+default profile; archive-only remains available only as a compatibility profile. The normal
+`auto` mode trusts only an installer-owned, digest-verified companion and otherwise leaves the
+Room available with memory marked as not installed:
 
 ```bash
 uv run xmuse-workroom start \
-  --memory \
+  --memory-mode on \
   --memoryos-executable /absolute/path/to/memoryos
 ```
 
-Both flags are required together. Workroom binds MemoryOS to `127.0.0.1:8301`, gives it a
+The `--memory` flag is a compatibility alias for `--memory-mode on`; `--no-memory` is the
+explicit `off` shortcut. `--memoryos-executable` is accepted only for `on`. Workroom binds MemoryOS to `127.0.0.1:8301`, gives it a
 random server-only API key and a private `<XMUSE_ROOT>/runtime/memoryos-derived` directory,
 and starts it with v3 memory/v2 recall. Full-local uses offline BM25, FastEmbed and RRF while
 xmuse retains external governance of durable memory candidates in `chat.db`. The key is never
