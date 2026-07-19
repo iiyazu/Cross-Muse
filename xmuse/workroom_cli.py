@@ -173,19 +173,6 @@ def run_cli(
             build_parser().error("--memory-profile requires memory mode on")
         memory_enabled = requested_mode == "on"
         executable = args.memoryos_executable
-        if requested_mode == "auto":
-            try:
-                companion = discover_managed_companion()
-            except MemoryOSCompanionError:
-                companion = None
-            if companion is not None:
-                memory_enabled = True
-                executable = companion.executable
-                try:
-                    _prepare_managed_memoryos_cache(executable, paths.xmuse_root)
-                except ManagedMemoryOSError:
-                    memory_enabled = False
-                    executable = None
         exit_code, payload = launch_workroom(
             paths,
             deps,

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from xmuse.memoryos_companion import managed_companion_executable
+from xmuse.memoryos_companion import MemoryOSCompanionError, managed_companion_executable
 from xmuse.workroom import COMMAND_SCHEMA_VERSION, workroom_status
 from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 
@@ -157,7 +157,10 @@ def _start_argv(
     memoryos = request.memoryos_executable
     explicit_memory = request.memory or request.memory_mode == "on"
     if explicit_memory:
-        memoryos = memoryos or dependencies.resolve_managed_memoryos()
+        try:
+            memoryos = memoryos or dependencies.resolve_managed_memoryos()
+        except MemoryOSCompanionError as exc:
+            return None, _error(exc.code, "the managed MemoryOS companion is invalid")
         if memoryos is None:
             return None, _error(
                 "memoryos_executable_required",
@@ -252,7 +255,10 @@ def launch_workroom(
         and request.memoryos_executable is None
         and request.memory_profile != "archive-only"
     ):
-        managed_memoryos = deps.resolve_managed_memoryos()
+        try:
+            managed_memoryos = deps.resolve_managed_memoryos()
+        except MemoryOSCompanionError as exc:
+            return _error(exc.code, "the managed MemoryOS companion is invalid")
         assert managed_memoryos is not None
         try:
             deps.prepare_managed_memoryos_cache(managed_memoryos, request.root)
