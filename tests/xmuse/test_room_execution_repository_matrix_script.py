@@ -13,6 +13,7 @@ def test_fixed_matrix_pins_expected_repositories_profiles_and_blockers() -> None
         "clowder-next-probe",
         "memoryos-control",
         "letta-ty-probe",
+        "twg-node-library",
         "mem0-ts-probe",
     )
     assert tuple(item.profile_id for item in matrix.REPOSITORIES) == (
@@ -21,10 +22,12 @@ def test_fixed_matrix_pins_expected_repositories_profiles_and_blockers() -> None
         "python-uv/v1",
         "python-uv-ty/v1",
         "node-pnpm-library/v1",
+        "node-pnpm-library/v1",
     )
     assert matrix.REPOSITORIES[3].expected_reason == ("execution_backend_dependencies_unavailable")
-    assert matrix.REPOSITORIES[4].expected_reason == ("execution_frontend_dependencies_unavailable")
-    assert matrix.REPOSITORIES[4].workspace_subdir == "mem0-ts"
+    assert matrix.REPOSITORIES[4].expected_status == "passed"
+    assert matrix.REPOSITORIES[5].expected_reason == ("execution_frontend_dependencies_unavailable")
+    assert matrix.REPOSITORIES[5].workspace_subdir == "mem0-ts"
     assert all(len(item.commit) == 40 and len(item.tree) == 40 for item in matrix.REPOSITORIES)
 
 
@@ -77,6 +80,26 @@ def test_fixed_python_baseline_uses_only_server_owned_commands(tmp_path: Path, m
         "python_uv_pytest",
         "layout-close",
     ]
+
+
+def test_node_dependency_link_does_not_require_python(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    (source / "node_modules").mkdir(parents=True)
+    (target / ".git" / "info").mkdir(parents=True)
+    (target / ".git" / "info" / "exclude").write_text("", encoding="utf-8")
+    monkeypatch.setattr(matrix.acceptance, "_git", lambda *_args: b"")
+
+    matrix.acceptance._link_dependencies(
+        target,
+        source,
+        frontend=False,
+        python=False,
+        node=True,
+    )
+
+    assert (target / "node_modules").is_symlink()
+    assert not (target / ".venv").exists()
 
 
 def test_safe_scenario_uses_opaque_frozen_refs() -> None:

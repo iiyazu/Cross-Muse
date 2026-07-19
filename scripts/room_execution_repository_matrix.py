@@ -83,6 +83,17 @@ REPOSITORIES = (
         "execution_backend_dependencies_unavailable",
     ),
     FrozenRepository(
+        "twg-node-library",
+        "59e0184e949c61df7cdcb68c37ef104d36ec7719",
+        "e36bffed51297e7033c81a65ea1f349fcab49795",
+        "node-pnpm-library/v1",
+        "passed",
+        "accepted",
+        ("tests/twg.test.ts",),
+        "twg-node-pnpm-59e0184.patch",
+        "sha256:87bd8a303ad647107d9a93698fa96c271e42ddcff56bd9e9400b8d6b24b39e8f",
+    ),
+    FrozenRepository(
         "mem0-ts-probe",
         "74d043731b9f3ef5d89dcbd435e359b885be5add",
         "f1d1e6c0f56dc7de24502a6ba78a6b2ab133deb7",
@@ -183,11 +194,13 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
         "clowder-next-probe": Path(args.clowder_repo).resolve(strict=True),
         "memoryos-control": Path(args.memoryos_repo).resolve(strict=True),
         "letta-ty-probe": Path(args.letta_repo).resolve(strict=True),
+        "twg-node-library": Path(args.twg_repo).resolve(strict=True),
         "mem0-ts-probe": Path(args.mem0_repo).resolve(strict=True),
     }
     dependency_sources = {
         "memu-python": Path(args.memu_dependency_repo).resolve(strict=True),
         "memoryos-control": Path(args.memoryos_dependency_repo).resolve(strict=True),
+        "twg-node-library": Path(args.twg_dependency_repo).resolve(strict=True),
     }
     guards = {name: acceptance._source_guard(path) for name, path in sources.items()}
     dependency_guards = {
@@ -293,6 +306,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--memoryos-repo", required=True)
     parser.add_argument("--memoryos-dependency-repo", required=True)
     parser.add_argument("--letta-repo", required=True)
+    parser.add_argument("--twg-repo", required=True)
+    parser.add_argument("--twg-dependency-repo", required=True)
     parser.add_argument("--mem0-repo", required=True)
     parser.add_argument("--result", required=True)
     return parser
