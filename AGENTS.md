@@ -77,11 +77,13 @@ do not load `.env`.
   workspaces require an explicit profile; their path and private digests never enter browser
   projections. Harness frontend gates call fixed read-only dependency entrypoints rather than
   candidate-controlled package scripts.
-- Source-backed memory is opt-in through `xmuse-workroom start --memory` together with
-  `--memoryos-executable ...`. `chat.db` owns its outbox, approvals, delivery evidence, and
-  recall receipts; the MemoryOS archive database is derived and rebuildable. Recall accepts
-  only bounded archival items whose source documents/activities can be re-proved, and any
-  failure remains Host attention rather than Room Runtime failure.
+- Source-backed memory remains optional at installation time. Workroom defaults to
+  `--memory-mode auto`: it selects only an installer-owned, digest-verified full-local
+  companion; `--memory`/`--memory-mode on` is the explicit source/development path and
+  `--no-memory`/`--memory-mode off` disables it. `chat.db` owns its outbox, approvals,
+  delivery evidence, and recall receipts; the MemoryOS archive database is derived and
+  rebuildable. Recall accepts only bounded archival items whose source documents/activities
+  can be re-proved, and any failure remains Host attention rather than Room Runtime failure.
 - The MemoryOS sidecar and Room Runner may receive the server-only MemoryOS API key. Room
   MCP, Codex sessions, the browser, Operations, commands, receipts, and logs must not.
 - The Workroom manager automatically restarts only its identity-confirmed-dead MemoryOS
