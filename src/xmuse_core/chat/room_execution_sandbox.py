@@ -172,7 +172,7 @@ GATE_SPECS: Mapping[str, GateSpec] = {
     ),
     "python_uv_ty": GateSpec(
         "python_uv_ty",
-        ("/opt/python/bin/python3", "-m", "ty", "check", "src"),
+        ("/opt/python/bin/python3", "-m", "ty", "check"),
         "/workspace",
         600.0,
     ),
