@@ -2,8 +2,7 @@
 
 The Room host and provider transport only exchange review evidence with the
 execution subsystem.  They must not depend on its privileged operator or
-controller surface merely because the production implementation happens to
-offer both through ``RoomExecutionStore``.
+controller surface; composition supplies only the review capability.
 """
 
 from __future__ import annotations

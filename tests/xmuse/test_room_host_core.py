@@ -9,7 +9,7 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_application import RoomApplicationService
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_host import (
     RoomHostPolicy,
     RoomObservationDelivery,
@@ -286,7 +286,7 @@ def test_host_claims_one_peer_batch_per_participant_after_root_barrier(tmp_path)
                 participant_cooldown_s=0,
                 max_batch_size=3,
             ),
-            execution_store=RoomExecutionStore(db),
+            execution_store=RoomExecutionReviewStore(db),
         ).pump_once(conversation_id=cid)
     )
 
@@ -372,7 +372,7 @@ def test_host_loads_exact_execution_material_for_current_peer_batch(tmp_path):
             db,
             transport,
             policy=RoomHostPolicy(participant_cooldown_s=0),
-            execution_store=RoomExecutionStore(db),
+            execution_store=RoomExecutionReviewStore(db),
         ).pump_once(conversation_id=cid)
     )
 

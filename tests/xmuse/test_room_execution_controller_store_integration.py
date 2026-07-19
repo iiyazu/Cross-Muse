@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.xmuse.execution_store_testkit import TestExecutionStore
 from tests.xmuse.test_room_participant_outcomes import root_and_claims, submit
 from xmuse_core.chat import room_execution_controller as controller
 from xmuse_core.chat.room_execution_controller import (
@@ -36,7 +37,6 @@ from xmuse_core.chat.room_execution_sandbox import (
     discover_sandbox_layout,
     run_gate,
 )
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_runtime import read_process_start_identity
 
 
@@ -124,14 +124,14 @@ def _authorized(
     two_files: bool = False,
     python_profile: bool = False,
     consensus_policy: bool = False,
-) -> tuple[RoomExecutionStore, ControllerConfig, dict[str, object], str]:
+) -> tuple[TestExecutionStore, ControllerConfig, dict[str, object], str]:
     repo = _repo(tmp_path, two_files=two_files, python_profile=python_profile)
     diff, allowed = _patch(repo, two_files=two_files, python_profile=python_profile)
     runtime = tmp_path / "runtime"
     runtime.mkdir()
     db, registry, conversation_id, records, _, claims = root_and_claims(runtime)
     if consensus_policy:
-        policy_store = RoomExecutionStore(db)
+        policy_store = TestExecutionStore(db)
         policy_store.set_policy(
             conversation_id=conversation_id,
             mode="consensus",
@@ -163,7 +163,7 @@ def _authorized(
         outcome_type="propose",
         outcome_payload=payload,
     )
-    store = RoomExecutionStore(db)
+    store = TestExecutionStore(db)
     candidate_id = outcome["execution_candidate"]["candidate_id"]
     candidate = store.get_candidate(candidate_id, include_patch=True)
     assert candidate is not None
@@ -218,7 +218,7 @@ def _passing_gate(gate_id: str) -> GateResult:
 
 
 def _advance_to_ready_with_passed_gates(
-    store: RoomExecutionStore,
+    store: TestExecutionStore,
     config: ControllerConfig,
     material: dict[str, object],
 ) -> dict[str, object]:

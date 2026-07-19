@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
+from tests.xmuse.execution_store_testkit import TestExecutionStore
 from tests.xmuse.test_room_execution_gate_plan_ledger import _authorize
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
 
 
 def _authority_snapshot(path: Path) -> tuple[object, ...]:
@@ -50,13 +50,13 @@ def test_manual_execution_decision_rolls_back_every_durable_stage(
         "complete_execution_action_conn": "_complete_action_conn",
         "projection_event": "_record_event_conn",
     }[stage]
-    original = getattr(RoomExecutionStore, seam)
+    original = getattr(TestExecutionStore, seam)
 
     def fail_after_write(*args: Any, **values: Any) -> None:
         original(*args, **values)
         raise RuntimeError("injected_execution_stage_failure")
 
-    monkeypatch.setattr(RoomExecutionStore, seam, staticmethod(fail_after_write))
+    monkeypatch.setattr(TestExecutionStore, seam, staticmethod(fail_after_write))
 
     with pytest.raises(RuntimeError, match="injected_execution_stage_failure"):
         execution.apply_operator_decision(**kwargs, gate_plan=plan)

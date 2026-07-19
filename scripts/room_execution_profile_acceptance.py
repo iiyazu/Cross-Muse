@@ -26,18 +26,20 @@ from xmuse_core.chat.room_execution_controller import (
     build_workspace_guard,
     run_execution_controller,
 )
+from xmuse_core.chat.room_execution_controller_store import RoomExecutionControllerStore
+from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_profiles import (
     build_execution_gate_plan,
     gate_ids_for_profile_paths,
     get_execution_gate_profile,
 )
+from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
 from xmuse_core.chat.room_execution_sandbox import (
     RoomExecutionSandboxError,
     build_repository_manifest_digest,
     build_toolchain_capability_digest,
     discover_python_extension_artifacts,
 )
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_runtime import read_process_start_identity
 from xmuse_core.chat.room_setup import RoomSetupService
@@ -404,7 +406,7 @@ def _authorize_run(
     profile_id: str,
     paths: tuple[str, ...],
     patch: str,
-) -> tuple[RoomExecutionStore, ControllerConfig, tuple[str, ...]]:
+) -> tuple[RoomExecutionControllerStore, ControllerConfig, tuple[str, ...]]:
     runtime.mkdir(parents=True, exist_ok=False)
     RoomDatabase(runtime / "chat.db").initialize()
     setup = RoomSetupService(runtime).create_conversation(
@@ -464,9 +466,10 @@ def _authorize_run(
     execution_candidate = proposal.get("execution_candidate")
     if not isinstance(execution_candidate, dict):
         raise AcceptanceError("acceptance_candidate_missing")
-    store = RoomExecutionStore(db)
+    reader = RoomExecutionLedgerReader(db)
+    operator_store = RoomExecutionOperatorStore(db)
     candidate_id = str(execution_candidate["candidate_id"])
-    candidate = store.get_candidate(candidate_id, include_patch=True)
+    candidate = reader.get_candidate(candidate_id, include_patch=True)
     if candidate is None:
         raise AcceptanceError("acceptance_candidate_missing")
     allowed = tuple(str(value) for value in candidate["allowed_files"])
@@ -484,10 +487,10 @@ def _authorize_run(
             repository, profile, gate_ids=profile.gate_ids
         ),
     )
-    policy = store.get_policy(conversation_id)
+    policy = reader.get_policy(conversation_id)
     if policy is None:
         raise AcceptanceError("acceptance_policy_missing")
-    decision = store.apply_operator_decision(
+    decision = operator_store.apply_operator_decision(
         candidate_id=candidate_id,
         decision="execute",
         client_action_id="acceptance-execute",
@@ -506,7 +509,7 @@ def _authorize_run(
     if identity is None:
         raise AcceptanceError("acceptance_controller_identity_missing")
     return (
-        store,
+        RoomExecutionControllerStore(db),
         ControllerConfig(
             xmuse_root=runtime,
             execution_root=repository,
