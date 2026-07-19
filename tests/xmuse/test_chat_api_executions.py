@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.xmuse.execution_store_testkit import TestExecutionStore
 from tests.xmuse.test_room_execution_outcomes import (
     DIGEST,
     PATH,
@@ -18,7 +19,6 @@ from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
 
 
 class _ExecutionStore:
@@ -558,7 +558,7 @@ def test_routes_bind_the_real_store_keyword_contract_and_default_manual_policy(
     assert updated.status_code == 200
     assert updated.json()["policy_mode"] == "consensus"
     assert updated.json()["policy_revision"] == 1
-    stored = RoomExecutionStore(tmp_path / "chat.db").get_policy("conv-real-store")
+    stored = RoomExecutionLedgerReader(tmp_path / "chat.db").get_policy("conv-real-store")
     assert stored is not None
     assert stored["mode"] == "consensus"
 
@@ -616,7 +616,8 @@ def test_real_store_lost_response_replays_before_context_or_controller_failure(
     register_room_execution_routes(
         app,
         root=tmp_path,
-        store_factory=RoomExecutionStore,
+        store_factory=TestExecutionStore,
+        read_store_factory=RoomExecutionLedgerReader,
         operator_token="operator-secret",
         decision_context_provider=unavailable_context,
         run_starter=None,
@@ -661,7 +662,8 @@ def test_real_store_secondary_replay_closes_context_provider_commit_race(
     register_room_execution_routes(
         app,
         root=tmp_path,
-        store_factory=RoomExecutionStore,
+        store_factory=TestExecutionStore,
+        read_store_factory=RoomExecutionLedgerReader,
         operator_token="operator-secret",
         decision_context_provider=concurrent_context,
         run_starter=starters.append,

@@ -11,12 +11,10 @@ from tests.xmuse.test_room_execution_outcomes import (
     make_candidate,
     trusted_gate_plan,
 )
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 from xmuse_core.chat.room_execution_profiles import build_execution_gate_plan
-from xmuse_core.chat.room_execution_store import (
-    RoomExecutionStoreError,
-    create_room_execution_schema,
-)
+from xmuse_core.chat.room_execution_schema import create_room_execution_schema
 
 CONTROLLER = {
     "controller_id": "controller",

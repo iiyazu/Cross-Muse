@@ -154,7 +154,7 @@ def _is_privileged_read_dependency(module_name: str) -> bool:
 
 
 def _adapter_debts(modules: Mapping[str, _ModuleSource]) -> list[dict[str, str]]:
-    """Find narrow-named stores that construct a different Store implementation.
+    """Find narrow-named stores that construct a wider store or ledger implementation.
 
     This is intentionally evidence, not an allowlist-backed exception mechanism.  A private
     member is still reported because it is the concrete authority hidden behind a narrow port.
@@ -165,18 +165,18 @@ def _adapter_debts(modules: Mapping[str, _ModuleSource]) -> list[dict[str, str]]
         if not name.startswith("xmuse_core."):
             continue
         tree = ast.parse(source.path.read_text(encoding="utf-8"), filename=str(source.path))
-        imported_stores: set[str] = set()
+        imported_authorities: set[str] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom) or not node.module:
                 continue
             for alias in node.names:
-                if alias.name.endswith("Store"):
-                    imported_stores.add(alias.asname or alias.name)
+                if alias.name.endswith(("Store", "Ledger")):
+                    imported_authorities.add(alias.asname or alias.name)
         for class_node in (node for node in tree.body if isinstance(node, ast.ClassDef)):
-            if not class_node.name.endswith("Store") or class_node.name in imported_stores:
+            if not class_node.name.endswith("Store") or class_node.name in imported_authorities:
                 continue
             for call in (node for node in ast.walk(class_node) if isinstance(node, ast.Call)):
-                if isinstance(call.func, ast.Name) and call.func.id in imported_stores:
+                if isinstance(call.func, ast.Name) and call.func.id in imported_authorities:
                     debts.append(
                         {
                             "module": name,

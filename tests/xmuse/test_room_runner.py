@@ -15,7 +15,7 @@ import pytest
 from xmuse import room_runner, room_runner_composition, room_runner_memory
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_host import RoomParticipantHost, RoomTransportResult
 from xmuse_core.chat.room_runtime import (
     ROOM_RUNNER_PROOF_BOUNDARY,
@@ -371,7 +371,7 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
 ) -> None:
     db_path = tmp_path / "chat.db"
     RoomDatabase(db_path).initialize()
-    execution_store = RoomExecutionStore(db_path)
+    execution_store = RoomExecutionReviewStore(db_path)
     memory = room_runner_memory.compose_room_runner_memory(
         db_path,
         worker_id="memory-composition-test",

@@ -7,8 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.xmuse.execution_store_testkit import TestExecutionStore
 from tests.xmuse.test_room_participant_outcomes import root_and_claims, submit
 from xmuse_core.chat.room_errors import RoomApplicationError
+from xmuse_core.chat.room_execution_candidates import record_proposal_assessments_conn
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_execution_contracts import (
     EXECUTION_RISK_POLICY_REVISION,
     ExecutionRiskEvaluation,
@@ -16,11 +19,6 @@ from xmuse_core.chat.room_execution_contracts import (
     ProposalAssessment,
 )
 from xmuse_core.chat.room_execution_profiles import build_execution_gate_plan
-from xmuse_core.chat.room_execution_store import (
-    RoomExecutionStore,
-    RoomExecutionStoreError,
-    record_proposal_assessments_conn,
-)
 from xmuse_core.chat.room_kernel import RoomKernelStore
 
 PATH = "src/xmuse_core/example.py"
@@ -59,7 +57,7 @@ def patch_outcome() -> dict[str, object]:
 
 def make_candidate(tmp_path: Path, *, consensus: bool = False):
     db, registry, conversation_id, records, _, claims = root_and_claims(tmp_path)
-    execution = RoomExecutionStore(db)
+    execution = TestExecutionStore(db)
     if consensus:
         execution.set_policy(
             conversation_id=conversation_id,
