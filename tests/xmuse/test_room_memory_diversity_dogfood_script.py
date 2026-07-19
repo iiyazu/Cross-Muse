@@ -150,6 +150,14 @@ def _seed(root: Path) -> dict[str, object]:
                 "doc-preference",
             ),
             (
+                "candidate-semantic-preference",
+                "room-b",
+                "user_preference",
+                "local_user",
+                "source-preference",
+                "doc-semantic-preference",
+            ),
+            (
                 "candidate-decision",
                 "room-c",
                 "room_decision",
@@ -187,7 +195,12 @@ def _seed(root: Path) -> dict[str, object]:
                 ["source-decision"],
             ),
             "lexical": ("attempt-lexical", "room-b", "doc-project", ["source-project"]),
-            "semantic": ("attempt-semantic", "room-c", "doc-preference", ["source-preference"]),
+            "semantic": (
+                "attempt-semantic",
+                "room-c",
+                "doc-semantic-preference",
+                ["source-preference"],
+            ),
             "derived": ("attempt-derived", "room-a", None, ["source-derived"]),
         }
         for index, (label, (attempt_id, room, document, sources)) in enumerate(attempts.items()):
@@ -230,6 +243,7 @@ def _seed(root: Path) -> dict[str, object]:
         "candidates": {
             "project_rule": "candidate-project",
             "user_preference": "candidate-preference",
+            "semantic_preference": "candidate-semantic-preference",
             "room_decision": "candidate-decision",
         },
         "query_attempt_ids": {

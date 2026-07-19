@@ -31,6 +31,11 @@ MANIFEST_SCHEMA = "room_memory_diversity_dogfood_manifest/v1"
 _CANDIDATE_KINDS = {
     "project_rule": ("project_rule", "project"),
     "user_preference": ("user_preference", "local_user"),
+    # Cross-Room exact recall and semantic recall are independent product
+    # claims.  Requiring both queries to select one document made the private
+    # acceptance manifest stricter than the public result contract and hid
+    # valid evidence when two separately approved preferences were exercised.
+    "semantic_preference": ("user_preference", "local_user"),
     "room_decision": ("room_decision", "room"),
 }
 _QUERY_KEYS = (
@@ -469,7 +474,7 @@ def collect_diversity_evidence(
         )
         semantic_hit = _has_candidate_item(
             items=semantic_items,
-            candidate=candidates["user_preference"],
+            candidate=candidates["semantic_preference"],
             sources=set(semantic_sources),
         )
         document_backlog = int(
