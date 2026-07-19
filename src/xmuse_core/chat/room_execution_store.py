@@ -112,8 +112,13 @@ from xmuse_core.chat.room_execution_views import (
 from xmuse_core.chat.room_execution_views import run_view_conn as _run_view_conn
 
 
-class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
-    """Privileged/read-model facade over the durable execution ledger."""
+class _ExecutionLedger(RoomExecutionReviewStore, RoomExecutionLedgerReader):
+    """Internal durable implementation shared only by narrow execution adapters.
+
+    Its methods deliberately retain the existing transaction boundaries while the
+    public ``RoomExecutionStore`` name remains a compatibility facade for older
+    in-process callers.
+    """
 
     def __init__(self, db_path: Path | str) -> None:
         self._database = RoomDatabase(db_path)
@@ -1707,3 +1712,11 @@ class RoomExecutionStore(RoomExecutionReviewStore, RoomExecutionLedgerReader):
             except Exception:
                 conn.rollback()
                 raise
+
+
+class RoomExecutionStore(_ExecutionLedger):
+    """Compatibility facade for legacy in-process callers.
+
+    New production composition must receive one of the controller, runtime,
+    operator, read, or review capability stores instead.
+    """

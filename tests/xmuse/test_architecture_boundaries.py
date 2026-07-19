@@ -243,6 +243,21 @@ def test_execution_runtime_uses_reconciler_capability_store() -> None:
     assert not _imports_prefix(runtime, "xmuse_core.chat.room_execution_store")
 
 
+def test_execution_capability_stores_do_not_construct_public_wide_store_facade() -> None:
+    """Production composition may use the internal ledger, never the legacy facade."""
+
+    stores = (
+        CORE_ROOT / "chat" / "room_execution_controller_store.py",
+        CORE_ROOT / "chat" / "room_execution_operator_store.py",
+        CORE_ROOT / "chat" / "room_execution_runtime_store.py",
+    )
+    for store in stores:
+        source = store.read_text(encoding="utf-8")
+        assert "import RoomExecutionStore" not in source
+        assert "RoomExecutionStore(" not in source
+        assert "import _ExecutionLedger" in source
+
+
 def test_execution_event_helper_uses_caller_owned_transaction() -> None:
     events = CORE_ROOT / "chat" / "room_execution_events.py"
 

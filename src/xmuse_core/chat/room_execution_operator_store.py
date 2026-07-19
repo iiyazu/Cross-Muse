@@ -11,14 +11,14 @@ from xmuse_core.chat.room_execution_contracts import (
     ExecutionWorkspaceGuard,
 )
 from xmuse_core.chat.room_execution_profiles import ExecutionGatePlan
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_store import _ExecutionLedger
 
 
 class RoomExecutionOperatorStore:
     """Expose fixed operator commands without controller lifecycle methods."""
 
     def __init__(self, db_path: Path | str) -> None:
-        self._ledger = RoomExecutionStore(db_path)
+        self._ledger = _ExecutionLedger(db_path)
 
     def set_policy(
         self,

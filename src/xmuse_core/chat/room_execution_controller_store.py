@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from xmuse_core.chat.room_execution_controller import ExecutionStore
-from xmuse_core.chat.room_execution_store import RoomExecutionStore
+from xmuse_core.chat.room_execution_store import _ExecutionLedger
 
 
 class RoomExecutionControllerStore:
     """Expose only the durable operations required by a one-shot controller."""
 
     def __init__(self, db_path: Path | str) -> None:
-        self._ledger = RoomExecutionStore(db_path)
+        self._ledger = _ExecutionLedger(db_path)
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self._ledger.get_run(run_id)
