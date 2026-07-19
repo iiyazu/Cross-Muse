@@ -37,6 +37,26 @@ export type RoomSetupOptions = {
   roster_templates: RoomSetupOption[];
 };
 
+export type XmuseBootstrapProjection = {
+  schema_version: "xmuse_bootstrap_projection/v1";
+  has_rooms: boolean;
+  codex: { launcher_available: boolean };
+  memory: {
+    mode: "auto" | "on" | "off" | string;
+    companion: "installed" | "missing" | "invalid" | string;
+    version?: string | null;
+    profile: "full-local" | "unavailable" | string;
+    runtime: { state: string; code: string };
+    capability_digest?: string | null;
+  };
+  execution: {
+    profile_id?: string | null;
+    revision?: number | null;
+    readiness: { state: "ready" | "blocked" | "unknown" | string; ready?: boolean; code?: string };
+  };
+  recommended_action: "create_room" | "open_room" | "install_memory" | "repair_memory" | string;
+};
+
 export type FrontendEvent = {
   sequence?: number;
   type?: string;

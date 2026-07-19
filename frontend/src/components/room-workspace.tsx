@@ -55,6 +55,7 @@ import {
 } from "./room-header";
 import { RoomMessage, RoomPendingBubble } from "./room-message";
 import { RoomAgentPreview } from "./room-agent-preview";
+import { RoomOnboarding } from "./room-onboarding";
 import { RoomInspector as RoomInspectorShell } from "./room-inspector";
 import { WorkspaceSidebar } from "./room-workspace-sidebar";
 import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
@@ -984,12 +985,24 @@ function TabScopedWorkspaceInspector(props: WorkspaceInspectorProps) {
   });
   const refreshOperations = useRoomStore((state) => state.refreshOperations);
   const refreshRoom = useRoomStore((state) => state.refreshRoom);
+  const projection = useRoomStore((state) => roomId ? state.roomsById[roomId]?.projection ?? null : null);
   return <RoomInspectorShell
     activeTab={activeTab}
     agentConsoleSection={activeTab === "agent" ? <AgentInspectorTab onNotice={props.onNotice} /> : undefined}
     executionSection={activeTab === "room" ? <RoomInspectorTab onRequestCancel={props.onRequestCancel} onRequestMemoryRebuild={props.onRequestMemoryRebuild} /> : null}
     memorySection={null}
     modal={props.compact}
+    onboardingSection={<RoomOnboarding
+      mode="guide"
+      onCreateRoom={() => undefined}
+      progress={{
+        room: Boolean(roomId),
+        message: Boolean(projection?.turns.length),
+        activity: activeTab === "agent",
+        evidence: activeTab === "room" || activeTab === "runtime",
+        settled: projection?.turns.some((turn) => turn.state === "settled") === true
+      }}
+    />}
     onClose={() => setInspectorOpen(false)}
     onTabChange={setDockTab}
     onTargetMissing={() => { void refreshOperations(); if (roomId) void refreshRoom(roomId, "incremental"); }}
@@ -1091,6 +1104,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
     sidebarOpen: state.sidebarOpen,
     inspectorOpen: state.inspectorOpen,
     dockTab: state.dockTab,
+    onboardingCompleted: state.onboardingCompleted,
     loadRooms: state.loadRooms,
     refreshRoom: state.refreshRoom,
     sendMessage: state.sendMessage,
@@ -1101,6 +1115,8 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
     setSidebarOpen: state.setSidebarOpen,
     setInspectorOpen: state.setInspectorOpen,
     setDockTab: state.setDockTab,
+    completeOnboarding: state.completeOnboarding,
+    openOnboarding: state.openOnboarding,
     clearRoomError: state.clearRoomError,
     clearControlError: state.clearControlError,
     startOperationsSync: state.startOperationsSync,
@@ -1146,6 +1162,14 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   const currentTurn = activeTurns.at(-1) ?? projection?.turns.at(-1) ?? null;
   const title = projection?.conversation.title ?? selectedRoom?.title ?? "选择一个房间";
   const draft = useRoomStore((state) => state.selectedRoomId ? state.drafts[state.selectedRoomId] ?? "" : "");
+  const completeOnboarding = store.completeOnboarding;
+  const onboardingCompleted = store.onboardingCompleted;
+
+  useEffect(() => {
+    if (currentTurn?.state === "settled" && !onboardingCompleted) {
+      completeOnboarding();
+    }
+  }, [completeOnboarding, currentTurn?.state, onboardingCompleted]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = store.theme;
@@ -1250,7 +1274,10 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           ) : null}
           <WorkspaceSidebar
             creating={creatingRoom}
-            onCreatedRoom={onCreatedRoom}
+            onCreatedRoom={(roomId) => {
+              if (!store.onboardingCompleted) store.setDockTab("agent");
+              onCreatedRoom(roomId);
+            }}
             onCreatingChange={setCreatingRoom}
             onNavigateRoom={onNavigateRoom}
             onRequestCloseMobile={() => setMobileSidebarOpen(false)}
@@ -1344,10 +1371,14 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             <button className="room-primary-button" onClick={() => void store.loadRooms()} type="button">重新连接</button>
           </section>
         ) : (
-          <section className="room-fatal-empty">
-            <strong>{store.roomsLoading && !store.roomsLoaded ? "正在连接 xmuse…" : "还没有房间"}</strong>
-            <span>创建房间后，活跃 Agent 会共同观察其中的活动。</span>
-          </section>
+          store.roomsLoading && !store.roomsLoaded ? (
+            <section className="room-fatal-empty">
+              <strong>正在连接 xmuse…</strong>
+              <span>正在读取本地 Workroom 能力。</span>
+            </section>
+          ) : (
+            <RoomOnboarding mode="start" onCreateRoom={() => setCreatingRoom(true)} />
+          )
         )}
       </main>
 
@@ -1410,6 +1441,10 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
           setCreatingRoom(true);
           if (compactLayout) setMobileSidebarOpen(true);
           else store.setSidebarOpen(true);
+        }}
+        onOpenOnboarding={() => {
+          store.openOnboarding();
+          store.setInspectorOpen(true);
         }}
       />
     </div>

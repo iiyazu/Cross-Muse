@@ -28,6 +28,7 @@ import type {
   RoomRuntimeRecoverDescriptor,
   RoomRuntimeRecoverResult,
   RoomSetupOptions,
+  XmuseBootstrapProjection,
   XmuseApiErrorShape
 } from "./types";
 
@@ -162,6 +163,25 @@ export async function fetchRooms(options: ApiClientOptions = {}): Promise<RoomLi
     { method: "GET", cache: "no-store" },
     options
   );
+}
+
+export async function fetchBootstrap(
+  options: ApiClientOptions = {}
+): Promise<XmuseBootstrapProjection> {
+  const payload = await fetchJson<XmuseBootstrapProjection>(
+    `${chatApiBaseUrl(options)}/bootstrap`,
+    { method: "GET", cache: "no-store" },
+    options
+  );
+  if (payload.schema_version !== "xmuse_bootstrap_projection/v1") {
+    throw new XmuseApiError({
+      code: "xmuse_bootstrap_schema_unsupported",
+      message: "xmuse bootstrap projection uses an unsupported schema",
+      retryable: false,
+      status: 422
+    });
+  }
+  return payload;
 }
 
 export async function fetchRoomOperations(

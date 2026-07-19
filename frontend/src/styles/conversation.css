@@ -426,6 +426,157 @@
   text-align: center;
 }
 
+.room-onboarding {
+  width: min(760px, calc(100% - 36px));
+  margin: auto;
+  padding: 28px;
+  display: grid;
+  gap: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.room-onboarding--compact {
+  width: min(640px, calc(100% - 36px));
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.room-onboarding--guide {
+  width: min(820px, calc(100% - 32px));
+  margin-block: 12px 4px;
+  padding: 16px 18px;
+  gap: 12px;
+  box-shadow: none;
+}
+
+.room-onboarding--guide .room-onboarding-intro {
+  align-items: center;
+}
+
+.room-onboarding--guide .room-onboarding-mark {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
+}
+
+.room-onboarding--guide h2 {
+  font-size: 16px;
+}
+
+.room-onboarding-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.room-onboarding-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent), transparent 86%);
+}
+
+.room-onboarding h2 {
+  margin: 2px 0 8px;
+  color: var(--fg);
+  font-size: clamp(20px, 2.6vw, 28px);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.room-onboarding-intro p:not(.room-overline),
+.room-onboarding-footnote {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.room-onboarding-recommendation {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.room-onboarding-install {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.room-onboarding-install code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.room-onboarding-checks,
+.room-onboarding-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.room-onboarding-checks span,
+.room-onboarding-steps div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.room-onboarding-checks .is-ready { color: var(--success); }
+.room-onboarding-checks .is-attention { color: var(--warn); }
+.room-onboarding-checks .is-muted { color: var(--muted); }
+.room-onboarding-steps .is-done { color: var(--success); border-color: color-mix(in srgb, var(--success), var(--border) 60%); }
+
+.room-onboarding-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .room-onboarding { padding: 20px; }
+  .room-onboarding--compact { grid-template-columns: 1fr; }
+  .room-onboarding--guide { width: calc(100% - 20px); margin-block: 8px 2px; padding: 14px; }
+  .room-onboarding-install { align-items: stretch; flex-direction: column; }
+  .room-onboarding-actions { align-items: stretch; flex-direction: column; }
+}
+
 .room-empty-timeline strong,
 .room-fatal-empty strong {
   color: var(--fg);

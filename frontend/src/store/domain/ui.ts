@@ -12,6 +12,10 @@ export type UiDomainState = {
   dockTab: WorkspaceDockTab;
   pinnedRoomIds: string[];
   selectedParticipants: Record<string, string>;
+  onboardingVersion: number;
+  onboardingCompleted: boolean;
+  onboardingDismissed: boolean;
+  onboardingOpen: boolean;
 };
 
 export type UiDomainActions = {
@@ -23,6 +27,9 @@ export type UiDomainActions = {
   setInspectorOpen: (open: boolean) => void;
   setDockTab: (tab: WorkspaceDockTab) => void;
   togglePinnedRoom: (roomId: string) => void;
+  completeOnboarding: () => void;
+  dismissOnboarding: () => void;
+  openOnboarding: () => void;
 };
 
 export type UiDomain = UiDomainState & UiDomainActions;

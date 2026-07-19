@@ -1,6 +1,8 @@
 export const MAX_LOCAL_ROOMS = 50;
-export const LOCAL_STATE_KEY = "xmuse.room-ui/v2";
-export const LEGACY_LOCAL_STATE_KEY = "xmuse.room-ui/v1";
+export const LOCAL_STATE_KEY = "xmuse.room-ui/v3";
+export const LEGACY_LOCAL_STATE_KEYS = ["xmuse.room-ui/v2", "xmuse.room-ui/v1"] as const;
+/** Kept as a named export for consumers that only need the oldest migration key. */
+export const LEGACY_LOCAL_STATE_KEY = LEGACY_LOCAL_STATE_KEYS[1];
 export const DRAFT_KEY_PREFIX = "xmuse.room-draft/v1:";
 
 export type WorkspaceDockTab = "agent" | "room" | "runtime";
@@ -19,6 +21,9 @@ export type PersistedRoomUiState = {
   dockTab: WorkspaceDockTab;
   pinnedRoomIds: string[];
   selectedParticipants: Record<string, string>;
+  onboardingVersion: number;
+  onboardingCompleted: boolean;
+  onboardingDismissed: boolean;
 };
 
 export function defaultRoomUiState(): PersistedRoomUiState {
@@ -30,7 +35,10 @@ export function defaultRoomUiState(): PersistedRoomUiState {
     inspectorOpen: false,
     dockTab: "room",
     pinnedRoomIds: [],
-    selectedParticipants: {}
+    selectedParticipants: {},
+    onboardingVersion: 1,
+    onboardingCompleted: false,
+    onboardingDismissed: false
   };
 }
 
@@ -38,9 +46,10 @@ export function readRoomUiState(storage: Storage | null): PersistedRoomUiState {
   const fallback = defaultRoomUiState();
   if (!storage) return fallback;
   try {
-    const parsed = JSON.parse(
-      storage.getItem(LOCAL_STATE_KEY) ?? storage.getItem(LEGACY_LOCAL_STATE_KEY) ?? "{}"
-    ) as Record<string, unknown>;
+    const raw = [LOCAL_STATE_KEY, ...LEGACY_LOCAL_STATE_KEYS]
+      .map((key) => storage.getItem(key))
+      .find((value): value is string => value !== null) ?? "{}";
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
     const dockTab = ["agent", "room", "runtime"].includes(String(parsed.dockTab))
       ? parsed.dockTab as WorkspaceDockTab
       : parsed.inspectorOpen === true ? "room" : "agent";
@@ -64,7 +73,10 @@ export function readRoomUiState(storage: Storage | null): PersistedRoomUiState {
               .filter((entry): entry is [string, string] => typeof entry[1] === "string")
               .slice(0, MAX_LOCAL_ROOMS)
           )
-        : {}
+        : {},
+      onboardingVersion: typeof parsed.onboardingVersion === "number" ? parsed.onboardingVersion : 1,
+      onboardingCompleted: parsed.onboardingCompleted === true,
+      onboardingDismissed: parsed.onboardingDismissed === true
     };
   } catch {
     return fallback;
@@ -95,7 +107,7 @@ export function persistRoomUiState(
       : [])
   );
   storage.setItem(LOCAL_STATE_KEY, JSON.stringify({
-    version: 2,
+    version: 3,
     readCursors,
     scrollAnchors,
     theme: state.theme,
@@ -103,7 +115,10 @@ export function persistRoomUiState(
     dockOpen: state.inspectorOpen,
     dockTab: state.dockTab,
     pinnedRoomIds: pinned,
-    selectedParticipants
+    selectedParticipants,
+    onboardingVersion: state.onboardingVersion,
+    onboardingCompleted: state.onboardingCompleted,
+    onboardingDismissed: state.onboardingDismissed
   }));
 }
 

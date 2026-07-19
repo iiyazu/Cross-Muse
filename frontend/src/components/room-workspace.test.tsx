@@ -445,7 +445,11 @@ afterEach(() => {
     memoryRebuildPending: false,
     memoryRebuildIncidentId: null,
     memoryRebuildError: null,
-    dockTab: "room"
+    dockTab: "room",
+    onboardingVersion: 1,
+    onboardingCompleted: false,
+    onboardingDismissed: false,
+    onboardingOpen: false
   }));
 });
 
@@ -1316,6 +1320,35 @@ describe("RoomWorkspace observation controls", () => {
     const inspector = screen.getByRole("complementary", { name: "房间检查器" });
     expect(within(inspector).getByText("最近轮次")).toBeInTheDocument();
     expect(within(inspector).queryByText(/可处理轮次|进行中轮次/)).not.toBeInTheDocument();
+  });
+
+  it("marks onboarding complete only after the first Room turn settles", async () => {
+    const value = cache();
+    value.projection!.turns[0].state = "settled";
+    value.projection!.active_turn_count = 0;
+    useRoomStore.setState({
+      rooms: [{
+        conversation_id: "conv-1",
+        title: "控制审计",
+        latest_visible_room_seq: 1,
+        members: [],
+        state: "settled",
+        active_turn_count: 0,
+        attention_turn_count: 0
+      }],
+      roomsById: { "conv-1": value },
+      selectedRoomId: "conv-1",
+      sidebarOpen: false,
+      inspectorOpen: false,
+      onboardingCompleted: false,
+      onboardingDismissed: false,
+      onboardingOpen: false
+    });
+
+    render(<RoomWorkspace onCreatedRoom={vi.fn()} onNavigateRoom={vi.fn()} />);
+
+    await waitFor(() => expect(useRoomStore.getState().onboardingCompleted).toBe(true));
+    expect(screen.queryByLabelText("首次使用进度")).not.toBeInTheDocument();
   });
 
   it("retains an earlier response when a later peer observation settles as noop", () => {

@@ -80,27 +80,30 @@ export function RoomRuntimeDomain({
     <section className={`room-operations state-${operations?.overall ?? "unknown"}`} aria-label="运行与恢复" tabIndex={-1}>
       <div className="room-operations-heading">
         <h3>运行与恢复</h3>
-        {operationsLoading ? <small>正在核验…</small> : null}
+        {operationsLoading ? <small>正在核验…</small> : operations ? <small>{runtimeStateLabel(operations.overall)}</small> : null}
       </div>
       {operations ? <>
-        <dl className="room-operations-components">
-          <dt>Runner</dt><dd>{runtimeStateLabel(operations.runtime.runner.state)}{operations.runtime.runner.code ? ` · ${operations.runtime.runner.code}` : ""}</dd>
-          <dt>Room MCP</dt><dd>{runtimeStateLabel(operations.runtime.mcp.state)}{operations.runtime.mcp.code ? ` · ${operations.runtime.mcp.code}` : ""}</dd>
-          <dt>Host</dt><dd>{runtimeStateLabel(operations.runtime.host.state)}{operations.runtime.host.code ? ` · ${operations.runtime.host.code}` : ""}</dd>
-          <dt>MemoryOS</dt><dd>{runtimeStateLabel(operations.runtime.memory.state)}{operations.runtime.memory.code ? ` · ${operations.runtime.memory.code}` : ""}</dd>
-        </dl>
-        <div className="room-operations-counts" aria-label="运行计数">
-          <span><strong>{operations.counts.active_delivery}</strong>处理中</span>
-          <span><strong>{operations.counts.retained_cleanup}</strong>遗留清理</span>
-          <span><strong>{operations.counts.recovery_pending}</strong>恢复中</span>
-          <span><strong>{operations.counts.cancel_pending}</strong>取消中</span>
-          <span><strong>{operations.counts.provider_cleanup_pending}</strong>Provider 清理</span>
-          <span><strong>{operations.counts.exhausted}</strong>已耗尽</span>
-        </div>
         {incidents.length ? <div className="room-operations-incidents" aria-label="运行事件">
           {incidents.map((incident) => <RoomOperationIncident incident={incident} key={incident.incident_id} onAction={onIncidentAction} />)}
           {operations.incident_total > incidents.length ? <small>另有 {operations.incident_total - incidents.length} 项</small> : null}
         </div> : <p className="room-operations-empty">当前没有需要处理的运行事件。</p>}
+        <details className="room-operations-disclosure" open={operations.overall !== "healthy"}>
+          <summary>组件状态与运行计数</summary>
+          <dl className="room-operations-components">
+            <dt>Runner</dt><dd>{runtimeStateLabel(operations.runtime.runner.state)}{operations.runtime.runner.code ? ` · ${operations.runtime.runner.code}` : ""}</dd>
+            <dt>Room MCP</dt><dd>{runtimeStateLabel(operations.runtime.mcp.state)}{operations.runtime.mcp.code ? ` · ${operations.runtime.mcp.code}` : ""}</dd>
+            <dt>Host</dt><dd>{runtimeStateLabel(operations.runtime.host.state)}{operations.runtime.host.code ? ` · ${operations.runtime.host.code}` : ""}</dd>
+            <dt>MemoryOS</dt><dd>{runtimeStateLabel(operations.runtime.memory.state)}{operations.runtime.memory.code ? ` · ${operations.runtime.memory.code}` : ""}</dd>
+          </dl>
+          <div className="room-operations-counts" aria-label="运行计数">
+            <span><strong>{operations.counts.active_delivery}</strong>处理中</span>
+            <span><strong>{operations.counts.retained_cleanup}</strong>遗留清理</span>
+            <span><strong>{operations.counts.recovery_pending}</strong>恢复中</span>
+            <span><strong>{operations.counts.cancel_pending}</strong>取消中</span>
+            <span><strong>{operations.counts.provider_cleanup_pending}</strong>Provider 清理</span>
+            <span><strong>{operations.counts.exhausted}</strong>已耗尽</span>
+          </div>
+        </details>
         {operations.actions.recover_runtime.available ? <button
           className="room-danger-button room-runtime-recover-button"
           disabled={recoverPending}
