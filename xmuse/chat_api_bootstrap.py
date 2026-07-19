@@ -62,7 +62,7 @@ def register_bootstrap_route(
                 "repair_memory"
                 if companion_state == "invalid"
                 else "install_memory"
-                if companion_state == "missing" and codex_available
+                if companion_state == "missing"
                 else "create_room"
             )
         )

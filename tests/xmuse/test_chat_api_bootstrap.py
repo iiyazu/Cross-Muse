@@ -62,6 +62,7 @@ def test_bootstrap_is_safe_and_reports_companion(monkeypatch, tmp_path: Path) ->
 
 def test_bootstrap_missing_companion_recommends_install(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(chat_api_bootstrap, "discover_managed_companion", lambda: None)
+    monkeypatch.setattr(chat_api_bootstrap.shutil, "which", lambda _name: None)
     app = FastAPI()
     register_bootstrap_route(
         app,
@@ -76,4 +77,5 @@ def test_bootstrap_missing_companion_recommends_install(monkeypatch, tmp_path: P
     payload = _endpoint(app)()
 
     assert payload["memory"]["companion"] == "missing"
+    assert payload["codex"] == {"launcher_available": False}
     assert payload["recommended_action"] == "install_memory"
