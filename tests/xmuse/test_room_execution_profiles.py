@@ -155,6 +155,21 @@ def test_profile_paths_resolve_only_ordered_fixed_gates(profile_id, paths, expec
         ("python-uv/v1", ("package-lock.json",), "room_execution_gate_path_uncovered"),
         ("node-pnpm-library/v1", ("package.json",), "room_execution_gate_path_uncovered"),
         (
+            "node-pnpm-library/v1",
+            ("packages/core/.prettierrc.js",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
+            "node-pnpm-library/v1",
+            ("packages/core/jest.config.ts",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
+            "node-pnpm-library/v1",
+            ("packages/core/tsup.config.ts",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
             "node-pnpm-next-workspace/v1",
             ("packages/web/tsconfig.json",),
             "room_execution_gate_path_uncovered",

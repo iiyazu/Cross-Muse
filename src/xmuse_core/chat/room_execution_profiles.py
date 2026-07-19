@@ -61,15 +61,30 @@ _NODE_SOURCE_SUFFIXES = frozenset(
 )
 _NODE_TOOLING_FILENAMES = frozenset(
     {
+        ".prettierignore",
         "biome.json",
+        "biome.jsonc",
         "package.json",
         "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
         "tsconfig.json",
-        "vite.config.ts",
-        "vite.config.mts",
-        "vitest.config.ts",
-        "vitest.config.mts",
+        "turbo.json",
     }
+)
+_NODE_TOOLING_PREFIXES = (
+    ".babelrc",
+    ".eslintrc",
+    ".prettierrc",
+    "babel.config.",
+    "biome.",
+    "eslint.config.",
+    "jest.config.",
+    "next.config.",
+    "prettier.config.",
+    "tsconfig.",
+    "tsup.config.",
+    "vite.config.",
+    "vitest.config.",
 )
 _XMUSE_BACKEND_PREFIXES = ("xmuse/", *_PYTHON_PREFIXES)
 _XMUSE_BACKEND_FILES = frozenset({*_PYTHON_ROOT_FILES, "AGENTS.md"})
@@ -199,7 +214,7 @@ _PROFILE_SPECS = (
             "node_pnpm_jest",
             "node_pnpm_tsup",
         ),
-        "node_pnpm_paths/v1",
+        "node_pnpm_paths/v2",
         "node_pnpm_markers/v1",
     ),
     _ProfileSpec(
@@ -212,7 +227,7 @@ _PROFILE_SPECS = (
             "node_pnpm_workspace_vitest",
             "node_pnpm_next_build",
         ),
-        "node_pnpm_workspace_paths/v1",
+        "node_pnpm_workspace_paths/v2",
         "node_pnpm_workspace_markers/v1",
     ),
 )
@@ -357,7 +372,8 @@ def _is_node_candidate_path(path: str) -> bool:
     """
 
     pure = PurePosixPath(path)
-    if pure.name in _NODE_TOOLING_FILENAMES or pure.name.startswith("next.config."):
+    name = pure.name.casefold()
+    if name in _NODE_TOOLING_FILENAMES or name.startswith(_NODE_TOOLING_PREFIXES):
         return False
     if _is_documentation_path(path):
         return True
