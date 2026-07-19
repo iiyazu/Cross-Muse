@@ -45,7 +45,11 @@ LIVE_EVIDENCE_SCHEMA = "room_soak_live_evidence/v1"
 GOAL_MEMORY_PROFILE_ID = "live-goal-memory-soak"
 ENDURANCE_PROFILE_ID = "live-endurance"
 ENDURANCE_SHORT_PROFILE_ID = "live-endurance-short"
-ENDURANCE_PROFILE_IDS = frozenset({ENDURANCE_PROFILE_ID, ENDURANCE_SHORT_PROFILE_ID})
+V040_RELEASE_PROFILE_ID = "live-v040-release"
+V040_RELEASE_ROSTER_TEMPLATE_ID = "builtin.development"
+ENDURANCE_PROFILE_IDS = frozenset(
+    {ENDURANCE_PROFILE_ID, ENDURANCE_SHORT_PROFILE_ID, V040_RELEASE_PROFILE_ID}
+)
 BROWSER_INPUT_SCHEMA = "room_soak_browser_input/v1"
 BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v1"
 GOAL_BROWSER_EVIDENCE_SCHEMA = "room_soak_browser_evidence/v2"
@@ -121,6 +125,16 @@ LIVE_PROFILES: dict[str, LiveProfileSpec] = {
         56,
         memory_recovery=True,
     ),
+    V040_RELEASE_PROFILE_ID: LiveProfileSpec(
+        V040_RELEASE_PROFILE_ID,
+        3,
+        4,
+        6,
+        6,
+        176,
+        minimum_duration_s=2700.0,
+        memory_recovery=True,
+    ),
     GOAL_MEMORY_PROFILE_ID: LiveProfileSpec(
         GOAL_MEMORY_PROFILE_ID,
         4,
@@ -172,6 +186,39 @@ ENDURANCE_PROMPT_CATEGORIES: tuple[tuple[str, str], ...] = (
         "Read-only adversarial architecture review: jointly inspect boundaries, import direction, "
         "authority, causality, idempotency, recovery, memory source proof, and execution gates; "
         "surface contradictions and do not edit files." + ENDURANCE_OUTCOME_REQUIREMENT,
+    ),
+)
+
+V040_RELEASE_PROMPT_CATEGORIES: tuple[tuple[str, str], ...] = (
+    (
+        "architecture_boundaries",
+        "Release architecture review: trace package direction and durable authority ownership "
+        "across Room, Host, Runner, and provider boundaries using only evidence-backed facts.",
+    ),
+    (
+        "memory_source_proof",
+        "Release memory review: distinguish recent Room context from full-local archival recall, "
+        "and require re-provable source references and bounded recovery evidence.",
+    ),
+    (
+        "harness_fail_closed",
+        "Release Harness review: inspect fixed profile selection, offline toolchain proof, exact "
+        "patch authorization, and fail-closed behavior for incompatible repositories.",
+    ),
+    (
+        "workbench_ux",
+        "Release Workbench UX review: assess progressive onboarding, Room navigation, attention "
+        "states, reduced motion, and whether operator actions preserve clear authority boundaries.",
+    ),
+    (
+        "recovery_causality",
+        "Release recovery review: check identity fencing, causality, idempotency, bounded retries, "
+        "and cleanup after provider, Runner, MemoryOS, and cache faults.",
+    ),
+    (
+        "integrated_release",
+        "Integrated release review: reconcile architecture, source-backed memory, Harness safety, "
+        "and Workbench UX evidence; surface contradictions instead of filling gaps with guesses.",
     ),
 )
 
@@ -2593,17 +2640,27 @@ def _create_rooms(
     deps: SoakDependencies,
     state: _LiveState,
 ) -> None:
+    if spec.profile_id != V040_RELEASE_PROFILE_ID and spec.agents_per_room != 2:
+        raise SoakError("soak_agent_count_unsupported")
+
     def create(index: int) -> str:
+        roster = (
+            {"roster_template_id": V040_RELEASE_ROSTER_TEMPLATE_ID}
+            if spec.profile_id == V040_RELEASE_PROFILE_ID
+            else {
+                "initial_participants": [
+                    {"role": "architect", "display_name": "Architect", "cli_kind": "codex"},
+                    {"role": "review", "display_name": "Reviewer", "cli_kind": "codex"},
+                ]
+            }
+        )
         response = deps.http_json(
             "POST",
             f"{FRONTEND_URL}/api/rooms",
             {
                 "title": f"Soak Room {index + 1}",
                 "client_request_id": f"soak_create_{uuid.uuid4().hex}",
-                "initial_participants": [
-                    {"role": "architect", "display_name": "Architect", "cli_kind": "codex"},
-                    {"role": "review", "display_name": "Reviewer", "cli_kind": "codex"},
-                ],
+                **roster,
             },
             timeout_s=20.0,
         )
@@ -2663,7 +2720,15 @@ def _post_wave(
         started = deps.monotonic()
         client_request_id = f"soak_post_{uuid.uuid4().hex}"
         category: str | None = None
-        if spec.profile_id in ENDURANCE_PROFILE_IDS:
+        if spec.profile_id == V040_RELEASE_PROFILE_ID:
+            category, base_message = V040_RELEASE_PROMPT_CATEGORIES[
+                (wave * spec.room_count + index) % len(V040_RELEASE_PROMPT_CATEGORIES)
+            ]
+            message = (
+                f"{base_message} Review lane {wave + 1}.{index + 1}; do not edit files."
+                + ENDURANCE_OUTCOME_REQUIREMENT
+            )
+        elif spec.profile_id in ENDURANCE_PROFILE_IDS:
             category, message = ENDURANCE_PROMPT_CATEGORIES[
                 (wave * spec.room_count + index) % len(ENDURANCE_PROMPT_CATEGORIES)
             ]
@@ -4616,6 +4681,17 @@ def _resource_evidence(
     }
 
 
+def _wave_offsets(spec: LiveProfileSpec) -> list[float]:
+    if spec.profile_id == ENDURANCE_PROFILE_ID:
+        # Fault waves are fixed at 0/24/48/72/96 minutes.  The system then
+        # remains under observation until the 120-minute duration boundary.
+        return [index * 24.0 * 60.0 for index in range(spec.wave_count)]
+    return [
+        (spec.minimum_duration_s * index / (spec.wave_count - 1)) if spec.wave_count > 1 else 0.0
+        for index in range(spec.wave_count)
+    ]
+
+
 def _run_live(
     config: SoakConfig,
     deps: SoakDependencies,
@@ -4630,17 +4706,7 @@ def _run_live(
     state.run_started_monotonic = started
     _start_workroom(config, deps, state, runtime_root, env)
     _create_rooms(spec, deps, state)
-    if spec.profile_id == ENDURANCE_PROFILE_ID:
-        # Fault waves are fixed at 0/24/48/72/96 minutes.  The system then
-        # remains under observation until the 120-minute duration boundary.
-        offsets = [index * 24.0 * 60.0 for index in range(spec.wave_count)]
-    else:
-        offsets = [
-            (spec.minimum_duration_s * index / (spec.wave_count - 1))
-            if spec.wave_count > 1
-            else 0.0
-            for index in range(spec.wave_count)
-        ]
+    offsets = _wave_offsets(spec)
     memory_event: _PendingChaosEvent | None = None
     for wave, offset in enumerate(offsets):
         _wait_for_wave_offset(
@@ -4773,7 +4839,12 @@ def _run_live(
             offset_s=spec.minimum_duration_s,
         )
     if spec.profile_id in ENDURANCE_PROFILE_IDS:
-        expected_categories = {category for category, _message in ENDURANCE_PROMPT_CATEGORIES}
+        prompt_categories = (
+            V040_RELEASE_PROMPT_CATEGORIES
+            if spec.profile_id == V040_RELEASE_PROFILE_ID
+            else ENDURANCE_PROMPT_CATEGORIES
+        )
+        expected_categories = {category for category, _message in prompt_categories}
         if (
             set(state.endurance_prompt_categories) != expected_categories
             or sum(state.endurance_prompt_categories.values())
@@ -5346,6 +5417,7 @@ def build_parser() -> argparse.ArgumentParser:
             "live-soak",
             ENDURANCE_PROFILE_ID,
             ENDURANCE_SHORT_PROFILE_ID,
+            V040_RELEASE_PROFILE_ID,
             "memory-recovery",
             GOAL_MEMORY_PROFILE_ID,
         ),

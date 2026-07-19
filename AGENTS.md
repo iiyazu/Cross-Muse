@@ -77,6 +77,10 @@ do not load `.env`.
   workspaces require an explicit profile; their path and private digests never enter browser
   projections. Harness frontend gates call fixed read-only dependency entrypoints rather than
   candidate-controlled package scripts.
+- The fixed Harness profiles are `docs/v1`, `python-uv/v1`, `xmuse-monorepo/v2`,
+  `python-uv-ty/v1`, `node-pnpm-library/v1`, and `node-pnpm-next-workspace/v1`. They invoke
+  only server-owned direct entrypoints whose marker, lock, configuration, and local capability
+  have been frozen; they never accept repository scripts, arbitrary argv, or network installs.
 - Source-backed memory remains optional at installation time. Workroom defaults to
   `--memory-mode auto`: it selects only an installer-owned, digest-verified full-local
   companion; `--memory`/`--memory-mode on` is the explicit source/development path and
@@ -94,6 +98,10 @@ do not load `.env`.
 - `xmuse-data` may inspect old `xmuse.chat_db/v1` databases only for offline
   doctor/backup/restore/compact. It must not initialize a retired runtime.
 - The local application remains loopback-only and single-user.
+- The Workbench is a progressive Room-first UI: the shared timeline remains primary while the
+  Agent, Room, and Runtime dock exposes safe native Codex activity and actionable Room state.
+  It must not duplicate native authority, reveal raw thinking/tool payloads/paths, or revive a
+  Dashboard.
 
 ## Cleanup and safety
 

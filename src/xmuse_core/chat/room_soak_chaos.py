@@ -94,6 +94,23 @@ _PROFILES = {
                 "agent_stream_cache_delete",
             ),
         ),
+        SoakProfile(
+            "live-v040-release",
+            3,
+            4,
+            6,
+            "codex",
+            176,
+            2700,
+            True,
+            True,
+            (
+                "codex_app_server_sigkill",
+                "runner_sigkill",
+                "memoryos_sigkill",
+                "agent_stream_cache_delete",
+            ),
+        ),
     )
 }
 

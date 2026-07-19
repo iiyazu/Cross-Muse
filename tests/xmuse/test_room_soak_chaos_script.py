@@ -252,14 +252,21 @@ def test_live_soak_cost_confirmation_fails_before_start(tmp_path: Path) -> None:
     assert not any("codex" in command for command in system.commands)
 
 
-def test_live_endurance_requires_cost_then_memory_executable_before_start(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "profile_id",
+    [soak.ENDURANCE_PROFILE_ID, soak.V040_RELEASE_PROFILE_ID],
+)
+def test_live_endurance_requires_cost_then_memory_executable_before_start(
+    tmp_path: Path,
+    profile_id: str,
+) -> None:
     repo = _repo(tmp_path)
     system = _FakeSystem(repo)
 
     missing_cost = soak.run_soak(
         soak.SoakConfig(
             repo_root=repo,
-            profile_id=soak.ENDURANCE_PROFILE_ID,
+            profile_id=profile_id,
             runtime_root=tmp_path / "runtime-cost",
             result_path=tmp_path / "result-cost.json",
         ),
@@ -270,7 +277,7 @@ def test_live_endurance_requires_cost_then_memory_executable_before_start(tmp_pa
     missing_memory = soak.run_soak(
         soak.SoakConfig(
             repo_root=repo,
-            profile_id=soak.ENDURANCE_PROFILE_ID,
+            profile_id=profile_id,
             runtime_root=tmp_path / "runtime-memory",
             result_path=tmp_path / "result-memory.json",
             confirm_provider_cost=True,
@@ -579,6 +586,79 @@ def test_live_endurance_schedules_four_faults_then_steady_wave(
     assert "endurance_prompt_categories" not in evidence
 
 
+def test_v040_release_timeline_is_fixed_across_six_waves() -> None:
+    spec = soak.LIVE_PROFILES[soak.V040_RELEASE_PROFILE_ID]
+
+    assert soak._wave_offsets(spec) == [0.0, 540.0, 1080.0, 1620.0, 2160.0, 2700.0]
+    assert spec.room_count * spec.human_turns_per_room == 18
+    assert spec.room_count * spec.human_turns_per_room * spec.agents_per_room * 2 == 144
+    assert spec.max_attempts == 176
+
+
+def test_v040_release_selects_builtin_four_agent_roster(tmp_path: Path) -> None:
+    from xmuse_core.chat.roster_templates import builtin_workroom_catalog
+
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    payloads: list[Mapping[str, Any]] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        payloads.append(payload)
+        room_number = int(str(payload["title"]).rsplit(" ", 1)[-1])
+        return soak.HttpJsonResponse(201, {"id": f"conv_{room_number:08d}"})
+
+    deps.http_json = http_json
+    state = soak._LiveState()
+    soak._create_rooms(soak.LIVE_PROFILES[soak.V040_RELEASE_PROFILE_ID], deps, state)
+
+    assert len(state.room_ids) == len(payloads) == 3
+    for payload in payloads:
+        assert payload["roster_template_id"] == soak.V040_RELEASE_ROSTER_TEMPLATE_ID
+        assert "initial_participants" not in payload
+
+    catalog = builtin_workroom_catalog()
+    template = catalog.roster_templates[soak.V040_RELEASE_ROSTER_TEMPLATE_ID]
+    assert [binding.role_id for binding in template.roles] == [
+        "architect",
+        "builder",
+        "reviewer",
+        "critic",
+    ]
+    assert [
+        catalog.role_profiles[binding.role_id].participant_role for binding in template.roles
+    ] == [
+        "architect",
+        "execute",
+        "review",
+        "critic",
+    ]
+    assert [catalog.role_profiles[binding.role_id].display_name for binding in template.roles] == [
+        "Architect",
+        "Builder",
+        "Reviewer",
+        "Critic",
+    ]
+
+    payloads.clear()
+    existing_state = soak._LiveState()
+    soak._create_rooms(soak.LIVE_PROFILES["live-short"], deps, existing_state)
+    assert len(payloads) == 4
+    for payload in payloads:
+        assert "roster_template_id" not in payload
+        assert payload["initial_participants"] == [
+            {"role": "architect", "display_name": "Architect", "cli_kind": "codex"},
+            {"role": "review", "display_name": "Reviewer", "cli_kind": "codex"},
+        ]
+
+
 def test_runner_pause_uses_private_binding_when_safe_status_omits_pid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -758,6 +838,42 @@ def test_endurance_posts_cover_six_fixed_read_only_categories_without_public_evi
     assert all(count > 0 for count in state.endurance_prompt_categories.values())
     assert set(messages) == set(category_messages.values())
     assert all("Read-only" in message and "do not edit files" in message for message in messages)
+    assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
+
+
+def test_v040_release_posts_cover_architecture_memory_harness_and_ux_without_demo_copy(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    system = _FakeSystem(repo)
+    deps = system.dependencies()
+    messages: list[str] = []
+
+    def http_json(
+        method: str,
+        url: str,
+        payload: Mapping[str, Any],
+        *,
+        timeout_s: float,
+    ) -> soak.HttpJsonResponse:
+        del method, url, timeout_s
+        messages.append(str(payload["message"]))
+        return soak.HttpJsonResponse(201, {"activity_id": f"activity_{len(messages):08d}"})
+
+    deps.http_json = http_json
+    spec = soak.LIVE_PROFILES[soak.V040_RELEASE_PROFILE_ID]
+    state = soak._LiveState(room_ids=[f"conv_{index:08d}" for index in range(spec.room_count)])
+    for wave in range(spec.wave_count):
+        soak._post_wave(spec, deps, state, wave=wave)
+
+    categories = {category for category, _message in soak.V040_RELEASE_PROMPT_CATEGORIES}
+    assert len(messages) == len(set(messages)) == 18
+    assert set(state.endurance_prompt_categories) == categories
+    assert sum(state.endurance_prompt_categories.values()) == 18
+    corpus = " ".join(messages)
+    assert all(topic in corpus for topic in ("architecture", "memory", "Harness", "UX"))
+    assert "Soak wave" not in corpus
+    assert all("do not edit files" in message for message in messages)
     assert all("Submit exactly one concise durable Room outcome" in message for message in messages)
 
 
@@ -1957,7 +2073,12 @@ def test_runtime_provider_discovery_owns_only_runner_descendants(
 
 @pytest.mark.parametrize(
     "profile_id",
-    [soak.GOAL_MEMORY_PROFILE_ID, soak.ENDURANCE_PROFILE_ID, soak.ENDURANCE_SHORT_PROFILE_ID],
+    [
+        soak.GOAL_MEMORY_PROFILE_ID,
+        soak.ENDURANCE_PROFILE_ID,
+        soak.ENDURANCE_SHORT_PROFILE_ID,
+        soak.V040_RELEASE_PROFILE_ID,
+    ],
 )
 def test_full_local_preflight_copies_proven_cache_and_runs_offline(
     tmp_path: Path,
@@ -2620,6 +2741,7 @@ def test_profile_matrix_is_fixed_and_live_result_has_no_private_fields() -> None
         "memory-recovery": (2, 2, 2, 10, None, 0.0, True),
         soak.ENDURANCE_PROFILE_ID: (8, 2, 5, 5, 192, 7200.0, True),
         soak.ENDURANCE_SHORT_PROFILE_ID: (2, 2, 5, 5, 56, 0.0, True),
+        soak.V040_RELEASE_PROFILE_ID: (3, 4, 6, 6, 176, 2700.0, True),
         soak.GOAL_MEMORY_PROFILE_ID: (4, 2, 4, 4, 128, 3600.0, True),
     }
     source = Path(soak.__file__).read_text(encoding="utf-8")
@@ -3081,6 +3203,16 @@ def test_goal_guards_are_optional_cli_outer_limits() -> None:
     assert soak.build_parser().parse_args([soak.ENDURANCE_SHORT_PROFILE_ID]).profile == (
         soak.ENDURANCE_SHORT_PROFILE_ID
     )
+    release = soak.build_parser().parse_args(
+        [
+            soak.V040_RELEASE_PROFILE_ID,
+            "--confirm-provider-cost",
+            "--memoryos-executable",
+            "/tmp/memoryos",
+        ]
+    )
+    assert release.profile == soak.V040_RELEASE_PROFILE_ID
+    assert release.confirm_provider_cost is True
 
 
 def test_goal_pause_waits_for_paused_thread_to_become_idle(
