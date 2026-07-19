@@ -243,8 +243,8 @@ def test_execution_runtime_uses_reconciler_capability_store() -> None:
     assert not _imports_prefix(runtime, "xmuse_core.chat.room_execution_store")
 
 
-def test_execution_capability_stores_do_not_construct_public_wide_store_facade() -> None:
-    """Production composition may use the internal ledger, never the legacy facade."""
+def test_execution_capability_stores_do_not_construct_a_wide_execution_ledger() -> None:
+    """Each execution capability owns only its narrow transaction seam."""
 
     stores = (
         CORE_ROOT / "chat" / "room_execution_controller_store.py",
@@ -253,9 +253,25 @@ def test_execution_capability_stores_do_not_construct_public_wide_store_facade()
     )
     for store in stores:
         source = store.read_text(encoding="utf-8")
-        assert "import RoomExecutionStore" not in source
+        assert "from xmuse_core.chat.room_execution_store import" not in source
         assert "RoomExecutionStore(" not in source
-        assert "import _ExecutionLedger" in source
+        assert "import _ExecutionLedger" not in source
+        assert "_ExecutionLedger(" not in source
+
+
+def test_production_execution_surface_has_no_aggregate_store_module() -> None:
+    """Aggregate fixture wiring belongs in tests, never the shipped package."""
+
+    aggregate = CORE_ROOT / "chat" / "room_execution_store.py"
+    assert not aggregate.exists()
+    production_roots = (CORE_ROOT, APP_ROOT, PROJECT_ROOT / "scripts")
+    offenders = [
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for root in production_roots
+        for path in _python_files(root)
+        if "room_execution_store" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
 
 
 def test_execution_event_helper_uses_caller_owned_transaction() -> None:

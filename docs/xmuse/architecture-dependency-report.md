@@ -8,7 +8,7 @@ The hard gate reports import cycles, `xmuse_core` dependencies on the applicatio
 `memoryos_lite`, and read-model dependencies on supervisors, CLIs, or operator mutation
 stores. It also reports cross-layer edges and fan-out as review evidence, not thresholds.
 
-`capability_debts` intentionally exposes narrow adapters that construct a wider public
-Store facade. It has no file-specific suppression mechanism. Execution's public
-`RoomExecutionStore` remains only for in-process compatibility; production capability
-adapters compose the internal ledger directly and do not construct that facade.
+`capability_debts` intentionally exposes narrow adapters that construct a wider Store or
+Ledger implementation. It has no file-specific suppression mechanism. Execution's public
+`RoomExecutionStore` remains only as a stateless in-process compatibility composition;
+Operator, Controller, Runtime, Review, and Read stores own their respective SQL seams directly.

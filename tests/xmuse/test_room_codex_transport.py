@@ -19,7 +19,7 @@ from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStr
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
-from xmuse_core.chat.room_execution_store import RoomExecutionStoreError
+from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_host import (
     RoomHostPolicy,
     RoomObservationDelivery,

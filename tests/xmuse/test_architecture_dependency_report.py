@@ -66,7 +66,7 @@ def test_report_detects_synthetic_cycles_core_and_read_model_boundary_breaks(
     ]
 
 
-def test_report_exposes_narrow_adapter_wrapping_wide_store_without_path_suppression(
+def test_report_exposes_narrow_adapter_wrapping_wide_authority_without_path_suppression(
     tmp_path: Path,
 ) -> None:
     _module(
@@ -92,5 +92,32 @@ def test_report_exposes_narrow_adapter_wrapping_wide_store_without_path_suppress
             "module": "xmuse_core.chat.room_execution_controller_store",
             "adapter": "RoomExecutionControllerStore",
             "concrete_store": "RoomExecutionStore",
+        }
+    ]
+
+
+def test_report_exposes_private_ledger_wrapped_by_a_narrow_store(tmp_path: Path) -> None:
+    _module(
+        tmp_path,
+        "src/xmuse_core/chat/room_execution_ledger.py",
+        "class _ExecutionLedger:\n    pass\n",
+    )
+    _module(
+        tmp_path,
+        "src/xmuse_core/chat/room_execution_runtime_store.py",
+        "from xmuse_core.chat.room_execution_ledger import _ExecutionLedger\n"
+        "\n"
+        "class RoomExecutionRuntimeStore:\n"
+        "    def __init__(self):\n"
+        "        self._ledger = _ExecutionLedger()\n",
+    )
+
+    report = build_report(tmp_path)
+
+    assert report["capability_debts"] == [
+        {
+            "module": "xmuse_core.chat.room_execution_runtime_store",
+            "adapter": "RoomExecutionRuntimeStore",
+            "concrete_store": "_ExecutionLedger",
         }
     ]
