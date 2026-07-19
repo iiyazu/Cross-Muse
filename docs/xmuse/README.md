@@ -32,6 +32,7 @@ optional MemoryOS
 | Module | Responsibility |
 | --- | --- |
 | `xmuse/chat_api.py` | Room-only HTTP composition. |
+| `xmuse/chat_api_bootstrap.py` | Safe first-run capability and recommended-action projection. |
 | `xmuse/chat_api_room_setup.py` | Atomic Room and roster creation. |
 | `xmuse/chat_api_room_messages.py` | Human speech write path. |
 | `xmuse/chat_api_room_projection.py` | Bounded Room list, timeline, and events. |
@@ -46,6 +47,7 @@ optional MemoryOS
 | `xmuse/room_runner.py` | Host process lock, receipt, heartbeat, and pump lifecycle. |
 | `xmuse/room_mcp_server.py` | `/health` and `/mcp/room`; one outcome tool. |
 | `xmuse/workroom.py` | Local Chat API/frontend lifecycle and optional derived MemoryOS sidecar. |
+| `xmuse/memoryos_companion.py` | Installer-owned companion manifest, payload and full-local capability proof. |
 | `xmuse/data_cli.py` | Offline doctor, backup, restore, and compact. |
 | `src/xmuse_core/chat/room_database.py` | Room schema and SQLite connection policy. |
 | `src/xmuse_core/chat/room_batches.py` | Immutable observation batches and canonical membership. |
@@ -70,6 +72,7 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_memory_ports.py` | Narrow persistence ports consumed by optional memory adapters. |
 | `src/xmuse_core/chat/room_memory_runtime.py` | Sidecar-neutral Host evidence protocol. |
 | `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` safe read model. |
+| `src/xmuse_core/chat/room_memory_diversity.py` | Bounded multi-topic recall dogfood result contract. |
 | `src/xmuse_core/chat/memoryos_supervisor.py` | Optional sidecar command, environment, receipt, and safe status. |
 | `src/xmuse_core/chat/room_soak_chaos.py` | Fixed soak profiles, strict aggregate evidence, and `room_soak_chaos_result/v1` gates. |
 | `src/xmuse_core/chat/room_soak_ci.py` | Deterministic 12-Room production Kernel/Host CI simulation. |
@@ -114,6 +117,14 @@ explicit cache/schema rebuilds through a guarded Inspector action. Rebuild stops
 child before fixed-cache deletion, resets only derived bindings/outbox in one transaction,
 then waits for replay evidence; it never changes Room Runtime readiness or manufactures Room
 activity.
+
+Workroom memory mode is `auto` by default. It starts full-local only after verifying the
+installer-generated companion manifest, every payload digest, the offline FastEmbed cache and
+the companion capability contract. A missing companion leaves the Room usable; a malformed
+manifest is reported as degraded without executing its files. `--memory` is the explicit `on`
+alias for source/development executables and `--no-memory` is the explicit `off` shortcut.
+The bootstrap projection exposes only these safe capabilities and recommended action codes;
+it never returns executable paths, process identity, API keys or MemoryOS internal IDs.
 
 Participant Codex session creation, ordinary reuse, and forced recovery share one
 participant-scoped singleflight. A late recovery task cannot abort a newer incarnation.

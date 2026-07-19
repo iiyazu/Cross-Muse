@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
 
 from xmuse import workroom_cli, workroom_launcher
+from xmuse.memoryos_companion import MemoryOSCompanionError
 from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 from xmuse.workroom_launcher import (
     ManagedMemoryOSError,
@@ -245,6 +246,32 @@ def test_missing_managed_memoryos_returns_stable_error_without_spawn(tmp_path: P
     assert fixture.spawned == []
 
 
+def test_invalid_managed_memoryos_returns_stable_error_without_spawn(tmp_path: Path) -> None:
+    fixture = LaunchFixture(["stopped"])
+
+    def invalid_companion() -> Path | None:
+        raise MemoryOSCompanionError("memoryos_companion_manifest_invalid")
+
+    dependencies = replace(
+        fixture.dependencies(),
+        resolve_managed_memoryos=invalid_companion,
+    )
+
+    exit_code, payload = launch_workroom(
+        _paths(tmp_path),
+        WorkroomDependencies(),
+        _request(tmp_path, memory=True),
+        dependencies=dependencies,
+    )
+
+    assert exit_code == 1
+    assert payload["error"] == {
+        "code": "memoryos_companion_manifest_invalid",
+        "message": "the managed MemoryOS companion is invalid",
+    }
+    assert fixture.spawned == []
+
+
 def test_default_managed_memoryos_resolver_uses_active_install_layout(
     tmp_path: Path,
     monkeypatch: object,
@@ -319,3 +346,31 @@ def test_cli_no_open_and_forwarding_use_launch_contract(
     assert argv[argv.index("--execution-profile") + 1] == "docs/v1"
     assert argv[argv.index("--readiness-timeout-s") + 1] == "4.0"
     assert argv[argv.index("--stop-timeout-s") + 1] == "5.0"
+
+
+def test_cli_ready_auto_launch_does_not_discover_or_stage_companion(
+    tmp_path: Path,
+    capsys: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = LaunchFixture(["ready"])
+    monkeypatch.setattr(
+        workroom_cli,
+        "discover_managed_companion",
+        lambda: pytest.fail("ready launch must not inspect the companion"),
+    )
+    monkeypatch.setattr(
+        workroom_cli,
+        "_prepare_managed_memoryos_cache",
+        lambda *_args: pytest.fail("ready launch must not rewrite the model cache"),
+    )
+
+    exit_code = workroom_cli.run_cli(
+        ["launch", "--root", str(tmp_path / "root"), "--no-open"],
+        dependencies=WorkroomDependencies(repo_root=tmp_path / "repo"),
+        launch_dependencies=fixture.dependencies(),
+    )
+
+    assert exit_code == 0
+    assert fixture.spawned == []
+    assert json.loads(capsys.readouterr().out)["already_running"] is True  # type: ignore[attr-defined]

@@ -134,9 +134,12 @@ Dashboard, broad MCP root, self-evolution control plane, enabled MemoryOS sideca
 A2A transport. The Room Collaboration Protocol is xmuse's own durable collaboration model,
 not an implementation of Google A2A; a future Google A2A adapter could only be an opt-in
 remote participant transport.
-MemoryOS is an explicit `--memory` option; it does not expand the Room Agent's
-single MCP tool or filesystem/network permissions. Retired implementations live only in Git
-history.
+MemoryOS remains optional at installation time. Workroom's default `--memory-mode auto`
+selects only an installer-owned, digest-verified full-local companion; `--memory` is the
+explicit `--memory-mode on` compatibility alias and `--no-memory` disables it. The companion
+is never discovered through PATH or arbitrary configuration. Memory does not expand the Room
+Agent's single MCP tool or filesystem/network permissions. Retired implementations live only
+in Git history.
 
 ## Install a release bundle
 
@@ -157,8 +160,10 @@ xmuse-workroom launch --no-open
 
 `launch` starts the existing Workroom supervisor in a detached process, waits for its real
 readiness receipt, and opens `http://127.0.0.1:3000` unless `--no-open` is supplied. It does
-not introduce a second supervisor. With the companion installed, `launch --memory` discovers
-the bundled executable and stages the verified FastEmbed cache into the private runtime root.
+not introduce a second supervisor. With the companion installed, plain `launch` discovers the
+bundled executable and stages the verified FastEmbed cache into the private runtime root. Use
+`launch --no-memory` to opt out, or `launch --memory` when explicitly selecting a source/
+development executable.
 
 Install a newer base bundle to create and atomically activate a separate version. Roll back
 or remove an inactive version explicitly:
@@ -215,14 +220,19 @@ manual and consensus execution. Python gates are supervised at 2 GiB aggregate R
 processes, and 1 GiB scratch; frontend gates use 4 GiB, 128 processes, and 2 GiB scratch.
 Neither the workspace path nor internal profile/toolchain digests enter browser projections.
 
-To opt into source-backed memory from a checkout, point Workroom at a real MemoryOS
+To explicitly enable source-backed memory from a checkout, point Workroom at a real MemoryOS
 executable. Full-local is the default memory profile; archive-only remains an explicit
-compatibility profile:
+compatibility profile. Without an executable, `auto` leaves the Room available and reports
+that the companion is not installed:
 
 ```bash
-uv run xmuse-workroom start --memory \
+uv run xmuse-workroom start --memory-mode on \
   --memoryos-executable /absolute/path/to/memoryos
 ```
+
+The equivalent `--memory` flag is retained for compatibility. `--memory-mode auto` is the
+default and only trusts the verified companion manifest created by the installer; it never
+searches PATH. Use `--no-memory` or `--memory-mode off` to disable the optional sidecar.
 
 Workroom fixes the sidecar to loopback, creates a private derived data directory and random
 server-only API key, and keeps external memory governance in `chat.db`. Full-local enables

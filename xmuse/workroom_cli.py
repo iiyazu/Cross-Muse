@@ -8,6 +8,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from xmuse.memoryos_companion import MemoryOSCompanionError, discover_managed_companion
 from xmuse.workroom import (
     DEFAULT_XMUSE_ROOT,
     doctor_workroom,
@@ -17,8 +18,10 @@ from xmuse.workroom import (
 )
 from xmuse.workroom_contracts import WorkroomDependencies, WorkroomPaths
 from xmuse.workroom_launcher import (
+    ManagedMemoryOSError,
     WorkroomLaunchDependencies,
     WorkroomLaunchRequest,
+    _prepare_managed_memoryos_cache,
     launch_workroom,
 )
 
@@ -36,10 +39,22 @@ def _add_start_options(parser: argparse.ArgumentParser) -> None:
         "--execution-profile",
         help="fixed server gate profile; required for a non-default workspace",
     )
-    parser.add_argument(
+    memory_flags = parser.add_mutually_exclusive_group()
+    memory_flags.add_argument(
         "--memory",
         action="store_true",
-        help="enable the optional source-backed MemoryOS archive sidecar",
+        help="enable the optional source-backed MemoryOS archive sidecar (alias for mode on)",
+    )
+    memory_flags.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="disable MemoryOS even when an installed companion is available",
+    )
+    parser.add_argument(
+        "--memory-mode",
+        choices=("auto", "on", "off"),
+        default=None,
+        help="select MemoryOS auto-discovery, explicit enablement, or disablement",
     )
     parser.add_argument(
         "--memoryos-executable",
@@ -88,15 +103,52 @@ def run_cli(
     args = build_parser().parse_args(argv)
     deps = dependencies or WorkroomDependencies()
     paths = WorkroomPaths.resolve(args.root, deps.repo_root, deps.assets_root)
+    requested_mode = getattr(args, "memory_mode", None)
+    if requested_mode is None:
+        requested_mode = (
+            "on"
+            if getattr(args, "memory", False)
+            else "off"
+            if getattr(args, "no_memory", False)
+            else "auto"
+        )
+    if getattr(args, "memory", False) and requested_mode != "on":
+        build_parser().error("--memory is an alias for --memory-mode on")
+    if getattr(args, "no_memory", False) and requested_mode != "off":
+        build_parser().error("--no-memory conflicts with --memory-mode on")
     if args.command == "start":
         if args.readiness_timeout_s <= 0 or args.stop_timeout_s <= 0:
             build_parser().error("timeouts must be positive")
-        if bool(args.memory) != (args.memoryos_executable is not None):
-            build_parser().error("--memory and --memoryos-executable must be provided together")
-        if args.memory_profile is not None and not args.memory:
-            build_parser().error("--memory-profile requires --memory")
+        if requested_mode == "off" and args.memoryos_executable is not None:
+            build_parser().error("--memoryos-executable requires memory mode on")
+        if requested_mode == "auto" and args.memoryos_executable is not None:
+            build_parser().error("an explicit MemoryOS executable requires memory mode on")
+        if args.memory_profile is not None and requested_mode != "on":
+            build_parser().error("--memory-profile requires memory mode on")
+        memory_enabled = requested_mode == "on"
+        executable = args.memoryos_executable
+        disabled_code: str | None = None
+        if requested_mode == "auto":
+            try:
+                companion = discover_managed_companion()
+            except MemoryOSCompanionError as exc:
+                companion = None
+                disabled_code = exc.code
+            if companion is not None:
+                memory_enabled = True
+                executable = companion.executable
+                try:
+                    _prepare_managed_memoryos_cache(executable, paths.xmuse_root)
+                except ManagedMemoryOSError as exc:
+                    memory_enabled = False
+                    executable = None
+                    disabled_code = str(exc) or "memoryos_companion_cache_invalid"
+        if memory_enabled and executable is None:
+            build_parser().error(
+                "memory mode on requires an explicit or managed MemoryOS executable"
+            )
         resolved_memory_profile = args.memory_profile or (
-            "full-local" if args.memory else "archive-only"
+            "full-local" if memory_enabled else "archive-only"
         )
         return start_workroom(
             paths,
@@ -105,17 +157,22 @@ def run_cli(
             stop_timeout_s=args.stop_timeout_s,
             execution_workspace=args.workspace,
             execution_profile_id=args.execution_profile,
-            memory_enabled=bool(args.memory),
-            memoryos_executable=args.memoryos_executable,
+            memory_enabled=memory_enabled,
+            memoryos_executable=executable,
             memory_profile=resolved_memory_profile,
+            memory_disabled_code=disabled_code,
         )
     if args.command == "launch":
         if args.readiness_timeout_s <= 0 or args.stop_timeout_s <= 0:
             build_parser().error("timeouts must be positive")
-        if args.memoryos_executable is not None and not args.memory:
-            build_parser().error("--memoryos-executable requires --memory")
-        if args.memory_profile is not None and not args.memory:
-            build_parser().error("--memory-profile requires --memory")
+        if requested_mode == "off" and args.memoryos_executable is not None:
+            build_parser().error("--memoryos-executable requires memory mode on")
+        if requested_mode == "auto" and args.memoryos_executable is not None:
+            build_parser().error("an explicit MemoryOS executable requires memory mode on")
+        if args.memory_profile is not None and requested_mode != "on":
+            build_parser().error("--memory-profile requires memory mode on")
+        memory_enabled = requested_mode == "on"
+        executable = args.memoryos_executable
         exit_code, payload = launch_workroom(
             paths,
             deps,
@@ -125,8 +182,9 @@ def run_cli(
                 stop_timeout_s=args.stop_timeout_s,
                 workspace=args.workspace,
                 execution_profile=args.execution_profile,
-                memory=bool(args.memory),
-                memoryos_executable=args.memoryos_executable,
+                memory=memory_enabled,
+                memory_mode="on" if memory_enabled else requested_mode,
+                memoryos_executable=executable,
                 memory_profile=args.memory_profile,
                 open_browser=not args.no_open,
             ),

@@ -804,6 +804,8 @@ def record_memoryos_disabled(
     manifest: Mapping[str, Any],
     paths: WorkroomPaths,
     deps: WorkroomDependencies,
+    *,
+    code: str | None = None,
 ) -> dict[str, Any]:
     """Write and return a safe disabled-sidecar receipt."""
 
@@ -813,7 +815,7 @@ def record_memoryos_disabled(
         paths,
         enabled=False,
         state="disabled",
-        code="memoryos_disabled",
+        code=code or "memoryos_disabled",
     )
 
 
