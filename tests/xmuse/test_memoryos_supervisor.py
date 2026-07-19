@@ -82,6 +82,7 @@ def test_full_local_sidecar_selects_offline_hybrid_and_external_governance(
     assert environment["MEMORYOS_AGENT_KERNEL"] == "external"
     assert environment["MEMORYOS_ITEM_EXTRACTION"] == "true"
     assert environment["MEMORYOS_PAGING_MODE"] == "heuristic"
+    assert environment["MEMORYOS_ARCHIVAL_VECTOR_ENABLED"] == "true"
     assert environment["MEMORYOS_EMBEDDING_PROVIDER"] == "fastembed"
     assert environment["MEMORYOS_FASTEMBED_OFFLINE"] == "1"
     assert environment["HF_HUB_OFFLINE"] == "1"

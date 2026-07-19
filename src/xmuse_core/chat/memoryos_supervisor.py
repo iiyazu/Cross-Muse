@@ -144,7 +144,9 @@ def memoryos_child_environment(
             "FASTEMBED_CACHE_PATH": str(xmuse_root / "runtime" / "fastembed-cache"),
             "MEMORYOS_AGENT_KERNEL": "external" if profile == "full-local" else "off",
             "MEMORYOS_API_KEY": api_key,
-            "MEMORYOS_ARCHIVAL_VECTOR_ENABLED": "false",
+            # full-local uses MemoryOS' bounded process-local FastEmbed index.
+            # archive-only deliberately remains lexical and dependency-light.
+            "MEMORYOS_ARCHIVAL_VECTOR_ENABLED": "true" if profile == "full-local" else "false",
             "MEMORYOS_CORS_ORIGINS": "[]",
             "MEMORYOS_ITEM_EXTRACTION": "true" if profile == "full-local" else "false",
             "MEMORYOS_MEMORY_ARCH": "v3",
