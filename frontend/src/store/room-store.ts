@@ -359,6 +359,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   onboardingVersion: 1,
   onboardingCompleted: false,
   onboardingDismissed: false,
+  onboardingOpen: false,
   operations: null,
   operationsLoading: false,
   operationsError: null,

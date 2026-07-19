@@ -26,6 +26,7 @@ export type RoomInspectorProps = {
   executionSection: ReactNode;
   memorySection: ReactNode;
   roomEvidenceSection: ReactNode;
+  onboardingSection?: ReactNode;
   activeTab?: WorkspaceDockTab;
   onTabChange?: (tab: WorkspaceDockTab) => void;
   onClose: () => void;
@@ -58,6 +59,7 @@ export function RoomInspector({
   executionSection,
   memorySection,
   roomEvidenceSection,
+  onboardingSection,
   activeTab = "room",
   onTabChange = () => undefined,
   onClose,
@@ -172,6 +174,7 @@ export function RoomInspector({
         ))}
       </div>
       <div className="workspace-dock-content" role="tabpanel">
+        {onboardingSection}
         {activeTab === "agent" ? agentConsoleSection : null}
         {activeTab === "room" ? <>{executionSection}{memorySection}{roomEvidenceSection}</> : null}
         {activeTab === "runtime" ? operationsSection : null}

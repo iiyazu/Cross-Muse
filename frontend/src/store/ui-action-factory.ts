@@ -97,13 +97,17 @@ export function createUiDomainActions({
     },
 
     completeOnboarding() {
-      set({ onboardingCompleted: true, onboardingDismissed: false });
+      set({ onboardingCompleted: true, onboardingDismissed: false, onboardingOpen: false });
       persistUiState(get());
     },
 
     dismissOnboarding() {
-      set({ onboardingDismissed: true });
+      set({ onboardingDismissed: true, onboardingOpen: false });
       persistUiState(get());
+    },
+
+    openOnboarding() {
+      set({ onboardingOpen: true });
     }
   };
 }

@@ -33,7 +33,11 @@ async function json(route: Route, body: unknown, status = 200) {
 
 async function installRoomFixture(
   page: Page,
-  options: { memoryRebuildable?: boolean } = {}
+  options: {
+    empty?: boolean;
+    memoryCompanion?: "installed" | "missing" | "invalid";
+    memoryRebuildable?: boolean;
+  } = {}
 ) {
   let cancelled = false;
   let executionPolicy: "manual" | "consensus" = "manual";
@@ -166,6 +170,32 @@ async function installRoomFixture(
             { role_id: "critic", role: "critic", display_name: "Critic", description: "负责反例", collaboration_focus: "风险" }
           ]
         }]
+      });
+      return;
+    }
+    if (url.pathname === "/api/chat/bootstrap") {
+      const companion = options.memoryCompanion ?? "installed";
+      await json(route, {
+        schema_version: "xmuse_bootstrap_projection/v1",
+        has_rooms: !options.empty,
+        codex: { launcher_available: true },
+        memory: {
+          mode: "auto",
+          companion,
+          profile: companion === "installed" ? "full-local" : "unavailable",
+          runtime: {
+            state: companion === "installed" ? "ready" : companion === "invalid" ? "degraded" : "disabled",
+            code: companion === "installed" ? "ready" : `memoryos_companion_${companion}`
+          }
+        },
+        execution: {
+          profile_id: "xmuse-monorepo/v2",
+          revision: 2,
+          readiness: { state: "ready", ready: true, code: "ready" }
+        },
+        recommended_action: options.empty
+          ? companion === "invalid" ? "repair_memory" : companion === "missing" ? "install_memory" : "create_room"
+          : "open_room"
       });
       return;
     }
@@ -336,7 +366,7 @@ async function installRoomFixture(
     if (url.pathname === "/api/chat/rooms") {
       await json(route, {
         schema_version: "room_list_projection/v1",
-        rooms: [
+        rooms: options.empty ? [] : [
           {
             conversation_id: "conv-1",
             title: "闭环审计室",
@@ -913,6 +943,18 @@ async function installRoomFixture(
   });
 }
 
+test("first-run readiness remains actionable without the optional companion", async ({ page }) => {
+  await installRoomFixture(page, { empty: true, memoryCompanion: "missing" });
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "让多个 Codex Agent 在一个 Room 自然协作" })).toBeVisible();
+  await expect(page.getByText("Codex 已就绪")).toBeVisible();
+  await expect(page.getByText("MemoryOS 未安装（可选）")).toBeVisible();
+  await expect(page.getByText("Harness 已就绪")).toBeVisible();
+  await page.getByRole("button", { name: "创建协作 Room" }).click();
+  await expect(page.getByRole("dialog", { name: "创建协作 Room" })).toBeVisible();
+});
+
 test("deep link, message send, and single-Agent control remain usable", async ({ page }) => {
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
@@ -1259,6 +1301,7 @@ test("the 200% zoom-equivalent viewport preserves the complete chat path", async
 });
 
 test("workroom landmarks and interactive controls pass automated accessibility checks", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await installRoomFixture(page);
   await page.goto("/rooms/conv-1");
   await expect(page.getByRole("heading", { name: "闭环审计室" })).toBeVisible();
