@@ -1,0 +1,12 @@
+diff --git a/tests/twg.test.ts b/tests/twg.test.ts
+index 148eec8..bc99ec1 100644
+--- a/tests/twg.test.ts
++++ b/tests/twg.test.ts
+@@ -47,7 +47,6 @@ describe("twg()", () => {
+                 expected: "multiple classes in array"
+             },
+             { args: [{ var: "" }], expected: "" },
+-            { args: [{ var: "" }], expected: "" },
+             { args: [{ "": "" }], expected: "" },
+             { args: [{ "": "class" }], expected: ":class" },
+             {

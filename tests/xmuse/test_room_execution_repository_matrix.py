@@ -15,7 +15,7 @@ from xmuse_core.chat.room_execution_repository_matrix import (
 
 
 def _digest(character: str) -> str:
-    return "sha256:" + character * 64
+    return "sha256:" + character[-1] * 64
 
 
 def _scenario(
@@ -49,32 +49,45 @@ def _scenario(
 def _scenarios() -> list[dict[str, object]]:
     return [
         _scenario("memu-python", "python-uv/v1", "passed", "accepted", index=1),
-        _scenario("clowder-docs", "docs/v1", "passed", "accepted", index=2),
+        _scenario(
+            "clowder-next-probe",
+            "node-pnpm-next-workspace/v1",
+            "blocked",
+            "execution_frontend_dependencies_unavailable",
+            index=2,
+        ),
         _scenario("memoryos-control", "python-uv/v1", "passed", "accepted", index=3),
         _scenario(
-            "letta-blocked",
-            "python-uv/v1",
+            "letta-ty-probe",
+            "python-uv-ty/v1",
             "blocked",
             "execution_backend_dependencies_unavailable",
             index=4,
         ),
         _scenario(
-            "mem0-blocked",
-            "python-uv/v1",
-            "blocked",
-            "execution_gate_profile_marker_missing",
+            "twg-node-library",
+            "node-pnpm-library/v1",
+            "passed",
+            "accepted",
             index=5,
+        ),
+        _scenario(
+            "mem0-ts-probe",
+            "node-pnpm-library/v1",
+            "blocked",
+            "execution_frontend_dependencies_unavailable",
+            index=6,
         ),
     ]
 
 
-def test_fixed_two_new_repositories_and_control_pass_with_exact_blocks() -> None:
+def test_fixed_python_and_node_repositories_pass_with_exact_blocks() -> None:
     result = build_repository_matrix_result(scenarios=_scenarios())
 
     assert result["schema_version"] == RESULT_SCHEMA
-    assert result["scenario_count"] == 5
+    assert result["scenario_count"] == 6
     assert result["positive_promotions"] == 3
-    assert result["expected_blocks"] == 2
+    assert result["expected_blocks"] == 3
     assert evaluate_repository_matrix_result(result) == (True, ())
     assert normalize_repository_matrix_result(result) == result
     assert validate_repository_matrix_result(result) == result
@@ -83,8 +96,8 @@ def test_fixed_two_new_repositories_and_control_pass_with_exact_blocks() -> None
 @pytest.mark.parametrize(
     ("scenario_id", "wrong_reason"),
     [
-        ("letta-blocked", "execution_gate_profile_marker_missing"),
-        ("mem0-blocked", "execution_backend_dependencies_unavailable"),
+        ("letta-ty-probe", "execution_frontend_dependencies_unavailable"),
+        ("mem0-ts-probe", "execution_backend_dependencies_unavailable"),
     ],
 )
 def test_negative_scenarios_require_the_exact_fail_closed_reason(

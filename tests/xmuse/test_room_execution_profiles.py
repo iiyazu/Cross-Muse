@@ -21,6 +21,9 @@ def test_fixed_profiles_are_server_owned_and_contain_no_command_text() -> None:
     docs = get_execution_gate_profile("docs/v1")
     python = get_execution_gate_profile("python-uv/v1")
     xmuse = get_execution_gate_profile("xmuse-monorepo/v2")
+    ty = get_execution_gate_profile("python-uv-ty/v1")
+    pnpm_library = get_execution_gate_profile("node-pnpm-library/v1")
+    pnpm_workspace = get_execution_gate_profile("node-pnpm-next-workspace/v1")
 
     assert docs.schema_version == EXECUTION_GATE_PROFILE_SCHEMA
     assert docs.gate_ids == ("patch_diff_check",)
@@ -31,7 +34,18 @@ def test_fixed_profiles_are_server_owned_and_contain_no_command_text() -> None:
         "python_uv_pytest",
     )
     assert xmuse.gate_ids[-1] == "frontend_build"
-    assert all(profile.profile_digest.startswith("sha256:") for profile in (docs, python, xmuse))
+    assert ty.gate_ids == (
+        "patch_diff_check",
+        "python_uv_ruff",
+        "python_uv_ty",
+        "python_uv_pytest",
+    )
+    assert pnpm_library.gate_ids[-2:] == ("node_pnpm_jest", "node_pnpm_tsup")
+    assert pnpm_workspace.gate_ids[-1] == "node_pnpm_next_build"
+    assert all(
+        profile.profile_digest.startswith("sha256:")
+        for profile in (docs, python, xmuse, ty, pnpm_library, pnpm_workspace)
+    )
     assert set(xmuse.safe_reference()) == {
         "schema_version",
         "profile_id",
@@ -48,6 +62,33 @@ def test_fixed_profiles_are_server_owned_and_contain_no_command_text() -> None:
             "python-uv/v1",
             ("README.md",),
             ("patch_diff_check", "python_uv_ruff", "python_uv_mypy", "python_uv_pytest"),
+        ),
+        (
+            "python-uv-ty/v1",
+            ("tests/test_example.py",),
+            ("patch_diff_check", "python_uv_ruff", "python_uv_ty", "python_uv_pytest"),
+        ),
+        (
+            "node-pnpm-library/v1",
+            ("src/index.ts",),
+            (
+                "patch_diff_check",
+                "node_pnpm_prettier",
+                "node_pnpm_typecheck",
+                "node_pnpm_jest",
+                "node_pnpm_tsup",
+            ),
+        ),
+        (
+            "node-pnpm-next-workspace/v1",
+            ("packages/web/app/page.tsx",),
+            (
+                "patch_diff_check",
+                "node_pnpm_biome",
+                "node_pnpm_workspace_typecheck",
+                "node_pnpm_workspace_vitest",
+                "node_pnpm_next_build",
+            ),
         ),
         (
             "python-uv/v1",
@@ -112,6 +153,27 @@ def test_profile_paths_resolve_only_ordered_fixed_gates(profile_id, paths, expec
         ("unknown/v1", ("README.md",), "room_execution_gate_profile_unknown"),
         ("docs/v1", ("src/example.py",), "room_execution_gate_path_uncovered"),
         ("python-uv/v1", ("package-lock.json",), "room_execution_gate_path_uncovered"),
+        ("node-pnpm-library/v1", ("package.json",), "room_execution_gate_path_uncovered"),
+        (
+            "node-pnpm-library/v1",
+            ("packages/core/.prettierrc.js",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
+            "node-pnpm-library/v1",
+            ("packages/core/jest.config.ts",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
+            "node-pnpm-library/v1",
+            ("packages/core/tsup.config.ts",),
+            "room_execution_gate_path_uncovered",
+        ),
+        (
+            "node-pnpm-next-workspace/v1",
+            ("packages/web/tsconfig.json",),
+            "room_execution_gate_path_uncovered",
+        ),
         ("xmuse-monorepo/v2", ("deploy/prod.yml",), "room_execution_gate_path_uncovered"),
         ("docs/v1", ("prompts/system.txt",), "room_execution_gate_path_uncovered"),
         ("docs/v1", ("secrets.txt",), "room_execution_gate_path_uncovered"),

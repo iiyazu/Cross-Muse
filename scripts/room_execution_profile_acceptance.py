@@ -293,25 +293,42 @@ def _clone_no_hardlinks(source: Path, destination: Path) -> None:
         raise AcceptanceError("acceptance_clone_failed")
 
 
-def _link_dependencies(target: Path, source: Path, *, frontend: bool) -> None:
+def _link_dependencies(
+    target: Path,
+    source: Path,
+    *,
+    frontend: bool,
+    python: bool = True,
+    node: bool = False,
+) -> None:
     exclude = target / ".git" / "info" / "exclude"
     with exclude.open("a", encoding="utf-8") as handle:
-        handle.write("\n.venv\nfrontend/node_modules\n")
-    python = source / ".venv"
-    if not python.is_dir():
-        raise AcceptanceError("acceptance_python_dependencies_missing")
-    os.symlink(python.resolve(strict=True), target / ".venv", target_is_directory=True)
-    try:
-        artifacts = discover_python_extension_artifacts(source)
-    except RoomExecutionSandboxError as exc:
-        raise AcceptanceError("acceptance_python_dependencies_invalid") from exc
-    for artifact, relative_value, digest in artifacts:
-        relative = Path(relative_value)
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(artifact, destination, follow_symlinks=False)
-        if _file_digest(destination) != digest:
-            raise AcceptanceError("acceptance_python_dependencies_invalid")
+        handle.write("\n.venv\nnode_modules\nfrontend/node_modules\n")
+    if python:
+        python_root = source / ".venv"
+        if not python_root.is_dir():
+            raise AcceptanceError("acceptance_python_dependencies_missing")
+        os.symlink(python_root.resolve(strict=True), target / ".venv", target_is_directory=True)
+        try:
+            artifacts = discover_python_extension_artifacts(source)
+        except RoomExecutionSandboxError as exc:
+            raise AcceptanceError("acceptance_python_dependencies_invalid") from exc
+        for artifact, relative_value, digest in artifacts:
+            relative = Path(relative_value)
+            destination = target / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(artifact, destination, follow_symlinks=False)
+            if _file_digest(destination) != digest:
+                raise AcceptanceError("acceptance_python_dependencies_invalid")
+    if node:
+        node_modules = source / "node_modules"
+        if not node_modules.is_dir():
+            raise AcceptanceError("acceptance_frontend_dependencies_missing")
+        os.symlink(
+            node_modules.resolve(strict=True),
+            target / "node_modules",
+            target_is_directory=True,
+        )
     if frontend:
         node_modules = source / "frontend" / "node_modules"
         if not node_modules.is_dir():
@@ -515,9 +532,12 @@ def _run_scenario(
     link_dependencies: bool = True,
 ) -> dict[str, Any]:
     if link_dependencies:
+        node_profile = profile_id.startswith("node-pnpm-")
         _link_dependencies(
             repository,
             dependency_source,
+            python=not node_profile,
+            node=node_profile,
             frontend=(
                 profile_id == "xmuse-monorepo/v2"
                 or any(value.startswith("frontend/") for value in paths)
