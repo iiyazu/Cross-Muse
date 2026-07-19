@@ -279,6 +279,22 @@ def test_fixed_profiles_match_the_cost_and_transport_contract() -> None:
     assert short.minimum_duration_s == 0
     assert short.provider_cost_confirmation_required is True
     assert short.chaos_kinds == endurance.chaos_kinds
+    release = get_soak_profile("live-v040-release")
+    assert (release.room_count, release.agents_per_room, release.human_turns_per_room) == (
+        3,
+        4,
+        6,
+    )
+    theoretical_root_and_peer = (
+        release.room_count * release.human_turns_per_room * release.agents_per_room * 2
+    )
+    assert theoretical_root_and_peer == 144
+    assert release.max_attempts == 176
+    assert release.max_attempts - theoretical_root_and_peer == 32
+    assert release.minimum_duration_s == 2700
+    assert release.provider_cost_confirmation_required is True
+    assert release.memory_recovery is True
+    assert release.chaos_kinds == endurance.chaos_kinds
     with pytest.raises(RoomSoakChaosError) as unknown:
         get_soak_profile("invented")
     assert unknown.value.code == "room_soak_profile_unknown"
@@ -437,6 +453,11 @@ def test_live_endurance_requires_the_strict_four_fault_sequence_and_memory_recov
     passed = _build("live-endurance")
     assert passed["status"] == "passed"
     assert _build("live-endurance-short")["status"] == "passed"
+    release = _build("live-v040-release")
+    assert release["status"] == "passed"
+    assert [event["kind"] for event in release["chaos_events"]] == list(
+        get_soak_profile("live-v040-release").chaos_kinds
+    )
     assert [event["kind"] for event in passed["chaos_events"]] == list(
         get_soak_profile("live-endurance").chaos_kinds
     )

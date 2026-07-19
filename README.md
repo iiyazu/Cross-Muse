@@ -92,6 +92,29 @@ optional source-backed memory
 - This remains a loopback-only, single-user application. Managed writes use a server-only
   `XMUSE_OPERATOR_TOKEN`; fixed Next routes never expose it to the browser.
 
+## v0.4.0 release qualification
+
+`v0.4.0` keeps the Room-first authority model while closing four production-facing seams:
+an optional but trusted full-local MemoryOS companion can be selected automatically; the
+Harness has additional closed, server-owned Python and pnpm profiles; Execution no longer
+hides a broad Store behind narrow capability adapters; and the Workbench adds progressive
+disclosure and first-use guidance without recreating Codex state machines.
+
+The release-candidate qualification ran a 45+ minute, three-Room/four-Agent/six-wave soak:
+18/18 correlations settled in 159 attempts while provider, Runner, MemoryOS, and stream-cache
+faults were recovered. The browser reported zero console errors. The accompanying memory
+diversity run settled 48 correlations with six non-empty source-backed recall receipts, 19
+re-proved source references, and 16 derived items. The Harness matrix promoted fixed patches
+in memU, MemoryOS, and twg while Clowder, Letta, and mem0 failed closed where their fixed
+profile capability was not satisfied. Release notes retain only safe aggregate evidence and
+SHA-256 digests; Room text, provider output, internal IDs, runtime paths, and traces remain
+outside the release. See `docs/releases/v0.4.0.md`.
+
+The optional companion is built from `memoryos-lite 0.2.1` at clean source SHA
+`26a77ece3bfe865169890a7dd49b5076c13ab723`. Installation stays optional; when its
+installer-owned manifest and payload digests verify, the default `--memory-mode auto` starts
+the full-local companion. It never searches PATH or arbitrary configuration.
+
 ## v0.3.1 release
 
 The `v0.3.1` release adds production evidence for the existing Room-first product. A
@@ -149,9 +172,9 @@ bundle ABI; installation is offline and verifies every payload digest before act
 
 ```bash
 python3.11 xmuse-setup.pyz install \
-  --bundle xmuse-0.3.1-linux-x86_64.tar.gz
+  --bundle xmuse-0.4.0-linux-x86_64.tar.gz
 python3.11 xmuse-setup.pyz install-memory \
-  --bundle xmuse-memoryos-companion-0.3.1-linux-x86_64.tar.gz   # optional
+  --bundle xmuse-memoryos-companion-0.4.0-linux-x86_64.tar.gz   # optional
 
 export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
 xmuse-setup verify
@@ -170,7 +193,7 @@ or remove an inactive version explicitly:
 
 ```bash
 xmuse-setup activate 0.3.0  # roll back
-xmuse-setup activate 0.3.1
+xmuse-setup activate 0.4.0
 xmuse-setup uninstall 0.3.0
 ```
 
@@ -213,12 +236,17 @@ uv run xmuse-workroom start \
 ```
 
 The fixed profiles are `docs/v1` (documentation plus diff-check), `python-uv/v1`
-(`ruff`, `mypy src`, and `pytest`), and `xmuse-monorepo/v2` (backend plus direct
-TypeScript, ESLint, Vitest, and Next build gates). Only `docs/v1` can run diff-check alone.
-Missing markers, preinstalled dependencies, Bubblewrap, or fixed tool entrypoints block both
-manual and consensus execution. Python gates are supervised at 2 GiB aggregate RSS, 64
-processes, and 1 GiB scratch; frontend gates use 4 GiB, 128 processes, and 2 GiB scratch.
-Neither the workspace path nor internal profile/toolchain digests enter browser projections.
+(`ruff`, `mypy src`, and `pytest`), `xmuse-monorepo/v2` (backend plus direct TypeScript,
+ESLint, Vitest, and Next build gates), `python-uv-ty/v1` (Ruff, ty, and pytest),
+`node-pnpm-library/v1` (Prettier, TypeScript, Jest, and tsup), and
+`node-pnpm-next-workspace/v1` (Biome, workspace TypeScript, Vitest, and Next build).
+Only `docs/v1` can run diff-check alone. Missing markers, preinstalled dependencies,
+Bubblewrap, or fixed tool entrypoints block both manual and consensus execution. xmuse never
+runs repository package scripts, accepts candidate-controlled argv, or installs dependencies
+from the network to accommodate a workspace. Python gates are supervised at 2 GiB aggregate
+RSS, 64 processes, and 1 GiB scratch; frontend gates use 4 GiB, 128 processes, and 2 GiB
+scratch. Neither the workspace path nor internal profile/toolchain digests enter browser
+projections.
 
 To explicitly enable source-backed memory from a checkout, point Workroom at a real MemoryOS
 executable. Full-local is the default memory profile; archive-only remains an explicit
@@ -307,6 +335,12 @@ Release maintainers additionally use the fixed `live-goal-memory-soak` profile. 
 `room_goal_memory_soak_result/v1` evidence combines multi-Room provider recovery, MemoryOS
 recall, guarded native Codex actions, three browser viewports, and workspace-integrity proof;
 it is intentionally not part of ordinary CI.
+
+For v0.4.0 release qualification, the installed 45-minute soak and the separate three-Room
+memory-diversity dogfood emit safe aggregate result contracts only. The latter uses
+`room_memory_diversity_result/v1` to prove source-backed project-rule, user-preference,
+non-recent decision, lexical, semantic, and derived recall paths without publishing dialogue,
+MemoryOS IDs, paths, or traces.
 
 Implementation and fresh tests are evidence. See [QUICKSTART.md](QUICKSTART.md) and the
 [implementation map](docs/xmuse/README.md).

@@ -7,8 +7,9 @@
 - an authenticated Codex CLI on `PATH` for real Agent turns;
 - Node.js 20.9+ and npm when running the browser Workroom.
 
-MemoryOS is optional. A release companion can install its executable and offline FastEmbed
-cache; source development may instead point xmuse at a real external `memoryos` executable.
+MemoryOS is optional. The v0.4.0 release companion packages `memoryos-lite 0.2.1` from clean
+source SHA `26a77ece3bfe865169890a7dd49b5076c13ab723`, including its offline FastEmbed cache;
+source development may instead point xmuse at a real external `memoryos` executable.
 
 Backend entrypoints read the process environment directly. They do not automatically load a
 repository `.env` file.
@@ -18,9 +19,9 @@ repository `.env` file.
 Linux x86_64 / WSL release assets are self-contained and offline after download:
 
 ```bash
-python3.11 xmuse-setup.pyz install --bundle xmuse-0.3.1-linux-x86_64.tar.gz
+python3.11 xmuse-setup.pyz install --bundle xmuse-0.4.0-linux-x86_64.tar.gz
 python3.11 xmuse-setup.pyz install-memory \
-  --bundle xmuse-memoryos-companion-0.3.1-linux-x86_64.tar.gz  # optional
+  --bundle xmuse-memoryos-companion-0.4.0-linux-x86_64.tar.gz  # optional
 export PATH="$HOME/.local/share/xmuse/active/.venv/bin:$PATH"
 xmuse-setup verify
 xmuse-workroom launch
@@ -175,5 +176,10 @@ isolated Workroom, use fixed same-origin Next writes, inject identity-fenced fau
 every Room in a real browser, verify SQLite and process/resource residue, then stop what they
 started. Preflight or startup failures emit a separate bounded CLI error instead of
 manufacturing a complete soak receipt.
+
+The v0.4.0 release qualification additionally uses a 45-minute multi-Room soak
+and a separate `room_memory_diversity_result/v1` run. Both publish only safe counts,
+opaque source references, reason codes, and digests; they never publish Room/provider text,
+MemoryOS internal IDs, paths, keys, or traces.
 
 Do not commit runtime databases, JSONL logs, PID files, `.next`, `node_modules`, or caches.
