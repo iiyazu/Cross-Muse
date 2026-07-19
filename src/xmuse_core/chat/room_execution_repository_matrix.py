@@ -18,32 +18,42 @@ MAX_RESULT_BYTES: Final = 16 * 1024
 
 SCENARIO_IDS: Final = (
     "memu-python",
-    "clowder-docs",
+    "clowder-next-probe",
     "memoryos-control",
-    "letta-blocked",
-    "mem0-blocked",
+    "letta-ty-probe",
+    "twg-node-library",
+    "mem0-ts-probe",
 )
 
 _SCENARIO_POLICY: Final = {
     "memu-python": ("python-uv/v1", "passed", "accepted"),
-    "clowder-docs": ("docs/v1", "passed", "accepted"),
+    "clowder-next-probe": (
+        "node-pnpm-next-workspace/v1",
+        "blocked",
+        "execution_frontend_dependencies_unavailable",
+    ),
     "memoryos-control": ("python-uv/v1", "passed", "accepted"),
-    "letta-blocked": (
-        "python-uv/v1",
+    "letta-ty-probe": (
+        "python-uv-ty/v1",
         "blocked",
         "execution_backend_dependencies_unavailable",
     ),
-    "mem0-blocked": (
-        "python-uv/v1",
+    "twg-node-library": ("node-pnpm-library/v1", "passed", "accepted"),
+    "mem0-ts-probe": (
+        "node-pnpm-library/v1",
         "blocked",
-        "execution_gate_profile_marker_missing",
+        "execution_frontend_dependencies_unavailable",
     ),
 }
+_POSITIVE_PROMOTIONS: Final = sum(
+    1 for _profile, status, _reason in _SCENARIO_POLICY.values() if status == "passed"
+)
+_EXPECTED_BLOCKS: Final = len(_SCENARIO_POLICY) - _POSITIVE_PROMOTIONS
 _REASONS: Final = frozenset(
     {
         "accepted",
         "execution_backend_dependencies_unavailable",
-        "execution_gate_profile_marker_missing",
+        "execution_frontend_dependencies_unavailable",
     }
 )
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -191,8 +201,8 @@ def build_repository_matrix_result(*, scenarios: Sequence[Mapping[str, Any]]) ->
     result: dict[str, Any] = {
         "schema_version": RESULT_SCHEMA,
         "scenario_count": len(SCENARIO_IDS),
-        "positive_promotions": 3,
-        "expected_blocks": 2,
+        "positive_promotions": _POSITIVE_PROMOTIONS,
+        "expected_blocks": _EXPECTED_BLOCKS,
         "scenarios": normalized,
         "matrix_digest": "",
     }
@@ -209,15 +219,15 @@ def validate_repository_matrix_result(payload: Mapping[str, Any]) -> dict[str, A
     if (
         raw.get("schema_version") != RESULT_SCHEMA
         or raw.get("scenario_count") != len(SCENARIO_IDS)
-        or raw.get("positive_promotions") != 3
-        or raw.get("expected_blocks") != 2
+        or raw.get("positive_promotions") != _POSITIVE_PROMOTIONS
+        or raw.get("expected_blocks") != _EXPECTED_BLOCKS
     ):
         raise RepositoryMatrixContractError("repository_matrix_result_invalid")
     normalized: dict[str, Any] = {
         "schema_version": RESULT_SCHEMA,
         "scenario_count": len(SCENARIO_IDS),
-        "positive_promotions": 3,
-        "expected_blocks": 2,
+        "positive_promotions": _POSITIVE_PROMOTIONS,
+        "expected_blocks": _EXPECTED_BLOCKS,
         "scenarios": _normalize_scenarios(raw.get("scenarios")),
         "matrix_digest": _digest(raw.get("matrix_digest"), "repository_matrix_digest_invalid"),
     }

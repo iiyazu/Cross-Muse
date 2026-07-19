@@ -40,6 +40,7 @@ class FrozenRepository:
     paths: tuple[str, ...] = ()
     fixture_name: str | None = None
     fixture_sha256: str | None = None
+    workspace_subdir: str = ""
 
 
 REPOSITORIES = (
@@ -55,15 +56,12 @@ REPOSITORIES = (
         "sha256:9f10ef3b5e301e4a166ac10ddab9fe0c3aacdde22365c97e0d01401aa0feb732",
     ),
     FrozenRepository(
-        "clowder-docs",
+        "clowder-next-probe",
         "88c5836a54d02ffa3843f60a416c660804b272de",
         "cfe9e5602ef3e6791d7d0ee60101325f3f8e349b",
-        "docs/v1",
-        "passed",
-        "accepted",
-        ("docs/features/F151-xiaoyi-channel-gateway.md",),
-        "clowder-docs-88c5836.patch",
-        "sha256:85ae679fed2e1e519633cc403d36b3c34c64b9e138e89063532b6b9c86bcd25a",
+        "node-pnpm-next-workspace/v1",
+        "blocked",
+        "execution_frontend_dependencies_unavailable",
     ),
     FrozenRepository(
         "memoryos-control",
@@ -77,20 +75,32 @@ REPOSITORIES = (
         "sha256:e074ab996329dfaab4379fa480a5b88dacbc89eea4a00e0d7b2ac61c0f1c8128",
     ),
     FrozenRepository(
-        "letta-blocked",
+        "letta-ty-probe",
         "1131535716e8a31c9a437f8695e25ac98f203a24",
         "8d53781fa7c433a2071b578fcbae67b68063fa10",
-        "python-uv/v1",
+        "python-uv-ty/v1",
         "blocked",
         "execution_backend_dependencies_unavailable",
     ),
     FrozenRepository(
-        "mem0-blocked",
+        "twg-node-library",
+        "59e0184e949c61df7cdcb68c37ef104d36ec7719",
+        "e36bffed51297e7033c81a65ea1f349fcab49795",
+        "node-pnpm-library/v1",
+        "passed",
+        "accepted",
+        ("tests/twg.test.ts",),
+        "twg-node-pnpm-59e0184.patch",
+        "sha256:87bd8a303ad647107d9a93698fa96c271e42ddcff56bd9e9400b8d6b24b39e8f",
+    ),
+    FrozenRepository(
+        "mem0-ts-probe",
         "74d043731b9f3ef5d89dcbd435e359b885be5add",
         "f1d1e6c0f56dc7de24502a6ba78a6b2ab133deb7",
-        "python-uv/v1",
+        "node-pnpm-library/v1",
         "blocked",
-        "execution_gate_profile_marker_missing",
+        "execution_frontend_dependencies_unavailable",
+        workspace_subdir="mem0-ts",
     ),
 )
 
@@ -181,14 +191,16 @@ def _safe_scenario(
 def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     sources = {
         "memu-python": Path(args.memu_repo).resolve(strict=True),
-        "clowder-docs": Path(args.clowder_repo).resolve(strict=True),
+        "clowder-next-probe": Path(args.clowder_repo).resolve(strict=True),
         "memoryos-control": Path(args.memoryos_repo).resolve(strict=True),
-        "letta-blocked": Path(args.letta_repo).resolve(strict=True),
-        "mem0-blocked": Path(args.mem0_repo).resolve(strict=True),
+        "letta-ty-probe": Path(args.letta_repo).resolve(strict=True),
+        "twg-node-library": Path(args.twg_repo).resolve(strict=True),
+        "mem0-ts-probe": Path(args.mem0_repo).resolve(strict=True),
     }
     dependency_sources = {
         "memu-python": Path(args.memu_dependency_repo).resolve(strict=True),
         "memoryos-control": Path(args.memoryos_dependency_repo).resolve(strict=True),
+        "twg-node-library": Path(args.twg_dependency_repo).resolve(strict=True),
     }
     guards = {name: acceptance._source_guard(path) for name, path in sources.items()}
     dependency_guards = {
@@ -240,11 +252,14 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 frozen_commit=spec.commit,
                 frozen_tree=spec.tree,
             )
+            execution_repository = repository / spec.workspace_subdir
+            if not execution_repository.is_dir():
+                raise RepositoryMatrixAcceptanceError("repository_matrix_workspace_missing")
             if spec.expected_status == "passed":
                 dependency_source = dependency_sources.get(spec.scenario_id, repository)
                 observed = acceptance._run_scenario(
                     name=spec.scenario_id,
-                    repository=repository,
+                    repository=execution_repository,
                     dependency_source=dependency_source,
                     runtime=temporary / f"runtime-{index}",
                     profile_id=spec.profile_id,
@@ -254,7 +269,7 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 )
             else:
                 observed = acceptance._run_expected_blocked_scenario(
-                    repository,
+                    execution_repository,
                     name=spec.scenario_id,
                     profile_id=spec.profile_id,
                     expected_reason=spec.expected_reason,
@@ -291,6 +306,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--memoryos-repo", required=True)
     parser.add_argument("--memoryos-dependency-repo", required=True)
     parser.add_argument("--letta-repo", required=True)
+    parser.add_argument("--twg-repo", required=True)
+    parser.add_argument("--twg-dependency-repo", required=True)
     parser.add_argument("--mem0-repo", required=True)
     parser.add_argument("--result", required=True)
     return parser
