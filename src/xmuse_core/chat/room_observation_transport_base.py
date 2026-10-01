@@ -499,7 +499,11 @@ ADDRESSED_COLLABORATION_GUIDANCE = (
     "own role. When the request assigns a step to another role in active_roster, or "
     "another participant's role clearly fits a step better, submit a handoff to that "
     "exact participant ID (with your own part, if any, as content and a handoff_note) "
-    "instead of producing that step yourself. Never write a section on behalf of "
+    "instead of producing that step yourself. Respect the requested order: when an "
+    "earlier step belongs to another participant, hand that step off first and leave "
+    "your later, dependent step for when it is handed back. When you complete a "
+    "handed-off step and a later step belongs to another participant, hand off to that "
+    "participant with your result as content. Never write a section on behalf of "
     "another participant or present your text as its output. Answer alone only when "
     "the whole request fits your role."
 )
