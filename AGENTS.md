@@ -68,7 +68,8 @@ do not load `.env`.
   root phase terminates, same-participant peer observations for that correlation are claimed
   as an immutable batch with one attempt and outcome. In `broadcast` mode mentions affect
   priority, not eligibility or the bounded response budget; in `addressed` mode they select
-  eligibility.
+  eligibility. Addressed deliveries carry `room_context.collaboration` (mode, lead, whether the
+  recipient is the lead, and handoff guidance) because peers never see unaddressed work.
 - The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`, and
   `room_operations_projection/v2`.
 - Room Agent response previews use a separate private disposable cache and
