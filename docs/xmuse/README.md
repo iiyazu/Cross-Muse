@@ -58,20 +58,33 @@ optional MemoryOS
 | `src/xmuse_core/chat/room_agent_stream.py` | Single-writer preview cache and safe projection. |
 | `src/xmuse_core/chat/room_operations.py` | Operational projection and action ledger. |
 | `src/xmuse_core/chat/room_execution_contracts.py` | Strict unified-diff and assessment contracts. |
-| `src/xmuse_core/chat/room_execution_store.py` | Candidate, vote, authorization, run, gate, and promotion authority. |
+| `src/xmuse_core/chat/room_execution_schema.py` | Execution authority schema and additive migrations. |
+| `src/xmuse_core/chat/room_execution_candidates.py` | Connection-only candidate, policy, consensus, and review-material primitives. |
+| `src/xmuse_core/chat/room_execution_runs.py` | Connection-only authorization, run, gate-plan, and controller fencing. |
+| `src/xmuse_core/chat/room_execution_actions.py` | Connection-only operator action primitives. |
+| `src/xmuse_core/chat/room_execution_promotion.py` | Connection-level promotion journal primitives. |
+| `src/xmuse_core/chat/room_execution_profiles.py` | Server-owned versioned gate profiles. |
+| `src/xmuse_core/chat/room_execution_supervisor.py` | Narrow launcher for one-shot execution controllers. |
 | `src/xmuse_core/chat/room_execution_controller.py` | Exact staging, guard checks, promotion, and crash classification. |
 | `src/xmuse_core/chat/room_execution_sandbox.py` | Fixed networkless Bubblewrap gate surface. |
 | `src/xmuse_core/chat/room_execution_projection.py` | Safe bounded Inspector read models. |
 | `src/xmuse_core/chat/room_memory_contracts.py` | Bounded Agent candidate and receipt contracts. |
 | `src/xmuse_core/chat/room_memory_schema.py` | Memory authority schema, additive migrations, and deterministic backfills. |
+| `src/xmuse_core/chat/room_memory_common.py` | Dependency-neutral primitives shared by the memory stores. |
 | `src/xmuse_core/chat/room_memory_binding_conn.py` | DB-neutral caller-transaction binding materialization. |
-| `src/xmuse_core/chat/room_memory_delivery_store.py` | Archive bindings, attachments, outbox leases, and delivery state. |
+| `src/xmuse_core/chat/room_memory_binding_store.py` | Archive bindings, MemoryOS sessions, and Room attachments. |
+| `src/xmuse_core/chat/room_memory_document_outbox_conn.py` | Caller-owned document delivery primitives. |
+| `src/xmuse_core/chat/room_memory_document_outbox_store.py` | Archive/document outbox leases and delivery state. |
+| `src/xmuse_core/chat/room_memory_message_outbox_store.py` | Message outbox leases and delivery state. |
 | `src/xmuse_core/chat/room_memory_governance_store.py` | Source-bound candidates and guarded operator decisions. |
-| `src/xmuse_core/chat/room_memory_recall_store.py` | Source proof, recall requests, receipts, and context binding. |
+| `src/xmuse_core/chat/room_memory_advisory_store.py` | Governance of externally proposed MemoryOS advisories. |
+| `src/xmuse_core/chat/room_memory_source_conn.py` | Caller-owned connection helpers for proving memory sources. |
+| `src/xmuse_core/chat/room_memory_recall_source_store.py` | Source proof and recall requests. |
+| `src/xmuse_core/chat/room_memory_recall_receipt_store.py` | Recall receipts and context binding. |
 | `src/xmuse_core/chat/room_memory_rebuild_store.py` | Durable guarded rebuild action and transactional derived-index replay reset. |
 | `src/xmuse_core/chat/room_memory_ports.py` | Narrow persistence ports consumed by optional memory adapters. |
 | `src/xmuse_core/chat/room_memory_runtime.py` | Sidecar-neutral Host evidence protocol. |
-| `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` safe read model. |
+| `src/xmuse_core/chat/room_memory_projection.py` | `room_memory_projection/v1` and `/v2` safe read models. |
 | `src/xmuse_core/chat/room_memory_diversity.py` | Bounded multi-topic recall dogfood result contract. |
 | `src/xmuse_core/chat/memoryos_supervisor.py` | Optional sidecar command, environment, receipt, and safe status. |
 | `src/xmuse_core/chat/room_soak_chaos.py` | Fixed soak profiles, strict aggregate evidence, and `room_soak_chaos_result/v1` gates. |
