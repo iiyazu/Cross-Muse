@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addressingChip,
+  codexConsoleAvailable,
+  collaborationModeLabel,
+  handoffNoteSections,
   mergeRoomTimeline,
   normalizeRoomList,
   normalizeRoomMemoryProjection,
   normalizeRoomOperationsProjection,
   normalizeRoomProjection,
+  providerBadge,
   roomAgentWorkStateLabel,
   roomParticipantStateLabel
 } from "./room-view";
+import type { RoomTimelineItem } from "./types";
 
 describe("Room projection view", () => {
   it("labels Agent work only from native turns and durable Room evidence", () => {
@@ -645,5 +651,76 @@ describe("Room projection view", () => {
       turns: [],
       page: { has_older: false, has_newer: false }
     }, "conv-requested")).toThrow("room_chat_projection_conversation_mismatch");
+  });
+});
+
+describe("Provider identity and collaboration view helpers", () => {
+  it("maps cli_kind to provider badges and gates the Codex console", () => {
+    expect(providerBadge("codex")).toEqual({ id: "codex", label: "Codex", confinement: "sandboxed read-only" });
+    expect(providerBadge("Claude")).toEqual({ id: "claude", label: "Claude", confinement: "permission-gated" });
+    expect(providerBadge("antigravity")).toEqual({ id: "antigravity", label: "Antigravity", confinement: "instructed read-only" });
+    expect(providerBadge("unknown")).toBeNull();
+    expect(providerBadge(null)).toBeNull();
+    expect(codexConsoleAvailable("codex")).toBe(true);
+    expect(codexConsoleAvailable(null)).toBe(true);
+    expect(codexConsoleAvailable("claude")).toBe(false);
+    expect(codexConsoleAvailable("antigravity")).toBe(false);
+    expect(collaborationModeLabel("addressed")).toBe("Addressed");
+    expect(collaborationModeLabel("broadcast")).toBe("Broadcast");
+  });
+
+  it("labels human addressing chips and handoff note sections", () => {
+    const base: RoomTimelineItem = {
+      id: "msg-addressed",
+      room_seq: 1,
+      kind: "message",
+      actor: { kind: "human", role: "human", display_name: "你" },
+      content: "请评审"
+    };
+    expect(addressingChip({ ...base, addressing: "mentions", mentions: ["架构师", "@研究员"] })).toBe("→ @架构师 @研究员");
+    expect(addressingChip({ ...base, addressing: "mentions" })).toBe("→ @Agent");
+    expect(addressingChip({ ...base, addressing: "lead" }, "架构师")).toBe("→ 架构师（lead）");
+    expect(addressingChip({ ...base, addressing: "lead" })).toBe("→ lead");
+    expect(addressingChip({ ...base, addressing: "fallback_broadcast" })).toBe("fallback: everyone");
+    expect(addressingChip(base)).toBeNull();
+    expect(handoffNoteSections({ what: "w", why: "y", tradeoffs: "t", open_questions: ["q1", "q2"], next_action: "n" })).toEqual([
+      { key: "what", label: "What", value: "w" },
+      { key: "why", label: "Why", value: "y" },
+      { key: "tradeoffs", label: "Trade-offs", value: "t" },
+      { key: "open_questions", label: "Open questions", value: "", questions: ["q1", "q2"] },
+      { key: "next_action", label: "Next action", value: "n" }
+    ]);
+    expect(handoffNoteSections({})).toEqual([]);
+  });
+
+  it("normalizes collaboration, addressing, cli_kind, and handoff notes from the durable projection", () => {
+    const projection = normalizeRoomProjection({
+      schema_version: "room_chat_projection/v3",
+      conversation: { id: "conv-collab", title: "Trio" },
+      collaboration: { mode: "addressed", lead_participant_id: "part-architect", secret: "must-not-leak" },
+      participants: [
+        { participant_id: "part-architect", role: "architect", display_name: "架构师", status: "active", mention_handle: "@architect", cli_kind: "claude" }
+      ],
+      timeline_items: [
+        {
+          kind: "message",
+          room_seq: 1,
+          message_id: "msg-collab-1",
+          actor: { kind: "human", role: "human", display_name: "你" },
+          content: "请先评审",
+          addressing: "mentions",
+          mentions: ["架构师"],
+          handoff_note: { what: "评审", tradeoffs: "延迟", open_questions: ["是否回滚？"], ignored_key: "drop" }
+        }
+      ],
+      page: { has_older: false, has_newer: false, next_before_room_seq: 1, next_after_room_seq: 1 }
+    }, "conv-collab");
+
+    expect(projection.collaboration).toEqual({ mode: "addressed", lead_participant_id: "part-architect" });
+    expect(projection.participants[0].cli_kind).toBe("claude");
+    expect(projection.timeline_items[0].addressing).toBe("mentions");
+    expect(projection.timeline_items[0].handoff_note).toEqual({ what: "评审", tradeoffs: "延迟", open_questions: ["是否回滚？"] });
+    expect(JSON.stringify(projection)).not.toContain("must-not-leak");
+    expect(JSON.stringify(projection)).not.toContain("ignored_key");
   });
 });

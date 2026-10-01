@@ -48,4 +48,49 @@ describe("RoomMessage", () => {
     await user.click(screen.getByRole("button", { name: "使用同一请求重试" }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
+
+  it("renders the addressing chip and handoff note card on a Human message", () => {
+    const human: RoomTimelineItem = {
+      id: "message-9",
+      room_seq: 9,
+      kind: "message",
+      actor: { kind: "human", role: "human", display_name: "你" },
+      content: "请先评估发布风险",
+      mentions: ["架构师", "@研究员"],
+      addressing: "mentions",
+      handoff_note: {
+        what: "评估发布风险",
+        why: "存在未验证路径",
+        tradeoffs: "延迟一天",
+        open_questions: ["是否回滚？"],
+        next_action: "给出结论"
+      }
+    };
+    render(<RoomMessage item={human} onJumpToReference={vi.fn()} leadName="架构师" />);
+    expect(screen.getByText("→ @架构师 @研究员")).toHaveAttribute("title", "@ 提及的 Agent 成为本次观察对象");
+    expect(screen.getByText("交办说明")).toBeInTheDocument();
+    expect(screen.getByText("What")).toBeInTheDocument();
+    expect(screen.getByText("评估发布风险")).toBeInTheDocument();
+    expect(screen.getByText("Open questions")).toBeInTheDocument();
+    expect(screen.getByText("是否回滚？")).toBeInTheDocument();
+    expect(screen.getByText("Next action")).toBeInTheDocument();
+  });
+
+  it("labels lead and fallback addressing when no lead name is known", () => {
+    const base: RoomTimelineItem = {
+      id: "message-10",
+      room_seq: 10,
+      kind: "message",
+      actor: { kind: "human", role: "human", display_name: "你" },
+      content: "继续"
+    };
+    render(
+      <>
+        <RoomMessage item={{ ...base, id: "message-10", addressing: "lead" }} onJumpToReference={vi.fn()} leadName="架构师" />
+        <RoomMessage item={{ ...base, id: "message-11", room_seq: 11, addressing: "fallback_broadcast" }} onJumpToReference={vi.fn()} />
+      </>
+    );
+    expect(screen.getByText("→ 架构师（lead）")).toBeInTheDocument();
+    expect(screen.getByText("fallback: everyone")).toBeInTheDocument();
+  });
 });

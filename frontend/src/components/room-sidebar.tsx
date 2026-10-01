@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Pin, PinOff, Plus, Search, X } from "lucide-react";
 
 import { fetchRoomSetupOptions } from "@/lib/api";
 import { roomStateLabel } from "@/lib/room-view";
-import type { RoomSetupOptions, RoomSummary } from "@/lib/types";
-import { formatRoomTime, RoomMemberStack } from "./room-header";
+import type {
+  RoomCollaborationInit,
+  RoomCollaborationMode,
+  RoomSetupOptions,
+  RoomSummary
+} from "@/lib/types";
+import { formatRoomTime, ProviderBadge, RoomMemberStack } from "./room-header";
 
 function roomPreview(room: RoomSummary): string {
   return room.latest_visible_item?.content || room.latest_message?.content || "还没有消息";
@@ -49,7 +54,12 @@ export function RoomSidebar({
   title: string;
   createRequestId: string | null;
   onNavigate: (roomId: string) => void;
-  onCreate: (title: string, clientRequestId: string, rosterTemplateId: string) => Promise<boolean>;
+  onCreate: (
+    title: string,
+    clientRequestId: string,
+    rosterTemplateId: string,
+    collaboration: RoomCollaborationInit
+  ) => Promise<boolean>;
   onClose: () => void;
   onQueryChange: (query: string) => void;
   onCreatingChange: (creating: boolean) => void;
@@ -60,12 +70,34 @@ export function RoomSidebar({
   const [setupOptions, setSetupOptions] = useState<RoomSetupOptions | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState("builtin.development");
+  const [collaborationMode, setCollaborationMode] = useState<RoomCollaborationMode>("broadcast");
+  const [leadRole, setLeadRole] = useState<string | null>(null);
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const wasCreatingRef = useRef(false);
   const filtered = rooms.filter((room) => room.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const ordered = [...filtered].sort((left, right) =>
     Number(pinnedRoomIds.includes(right.conversation_id)) - Number(pinnedRoomIds.includes(left.conversation_id))
   );
+  const selectedTemplate = setupOptions?.roster_templates.find(
+    (template) => template.template_id === selectedTemplateId
+  ) ?? null;
+  const leadCandidates = useMemo(() => {
+    const seen = new Set<string>();
+    return (selectedTemplate?.participants ?? []).flatMap((participant) => {
+      if (!participant.role || seen.has(participant.role)) return [];
+      seen.add(participant.role);
+      return [{ role: participant.role, display_name: participant.display_name }];
+    });
+  }, [selectedTemplate]);
+  const effectiveLeadRole = leadRole && leadCandidates.some((candidate) => candidate.role === leadRole)
+    ? leadRole
+    : leadCandidates[0]?.role ?? "";
+
+  function applyTemplatePreset(template: RoomSetupOptions["roster_templates"][number] | null) {
+    const preset = template?.collaboration ?? null;
+    setCollaborationMode(preset?.mode === "addressed" ? "addressed" : "broadcast");
+    setLeadRole(preset?.lead_role ?? null);
+  }
 
   useEffect(() => {
     if (!creating || setupOptions) return;
@@ -74,6 +106,11 @@ export function RoomSidebar({
       .then((payload) => {
         setSetupOptions(payload);
         setSelectedTemplateId(payload.default_roster_template_id);
+        applyTemplatePreset(
+          payload.roster_templates.find(
+            (template) => template.template_id === payload.default_roster_template_id
+          ) ?? null
+        );
         setSetupError(null);
       })
       .catch(() => setSetupError("暂时无法读取 Room roster，仍可使用默认开发团队。"));
@@ -92,7 +129,7 @@ export function RoomSidebar({
       return;
     }
     if (event.key !== "Tab") return;
-    const controls = [...event.currentTarget.querySelectorAll<HTMLElement>("input:not(:disabled), button:not(:disabled)")];
+    const controls = [...event.currentTarget.querySelectorAll<HTMLElement>("input:not(:disabled), select:not(:disabled), button:not(:disabled)")];
     const first = controls[0];
     const last = controls.at(-1);
     if (event.shiftKey && document.activeElement === first) {
@@ -108,7 +145,10 @@ export function RoomSidebar({
     event.preventDefault();
     if (!title.trim()) return;
     const requestId = createRequestId ?? `ui_room_create_${crypto.randomUUID()}`;
-    await onCreate(title, requestId, selectedTemplateId);
+    const collaboration: RoomCollaborationInit = collaborationMode === "addressed"
+      ? { mode: "addressed", lead_role: effectiveLeadRole || null }
+      : { mode: "broadcast" };
+    await onCreate(title, requestId, selectedTemplateId, collaboration);
   }
 
   return (
@@ -130,13 +170,54 @@ export function RoomSidebar({
                 <legend>参与团队</legend>
                 {(setupOptions?.roster_templates ?? []).map((template) => (
                   <label className={selectedTemplateId === template.template_id ? "is-selected" : ""} key={template.template_id}>
-                    <input checked={selectedTemplateId === template.template_id} name="roster" onChange={() => setSelectedTemplateId(template.template_id)} type="radio" value={template.template_id} />
-                    <span><strong>{template.display_name}</strong><small>{template.description}</small><em>{template.participants.map((participant) => participant.display_name).join(" · ")}</em></span>
+                    <input checked={selectedTemplateId === template.template_id} name="roster" onChange={() => { setSelectedTemplateId(template.template_id); applyTemplatePreset(template); }} type="radio" value={template.template_id} />
+                    <span>
+                      <strong>{template.display_name}</strong>
+                      <small>{template.description}</small>
+                      <em className="room-roster-participants">
+                        {template.participants.map((participant) => (
+                          <span className="room-roster-participant" key={`${participant.role_id}:${participant.role}`}>
+                            {participant.display_name}
+                            <ProviderBadge cliKind={participant.cli_kind} />
+                          </span>
+                        ))}
+                      </em>
+                    </span>
                   </label>
                 ))}
                 {!setupOptions ? <div className="room-roster-loading">{setupError ?? "正在读取 roster…"}</div> : null}
               </fieldset>
-              <p className="room-create-note">所有 Agent 会独立观察 Room；角色只定义协作侧重点，不授予额外权限。</p>
+              <fieldset className="room-collaboration-options">
+                <legend>协作模式</legend>
+                <label className={collaborationMode === "broadcast" ? "is-selected" : ""}>
+                  <input checked={collaborationMode === "broadcast"} disabled={createPending} name="collaboration-mode" onChange={() => setCollaborationMode("broadcast")} type="radio" value="broadcast" />
+                  <span><strong>Broadcast</strong><small>所有活跃 Agent 都会观察 Room 事件</small></span>
+                </label>
+                <label className={collaborationMode === "addressed" ? "is-selected" : ""}>
+                  <input checked={collaborationMode === "addressed"} disabled={createPending} name="collaboration-mode" onChange={() => setCollaborationMode("addressed")} type="radio" value="addressed" />
+                  <span><strong>Addressed</strong><small>仅 @ 提及的 Agent 观察；未提及时发给 lead</small></span>
+                </label>
+                {collaborationMode === "addressed" ? (
+                  <label className="room-lead-select">
+                    <span>Lead（未提及时的默认接收者）</span>
+                    <select
+                      aria-label="Room lead"
+                      disabled={createPending || !leadCandidates.length}
+                      onChange={(event) => setLeadRole(event.target.value)}
+                      value={effectiveLeadRole}
+                    >
+                      {leadCandidates.map((candidate) => (
+                        <option key={candidate.role} value={candidate.role}>{candidate.display_name}（{candidate.role}）</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </fieldset>
+              <p className="room-create-note">
+                {collaborationMode === "addressed"
+                  ? "仅被 @ 提及的 Agent（或未提及时的 lead）会观察本次消息；该策略在 Room 内持久生效。"
+                  : "所有 Agent 会独立观察 Room；角色只定义协作侧重点，不授予额外权限。"}
+              </p>
               <div className="room-dialog-actions">
                 <button className="room-quiet-button" disabled={createPending} onClick={() => onCreatingChange(false)} type="button">取消</button>
                 <button className="room-primary-button" disabled={createPending || !title.trim()} type="submit">{createPending ? "正在创建…" : "创建 Room"}</button>

@@ -1,9 +1,38 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RoomSummary } from "@/lib/types";
+import { fetchRoomSetupOptions } from "@/lib/api";
+import type { RoomSetupOptions, RoomSummary } from "@/lib/types";
 import { RoomSidebar } from "./room-sidebar";
+
+vi.mock("@/lib/api", () => ({ fetchRoomSetupOptions: vi.fn() }));
+
+const setupOptions: RoomSetupOptions = {
+  schema_version: "room_setup_options/v1",
+  default_roster_template_id: "builtin.development",
+  roster_templates: [
+    {
+      template_id: "builtin.development",
+      display_name: "开发小组",
+      description: "默认开发团队",
+      participants: [
+        { role_id: "role-builder", role: "builder", display_name: "Builder", description: "实现", collaboration_focus: "交付" }
+      ]
+    },
+    {
+      template_id: "builtin.heterogeneous-trio",
+      display_name: "异构协作小组",
+      description: "Claude 主导架构，Antigravity 调研，Codex 复审",
+      participants: [
+        { role_id: "role-architect", role: "architect", display_name: "架构师", description: "架构", collaboration_focus: "设计", cli_kind: "claude" },
+        { role_id: "role-researcher", role: "researcher", display_name: "研究员", description: "调研", collaboration_focus: "证据", cli_kind: "antigravity" },
+        { role_id: "role-backend", role: "backend_reviewer", display_name: "后端复审", description: "复核", collaboration_focus: "边界", cli_kind: "codex" }
+      ],
+      collaboration: { mode: "addressed", lead_role: "architect" }
+    }
+  ]
+};
 
 const rooms: RoomSummary[] = [{
   conversation_id: "conv-1",
@@ -44,6 +73,10 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof RoomSideba
   return props;
 }
 
+beforeEach(() => {
+  vi.mocked(fetchRoomSetupOptions).mockResolvedValue(setupOptions);
+});
+
 describe("RoomSidebar", () => {
   it("preserves navigation, unread, draft, stale, and controlled search semantics", async () => {
     const user = userEvent.setup();
@@ -58,11 +91,41 @@ describe("RoomSidebar", () => {
     expect(props.onQueryChange).toHaveBeenCalled();
   });
 
-  it("renders a controlled create form and forwards its stable request id", async () => {
+  it("renders a controlled create form and forwards its stable request id with a broadcast policy", async () => {
     const user = userEvent.setup();
     const props = renderSidebar({ creating: true, title: "New Room", createRequestId: "stable-create", createError: { message: "retry" } });
     expect(screen.getByRole("alert")).toHaveTextContent("retry");
+    expect(await screen.findByText("开发小组")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "创建 Room" }));
-    expect(props.onCreate).toHaveBeenCalledWith("New Room", "stable-create", "builtin.development");
+    expect(props.onCreate).toHaveBeenCalledWith("New Room", "stable-create", "builtin.development", { mode: "broadcast" });
+  });
+
+  it("shows provider badges in the roster preview", async () => {
+    renderSidebar({ creating: true });
+    expect(await screen.findByText("异构协作小组")).toBeInTheDocument();
+    expect(screen.getByLabelText("Claude · permission-gated")).toBeInTheDocument();
+    expect(screen.getByLabelText("Antigravity · instructed read-only")).toBeInTheDocument();
+    expect(screen.getByLabelText("Codex · sandboxed read-only")).toBeInTheDocument();
+  });
+
+  it("applies a template collaboration preset and sends the addressed payload", async () => {
+    const user = userEvent.setup();
+    const props = renderSidebar({ creating: true, title: "Trio", createRequestId: "req-addressed" });
+    await screen.findByText("异构协作小组");
+    await user.click(screen.getByRole("radio", { name: /异构协作小组/ }));
+    expect(screen.getByRole("radio", { name: /Addressed/ })).toBeChecked();
+    expect(screen.getByLabelText("Room lead")).toHaveValue("architect");
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
+    expect(props.onCreate).toHaveBeenCalledWith("Trio", "req-addressed", "builtin.heterogeneous-trio", { mode: "addressed", lead_role: "architect" });
+  });
+
+  it("sends the selected lead role when Addressed is chosen manually", async () => {
+    const user = userEvent.setup();
+    const props = renderSidebar({ creating: true, title: "Manual", createRequestId: "req-lead" });
+    await screen.findByText("异构协作小组");
+    await user.click(screen.getByRole("radio", { name: /异构协作小组/ }));
+    await user.selectOptions(screen.getByLabelText("Room lead"), "backend_reviewer");
+    await user.click(screen.getByRole("button", { name: "创建 Room" }));
+    expect(props.onCreate).toHaveBeenCalledWith("Manual", "req-lead", "builtin.heterogeneous-trio", { mode: "addressed", lead_role: "backend_reviewer" });
   });
 });

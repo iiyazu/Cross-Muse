@@ -1,10 +1,14 @@
 import type {
   JsonRecord,
   RoomActor,
+  RoomAddressing,
   RoomAttemptRecovery,
   RoomChatProjection,
   RoomCodexParticipantProjection,
+  RoomCollaboration,
+  RoomCollaborationMode,
   RoomControlActionDescriptor,
+  RoomHandoffNote,
   RoomListProjection,
   RoomMemoryCandidate,
   RoomMemoryProjection,
@@ -54,6 +58,42 @@ function bool(value: unknown, fallback = false): boolean {
 
 function strings(value: unknown): string[] {
   return list(value).flatMap((item) => (typeof item === "string" && item.trim() ? [item] : []));
+}
+
+const ADDRESSING_VALUES = new Set<RoomAddressing>(["mentions", "lead", "fallback_broadcast"]);
+const HANDOFF_NOTE_TEXT_LIMIT = 2000;
+const HANDOFF_NOTE_QUESTION_LIMIT = 16;
+
+function normalizeCollaboration(value: unknown): RoomCollaboration | null {
+  const source = record(value);
+  const mode = optionalText(source.mode);
+  if (mode !== "broadcast" && mode !== "addressed") return null;
+  return {
+    mode,
+    lead_participant_id: boundedOptionalText(source.lead_participant_id, 200)
+  };
+}
+
+function normalizeAddressing(value: unknown): RoomAddressing | null {
+  const addressing = optionalText(value);
+  return addressing && ADDRESSING_VALUES.has(addressing as RoomAddressing)
+    ? (addressing as RoomAddressing)
+    : null;
+}
+
+function normalizeHandoffNote(value: unknown): RoomHandoffNote | null {
+  const source = record(value);
+  if (!Object.keys(source).length) return null;
+  const note: RoomHandoffNote = {};
+  for (const key of ["what", "why", "tradeoffs", "next_action"] as const) {
+    const section = boundedOptionalText(source[key], HANDOFF_NOTE_TEXT_LIMIT);
+    if (section) note[key] = section;
+  }
+  const questions = strings(source.open_questions)
+    .flatMap((item) => boundedOptionalText(item, HANDOFF_NOTE_TEXT_LIMIT) ?? [])
+    .slice(0, HANDOFF_NOTE_QUESTION_LIMIT);
+  if (questions.length) note.open_questions = questions;
+  return Object.keys(note).length ? note : null;
 }
 
 const OPERATIONS_NEXT_ACTIONS = new Set<RoomOperationsNextAction>([
@@ -654,6 +694,7 @@ function normalizeParticipant(value: unknown): RoomParticipant {
     status,
     participant_status: participantStatus,
     active: participant.active !== false && participantStatus !== "stopped",
+    cli_kind: boundedOptionalText(participant.cli_kind, 32),
     frontier: normalizeFrontier(participant.frontier),
     last_completed_outcome: normalizeOutcome(participant.last_completed_outcome),
     unresolved_count: number(participant.unresolved_count)
@@ -675,6 +716,7 @@ function normalizeTurnParticipant(value: unknown): RoomTurnParticipant {
     observation_count: number(participant.observation_count),
     response_count: number(participant.response_count),
     unresolved_count: number(participant.unresolved_count),
+    cli_kind: boundedOptionalText(participant.cli_kind, 32),
     frontier: normalizeFrontier(participant.frontier),
     latest_outcome: normalizeOutcome(participant.latest_outcome),
     root_skill_decision: normalizeSkillDecision(participant.root_skill_decision)
@@ -715,7 +757,9 @@ export function normalizeTimelineItem(value: unknown, fallbackIndex = 0): RoomTi
     proposal,
     proof_boundary: optionalText(item.proof_boundary),
     source_refs: strings(item.source_refs),
-    context_only_tail: bool(item.context_only_tail)
+    context_only_tail: bool(item.context_only_tail),
+    addressing: normalizeAddressing(item.addressing),
+    handoff_note: normalizeHandoffNote(item.handoff_note)
   };
 }
 
@@ -758,6 +802,7 @@ function normalizeSummary(value: unknown): RoomSummary {
       : null,
     members: participants,
     participants,
+    collaboration: normalizeCollaboration(room.collaboration),
     state,
     status: state,
     participant_count: number(room.participant_count, participants.length),
@@ -817,6 +862,7 @@ export function normalizeRoomProjection(
       id: text(conversation.id, conversationId),
       title: text(conversation.title, "未命名房间")
     },
+    collaboration: normalizeCollaboration(source.collaboration),
     participants: list(source.participants).map(normalizeParticipant),
     turns: list(source.turns).map(normalizeTurn),
     hidden_active_turn_count: number(
@@ -908,4 +954,64 @@ export function roomStateLabel(state: RoomState): string {
   if (state === "attention") return "需要关注";
   if (state === "active") return "Agent 正在独立判断";
   return "本轮已收束";
+}
+
+export type RoomProviderBadge = {
+  id: "codex" | "claude" | "antigravity";
+  label: string;
+  confinement: string;
+};
+
+const PROVIDER_BADGES: Record<string, RoomProviderBadge> = {
+  codex: { id: "codex", label: "Codex", confinement: "sandboxed read-only" },
+  claude: { id: "claude", label: "Claude", confinement: "permission-gated" },
+  antigravity: { id: "antigravity", label: "Antigravity", confinement: "instructed read-only" }
+};
+
+function normalizedCliKind(cliKind: unknown): string {
+  return typeof cliKind === "string" ? cliKind.trim().toLowerCase() : "";
+}
+
+export function providerBadge(cliKind: unknown): RoomProviderBadge | null {
+  return PROVIDER_BADGES[normalizedCliKind(cliKind)] ?? null;
+}
+
+export function codexConsoleAvailable(cliKind: unknown): boolean {
+  const kind = normalizedCliKind(cliKind);
+  return !kind || kind === "codex";
+}
+
+export function collaborationModeLabel(mode: RoomCollaborationMode): string {
+  return mode === "addressed" ? "Addressed" : "Broadcast";
+}
+
+export function addressingChip(item: RoomTimelineItem, leadName?: string | null): string | null {
+  if (item.addressing === "mentions") {
+    const handles = (item.mentions ?? []).flatMap((mention) =>
+      mention.trim() ? [mention.startsWith("@") ? mention : `@${mention}`] : []
+    );
+    return handles.length ? `→ ${handles.join(" ")}` : "→ @Agent";
+  }
+  if (item.addressing === "lead") return leadName ? `→ ${leadName}（lead）` : "→ lead";
+  if (item.addressing === "fallback_broadcast") return "fallback: everyone";
+  return null;
+}
+
+export type RoomHandoffNoteSection = {
+  key: "what" | "why" | "tradeoffs" | "open_questions" | "next_action";
+  label: string;
+  value: string;
+  questions?: string[];
+};
+
+export function handoffNoteSections(note: RoomHandoffNote): RoomHandoffNoteSection[] {
+  const sections: RoomHandoffNoteSection[] = [];
+  if (note.what) sections.push({ key: "what", label: "What", value: note.what });
+  if (note.why) sections.push({ key: "why", label: "Why", value: note.why });
+  if (note.tradeoffs) sections.push({ key: "tradeoffs", label: "Trade-offs", value: note.tradeoffs });
+  if (note.open_questions?.length) {
+    sections.push({ key: "open_questions", label: "Open questions", value: "", questions: note.open_questions });
+  }
+  if (note.next_action) sections.push({ key: "next_action", label: "Next action", value: note.next_action });
+  return sections;
 }

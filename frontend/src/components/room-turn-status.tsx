@@ -2,7 +2,7 @@
 
 import { roomParticipantStateLabel, roomStateLabel } from "@/lib/room-view";
 import type { RoomControlActionDescriptor, RoomTurn, RoomTurnParticipant } from "@/lib/types";
-import { identityStyle, initials } from "./room-header";
+import { identityStyle, initials, ProviderBadge } from "./room-header";
 
 export type RoomCancelTarget = {
   observationId: string;
@@ -42,7 +42,7 @@ export function RoomTurnStatus({
             <div className={`room-agent-state state-${participant.state ?? participant.status}`} key={participant.participant_id}>
               <button className="room-agent-state__identity" onClick={() => onSelectAgent(participant.participant_id)} type="button">
                 <i className="room-avatar" style={identityStyle(participant.participant_id)}>{initials(participant.display_name)}</i>
-                <span><strong>{participant.display_name}</strong><small>{stateLabel}</small></span>
+                <span><strong>{participant.display_name}</strong><ProviderBadge cliKind={participant.cli_kind} /><small>{stateLabel}</small></span>
               </button>
               {(cancel?.available || retry?.available) ? <details className="room-agent-state__controls"><summary>控制</summary><div>
               <button aria-label={`取消 ${participant.display_name} 当前处理`} className="room-control-button is-cancel" disabled={pending || !cancel?.available || !observationId} onClick={() => cancel?.available && observationId && onCancel({ observationId, participant, descriptor: cancel })} title={cancel?.available ? "只取消该 Agent 当前 delivery" : "当前没有可取消的 delivery"} type="button">{pending ? "处理中" : "取消"}</button>
