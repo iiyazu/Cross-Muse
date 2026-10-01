@@ -365,6 +365,19 @@ def test_blind_transcript_strips_identity_and_mode() -> None:
     assert again.rendered == blinded.rendered
 
 
+def test_blinding_keeps_ordinary_words_that_contain_role_names() -> None:
+    transcript = two_agent_transcript(
+        "Architecturally, the research says Claude Lead and @architect agree.",
+        "Researchers architected it.",
+    )
+    blinded = judge.blind_transcript(transcript, seed=3)
+    assert "Architecturally, the research says" in blinded.rendered
+    assert "Researchers architected it." in blinded.rendered
+    assert "Claude Lead" not in blinded.rendered
+    assert "@architect" not in blinded.rendered
+    assert "urally" not in blinded.rendered.replace("Architecturally", "")
+
+
 def test_build_judge_prompt_contains_rubric_but_no_mode() -> None:
     task = tasks.tasks_by_id()["T4"]
     transcript = two_agent_transcript("SQLite WAL recommendation.", "Two tradeoffs listed.")

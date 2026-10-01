@@ -109,10 +109,11 @@ def _name_map(transcript: Mapping[str, Any], letters: Mapping[str, str]) -> dict
         letter = letters.get(str(participant.get("participant_id") or ""))
         if letter is None:
             continue
-        for key in ("display_name", "role"):
-            value = participant.get(key)
-            if isinstance(value, str) and value.strip():
-                names[value] = letter
+        # Bare role words ("research", "architect") are ordinary prose; only the
+        # display name is an identity reference.  Roles stay blinded as @handles.
+        value = participant.get("display_name")
+        if isinstance(value, str) and value.strip():
+            names[value] = letter
     return names
 
 
@@ -121,10 +122,12 @@ def _sanitize(
     handles: Mapping[str, str],
     names: Mapping[str, str],
 ) -> str:
+    # Whole-token matches only: a substring replace turned "architecturally" into
+    # "Agent Burally" and the judge then penalized the agents for the garbling.
     for handle in sorted(handles, key=len, reverse=True):
-        text = text.replace(handle, f"Agent {handles[handle]}")
+        text = re.sub(rf"{re.escape(handle)}(?![\w-])", f"Agent {handles[handle]}", text)
     for name in sorted(names, key=len, reverse=True):
-        text = text.replace(name, f"Agent {names[name]}")
+        text = re.sub(rf"(?<![\w@-]){re.escape(name)}(?![\w-])", f"Agent {names[name]}", text)
     return PARTICIPANT_MENTION_RE.sub("[participant]", text)
 
 
