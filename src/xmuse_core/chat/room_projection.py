@@ -167,9 +167,8 @@ def _mention_handles(rows: Iterable[sqlite3.Row | dict[str, Any]]) -> dict[str, 
 
 def _participant_payload(row: sqlite3.Row | dict[str, Any], handle: str) -> dict[str, Any]:
     value = dict(row)
-    status = (
-        value["status"] if value.get("cli_kind", "codex") in ROOM_AGENT_CLI_KINDS else "stopped"
-    )
+    cli_kind = value.get("cli_kind", "codex")
+    status = value["status"] if cli_kind in ROOM_AGENT_CLI_KINDS else "stopped"
     return {
         "participant_id": value["participant_id"],
         "role": value["role"],
@@ -177,6 +176,9 @@ def _participant_payload(row: sqlite3.Row | dict[str, Any], handle: str) -> dict
         "status": status,
         "participant_status": status,
         "mention_handle": handle,
+        # Provider family only (never model, paths or session identity) so the
+        # browser can label heterogeneous Agents and their confinement level.
+        "cli_kind": cli_kind if cli_kind in ROOM_AGENT_CLI_KINDS else None,
     }
 
 

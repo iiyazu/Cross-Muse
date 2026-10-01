@@ -212,6 +212,8 @@ def test_projection_and_mentions_treat_non_codex_participants_as_active_agents(
     assert by_id[claude.participant_id]["mention_handle"] == "@review"
     assert by_id[antigravity.participant_id]["status"] == "active"
     assert by_id[antigravity.participant_id]["mention_handle"] == "@execute"
+    assert by_id[claude.participant_id]["cli_kind"] == "claude"
+    assert by_id[antigravity.participant_id]["cli_kind"] == "antigravity"
     assert projection["active_turn_count"] == 1
     room = build_room_list_projection(tmp_path)["rooms"][0]
     assert room["status"] == "active"
