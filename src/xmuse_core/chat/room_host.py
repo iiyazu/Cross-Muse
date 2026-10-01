@@ -144,6 +144,8 @@ class RoomObservationDelivery:
     context_coverage: dict[str, Any] | None = None
     execution_review_materials: tuple[dict[str, Any], ...] = ()
     memory_evidence: RoomMemoryEvidence = field(default_factory=disabled_memory_evidence)
+    # ``room_collaboration`` view; ``None`` keeps the historical broadcast envelope.
+    collaboration: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -987,6 +989,12 @@ class RoomParticipantHost:
                         )
                         setup_outcomes.append(blocked.outcome)
                         continue
+                    try:
+                        collaboration = kernel.get_collaboration(conversation_id)
+                    except Exception:
+                        # Advisory context only: an unreadable policy falls back to
+                        # the historical broadcast envelope instead of blocking.
+                        collaboration = None
                     active_meta = tuple(
                         {
                             "participant_id": p.participant_id,
@@ -1052,6 +1060,7 @@ class RoomParticipantHost:
                         causal_ancestry=selected_context.causal_ancestry,
                         context_coverage=selected_context.coverage,
                         execution_review_materials=execution_review_materials,
+                        collaboration=collaboration,
                     )
                     try:
                         self._controls.bind_delivery(

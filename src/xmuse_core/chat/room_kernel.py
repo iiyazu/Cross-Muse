@@ -23,6 +23,7 @@ from xmuse_core.chat.room_batches import (
 )
 from xmuse_core.chat.room_collaboration import (
     collaboration_policy_row,
+    collaboration_view,
     is_addressed_mode,
 )
 from xmuse_core.chat.room_controls import (
@@ -2010,6 +2011,12 @@ class RoomKernelStore:
                 raise KeyError(f"unknown room observation: {observation_id}")
             source = self._activity_from_conn(conn, row["activity_id"])
             return _outcome_policy_conn(conn, observation=row, source=source)
+
+    def get_collaboration(self, conversation_id: str) -> dict[str, Any]:
+        """The Room's collaboration mode and lead (the broadcast default when unset)."""
+
+        with self._connect() as conn:
+            return collaboration_view(collaboration_policy_row(conn, conversation_id))
 
     def list_projection_events(
         self, conversation_id: str, *, after_seq: int = 0, limit: int = 100

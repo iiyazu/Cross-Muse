@@ -492,6 +492,32 @@ def build_room_observation_prompt(provider: str = "codex") -> str:
     return _PROMPT_COMMON_HEAD + clause + _PROMPT_COMMON_TAIL
 
 
+ADDRESSED_COLLABORATION_GUIDANCE = (
+    "This Room uses addressed collaboration: another participant observes only "
+    "activities that a Human mention or a durable handoff addresses to it, so it never "
+    "sees or acts on this request unless you hand off. Do only the part that fits your "
+    "own role. When the request assigns a step to another role in active_roster, or "
+    "another participant's role clearly fits a step better, submit a handoff to that "
+    "exact participant ID (with your own part, if any, as content and a handoff_note) "
+    "instead of producing that step yourself. Never write a section on behalf of "
+    "another participant or present your text as its output. Answer alone only when "
+    "the whole request fits your role."
+)
+
+
+def _collaboration_context(delivery: RoomObservationDelivery) -> dict[str, Any] | None:
+    view = delivery.collaboration
+    if not isinstance(view, dict) or view.get("mode") != "addressed":
+        return None
+    lead = view.get("lead_participant_id")
+    return {
+        "mode": "addressed",
+        "lead_participant_id": lead,
+        "self_is_lead": lead == delivery.participant.participant_id,
+        "guidance": ADDRESSED_COLLABORATION_GUIDANCE,
+    }
+
+
 def build_room_context_envelope(
     delivery: RoomObservationDelivery,
     *,
@@ -598,6 +624,9 @@ def build_room_context_envelope(
         },
         "skills": _skills_envelope(delivery),
     }
+    collaboration = _collaboration_context(delivery)
+    if collaboration is not None:
+        context["room_context"]["collaboration"] = collaboration
     return _fit_context_envelope(context)
 
 

@@ -16,7 +16,9 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_api_models import RoomCollaborationInit, RoomConversationCreate
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_host import RoomObservationDelivery
 from xmuse_core.chat.room_kernel import RoomKernelStore, normalize_participant_outcome
+from xmuse_core.chat.room_observation_transport_base import build_room_context_envelope
 from xmuse_core.chat.room_projection import (
     build_room_chat_projection,
     build_room_list_projection,
@@ -829,3 +831,72 @@ def test_collaboration_mode_is_broadcast_for_rooms_without_a_policy_row(tmp_path
             ).fetchone()[0]
             == 0
         )
+
+
+def _envelope_for(db: Path, conversation_id: str, member, collaboration):
+    kernel = RoomKernelStore(db)
+    _post(
+        kernel,
+        conversation_id,
+        f"envelope-{member.participant_id}",
+        mentions=[f"@participant:{member.participant_id}"],
+    )
+    claim = kernel.claim_next_observation(
+        conversation_id=conversation_id,
+        participant_id=member.participant_id,
+        lease_owner="envelope-test",
+    )
+    assert claim is not None
+    source = claim["activity"]
+    activity = {
+        "activity_id": source["activity_id"],
+        "seq": source["seq"],
+        "activity_type": source["activity_type"],
+        "actor_kind": source["actor_kind"],
+        "actor_identity": source["actor_identity"],
+        "actor_participant_id": source["actor_participant_id"],
+        "causation_id": source["causation_id"],
+        "correlation_id": source["correlation_id"],
+        "causal_depth": source["causal_depth"],
+        "created_at": source["created_at"],
+        "payload_preview": json.dumps(source["payload"]),
+    }
+    delivery = RoomObservationDelivery(
+        conversation_id=conversation_id,
+        participant=member,
+        observation=claim["observation"],
+        source_activity=activity,
+        recent_activities=(activity,),
+        active_participants=(),
+        transport_request_id="room-observation:envelope",
+        outcome_client_request_id="room-outcome:envelope",
+        collaboration=collaboration,
+    )
+    return build_room_context_envelope(delivery, god_session_id="god-envelope")
+
+
+def test_addressed_envelope_tells_agents_peers_only_see_handoffs(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    collaboration = RoomKernelStore(db).get_collaboration(conversation_id)
+    assert collaboration == {
+        "mode": "addressed",
+        "lead_participant_id": members["claude"].participant_id,
+    }
+
+    lead_view = _envelope_for(db, conversation_id, members["claude"], collaboration)
+    block = lead_view["room_context"]["collaboration"]
+    assert block["mode"] == "addressed"
+    assert block["self_is_lead"] is True
+    assert "handoff" in block["guidance"]
+
+    peer_view = _envelope_for(db, conversation_id, members["antigravity"], collaboration)
+    assert peer_view["room_context"]["collaboration"]["self_is_lead"] is False
+
+
+def test_broadcast_envelope_keeps_the_historical_shape(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path)
+    collaboration = RoomKernelStore(db).get_collaboration(conversation_id)
+    assert collaboration == {"mode": "broadcast", "lead_participant_id": None}
+
+    envelope = _envelope_for(db, conversation_id, members["claude"], collaboration)
+    assert "collaboration" not in envelope["room_context"]
