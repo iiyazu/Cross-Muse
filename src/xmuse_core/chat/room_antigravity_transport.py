@@ -189,14 +189,15 @@ def _language_server_csrf_tokens(proc_root: Path) -> dict[int, str | None]:
     return tokens
 
 
-def _loopback_listening_ports(proc_root: Path) -> list[int]:
-    """List 127.0.0.1 TCP listeners from the kernel's /proc/net/tcp table."""
+def _loopback_listeners(proc_root: Path) -> list[tuple[int, str | None]]:
+    """List 127.0.0.1 TCP listeners as ``(port, socket inode)`` from /proc/net/tcp."""
 
-    ports: list[int] = []
+    listeners: list[tuple[int, str | None]] = []
     try:
         lines = (proc_root / "net" / "tcp").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return ports
+        return listeners
+    seen: set[int] = set()
     for line in lines[1:]:
         parts = line.split()
         if len(parts) < 4:
@@ -211,9 +212,29 @@ def _loopback_listening_ports(proc_root: Path) -> list[int]:
             port = int(port_hex, 16)
         except ValueError:
             continue
-        if port not in ports:
-            ports.append(port)
-    return ports
+        if port in seen:
+            continue
+        seen.add(port)
+        listeners.append((port, parts[9] if len(parts) > 9 else None))
+    return listeners
+
+
+def _process_socket_inodes(proc_root: Path, pid: int) -> set[str]:
+    """Socket inodes held open by one process (empty when its fds are unreadable)."""
+
+    inodes: set[str] = set()
+    try:
+        entries = list((proc_root / str(pid) / "fd").iterdir())
+    except OSError:
+        return inodes
+    for entry in entries:
+        try:
+            target = os.readlink(entry)
+        except OSError:
+            continue
+        if target.startswith("socket:[") and target.endswith("]"):
+            inodes.add(target[len("socket:[") : -1])
+    return inodes
 
 
 def _address_port(address: str) -> int | None:
@@ -261,8 +282,25 @@ def discover_antigravity_language_server_env(
             "room_antigravity_language_server_unavailable",
             "language_server processes expose no --csrf_token",
         )
+    listeners = _loopback_listeners(root)
+    # Any unrelated local service may answer a plain HTTP probe, so prefer the
+    # loopback sockets the language_server process itself holds, paired with
+    # that process's own CSRF token.
+    for pid, pid_token in tokens.items():
+        if not pid_token:
+            continue
+        owned = _process_socket_inodes(root, pid)
+        for port, inode in listeners:
+            if inode is not None and inode in owned and probe_once(port, _HTTP_PROBE_TIMEOUT_S):
+                return {
+                    "ANTIGRAVITY_LS_ADDRESS": f"localhost:{port}",
+                    "ANTIGRAVITY_CSRF_TOKEN": pid_token,
+                    "ANTIGRAVITY_PROJECT_ID": project_id,
+                }
+    # Socket ownership is unreadable (restricted /proc): keep the historical
+    # first-answering-listener fallback.
     selected_token = candidates[0]
-    listening = _loopback_listening_ports(root)
+    listening = [port for port, _inode in listeners]
     for port in listening:
         if probe_once(port, _HTTP_PROBE_TIMEOUT_S):
             return {
@@ -832,7 +870,13 @@ class AntigravityRoomObservationTransport:
             output = await self._invoke_agentapi(
                 argv, env=env, conversation=conversation, expect_conversation_id=True
             )
-            conversation_id = _parse_new_conversation_id(output)
+            try:
+                conversation_id = _parse_new_conversation_id(output)
+            except RoomAntigravityTransportError:
+                # An error document usually means a stale or wrong language-server
+                # address; rediscover it on the next attempt instead of reusing it.
+                self._ls_env = None
+                raise
             conversation.conversation_id = conversation_id
             self._registry.update_provider_binding(
                 record.god_session_id,

@@ -303,6 +303,40 @@ def test_language_server_discovery_falls_back_to_the_proc_tree(tmp_path: Path) -
     assert env["ANTIGRAVITY_PROJECT_ID"] == "outside-of-project"
 
 
+def test_language_server_discovery_prefers_sockets_the_server_owns(tmp_path: Path) -> None:
+    # An unrelated loopback HTTP service listed first must not be mistaken for the
+    # language server (a live run picked another tool's port and agentapi failed).
+    proc_root = tmp_path / "proc"
+    (proc_root / "net").mkdir(parents=True)
+    (proc_root / "net" / "tcp").write_text(
+        "  sl  local_address rem_address   st tx_queue:rx_queue tr:tm->when retrnsmt"
+        "   uid  timeout inode\n"
+        "   0: 0100007F:C0CE 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
+        "  1000        0 111 1 0000000000000000 100 0 0 10 0\n"
+        "   1: 0100007F:8BEF 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
+        "  1000        0 222 1 0000000000000000 100 0 0 10 0\n",
+        encoding="utf-8",
+    )
+    server = proc_root / "4242"
+    (server / "fd").mkdir(parents=True)
+    (server / "cmdline").write_bytes(b"/opt/antigravity/language_server\0--csrf_token=ls-token\0")
+    (server / "fd" / "10").symlink_to("socket:[222]")
+    (server / "fd" / "11").symlink_to("/dev/null")
+    other = proc_root / "5151"
+    (other / "fd").mkdir(parents=True)
+    (other / "cmdline").write_bytes(b"opencode\0serve\0")
+    (other / "fd" / "10").symlink_to("socket:[111]")
+
+    env = discover_antigravity_language_server_env(
+        {},
+        proc_root=proc_root,
+        probe=lambda _port, _timeout_s: True,
+    )
+
+    assert env["ANTIGRAVITY_LS_ADDRESS"] == f"localhost:{0x8BEF}"
+    assert env["ANTIGRAVITY_CSRF_TOKEN"] == "ls-token"
+
+
 def test_language_server_discovery_fails_clearly_without_a_server(tmp_path: Path) -> None:
     with pytest.raises(RoomAntigravityTransportError) as excinfo:
         discover_antigravity_language_server_env(
