@@ -15,13 +15,18 @@ from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_ports import ExecutionReviewPort
-from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
+from xmuse_core.chat.room_host import (
+    RoomHostPolicy,
+    RoomObservationTransport,
+    RoomParticipantHost,
+)
 from xmuse_core.chat.room_memory_runtime import (
     RoomMemoryContextReceiptPort,
     RoomMemoryDeliveryPumpPort,
     RoomMemoryRecallPort,
 )
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 from xmuse_core.skills.catalog import SkillCatalog
 
 
@@ -51,8 +56,13 @@ def compose_room_runtime(
     memory_recall: RoomMemoryRecallPort,
     memory_context_receipts: RoomMemoryContextReceiptPort,
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
+    participant_transports: Mapping[str, RoomObservationTransport] | None = None,
 ) -> RoomRuntimeComposition:
-    """Wire one Room-only runtime without starting process lifecycle tasks."""
+    """Wire one Room-only runtime without starting process lifecycle tasks.
+
+    ``participant_transports`` registers additional cli_kind transports; the
+    always-present ``codex`` route is the Codex app-server transport.
+    """
 
     session_layer = GodSessionLayer(
         registry_path=root / "god_sessions.json",
@@ -70,17 +80,19 @@ def compose_room_runtime(
         projection_cache=RoomCodexProjectionCache(root),
     )
     stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
+    routes: dict[str, RoomObservationTransport] = dict(participant_transports or {})
+    routes["codex"] = CodexRoomObservationTransport(
+        session_layer,
+        worktree=worktree,
+        control_store=controls,
+        skill_decision_store=skill_decisions,
+        execution_store=execution_store,
+        memory_runtime=memory_context_receipts,
+        stream_projector=stream_projector,
+    )
     host = RoomParticipantHost(
         root / "chat.db",
-        CodexRoomObservationTransport(
-            session_layer,
-            worktree=worktree,
-            control_store=controls,
-            skill_decision_store=skill_decisions,
-            execution_store=execution_store,
-            memory_runtime=memory_context_receipts,
-            stream_projector=stream_projector,
-        ),
+        RoutingRoomObservationTransport(routes),
         policy=RoomHostPolicy(
             delivery_timeout_s=delivery_timeout_s,
             cleanup_grace_s=cleanup_grace_s,

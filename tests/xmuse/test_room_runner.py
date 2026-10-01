@@ -396,10 +396,11 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
         memory_delivery_pump=memory.delivery_pump,
     )
 
+    codex_route = composition.host._transport._routes["codex"]
     assert composition.host._execution_store is execution_store
-    assert composition.host._transport._execution_store is execution_store
+    assert codex_route._kit._execution_store is execution_store
     assert composition.host._memory_runtime is memory.recall
-    assert composition.host._transport._memory_runtime is memory.context_receipts
+    assert codex_route._kit._memory_runtime is memory.context_receipts
     assert composition.memory_delivery_pump is memory.delivery_pump
 
 
