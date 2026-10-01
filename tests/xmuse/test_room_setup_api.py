@@ -115,6 +115,7 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     assert payload["default_roster_template_id"] == "builtin.development"
     assert [item["template_id"] for item in payload["roster_templates"]] == [
         "builtin.development",
+        "builtin.heterogeneous-trio",
         "custom.review",
     ]
     assert len(payload["roster_templates"][0]["participants"]) == 4

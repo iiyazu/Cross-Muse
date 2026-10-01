@@ -25,25 +25,31 @@ def test_builtin_development_roster_exposes_product_roles_and_codex_profiles() -
         "reviewer",
         "critic",
     ]
-    assert {
+    role_defaults = {
         role.role_id: role.default_provider_profile_ref for role in catalog.role_profiles.values()
-    } == {
-        "architect": "codex.god",
-        "builder": "codex.worker",
-        "reviewer": "codex.review",
-        "critic": "codex.default",
     }
+    assert role_defaults["architect"] == "codex.god"
+    assert role_defaults["builder"] == "codex.worker"
+    assert role_defaults["reviewer"] == "codex.review"
+    assert role_defaults["critic"] == "codex.default"
+    assert role_defaults["product_lead"] == "claude.default"
+    assert role_defaults["researcher"] == "antigravity.default"
+    assert role_defaults["backend_reviewer"] == "codex.review"
     assert catalog.role_profiles["builder"].participant_role == "execute"
     assert catalog.provider_profiles["codex.worker"].provider_id == "codex"
     assert {
         key for key, profile in catalog.provider_profiles.items() if profile.implemented
     } == set(catalog.provider_profiles)
-    assert set(catalog.provider_profiles) == {
+    assert {
         "codex.default",
         "codex.worker",
         "codex.review",
         "codex.god",
-    }
+    } <= set(catalog.provider_profiles)
+    assert catalog.provider_profiles["claude.default"].cli_kind == "claude"
+    assert catalog.provider_profiles["claude.default"].model_id == "claude-acp-default"
+    assert catalog.provider_profiles["antigravity.default"].cli_kind == "antigravity"
+    assert catalog.provider_profiles["antigravity.default"].model_id == "flash"
     assert "claude-code.default" not in catalog.provider_profiles
     assert "opencode.default" not in catalog.provider_profiles
 

@@ -15,7 +15,7 @@ from xmuse_core.providers.registry import (
     normalize_codex_model_id,
 )
 
-ProviderRuntimeKind = Literal["codex"]
+ProviderRuntimeKind = Literal["codex", "claude", "antigravity"]
 
 
 class RoleProfile(BaseModel):
@@ -94,6 +94,21 @@ class RosterRoleBinding(BaseModel):
         return value
 
 
+class RosterCollaboration(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mode: Literal["broadcast", "addressed"]
+    lead_role: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("lead_role", mode="before")
+    @classmethod
+    def _strip_lead_role(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
 class RosterTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -101,6 +116,7 @@ class RosterTemplate(BaseModel):
     display_name: str = Field(min_length=1)
     description: str = Field(min_length=1)
     roles: tuple[RosterRoleBinding, ...]
+    collaboration: RosterCollaboration | None = None
 
     @field_validator("template_id", "display_name", "description", mode="before")
     @classmethod
@@ -291,6 +307,47 @@ def _builtin_role_profiles() -> dict[str, RoleProfile]:
             ),
             default_provider_profile_ref="codex.default",
         ),
+        "product_lead": RoleProfile(
+            role_id="product_lead",
+            participant_role="architect",
+            display_name="Product Lead",
+            description=(
+                "Owns product judgment, frontend and UX taste, and final synthesis of the "
+                "Room's work."
+            ),
+            collaboration_focus=(
+                "Use when framing the problem, shaping the user-facing experience, or "
+                "synthesizing the Room decision; not for exhaustive verification."
+            ),
+            default_provider_profile_ref="claude.default",
+        ),
+        "researcher": RoleProfile(
+            role_id="researcher",
+            participant_role="research",
+            display_name="Researcher",
+            description=(
+                "Runs fast, broad research and long-context reading to surface relevant "
+                "evidence early."
+            ),
+            collaboration_focus=(
+                "Use for breadth, speed, and long-context reading; not for final decisions."
+            ),
+            default_provider_profile_ref="antigravity.default",
+        ),
+        "backend_reviewer": RoleProfile(
+            role_id="backend_reviewer",
+            participant_role="review",
+            display_name="Backend Reviewer",
+            description=(
+                "Implements and critically reviews backend work with rigorous verification "
+                "discipline."
+            ),
+            collaboration_focus=(
+                "Use for rigorous backend implementation and critical review; not for UI "
+                "taste or product synthesis."
+            ),
+            default_provider_profile_ref="codex.review",
+        ),
     }
 
 
@@ -330,6 +387,26 @@ def _builtin_provider_profiles(
             description="Codex CLI planning profile.",
             model_id=codex_god.model_id,
         ),
+        "claude.default": WorkroomProviderProfile(
+            provider_profile_ref="claude.default",
+            provider_id="claude",
+            profile_id="default",
+            display_name="Claude Default",
+            description="Claude Code CLI participant over the Agent Client Protocol.",
+            model_id="claude-acp-default",
+            implemented=True,
+            cli_kind="claude",
+        ),
+        "antigravity.default": WorkroomProviderProfile(
+            provider_profile_ref="antigravity.default",
+            provider_id="antigravity",
+            profile_id="default",
+            display_name="Antigravity Default",
+            description="Antigravity CLI participant over its agentapi.",
+            model_id="flash",
+            implemented=True,
+            cli_kind="antigravity",
+        ),
     }
 
 
@@ -357,7 +434,30 @@ def _builtin_roster_templates() -> dict[str, RosterTemplate]:
                     provider_profile_ref="codex.default",
                 ),
             ),
-        )
+        ),
+        "builtin.heterogeneous-trio": RosterTemplate(
+            template_id="builtin.heterogeneous-trio",
+            display_name="Heterogeneous Trio",
+            description=(
+                "Cross-vendor trio: Claude leads product judgment, Antigravity researches "
+                "broadly, and Codex implements and reviews rigorously."
+            ),
+            roles=(
+                RosterRoleBinding(
+                    role_id="product_lead",
+                    provider_profile_ref="claude.default",
+                ),
+                RosterRoleBinding(
+                    role_id="researcher",
+                    provider_profile_ref="antigravity.default",
+                ),
+                RosterRoleBinding(
+                    role_id="backend_reviewer",
+                    provider_profile_ref="codex.review",
+                ),
+            ),
+            collaboration=RosterCollaboration(mode="addressed", lead_role="architect"),
+        ),
     }
 
 
@@ -393,6 +493,14 @@ def validate_roster_template(
         )
     if not normalized_roles:
         errors.append("roster template must include at least one role")
+    if template.collaboration is not None and template.collaboration.lead_role is not None:
+        participant_roles = {
+            catalog.role_profiles[binding.role_id].participant_role
+            for binding in template.roles
+            if binding.role_id in catalog.role_profiles
+        }
+        if template.collaboration.lead_role not in participant_roles:
+            errors.append(f"unknown collaboration lead role: {template.collaboration.lead_role}")
     if errors:
         raise ValueError("; ".join(errors))
     return template.model_copy(update={"roles": tuple(normalized_roles)})
@@ -414,25 +522,34 @@ def template_to_participant_inits(
                 f"provider profile is not implemented for runtime start: "
                 f"{provider.provider_profile_ref}"
             )
-        if provider.provider_id != "codex":
-            raise ValueError(
-                f"provider profile is not supported in this slice: {provider.provider_profile_ref}"
-            )
-        profile_id = ProviderProfileId(provider.profile_id)
-        participants.append(
-            ParticipantInit(
-                role=role.participant_role,
-                provider_id=ProviderId.CODEX,
-                profile_id=profile_id,
-                cli_kind="codex",
-                model=normalize_codex_model_id(
-                    binding.model,
+        if provider.provider_id == "codex":
+            profile_id = ProviderProfileId(provider.profile_id)
+            participants.append(
+                ParticipantInit(
+                    role=role.participant_role,
+                    provider_id=ProviderId.CODEX,
                     profile_id=profile_id,
-                    allow_final_quality=False,
-                ),
-                display_name=binding.display_name or role.display_name,
+                    cli_kind="codex",
+                    model=normalize_codex_model_id(
+                        binding.model,
+                        profile_id=profile_id,
+                        allow_final_quality=False,
+                    ),
+                    display_name=binding.display_name or role.display_name,
+                )
             )
-        )
+        else:
+            # Non-codex providers have no role-profile expectations to satisfy;
+            # the template's model id is the provider's own default spelling.
+            participants.append(
+                ParticipantInit(
+                    role=role.participant_role,
+                    provider_id=provider.provider_id,
+                    cli_kind=provider.cli_kind,
+                    model=binding.model,
+                    display_name=binding.display_name or role.display_name,
+                )
+            )
     return participants
 
 

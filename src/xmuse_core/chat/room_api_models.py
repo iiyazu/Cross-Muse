@@ -57,6 +57,18 @@ class ParticipantInit(BaseModel):
         return strip_optional_string(value)
 
 
+class RoomCollaborationInit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["broadcast", "addressed"]
+    lead_role: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("lead_role", mode="before")
+    @classmethod
+    def _strip_lead_role(cls, value: object) -> object:
+        return strip_optional_string(value)
+
+
 class RoomConversationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -68,6 +80,7 @@ class RoomConversationCreate(BaseModel):
         min_length=1,
         max_length=8,
     )
+    collaboration: RoomCollaborationInit | None = None
 
     @field_validator("title", mode="before")
     @classmethod

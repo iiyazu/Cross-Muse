@@ -19,9 +19,11 @@ from xmuse_core.chat.participant_store import (
     resolve_current_chat_cli_kind,
 )
 from xmuse_core.chat.room_api_models import ParticipantInit, RoomConversationCreate
+from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_memory_binding_conn import ensure_room_memory_bindings_conn
 from xmuse_core.chat.roster_templates import (
+    RosterCollaboration,
     WorkroomRosterTemplateStore,
     builtin_workroom_catalog,
     persona_snapshot_for_role_profile,
@@ -64,6 +66,12 @@ class _RequestedParticipant:
     persona_snapshot: PersonaSnapshot | None = None
 
 
+@dataclass(frozen=True)
+class _CollaborationSpec:
+    mode: str
+    lead_index: int | None
+
+
 class RoomSetupService:
     """Create a durable Room and its observers without init/bootstrap artifacts."""
 
@@ -77,7 +85,7 @@ class RoomSetupService:
                 "room_roster_conflict",
                 "roster_template_id and initial_participants are mutually exclusive",
             )
-        requested = self._requested_participants(request)
+        requested, template_collaboration = self._requested_participants(request)
         specs = [self._normalize_participant(item) for item in requested]
         roles = [spec.role for spec in specs]
         if len(roles) != len(set(roles)):
@@ -85,12 +93,14 @@ class RoomSetupService:
                 "room_participant_role_duplicate",
                 "Room participant roles must be unique",
             )
+        collaboration = self._resolve_collaboration(request, template_collaboration, specs)
         client_request_id = request.client_request_id or f"room_setup_{uuid.uuid4().hex}"
         roster_template_id = self._effective_roster_template_id(request)
         fingerprint = _request_fingerprint(
             title=request.title,
             roster_template_id=roster_template_id,
             specs=specs,
+            collaboration=collaboration,
         )
         conversation_id = f"conv_{uuid.uuid4().hex}"
         created_at = _utc_now()
@@ -107,6 +117,22 @@ class RoomSetupService:
             )
             for spec in specs
         ]
+        lead_participant_id = (
+            created[collaboration.lead_index].participant_id
+            if collaboration is not None and collaboration.lead_index is not None
+            else None
+        )
+        setup: dict[str, object] = {
+            "schema_version": "room_setup/v2",
+            "roster_template_id": roster_template_id,
+            "participant_count": len(created),
+            "authority": "chat.db",
+        }
+        if collaboration is not None:
+            setup["collaboration"] = {
+                "mode": collaboration.mode,
+                "lead_participant_id": lead_participant_id,
+            }
         result: dict[str, object] = {
             "id": conversation_id,
             "title": request.title,
@@ -114,12 +140,7 @@ class RoomSetupService:
             "client_request_id": client_request_id,
             "participants": [item.model_dump(mode="json") for item in created],
             "participant_sessions": [],
-            "setup": {
-                "schema_version": "room_setup/v2",
-                "roster_template_id": roster_template_id,
-                "participant_count": len(created),
-                "authority": "chat.db",
-            },
+            "setup": setup,
         }
         database = RoomDatabase(self._db_path)
         with database.connect() as conn:
@@ -150,6 +171,14 @@ class RoomSetupService:
                     conversation_id=conversation_id,
                     stamp=created_at,
                 )
+                if collaboration is not None:
+                    write_room_collaboration_policy_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        mode=collaboration.mode,
+                        lead_participant_id=lead_participant_id,
+                        updated_at=created_at,
+                    )
                 conn.execute(
                     """insert into room_setup_requests(
                            client_request_id, request_fingerprint, conversation_id,
@@ -180,11 +209,12 @@ class RoomSetupService:
     def _requested_participants(
         self,
         request: RoomConversationCreate,
-    ) -> list[_RequestedParticipant]:
+    ) -> tuple[list[_RequestedParticipant], RosterCollaboration | None]:
         if request.initial_participants is not None:
-            return [
-                _RequestedParticipant(participant=item) for item in request.initial_participants
-            ]
+            return (
+                [_RequestedParticipant(participant=item) for item in request.initial_participants],
+                None,
+            )
         template_id = request.roster_template_id or DEFAULT_ROOM_ROSTER_TEMPLATE_ID
         catalog = builtin_workroom_catalog()
         try:
@@ -193,7 +223,7 @@ class RoomSetupService:
             ).get(template_id, catalog=catalog)
             validated = validate_roster_template(template, catalog=catalog)
             participants = template_to_participant_inits(validated, catalog=catalog)
-            return [
+            requested = [
                 _RequestedParticipant(
                     participant=participant,
                     persona_snapshot=persona_snapshot_for_role_profile(
@@ -206,6 +236,7 @@ class RoomSetupService:
                     strict=True,
                 )
             ]
+            return requested, validated.collaboration
         except KeyError as exc:
             raise RoomSetupError(
                 "room_roster_not_found",
@@ -213,6 +244,33 @@ class RoomSetupService:
             ) from exc
         except ValueError as exc:
             raise RoomSetupError("room_roster_invalid", str(exc)) from exc
+
+    @staticmethod
+    def _resolve_collaboration(
+        request: RoomConversationCreate,
+        template_collaboration: RosterCollaboration | None,
+        specs: list[_ParticipantSpec],
+    ) -> _CollaborationSpec | None:
+        if request.collaboration is not None:
+            mode = request.collaboration.mode
+            lead_role = request.collaboration.lead_role
+        elif template_collaboration is not None:
+            mode = template_collaboration.mode
+            lead_role = template_collaboration.lead_role
+        else:
+            return None
+        roles = [spec.role for spec in specs]
+        if lead_role is None:
+            return _CollaborationSpec(
+                mode=mode,
+                lead_index=0 if mode == "addressed" else None,
+            )
+        if lead_role not in roles:
+            raise RoomSetupError(
+                "room_participant_invalid",
+                f"collaboration lead role {lead_role!r} does not match any participant role",
+            )
+        return _CollaborationSpec(mode=mode, lead_index=roles.index(lead_role))
 
     def _normalize_participant(self, requested: _RequestedParticipant) -> _ParticipantSpec:
         participant = requested.participant
@@ -278,8 +336,9 @@ def _request_fingerprint(
     title: str,
     roster_template_id: str | None,
     specs: list[_ParticipantSpec],
+    collaboration: _CollaborationSpec | None = None,
 ) -> str:
-    payload = {
+    payload: dict[str, object] = {
         "title": title,
         "roster_template_id": roster_template_id,
         "participants": [
@@ -299,4 +358,13 @@ def _request_fingerprint(
             for item in specs
         ],
     }
+    if collaboration is not None:
+        payload["collaboration"] = {
+            "mode": collaboration.mode,
+            "lead_role": (
+                specs[collaboration.lead_index].role
+                if collaboration.lead_index is not None
+                else None
+            ),
+        }
     return hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
