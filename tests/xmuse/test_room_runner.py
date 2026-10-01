@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from xmuse import room_runner, room_runner_composition, room_runner_memory
+from xmuse_core.chat.room_acp_transport import AcpTransportConfig
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
@@ -402,6 +403,50 @@ def test_runtime_composition_shares_one_execution_store_across_host_and_transpor
     assert composition.host._memory_runtime is memory.recall
     assert codex_route._kit._memory_runtime is memory.context_receipts
     assert composition.memory_delivery_pump is memory.delivery_pump
+
+
+def test_runtime_composition_routes_claude_acp_only_when_configured(tmp_path: Path) -> None:
+    db_path = tmp_path / "chat.db"
+    RoomDatabase(db_path).initialize()
+    memory = room_runner_memory.compose_room_runner_memory(
+        db_path,
+        worker_id="memory-acp-composition-test",
+        environ={},
+    )
+    common: dict[str, Any] = {
+        "root": tmp_path,
+        "worktree": tmp_path,
+        "launchers": {},
+        "controls": RoomObservationControlStore(db_path),
+        "skill_decisions": RoomAttemptSkillDecisionStore(db_path),
+        "skill_catalog": SkillCatalog.load_bundled(),
+        "execution_store": RoomExecutionReviewStore(db_path),
+        "max_concurrent_rooms": 1,
+        "delivery_timeout_s": 10,
+        "cleanup_grace_s": 1,
+        "runner_generation": "generation-acp-route",
+        "runner_boot_id": "boot-acp-route",
+        "memory_recall": memory.recall,
+        "memory_context_receipts": memory.context_receipts,
+        "memory_delivery_pump": memory.delivery_pump,
+    }
+
+    codex_only = room_runner_composition.compose_room_runtime(**common)
+    assert codex_only.acp_transports == ()
+    assert set(codex_only.host._transport._routes) == {"codex"}
+
+    configured = room_runner_composition.compose_room_runtime(
+        **common,
+        claude_acp_config=AcpTransportConfig(
+            workspace=tmp_path,
+            command=("npx", "-y", "@agentclientprotocol/claude-agent-acp"),
+            room_mcp_url="http://127.0.0.1:1/mcp/room",
+        ),
+    )
+    assert len(configured.acp_transports) == 1
+    claude_route = configured.host._transport._routes["claude"]
+    assert claude_route is configured.acp_transports[0]
+    assert claude_route._kit._stream_projector is configured.stream_projector
 
 
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(

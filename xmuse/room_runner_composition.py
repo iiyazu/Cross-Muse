@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.god_session_layer import GodSessionLayer
+from xmuse_core.chat.room_acp_transport import (
+    AcpRoomObservationTransport,
+    AcpTransportConfig,
+)
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
 from xmuse_core.chat.room_codex_native_runtime import RoomCodexNativeRuntime
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
@@ -37,6 +41,7 @@ class RoomRuntimeComposition:
     native_runtime: RoomCodexNativeRuntime
     stream_projector: RoomAgentStreamProjector
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None
+    acp_transports: tuple[AcpRoomObservationTransport, ...] = ()
 
 
 def compose_room_runtime(
@@ -56,12 +61,13 @@ def compose_room_runtime(
     memory_recall: RoomMemoryRecallPort,
     memory_context_receipts: RoomMemoryContextReceiptPort,
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
-    participant_transports: Mapping[str, RoomObservationTransport] | None = None,
+    claude_acp_config: AcpTransportConfig | None = None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks.
 
-    ``participant_transports`` registers additional cli_kind transports; the
-    always-present ``codex`` route is the Codex app-server transport.
+    ``claude_acp_config`` enables the ``claude`` route by building the ACP
+    transport over the composition's shared disposable Agent preview projector.
+    The always-present ``codex`` route is the Codex app-server transport.
     """
 
     session_layer = GodSessionLayer(
@@ -80,7 +86,20 @@ def compose_room_runtime(
         projection_cache=RoomCodexProjectionCache(root),
     )
     stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
-    routes: dict[str, RoomObservationTransport] = dict(participant_transports or {})
+    routes: dict[str, RoomObservationTransport] = {}
+    acp_transports: list[AcpRoomObservationTransport] = []
+    if claude_acp_config is not None:
+        acp_transport = AcpRoomObservationTransport(
+            config=claude_acp_config,
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=skill_decisions,
+            execution_store=execution_store,
+            memory_runtime=memory_context_receipts,
+            stream_projector=stream_projector,
+        )
+        acp_transports.append(acp_transport)
+        routes["claude"] = acp_transport
     routes["codex"] = CodexRoomObservationTransport(
         session_layer,
         worktree=worktree,
@@ -114,4 +133,5 @@ def compose_room_runtime(
         native_runtime=native_runtime,
         stream_projector=stream_projector,
         memory_delivery_pump=memory_delivery_pump,
+        acp_transports=tuple(acp_transports),
     )

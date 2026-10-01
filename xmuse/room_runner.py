@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -34,6 +35,10 @@ from xmuse.room_runner_memory import (
 )
 from xmuse_core.agents.codex_app_server_transport import CODEX_ROOM_READ_ONLY_SANDBOX
 from xmuse_core.agents.room_codex_launcher import build_room_launchers
+from xmuse_core.chat.room_acp_transport import (
+    ROOM_ACP_DEFAULT_COMMAND,
+    AcpTransportConfig,
+)
 from xmuse_core.chat.room_codex_native_runtime import (
     run_room_codex_native_loop,
 )
@@ -68,6 +73,8 @@ MCP_REQUEST_TIMEOUT_S = 1.0
 ROOM_OUTCOME_TOOL = "chat_room_submit_outcome"
 ROOM_CODEX_HOME_RELATIVE = Path("runtime") / "room-codex-home"
 CODEX_AUTH_FILE_NAME = "auth.json"
+CLAUDE_ACP_FLAG_ENV = "XMUSE_CLAUDE_ACP"
+CLAUDE_ACP_COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
 _SAFE_GENERATION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 logger = logging.getLogger(__name__)
@@ -121,6 +128,7 @@ async def run_room_runner(
     shutdown: asyncio.Event | None = None,
     mcp_probe: Callable[[str, int], tuple[bool, bool]] | None = None,
     executable_resolver: Callable[[str], str | None] | None = None,
+    claude_acp: bool | None = None,
 ) -> None:
     """Compose and run only the participant-owned Room delivery path."""
 
@@ -133,6 +141,8 @@ async def run_room_runner(
         delivery_timeout_s=delivery_timeout_s,
         cleanup_grace_s=cleanup_grace_s,
     )
+    claude_acp_enabled = claude_acp if claude_acp is not None else _env_flag(CLAUDE_ACP_FLAG_ENV)
+    claude_acp_command = _resolve_claude_acp_command() if claude_acp_enabled else None
     resolved_worktree = _resolve_worktree(worktree)
     stop = shutdown or asyncio.Event()
     process_identity = read_process_start_identity(os.getpid())
@@ -159,6 +169,14 @@ async def run_room_runner(
         "active_delivery_count": 0,
         "retained_cleanup_count": 0,
     }
+
+    async def _close_claude_acp_transports() -> None:
+        active = composition
+        if active is None:
+            return
+        for transport in active.acp_transports:
+            with suppress(Exception):
+                await transport.aclose()
 
     with _room_runner_lock(root, generation=generation):
         try:
@@ -228,6 +246,20 @@ async def run_room_runner(
                 raise RoomRunnerError("room_runner_codex_executable_unavailable")
             readiness["persistent_launcher"] = True
 
+            claude_acp_config: AcpTransportConfig | None = None
+            if claude_acp_command is not None:
+                if (executable_resolver or shutil.which)(claude_acp_command[0]) is None:
+                    raise RoomRunnerError("room_runner_claude_acp_executable_unavailable")
+                claude_acp_config = AcpTransportConfig(
+                    workspace=resolved_worktree,
+                    command=claude_acp_command,
+                    room_mcp_url=f"http://{DEFAULT_MCP_HOST}:{mcp_port}{ROOM_MCP_PATH}",
+                )
+                logger.info(
+                    "Claude ACP participant transport enabled command=%s",
+                    claude_acp_command,
+                )
+
             try:
                 composition = compose_room_runtime(
                     root=root,
@@ -245,6 +277,7 @@ async def run_room_runner(
                     cleanup_grace_s=cleanup_grace_s,
                     runner_generation=generation,
                     runner_boot_id=boot_id,
+                    claude_acp_config=claude_acp_config,
                 )
             except Exception as exc:
                 raise RoomRunnerError("room_runner_host_composition_failed") from exc
@@ -396,6 +429,7 @@ async def run_room_runner(
                 await asyncio.gather(native_task, return_exceptions=True)
             await composition.native_runtime.shutdown()
             await composition.host.shutdown()
+            await _close_claude_acp_transports()
             await composition.session_layer.shutdown()
             receipt_state["state"] = "stopped"
             _write_status(
@@ -459,6 +493,8 @@ async def run_room_runner(
                     await composition.host.shutdown()
                 with suppress(Exception):
                     await composition.session_layer.shutdown()
+            with suppress(Exception):
+                await _close_claude_acp_transports()
 
 
 def _prepare_room_codex_home(
@@ -776,6 +812,28 @@ def _validate_run_configuration(
             raise RoomRunnerError(code)
 
 
+def _env_flag(name: str, *, environ: Mapping[str, str] | None = None) -> bool:
+    source = os.environ if environ is None else environ
+    return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_claude_acp_command(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    source = os.environ if environ is None else environ
+    override = source.get(CLAUDE_ACP_COMMAND_ENV, "").strip()
+    if not override:
+        return ROOM_ACP_DEFAULT_COMMAND
+    try:
+        command = tuple(shlex.split(override))
+    except ValueError as exc:
+        raise RoomRunnerError("room_runner_claude_acp_command_invalid") from exc
+    if not command:
+        raise RoomRunnerError("room_runner_claude_acp_command_invalid")
+    return command
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -812,6 +870,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_CLEANUP_GRACE_S,
     )
+    parser.add_argument(
+        "--claude-acp",
+        action="store_true",
+        help=(
+            "admit Claude Code participants through the ACP transport "
+            "(also enabled by XMUSE_CLAUDE_ACP=1)"
+        ),
+    )
     parser.add_argument("--worktree", type=Path, default=None)
     return parser
 
@@ -831,6 +897,7 @@ def main() -> None:
                 delivery_timeout_s=args.delivery_timeout_s,
                 cleanup_grace_s=args.cleanup_grace_s,
                 worktree=args.worktree,
+                claude_acp=True if args.claude_acp else None,
             )
         )
     except (RoomRunnerError, RoomRunnerStatusError) as exc:
