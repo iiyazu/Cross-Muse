@@ -435,6 +435,8 @@ def test_runtime_composition_routes_claude_acp_only_when_configured(tmp_path: Pa
     codex_only = room_runner_composition.compose_room_runtime(**common)
     assert codex_only.acp_transports == ()
     assert set(codex_only.host._transport._routes) == {"codex"}
+    assert codex_only.host._policy.provider_min_delivery_timeout_s == {}
+    assert codex_only.host._policy.effective_delivery_timeout_s("codex") == 10.0
 
     configured = room_runner_composition.compose_room_runtime(
         **common,
@@ -448,6 +450,13 @@ def test_runtime_composition_routes_claude_acp_only_when_configured(tmp_path: Pa
     claude_route = configured.host._transport._routes["claude"]
     assert claude_route is configured.acp_transports[0]
     assert claude_route._kit._stream_projector is configured.stream_projector
+    policy = configured.host._policy
+    assert policy.provider_min_delivery_timeout_s == {"claude": 600.0}
+    assert policy.effective_delivery_timeout_s("claude") == 600.0
+    assert policy.effective_delivery_timeout_s("codex") == 10.0
+    assert (
+        policy.lease_ttl_s > policy.effective_delivery_timeout_s("claude") + policy.cleanup_grace_s
+    )
 
 
 def test_runtime_composition_routes_antigravity_only_when_configured(tmp_path: Path) -> None:
@@ -492,6 +501,14 @@ def test_runtime_composition_routes_antigravity_only_when_configured(tmp_path: P
     antigravity_route = configured.host._transport._routes["antigravity"]
     assert antigravity_route is configured.antigravity_transports[0]
     assert antigravity_route._kit._stream_projector is configured.stream_projector
+    policy = configured.host._policy
+    assert policy.provider_min_delivery_timeout_s == {"antigravity": 420.0}
+    assert policy.effective_delivery_timeout_s("antigravity") == 420.0
+    assert policy.effective_delivery_timeout_s("codex") == 10.0
+    assert (
+        policy.lease_ttl_s
+        > policy.effective_delivery_timeout_s("antigravity") + policy.cleanup_grace_s
+    )
 
 
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(

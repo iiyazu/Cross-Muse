@@ -37,6 +37,15 @@ from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 from xmuse_core.skills.catalog import SkillCatalog
 
+# Live provider turns can legitimately exceed the configured Room default
+# (Claude turns of ~280s were observed); each enabled slow provider gets this
+# floor, and the lease TTL below covers the longest floor so a delivery can
+# never outlive its claim.
+PROVIDER_MIN_DELIVERY_TIMEOUT_S: Mapping[str, float] = {
+    "claude": 600.0,
+    "antigravity": 420.0,
+}
+
 
 @dataclass(frozen=True)
 class RoomRuntimeComposition:
@@ -81,9 +90,18 @@ def compose_room_runtime(
         registry_path=root / "god_sessions.json",
         launchers=dict(launchers),
     )
+    provider_min_delivery_timeout_s = {
+        cli_kind: PROVIDER_MIN_DELIVERY_TIMEOUT_S[cli_kind]
+        for cli_kind, enabled in (
+            ("claude", claude_acp_config is not None),
+            ("antigravity", antigravity_config is not None),
+        )
+        if enabled
+    }
+    max_delivery_timeout_s = max([delivery_timeout_s, *provider_min_delivery_timeout_s.values()])
     lease_ttl_s = max(
         240,
-        int(math.ceil(delivery_timeout_s + cleanup_grace_s + 30.0)),
+        int(math.ceil(max_delivery_timeout_s + cleanup_grace_s + 30.0)),
     )
     native_runtime = RoomCodexNativeRuntime(
         root / "chat.db",
@@ -137,6 +155,7 @@ def compose_room_runtime(
             cleanup_grace_s=cleanup_grace_s,
             lease_ttl_s=lease_ttl_s,
             max_batch_size=max_concurrent_rooms,
+            provider_min_delivery_timeout_s=provider_min_delivery_timeout_s,
         ),
         control_store=controls,
         skill_catalog=skill_catalog,

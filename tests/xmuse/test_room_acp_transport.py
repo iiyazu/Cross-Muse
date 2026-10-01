@@ -30,6 +30,7 @@ from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionR
 from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_acp_transport import (
+    ROOM_ACP_BUILTIN_TOOLS,
     ROOM_ACP_PROVIDER_SESSION_KIND,
     AcpRoomObservationTransport,
     AcpTransportConfig,
@@ -408,6 +409,18 @@ async def _mixed_roster_scenario(tmp_path: Path, mcp_url: str) -> None:
     assert session_event is not None
     assert session_event["mcp_url"] == mcp_url
     assert session_event["server_name"] == "xmuse-room"
+    assert session_event["claude_code"] == {
+        "options": {
+            "tools": list(ROOM_ACP_BUILTIN_TOOLS),
+            "settingSources": ["user"],
+        }
+    }
+    mode_event = _event(events, "set_session_mode")
+    assert mode_event == {
+        "event": "set_session_mode",
+        "session_id": "fake-session-1",
+        "mode_id": "default",
+    }
     submission = _event(events, "outcome_submission")
     assert submission is not None
     assert "error" not in submission["result"]
@@ -442,6 +455,10 @@ async def _forbidden_scenario(tmp_path: Path, mcp_url: str) -> None:
         ("Bash", False),
         (OUTCOME_TOOL_TITLE, True),
     ]
+    # A denial must be a selected reject option, not ``cancelled`` (which the
+    # adapter treats as an abort of the whole turn).
+    assert decisions_log[0]["outcome"] == "selected"
+    assert decisions_log[0]["chosen_kind"] == "reject_once"
     forbidden = _event(events, "forbidden_tool_decision")
     assert forbidden == {"event": "forbidden_tool_decision", "tool": "Bash", "allowed": False}
     submission = _event(events, "outcome_submission")

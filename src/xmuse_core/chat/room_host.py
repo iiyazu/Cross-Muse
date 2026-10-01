@@ -62,6 +62,7 @@ class RoomHostPolicy:
     max_batch_size: int = 4
     context_activity_limit: int = 8
     max_activity_payload_chars: int = 4000
+    provider_min_delivery_timeout_s: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("delivery_timeout_s", "cleanup_grace_s", "lease_ttl_s"):
@@ -80,8 +81,36 @@ class RoomHostPolicy:
             "max_activity_payload_chars",
         ):
             _positive_int(getattr(self, name), name)
-        if self.lease_ttl_s <= self.delivery_timeout_s + self.cleanup_grace_s:
+        for cli_kind, minimum in self.provider_min_delivery_timeout_s.items():
+            if not isinstance(cli_kind, str) or not cli_kind.strip():
+                raise ValueError("provider_min_delivery_timeout_s_invalid")
+            _positive_real(minimum, "provider_min_delivery_timeout_s")
+        object.__setattr__(
+            self,
+            "provider_min_delivery_timeout_s",
+            dict(self.provider_min_delivery_timeout_s),
+        )
+        if self.lease_ttl_s <= self.max_effective_delivery_timeout_s() + self.cleanup_grace_s:
             raise ValueError("lease_ttl_s_too_short")
+
+    def effective_delivery_timeout_s(self, cli_kind: str | None = None) -> float:
+        """Return the delivery timeout for one participant CLI kind.
+
+        Slow providers get a per-provider floor so the configured Room default
+        never aborts and retries a turn the provider legitimately needs longer
+        for.
+        """
+
+        minimum = self.provider_min_delivery_timeout_s.get(cli_kind or "", 0.0)
+        return max(self.delivery_timeout_s, float(minimum))
+
+    def max_effective_delivery_timeout_s(self) -> float:
+        """Return the longest per-delivery timeout any CLI kind can receive."""
+
+        return max(
+            [self.delivery_timeout_s]
+            + [float(value) for value in self.provider_min_delivery_timeout_s.values()]
+        )
 
 
 _DEFAULT_ROOM_HOST_POLICY = RoomHostPolicy()
@@ -1317,12 +1346,15 @@ class RoomParticipantHost:
         release_permit_on_exit = True
         try:
             delivery = await self._with_memory_evidence(delivery)
+            delivery_timeout_s = self._policy.effective_delivery_timeout_s(
+                delivery.participant.cli_kind
+            )
             loop = asyncio.get_running_loop()
             task = asyncio.create_task(
-                self._transport.deliver(delivery, timeout_s=self._policy.delivery_timeout_s),
+                self._transport.deliver(delivery, timeout_s=delivery_timeout_s),
                 name=delivery.transport_request_id,
             )
-            deadline = loop.time() + self._policy.delivery_timeout_s
+            deadline = loop.time() + delivery_timeout_s
             transport_status: str | None
             reason: str | None
             diagnostic: str | None

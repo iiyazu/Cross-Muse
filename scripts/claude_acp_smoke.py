@@ -52,12 +52,17 @@ from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.skills.catalog import SkillCatalog
 
 HUMAN_PROMPT = "Reply with one short sentence: what is 2+2?"
+BASH_PROBE_PROMPT = (
+    "Before answering, run the shell command `ls /` with the Bash tool and include its "
+    "output. If no Bash tool is available to you, reply with one short sentence saying so."
+)
 CLAUDE_MODEL = "claude-acp-default"
 COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
-DEFAULT_TIMEOUT_S = 180.0
+DEFAULT_TIMEOUT_S = 720.0
 DELIVERY_TIMEOUT_S = 150.0
+CLAUDE_MIN_DELIVERY_TIMEOUT_S = 600.0
 CLEANUP_GRACE_S = 8.0
-LEASE_TTL_S = 240.0
+LEASE_TTL_S = 640.0
 
 _START = time.monotonic()
 
@@ -113,6 +118,7 @@ async def _run_smoke(
     mcp_url: str,
     command: tuple[str, ...],
     timeout_s: float,
+    ask_run_ls: bool = False,
 ) -> int:
     _mark("root", path=str(root), command=list(command))
     RoomDatabase(root / "chat.db").initialize()
@@ -145,14 +151,15 @@ async def _run_smoke(
         model=participant.model,
     )
 
+    prompt = BASH_PROBE_PROMPT if ask_run_ls else HUMAN_PROMPT
     kernel = RoomKernelStore(root / "chat.db")
     kernel.post_human_activity(
         conversation_id=conversation_id,
         human_id="human",
-        content=HUMAN_PROMPT,
+        content=prompt,
         client_request_id=f"claude-acp-smoke-human-{uuid.uuid4().hex}",
     )
-    _mark("human_posted", content=HUMAN_PROMPT)
+    _mark("human_posted", content=prompt)
 
     controls = RoomObservationControlStore(root / "chat.db")
     decisions = RoomAttemptSkillDecisionStore(root / "chat.db")
@@ -180,6 +187,7 @@ async def _run_smoke(
             cleanup_grace_s=CLEANUP_GRACE_S,
             lease_ttl_s=LEASE_TTL_S,
             participant_cooldown_s=0.0,
+            provider_min_delivery_timeout_s={"claude": CLAUDE_MIN_DELIVERY_TIMEOUT_S},
         ),
         control_store=controls,
         skill_catalog=SkillCatalog.load_bundled(),
@@ -202,6 +210,7 @@ async def _run_smoke(
                     attempt_count=item.attempt_count,
                     transport_status=item.transport_status,
                     outcome_type=item.outcome_type,
+                    diagnostic=item.diagnostic_text,
                 )
                 final = item
             if final is not None:
@@ -282,6 +291,14 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=None, help="defaults to a fresh tmp dir")
     parser.add_argument("--command", default=None, help=f"overrides {COMMAND_ENV}")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    parser.add_argument(
+        "--ask-run-ls",
+        action="store_true",
+        help=(
+            "confine the probe: ask Claude to run `ls /` with Bash before answering, "
+            "so the logs prove whether any Bash tool exists in the session"
+        ),
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -296,7 +313,13 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     with _serve_room_mcp(root) as mcp_url:
         return asyncio.run(
-            _run_smoke(root=root, mcp_url=mcp_url, command=command, timeout_s=args.timeout)
+            _run_smoke(
+                root=root,
+                mcp_url=mcp_url,
+                command=command,
+                timeout_s=args.timeout,
+                ask_run_ls=args.ask_run_ls,
+            )
         )
 
 

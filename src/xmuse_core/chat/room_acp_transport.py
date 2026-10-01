@@ -7,6 +7,17 @@ session; the agent produces Room truth only through
 ``chat_room_submit_outcome`` and every other tool request is rejected.  The
 ``RoomParticipantHost`` still decides completion from durable state.
 
+Claude (via ``claude-agent-acp``) is confined in-process on three axes, because
+Claude Code auto-approves its built-in read-only Bash allowlist *without* asking
+the ACP client: the session is created with the built-in tool set limited to
+``ROOM_ACP_BUILTIN_TOOLS`` (no Bash/Edit/Write/WebFetch/Task), workspace
+project/local settings are not loaded (``settingSources: ["user"]``, so a Room
+workspace cannot inject allow rules, hooks, or CLAUDE.md; the operator's user
+settings still load because they may carry the provider credential), and
+``session/set_mode`` pins the ``default`` permission mode.  The ACP permission
+callback then grants only the exact room outcome MCP tool; MCP tools are not
+affected by the built-in tool filter.
+
 Provider output only describes transport progress: an ``end_turn`` stop reason
 means the provider turn ended, never that the Room commit happened.
 """
@@ -81,9 +92,25 @@ ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp"
 ROOM_ACP_DEFAULT_MCP_URL = "http://127.0.0.1:8100/mcp/room"
 ROOM_ACP_MCP_SERVER_NAME = "xmuse-room"
 ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value,)
-# Claude Code enforces the Room boundary in-process: ACP permission requests are
-# granted solely for the exact room outcome tool and every other tool is denied.
+# Claude Code enforces the Room boundary in-process: the session's built-in tool
+# set is limited to ROOM_ACP_BUILTIN_TOOLS with workspace settings not loaded,
+# and ACP permission requests are granted solely for the exact room outcome tool
+# while every other tool is denied.
 ROOM_ACP_CONFINEMENT = "client_permission_gated"
+
+# The complete base set of BUILT-IN Claude Code tools this session may use.
+# Bash is excluded because Claude Code auto-approves its built-in read-only Bash
+# allowlist (ls, cat, find, grep, git log, ...) without ever calling the ACP
+# permission callback, so the client cannot reject those commands.  Edit/Write/
+# NotebookEdit would write workspace bytes outside exact-patch candidates,
+# WebFetch/WebSearch would leave the loopback-only boundary, and Task/Skill hide
+# further tool use (including agents with wider tools) from this client.  MCP
+# tools such as the room outcome tool are not affected by this base set.
+ROOM_ACP_BUILTIN_TOOLS: tuple[str, ...] = ("Read", "Glob", "Grep")
+# Load only the operator's user settings: they may hold the provider credential
+# (an empty list leaves such machines unauthenticated), while the Room
+# workspace's project/local settings must not shape the session.
+ROOM_ACP_SETTING_SOURCES: tuple[str, ...] = ("user",)
 
 # Claude Code names a mounted MCP tool ``mcp__<server>__<tool>`` in the ACP
 # tool-call title (verified against claude-agent-acp 0.84).
@@ -259,10 +286,14 @@ class _RoomAcpClient:
         allowed = session_id == self._session.acp_session_id and any(
             _is_room_outcome_tool_identifier(item) for item in identifiers
         )
+        # The adapter's ``claudeCode.toolName`` metadata is observation-only
+        # evidence; authorization stays with the exact tool-call title because
+        # metadata is not covered by the same-name guarantee.
         logger.info(
-            "room_acp_permission decision=%s candidates=%s",
+            "room_acp_permission decision=%s candidates=%s meta_tool=%s",
             "allow" if allowed else "reject",
             identifiers,
+            _field_meta_tool_name(tool_call),
         )
         preferred = ("allow_once", "allow_always") if allowed else ("reject_once",)
         for kind in preferred:
@@ -271,6 +302,8 @@ class _RoomAcpClient:
                 return RequestPermissionResponse(
                     outcome=AllowedOutcome(outcome="selected", option_id=option.option_id)
                 )
+        # ``cancelled`` makes the adapter abort the whole turn; only use it when
+        # the agent offered no reject option to select instead.
         return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
 
     async def read_text_file(
@@ -814,11 +847,25 @@ class AcpRoomObservationTransport:
                             type="http",
                         )
                     ],
+                    # Agent-client-protocol sends extra kwargs as the request
+                    # ``_meta``.  claude-agent-acp forwards ``claudeCode.options``
+                    # to the Claude Agent SDK: only the Read/Glob/Grep built-ins
+                    # remain, and only the operator's user settings load (they may
+                    # carry the provider credential); workspace project/local
+                    # settings cannot add allow rules, hooks, or CLAUDE.md.  User
+                    # allow rules cannot re-enable tools removed from the base set.
+                    claudeCode={
+                        "options": {
+                            "tools": list(ROOM_ACP_BUILTIN_TOOLS),
+                            "settingSources": list(ROOM_ACP_SETTING_SOURCES),
+                        }
+                    },
                 )
-            acp_session_id = normalized_text(created.session_id)
-            if acp_session_id is None:
-                raise RoomAcpTransportError("room_acp_session_id_missing")
-            session.acp_session_id = acp_session_id
+                acp_session_id = normalized_text(created.session_id)
+                if acp_session_id is None:
+                    raise RoomAcpTransportError("room_acp_session_id_missing")
+                session.acp_session_id = acp_session_id
+                await self._select_default_mode(session, created)
         except RoomAcpTransportError:
             await self._reap_failed_spawn(session, process)
             raise
@@ -852,6 +899,29 @@ class AcpRoomObservationTransport:
             process.pid,
         )
         return session
+
+    async def _select_default_mode(self, session: _AcpSession, created: Any) -> None:
+        """Pin the session's ``default`` permission mode after creation.
+
+        ``permissionMode`` cannot be set through ``new_session`` ``_meta``; the
+        adapter accepts it only via ``session/set_mode``.  An agent that does not
+        advertise session modes has no modal setting to pin, so a rejected
+        request is tolerated with a warning there; an agent that does advertise
+        modes must honor the request or the session could run under a more
+        permissive mode.
+        """
+
+        try:
+            await session.connection.set_session_mode(session.acp_session_id, "default")
+        except Exception as exc:
+            if getattr(created, "modes", None) is not None:
+                raise
+            logger.warning(
+                "room_acp_set_default_mode_unsupported error=%s",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return
+        logger.info("room_acp_permission_mode_selected mode_id=default")
 
     async def _reap_failed_spawn(
         self, session: _AcpSession | None, process: asyncio.subprocess.Process
@@ -965,3 +1035,16 @@ def _is_room_outcome_tool_identifier(value: str) -> bool:
     """Accept only the exact qualified outcome tool of the ``xmuse-room`` server."""
 
     return value == _ROOM_OUTCOME_QUALIFIED_TOOL_NAME
+
+
+def _field_meta_tool_name(tool_call: object) -> str | None:
+    """Return the adapter's ``claudeCode.toolName`` metadata for logging only."""
+
+    meta = getattr(tool_call, "field_meta", None)
+    if not isinstance(meta, Mapping):
+        return None
+    claude_code = meta.get("claudeCode")
+    if not isinstance(claude_code, Mapping):
+        return None
+    name = claude_code.get("toolName")
+    return name if isinstance(name, str) and name else None

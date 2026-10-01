@@ -79,7 +79,10 @@ do not load `.env`.
 - Room Codex sessions are participant-bound, read-only, network-disabled, and config-isolated.
   Other providers must deny or be instructed against workspace writes; their confinement
   level is reported per provider and never assumed equal to Codex. Workspace changes still
-  enter only through exact-patch candidates.
+  enter only through exact-patch candidates. Claude ACP sessions run with built-in tools
+  limited to Read/Glob/Grep (no Bash), no workspace project/local settings, the `default`
+  permission mode pinned via `session/set_mode`, and only the exact room outcome MCP tool
+  approved by the ACP permission callback.
 - Managed MCP exposes only `/health`, `/mcp/room`, and
   `chat_room_submit_outcome`. New batch deliveries bind that outcome to the exact batch and
   may name a reply target from the delivered members. Provider final text is not Room truth.

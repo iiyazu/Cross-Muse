@@ -36,6 +36,8 @@ from acp.schema import (
     NewSessionResponse,
     PermissionOption,
     PromptResponse,
+    SessionMode,
+    SessionModeState,
     ToolCallUpdate,
 )
 
@@ -114,8 +116,27 @@ class FakeAcpAgent:
                 url = server.url
                 server_name = server.name
         self._mcp_urls[session_id] = url
-        _log("new_session", session_id=session_id, cwd=cwd, mcp_url=url, server_name=server_name)
-        return NewSessionResponse(session_id=session_id)
+        _log(
+            "new_session",
+            session_id=session_id,
+            cwd=cwd,
+            mcp_url=url,
+            server_name=server_name,
+            claude_code=kwargs.get("claudeCode"),
+        )
+        return NewSessionResponse(
+            session_id=session_id,
+            modes=SessionModeState(
+                current_mode_id="default",
+                available_modes=[
+                    SessionMode(id="default", name="Default"),
+                    SessionMode(id="acceptEdits", name="Accept edits"),
+                ],
+            ),
+        )
+
+    async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> None:
+        _log("set_session_mode", session_id=session_id, mode_id=mode_id)
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         text = "".join(
