@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_batches import (
     batch_identity,
     batch_row_for_observation,
@@ -513,9 +517,9 @@ class RoomKernelStore:
                 participant_rows = conn.execute(
                     "select participant_id from participants "
                     "where conversation_id = ? and status = 'active' "
-                    "and cli_kind = 'codex' and role <> ? "
+                    f"and cli_kind in ({room_agent_cli_kind_placeholders()}) and role <> ? "
                     "order by rowid",
-                    (conversation_id, INIT_GOD_ROLE),
+                    (conversation_id, *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE),
                 ).fetchall()
                 priority_ids = {
                     mention.removeprefix("@participant:")
@@ -766,7 +770,7 @@ class RoomKernelStore:
         stamp = _timestamp(current)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 with unresolved as (
                     select o.conversation_id, o.participant_id, o.status,
                            o.expires_at, o.attempt_count, o.manual_retry_budget, a.seq,
@@ -795,7 +799,7 @@ class RoomKernelStore:
                               and t.state in ('claimed', 'delivering'))
                       )
                       and p.status = 'active'
-                      and p.cli_kind = 'codex'
+                      and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                       and p.role <> ?
                       and (
                           a.seq > coalesce(c.last_acknowledged_seq, 0)
@@ -825,13 +829,19 @@ class RoomKernelStore:
                             and root_o.delivery_mode = 'active'
                             and root_o.status <> 'completed'
                             and root_p.status = 'active'
-                            and root_p.cli_kind = 'codex'
+                            and root_p.cli_kind in ({room_agent_cli_kind_placeholders()})
                             and root_o.control_state not in ('cancelled','exhausted')
                       )
                   )
                 order by frontier_seq, conversation_id, participant_id
                 """,
-                (INIT_GOD_ROLE, max_attempts_per_observation, stamp),
+                (
+                    *ROOM_AGENT_CLI_KINDS,
+                    INIT_GOD_ROLE,
+                    max_attempts_per_observation,
+                    stamp,
+                    *ROOM_AGENT_CLI_KINDS,
+                ),
             ).fetchall()
         return [(str(row["conversation_id"]), str(row["participant_id"])) for row in rows]
 
@@ -887,7 +897,7 @@ class RoomKernelStore:
         conn: sqlite3.Connection, *, conversation_id: str, correlation_id: str
     ) -> bool:
         row = conn.execute(
-            """select count(*) as unresolved
+            f"""select count(*) as unresolved
                from room_observations o
                join room_activities a on a.activity_id = o.activity_id
                join participants p on p.participant_id = o.participant_id
@@ -896,9 +906,9 @@ class RoomKernelStore:
                  and o.delivery_mode = 'active'
                  and o.status <> 'completed'
                  and p.status = 'active'
-                 and p.cli_kind = 'codex'
+                 and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                  and o.control_state not in ('cancelled','exhausted')""",
-            (conversation_id, correlation_id),
+            (conversation_id, correlation_id, *ROOM_AGENT_CLI_KINDS),
         ).fetchone()
         return int(row["unresolved"]) == 0
 
@@ -1006,10 +1016,11 @@ class RoomKernelStore:
             conn.execute("begin immediate")
             try:
                 participant = conn.execute(
-                    """select participant_id from participants
-                    where conversation_id = ? and participant_id = ?
-                      and status = 'active' and cli_kind = 'codex'""",
-                    (conversation_id, participant_id),
+                    "select participant_id from participants "
+                    "where conversation_id = ? and participant_id = ? "
+                    "and status = 'active' "
+                    f"and cli_kind in ({room_agent_cli_kind_placeholders()})",
+                    (conversation_id, participant_id, *ROOM_AGENT_CLI_KINDS),
                 ).fetchone()
                 if participant is None:
                     raise ValueError("room_participant_not_active")
@@ -1364,7 +1375,10 @@ class RoomKernelStore:
                     raise ValueError("room_reply_to_activity_not_in_batch")
                 if row["status"] == "completed":
                     raise ValueError("room_observation_already_completed")
-                if participant["status"] != "active" or participant["cli_kind"] != "codex":
+                if (
+                    participant["status"] != "active"
+                    or participant["cli_kind"] not in ROOM_AGENT_CLI_KINDS
+                ):
                     raise ValueError("room_participant_not_active")
                 if (
                     row["status"] != "claimed"
@@ -1413,8 +1427,8 @@ class RoomKernelStore:
                     active_rows = conn.execute(
                         "select participant_id from participants "
                         "where conversation_id = ? and status = 'active' "
-                        "and cli_kind = 'codex' and role <> ?",
-                        (conversation_id, INIT_GOD_ROLE),
+                        f"and cli_kind in ({room_agent_cli_kind_placeholders()}) and role <> ?",
+                        (conversation_id, *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE),
                     ).fetchall()
                     active_ids = {item["participant_id"] for item in active_rows}
                     target_ids = normalized.get("target_participant_ids", [])

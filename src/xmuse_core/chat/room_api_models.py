@@ -6,7 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from xmuse_core.providers.models import ProviderId, ProviderProfileId
+from xmuse_core.chat.participant_store import CurrentChatCliKind, StoredProviderIdValue
+from xmuse_core.providers.models import ProviderProfileId
 
 
 def strip_required_string(value: object) -> object:
@@ -31,9 +32,9 @@ class ParticipantInit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: str = Field(min_length=1, max_length=64)
-    provider_id: ProviderId | None = None
+    provider_id: StoredProviderIdValue | None = None
     profile_id: ProviderProfileId | None = None
-    cli_kind: Literal["codex"] | None = None
+    cli_kind: CurrentChatCliKind | None = None
     model: str | None = Field(default=None, max_length=200)
     role_template_id: str | None = Field(default=None, max_length=200)
     display_name: str | None = Field(default=None, max_length=120)

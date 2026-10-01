@@ -157,6 +157,65 @@ def test_room_setup_public_request_rejects_retired_providers_before_writing(
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("provider", ["claude", "antigravity"])
+def test_room_setup_accepts_multi_provider_local_agents(
+    tmp_path: Path,
+    provider: str,
+) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": f"{provider} Room",
+            "client_request_id": f"setup-{provider}-agent",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "display_name": f"{provider} Reviewer",
+                    "provider_id": provider,
+                    "cli_kind": provider,
+                    "model": "reviewer-v1",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    participant = response.json()["participants"][0]
+    assert participant["cli_kind"] == provider
+    assert participant["provider_id"] == provider
+    assert participant["model"] == "reviewer-v1"
+    stored = ParticipantStore(tmp_path / "chat.db").get(participant["participant_id"])
+    assert stored.cli_kind == provider
+    assert stored.provider_id == provider
+    assert stored.status == "active"
+
+
+def test_room_setup_rejects_unknown_cli_kind_without_writing(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "Unknown provider",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "provider_id": "gemini",
+                    "cli_kind": "gemini",
+                    "model": "gemini-2.5-pro",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+        assert conn.execute("select count(*) from participants").fetchone()[0] == 0
+
+
 def test_room_setup_accepts_bounded_custom_local_roster(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.post(

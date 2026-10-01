@@ -10,9 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from xmuse_core.chat.participant_store import (
+    CurrentChatCliKind,
     PersonaSnapshot,
     insert_participant_conn,
     prepare_participant,
+    provider_id_for_cli_kind,
     provider_profile_id_for_role,
     resolve_current_chat_cli_kind,
 )
@@ -50,6 +52,7 @@ class RoomSetupError(Exception):
 class _ParticipantSpec:
     role: str
     display_name: str
+    cli_kind: CurrentChatCliKind
     model: str
     role_template_id: str | None
     persona_snapshot: PersonaSnapshot | None
@@ -96,7 +99,7 @@ class RoomSetupService:
                 conversation_id=conversation_id,
                 role=spec.role,
                 display_name=spec.display_name,
-                cli_kind="codex",
+                cli_kind=spec.cli_kind,
                 model=spec.model,
                 role_template_id=spec.role_template_id,
                 persona_snapshot=spec.persona_snapshot,
@@ -219,7 +222,7 @@ class RoomSetupService:
         ):
             raise RoomSetupError(
                 "room_provider_not_supported",
-                "default Room participants must use the local Codex runtime",
+                "a2a and remote Room participants are not supported",
             )
         expected_profile = provider_profile_id_for_role(participant.role)
         try:
@@ -232,16 +235,20 @@ class RoomSetupService:
             )
         except (TypeError, ValueError) as exc:
             raise RoomSetupError("room_participant_invalid", str(exc)) from exc
-        if cli_kind != "codex":
-            raise RoomSetupError(
-                "room_provider_not_supported",
-                "default Room participants must use the local Codex runtime",
-            )
-        model = participant.model or _default_model(expected_profile)
+        if cli_kind == "codex":
+            model = participant.model or _default_model(expected_profile)
+        else:
+            model = (participant.model or "").strip()
+            if not model:
+                raise RoomSetupError(
+                    "room_participant_invalid",
+                    "non-codex Room participants require an explicit model",
+                )
         display_name = participant.display_name or participant.role.replace("_", " ").title()
         return _ParticipantSpec(
             role=participant.role,
             display_name=display_name,
+            cli_kind=cli_kind,
             model=model,
             role_template_id=participant.role_template_id,
             persona_snapshot=requested.persona_snapshot,
@@ -286,8 +293,8 @@ def _request_fingerprint(
                     if item.persona_snapshot is not None
                     else None
                 ),
-                "provider_id": "codex",
-                "cli_kind": "codex",
+                "provider_id": str(provider_id_for_cli_kind(item.cli_kind)),
+                "cli_kind": item.cli_kind,
             }
             for item in specs
         ],

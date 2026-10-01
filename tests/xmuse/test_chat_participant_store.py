@@ -126,7 +126,7 @@ class TestParticipantStore:
     ) -> None:
         store = ParticipantStore(db_path)
 
-        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+        with pytest.raises(ValueError, match="support only cli_kind in"):
             store.add(
                 conversation_id=conv_id,
                 role="review",
@@ -170,7 +170,7 @@ class TestParticipantStore:
         assert historical.cli_kind == cli_kind
         assert historical.provider_id == cli_kind
         assert historical in store.list_by_conversation(conv_id)
-        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+        with pytest.raises(ValueError, match="support only cli_kind in"):
             store.update_status(historical.participant_id, "active")
         assert store.get(historical.participant_id).status == "stopped"
 
@@ -300,27 +300,51 @@ class TestParticipantStore:
         # Should not raise
         store.delete("part_nonexistent")
 
-    def test_add_rejects_claude_cli_kind(self, db_path: Path, conv_id: str) -> None:
+    @pytest.mark.parametrize("cli_kind", ["claude", "antigravity"])
+    def test_add_accepts_multi_provider_room_agent_cli_kinds(
+        self, db_path: Path, conv_id: str, cli_kind: str
+    ) -> None:
         store = ParticipantStore(db_path)
 
-        with pytest.raises(ValueError, match="unsupported xmuse chat participant cli_kind"):
+        p = store.add(
+            conversation_id=conv_id,
+            role="architect",
+            display_name="Architect GOD",
+            cli_kind=cli_kind,  # type: ignore[arg-type]
+            model="sonnet",
+        )
+
+        assert p.cli_kind == cli_kind
+        assert p.provider_id == cli_kind
+        assert p.model == "sonnet"
+        assert p.status == "active"
+        assert store.get(p.participant_id).cli_kind == cli_kind
+
+    def test_add_rejects_non_codex_kind_without_explicit_model(
+        self, db_path: Path, conv_id: str
+    ) -> None:
+        store = ParticipantStore(db_path)
+
+        with pytest.raises(
+            ValueError, match="non-codex chat participants require an explicit model"
+        ):
             store.add(
                 conversation_id=conv_id,
                 role="architect",
                 display_name="Architect GOD",
-                cli_kind="claude",
-                model="sonnet",
+                cli_kind="claude",  # type: ignore[arg-type]
+                model="  ",
             )
 
     def test_add_rejects_opencode_cli_kind(self, db_path: Path, conv_id: str) -> None:
         store = ParticipantStore(db_path)
 
-        with pytest.raises(ValueError, match="support only cli_kind 'codex'"):
+        with pytest.raises(ValueError, match="support only cli_kind in"):
             store.add(
                 conversation_id=conv_id,
                 role="review",
                 display_name="OpenCode Review",
-                cli_kind="opencode",
+                cli_kind="opencode",  # type: ignore[arg-type]
                 model="gpt-oss",
             )
 
@@ -384,8 +408,8 @@ class TestParticipantStore:
                     conv_id,
                     "architect",
                     "Architect GOD",
-                    "claude",
-                    "sonnet",
+                    "gemini",
+                    "gemini-2.5-pro",
                     None,
                     "active",
                     None,

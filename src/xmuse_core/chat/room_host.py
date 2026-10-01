@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE, Participant, ParticipantStore
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_context_selection import (
     RoomContextSelection,
     memory_excluded_activity_ids,
@@ -712,7 +713,9 @@ class RoomParticipantHost:
         active = [
             p
             for p in participants
-            if p.status == "active" and p.cli_kind == "codex" and p.role != INIT_GOD_ROLE
+            if p.status == "active"
+            and p.cli_kind in ROOM_AGENT_CLI_KINDS
+            and p.role != INIT_GOD_ROLE
         ]
         kernel = RoomKernelStore(self._db_path)
         observations = kernel.list_observations(conversation_id)

@@ -12,6 +12,10 @@ from typing import Any
 
 from xmuse_core.chat.mentions import normalize_address
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_database import RoomDatabase
 
 ROOM_CHAT_SCHEMA_VERSION = "room_chat_projection/v3"
@@ -131,7 +135,7 @@ def _mention_handles(rows: Iterable[sqlite3.Row | dict[str, Any]]) -> dict[str, 
         row
         for row in values
         if row.get("status") == "active"
-        and row.get("cli_kind", "codex") == "codex"
+        and row.get("cli_kind", "codex") in ROOM_AGENT_CLI_KINDS
         and row.get("role") != INIT_GOD_ROLE
     ]
     handles: dict[str, str] = {}
@@ -158,7 +162,9 @@ def _mention_handles(rows: Iterable[sqlite3.Row | dict[str, Any]]) -> dict[str, 
 
 def _participant_payload(row: sqlite3.Row | dict[str, Any], handle: str) -> dict[str, Any]:
     value = dict(row)
-    status = value["status"] if value.get("cli_kind", "codex") == "codex" else "stopped"
+    status = (
+        value["status"] if value.get("cli_kind", "codex") in ROOM_AGENT_CLI_KINDS else "stopped"
+    )
     return {
         "participant_id": value["participant_id"],
         "role": value["role"],
@@ -730,7 +736,7 @@ def build_room_chat_projection(
         participants = []
         for row in participant_rows:
             participant_id = row["participant_id"]
-            runtime_supported = row["cli_kind"] == "codex"
+            runtime_supported = row["cli_kind"] in ROOM_AGENT_CLI_KINDS
             frontier = global_frontiers.get(participant_id) if runtime_supported else None
             outcome = global_outcomes.get(participant_id)
             participants.append(
@@ -933,17 +939,20 @@ def _turns(
     has_observation_batches: bool,
 ) -> tuple[list[dict[str, Any]], int, int, int]:
     counts = conn.execute(
-        """select count(distinct case when p.status = 'active' and p.cli_kind = 'codex'
+        f"""select count(distinct case when p.status = 'active'
+                                   and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                                    and o.status <> 'completed'
                                    then a.correlation_id end) active_turn_count,
-                  count(distinct case when p.status = 'active' and p.cli_kind = 'codex'
+                  count(distinct case when p.status = 'active'
+                                   and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                                    and o.status <> 'completed'
                                    and ((o.status = 'claimed' and o.expires_at <= ?)
                                         or o.control_state <> 'active'
                                         or current_attempt.recovery_state
                                            in ('fenced', 'cleanup_pending'))
                                    then a.correlation_id end) attention_turn_count,
-                  sum(case when (p.status = 'stopped' or p.cli_kind <> 'codex')
+                  sum(case when (p.status = 'stopped'
+                                 or p.cli_kind not in ({room_agent_cli_kind_placeholders()}))
                            and o.status <> 'completed'
                            then 1 else 0 end) excluded_stopped_count
            from room_observations o
@@ -952,7 +961,13 @@ def _turns(
            left join room_observation_attempts current_attempt
              on current_attempt.attempt_id = o.current_attempt_id
            where o.conversation_id = ? and o.delivery_mode = 'active'""",
-        (_stamp(current), conversation_id),
+        (
+            *ROOM_AGENT_CLI_KINDS,
+            *ROOM_AGENT_CLI_KINDS,
+            _stamp(current),
+            *ROOM_AGENT_CLI_KINDS,
+            conversation_id,
+        ),
     ).fetchone()
     total_active = int(counts["active_turn_count"] or 0)
     total_attention = int(counts["attention_turn_count"] or 0)
@@ -1116,7 +1131,7 @@ def _turns(
             frontier = frontier_map.get((correlation_id, participant_id))
             outcome = outcome_map.get((correlation_id, participant_id))
             unresolved = int(aggregate["unresolved_count"] or 0)
-            runtime_status = row["status"] if row["cli_kind"] == "codex" else "stopped"
+            runtime_status = row["status"] if row["cli_kind"] in ROOM_AGENT_CLI_KINDS else "stopped"
             if runtime_status == "stopped" and unresolved:
                 excluded_stopped += 1
             elif runtime_status == "active" and unresolved:
@@ -1230,11 +1245,13 @@ def build_room_list_projection(
                ) select * from visible where rank = 1"""
         ).fetchall()
         status_rows = conn.execute(
-            """select o.conversation_id,
-                 count(distinct case when p.status = 'active' and p.cli_kind = 'codex'
+            f"""select o.conversation_id,
+                 count(distinct case when p.status = 'active'
+                                and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                                 and o.status <> 'completed'
                                 then a.correlation_id end) active_turn_count,
-                 count(distinct case when p.status = 'active' and p.cli_kind = 'codex'
+                 count(distinct case when p.status = 'active'
+                                and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                                 and o.status <> 'completed'
                                 and ((o.status = 'claimed' and o.expires_at <= ?)
                                      or o.control_state <> 'active'
@@ -1248,7 +1265,7 @@ def build_room_list_projection(
                left join room_observation_attempts current_attempt
                  on current_attempt.attempt_id = o.current_attempt_id
                where o.delivery_mode = 'active' group by o.conversation_id""",
-            (_stamp(current),),
+            (*ROOM_AGENT_CLI_KINDS, *ROOM_AGENT_CLI_KINDS, _stamp(current)),
         ).fetchall()
     participants_by_room: dict[str, list[sqlite3.Row]] = defaultdict(list)
     for row in participant_rows:
@@ -1276,7 +1293,9 @@ def build_room_list_projection(
         if state is not None and state["observation_updated_at"]:
             updated_candidates.append(state["observation_updated_at"])
         active_members = [
-            row for row in member_rows if row["status"] == "active" and row["cli_kind"] == "codex"
+            row
+            for row in member_rows
+            if row["status"] == "active" and row["cli_kind"] in ROOM_AGENT_CLI_KINDS
         ]
         inactive_members = [row for row in member_rows if row not in active_members]
         rooms.append(
