@@ -103,19 +103,45 @@ def _git_commit() -> dict[str, Any]:
 class RoomApiClient:
     """Minimal stdlib JSON client for the loopback Room API."""
 
-    def __init__(self, base_url: str, *, timeout_s: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout_s: float = 30.0,
+        write_proxy_url: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
+        # A managed Workroom keeps the operator token server-side; writes then go
+        # through the browser Workroom's same-origin loopback proxy instead.
+        self.write_proxy_url = write_proxy_url.rstrip("/") if write_proxy_url else None
 
-    def _request(self, method: str, path: str, body: dict[str, Any] | None) -> dict[str, Any]:
-        url = f"{self.base_url}{path}"
-        data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(
-            url,
-            data=data,
-            method=method,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+    def _write(self, api_path: str, proxy_path: str, body: dict[str, Any]) -> dict[str, Any]:
+        if self.write_proxy_url is None:
+            return self._request("POST", api_path, body)
+        return self._request(
+            "POST",
+            proxy_path,
+            body,
+            base_url=self.write_proxy_url,
+            origin=self.write_proxy_url,
         )
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        *,
+        base_url: str | None = None,
+        origin: str | None = None,
+    ) -> dict[str, Any]:
+        url = f"{base_url or self.base_url}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if origin is not None:
+            headers["Origin"] = origin
+        request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
                 payload = response.read().decode("utf-8")
@@ -140,9 +166,9 @@ class RoomApiClient:
         mode: str,
         lead_role: str,
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
+        return self._write(
             "/conversations",
+            "/api/rooms",
             {
                 "title": title,
                 "client_request_id": f"eval_room_{uuid.uuid4().hex}",
@@ -154,9 +180,9 @@ class RoomApiClient:
     def post_human_message(
         self, conversation_id: str, *, message: str, client_request_id: str
     ) -> dict[str, Any]:
-        return self._request(
-            "POST",
+        return self._write(
             f"/threads/{conversation_id}/messages",
+            f"/api/rooms/{conversation_id}/messages",
             {"message": message, "client_request_id": client_request_id},
         )
 
@@ -501,6 +527,13 @@ def build_parser() -> argparse.ArgumentParser:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
+    parser.add_argument(
+        "--write-proxy-url",
+        help=(
+            "browser Workroom origin (e.g. http://127.0.0.1:3000) whose loopback proxy "
+            "performs Room writes for a managed Workroom; reads still use --base-url"
+        ),
+    )
     parser.add_argument("--modes", default="broadcast,addressed")
     parser.add_argument("--roster-template", default="builtin.heterogeneous-duo")
     parser.add_argument("--tasks", default="all")
@@ -529,7 +562,11 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     transcripts_dir = args.out / "transcripts"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
-    client = RoomApiClient(args.base_url, timeout_s=args.http_timeout_s)
+    client = RoomApiClient(
+        args.base_url,
+        timeout_s=args.http_timeout_s,
+        write_proxy_url=args.write_proxy_url,
+    )
     state = RunState()
 
     manifest: dict[str, Any] = {
