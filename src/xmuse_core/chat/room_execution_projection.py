@@ -233,6 +233,16 @@ def _vote_summary(candidate: Mapping[str, Any]) -> dict[str, int]:
     return counts
 
 
+def _cross_family_review_payload(value: object) -> dict[str, Any]:
+    source = _mapping(value)
+    return {
+        "required": _boolean(source.get("required")),
+        "satisfied": _boolean(source.get("satisfied")),
+        "author_family": _text(source.get("author_family"), maximum=64),
+        "reviewer_families": _strings(source.get("reviewer_families"), maximum=8),
+    }
+
+
 def _gate_summary(run: Mapping[str, Any] | None) -> dict[str, int]:
     source = run or {}
     provided = _mapping(source.get("gate_summary"))
@@ -301,6 +311,7 @@ def _candidate_summary(
         "file_count": len(allowed_files),
         "byte_count": _integer(candidate.get("byte_count") or candidate.get("patch_bytes")),
         "votes": _vote_summary(candidate),
+        "cross_family_review": _cross_family_review_payload(candidate.get("cross_family_review")),
         "run": safe_run,
         "gate_summary": _gate_summary(run),
         "created_at": _text(candidate.get("created_at"), maximum=100),
