@@ -79,3 +79,80 @@ def test_bootstrap_missing_companion_recommends_install(monkeypatch, tmp_path: P
     assert payload["memory"]["companion"] == "missing"
     assert payload["codex"] == {"launcher_available": False}
     assert payload["recommended_action"] == "install_memory"
+
+
+def test_bootstrap_projects_only_whitelisted_provider_capabilities(tmp_path: Path) -> None:
+    app = FastAPI()
+    register_bootstrap_route(
+        app,
+        root=tmp_path,
+        memory_status_provider=lambda: {"state": "disabled", "code": "memoryos_disabled"},
+        execution_profile_provider=lambda: {
+            "profile_id": None,
+            "readiness": {"state": "unknown", "ready": False},
+        },
+        provider_capabilities_provider=lambda: {
+            "codex": {
+                "available": False,
+                "enabled": False,
+                "confinement": "read_only_sandbox",
+                "launcher_path": "/secret/bin/codex",
+            },
+            "claude": {
+                "available": True,
+                "enabled": True,
+                "confinement": "client_permission_gated",
+                "command": ["/secret/bin/npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+                "pid": 4242,
+            },
+            "antigravity": {
+                "available": True,
+                "enabled": False,
+                "confinement": "instructed_read_only",
+                "address": "127.0.0.1:65000",
+                "csrf_token": "secret-token",
+            },
+        },
+    )
+
+    payload = _endpoint(app)()
+
+    assert payload["providers"] == {
+        "codex": {"available": False, "enabled": False, "confinement": "read_only_sandbox"},
+        "claude": {
+            "available": True,
+            "enabled": True,
+            "confinement": "client_permission_gated",
+        },
+        "antigravity": {
+            "available": True,
+            "enabled": False,
+            "confinement": "instructed_read_only",
+        },
+    }
+    serialized = json.dumps(payload)
+    assert "/secret" not in serialized
+    assert "secret-token" not in serialized
+    assert "65000" not in serialized
+
+
+def test_bootstrap_provider_detection_failure_reports_unavailable(tmp_path: Path) -> None:
+    app = FastAPI()
+    register_bootstrap_route(
+        app,
+        root=tmp_path,
+        memory_status_provider=lambda: {"state": "disabled", "code": "memoryos_disabled"},
+        execution_profile_provider=lambda: {
+            "profile_id": None,
+            "readiness": {"state": "unknown", "ready": False},
+        },
+        provider_capabilities_provider=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    payload = _endpoint(app)()
+
+    assert payload["providers"] == {
+        "codex": {"available": False, "enabled": False, "confinement": "unknown"},
+        "claude": {"available": False, "enabled": False, "confinement": "unknown"},
+        "antigravity": {"available": False, "enabled": False, "confinement": "unknown"},
+    }

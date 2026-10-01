@@ -122,6 +122,8 @@ class WorkroomLaunchRequest:
     memoryos_executable: Path | None = None
     memory_profile: str | None = None
     open_browser: bool = True
+    claude: bool | None = None
+    antigravity: bool | None = None
 
 
 def _payload(*, state: str, **values: object) -> dict[str, object]:
@@ -188,6 +190,14 @@ def _start_argv(
         argv.extend(("--workspace", str(request.workspace)))
     if request.execution_profile is not None:
         argv.extend(("--execution-profile", request.execution_profile))
+    if request.claude is True:
+        argv.append("--claude")
+    elif request.claude is False:
+        argv.append("--no-claude")
+    if request.antigravity is True:
+        argv.append("--antigravity")
+    elif request.antigravity is False:
+        argv.append("--no-antigravity")
     if explicit_memory:
         assert memoryos is not None
         argv.extend(("--memory", "--memoryos-executable", str(memoryos)))

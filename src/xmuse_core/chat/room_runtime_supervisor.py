@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,9 @@ class RoomRuntimeSupervisorConfig:
     mcp_pid_file: Path | None = None
     runner_log_path: Path | None = None
     mcp_log_path: Path | None = None
+    # Caller-owned environment for the Room Runner child only; other children
+    # (including the Room MCP) never see these keys.
+    room_runner_env: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.generation.strip():
@@ -435,9 +438,13 @@ def _spawn_service(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     environment = normalize_child_temp_env(os.environ)
     environment.pop("XMUSE_OPERATOR_TOKEN", None)
-    if service != "room_runner":
+    if service == "room_runner":
+        environment.update(config.room_runner_env)
+    else:
         environment.pop("XMUSE_MEMORYOS_URL", None)
         environment.pop("XMUSE_MEMORYOS_API_KEY", None)
+        for key in config.room_runner_env:
+            environment.pop(key, None)
     for key in tuple(environment):
         if key.startswith("NEXT_PUBLIC_") and "TOKEN" in key.upper():
             environment.pop(key, None)

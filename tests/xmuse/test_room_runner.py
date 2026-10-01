@@ -783,6 +783,79 @@ def test_missing_codex_executable_publishes_failed_not_ready_receipt(
     assert status["error"] == {"code": "room_runner_codex_executable_unavailable"}
 
 
+def test_runner_reaches_ready_with_claude_only_and_no_codex_executable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("XMUSE_CLAUDE_ACP_COMMAND", raising=False)
+    root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            room_runner.run_room_runner(
+                xmuse_root=root,
+                generation="generation-claude-only",
+                worktree=worktree,
+                shutdown=stop,
+                mcp_probe=lambda _host, _port: (True, True),
+                executable_resolver=lambda command: None if command == "codex" else "/opt/npx",
+                claude_acp=True,
+            )
+        )
+        deadline = asyncio.get_running_loop().time() + 5
+        while True:
+            if task.done():
+                task.result()
+            status = read_room_runner_status(root)
+            if status is not None and status["state"] == "ready":
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError("Room Runner did not become ready without codex")
+            await asyncio.sleep(0.01)
+        stop.set()
+        await asyncio.wait_for(task, timeout=5)
+        stopped = read_room_runner_status(root)
+        assert stopped is not None
+        assert stopped["state"] == "stopped"
+        assert stopped["error"] is None
+
+    asyncio.run(scenario())
+
+
+def test_runner_refuses_antigravity_without_the_pinned_room_mcp_port(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("XMUSE_ANTIGRAVITY_AGENTAPI", str(tmp_path / "agentapi"))
+    monkeypatch.delenv("XMUSE_CLAUDE_ACP_COMMAND", raising=False)
+    root = tmp_path / "runtime"
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    with pytest.raises(room_runner.RoomRunnerError) as exc_info:
+        asyncio.run(
+            room_runner.run_room_runner(
+                xmuse_root=root,
+                generation="generation-antigravity-port",
+                mcp_port=18100,
+                worktree=worktree,
+                mcp_probe=lambda _host, _port: (True, True),
+                executable_resolver=lambda command: None if command == "codex" else "/opt/agentapi",
+                claude_acp=False,
+                antigravity=True,
+            )
+        )
+
+    assert exc_info.value.code == "room_runner_antigravity_mcp_port_required"
+    status = read_room_runner_status(root)
+    assert status is not None
+    assert status["state"] == "failed"
+    assert status["error"] == {"code": "room_runner_antigravity_mcp_port_required"}
+
+
 def test_startup_failure_publishes_failed_not_ready_receipt(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     root.mkdir()

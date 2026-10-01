@@ -435,6 +435,25 @@ def _builtin_roster_templates() -> dict[str, RosterTemplate]:
                 ),
             ),
         ),
+        "builtin.heterogeneous-duo": RosterTemplate(
+            template_id="builtin.heterogeneous-duo",
+            display_name="Heterogeneous Duo",
+            description=(
+                "Cross-vendor pair: Claude leads product judgment and synthesis while "
+                "Antigravity researches broadly; no Codex login required."
+            ),
+            roles=(
+                RosterRoleBinding(
+                    role_id="product_lead",
+                    provider_profile_ref="claude.default",
+                ),
+                RosterRoleBinding(
+                    role_id="researcher",
+                    provider_profile_ref="antigravity.default",
+                ),
+            ),
+            collaboration=RosterCollaboration(mode="addressed", lead_role="architect"),
+        ),
         "builtin.heterogeneous-trio": RosterTemplate(
             template_id="builtin.heterogeneous-trio",
             display_name="Heterogeneous Trio",

@@ -16,6 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from xmuse.provider_capabilities import (
+    ANTIGRAVITY_FLAG_ENV,
+    CLAUDE_FLAG_ENV,
+    ROOM_MCP_PINNED_HOST,
+    ROOM_MCP_PINNED_PORT,
+    ROOM_RUNNER_PROVIDER_ENV_KEYS,
+)
 from xmuse.workroom_contracts import WorkroomDependencies, WorkroomError, WorkroomPaths
 from xmuse.workroom_processes import (
     ManagedProcess,
@@ -55,7 +62,12 @@ class WorkroomServicesCoordinator:
         self._paths = paths
         self._deps = deps
 
-    def preflight(self) -> str:
+    def preflight(
+        self,
+        *,
+        claude_enabled: bool = False,
+        antigravity_enabled: bool = False,
+    ) -> str:
         """Prove required binaries, build assets, operation state, and ports."""
 
         if self._paths.data_operation_journal.exists():
@@ -66,10 +78,19 @@ class WorkroomServicesCoordinator:
         node = self._deps.which("node")
         if not node:
             raise WorkroomError("node_missing", "Node.js is required to run the Workroom frontend")
-        if not self._deps.which("codex"):
+        if not self._deps.which("codex") and not claude_enabled and not antigravity_enabled:
             raise WorkroomError(
                 "codex_missing",
-                "Codex CLI is required to run Workroom Room Agents",
+                "Codex CLI is required to run Workroom Room Agents unless Claude or "
+                "Antigravity is enabled",
+            )
+        if antigravity_enabled and not self._deps.port_available(
+            ROOM_MCP_PINNED_HOST, ROOM_MCP_PINNED_PORT
+        ):
+            raise WorkroomError(
+                "antigravity_room_mcp_port_required",
+                f"Antigravity participants mount the Room MCP at "
+                f"{ROOM_MCP_PINNED_HOST}:{ROOM_MCP_PINNED_PORT}, which is already in use",
             )
         if not self._paths.repo_root.is_dir():
             raise WorkroomError(
@@ -128,6 +149,8 @@ class WorkroomServicesCoordinator:
         memoryos_api_key: str | None = None,
         memoryos_profile: str = "full-local",
         cleanup_timeout_s: float = 2.0,
+        claude_enabled: bool = False,
+        antigravity_enabled: bool = False,
     ) -> RequiredServiceRuntime:
         """Start required children in dependency order and clean partial starts.
 
@@ -147,6 +170,8 @@ class WorkroomServicesCoordinator:
                 memoryos_url=memoryos_url,
                 memoryos_api_key=memoryos_api_key,
                 memoryos_profile=memoryos_profile,
+                claude_enabled=claude_enabled,
+                antigravity_enabled=antigravity_enabled,
             )
             started.append((chat_api, None))
             chat_record = self._record(
@@ -281,6 +306,8 @@ class WorkroomServicesCoordinator:
         memoryos_url: str | None,
         memoryos_api_key: str | None,
         memoryos_profile: str,
+        claude_enabled: bool,
+        antigravity_enabled: bool,
     ) -> tuple[ManagedProcess, ProcessSpec]:
         environment = self._child_environment(
             generation=generation,
@@ -293,6 +320,10 @@ class WorkroomServicesCoordinator:
                 "XMUSE_CHAT_API_URL": f"http://{CHAT_API_HOST}:{CHAT_API_PORT}",
                 "XMUSE_WORKSPACE_ROOT": str(execution_workspace),
                 "XMUSE_EXECUTION_PROFILE_ID": execution_profile_id,
+                # Provider admission reaches the Room Runner through the Chat API
+                # child only; the frontend never receives transport environment.
+                CLAUDE_FLAG_ENV: "1" if claude_enabled else "0",
+                ANTIGRAVITY_FLAG_ENV: "1" if antigravity_enabled else "0",
             }
         )
         if memoryos_url is not None and memoryos_api_key is not None:
@@ -324,6 +355,8 @@ class WorkroomServicesCoordinator:
             operator_token=operator_token,
             service="frontend",
         )
+        for key in ROOM_RUNNER_PROVIDER_ENV_KEYS:
+            environment.pop(key, None)
         environment.update(
             {
                 "HOSTNAME": FRONTEND_HOST,

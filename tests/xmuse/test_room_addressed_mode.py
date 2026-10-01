@@ -773,6 +773,49 @@ def test_heterogeneous_trio_template_expands_to_three_providers_with_addressed_p
         validate_roster_template(bad, catalog=catalog)
 
 
+def test_heterogeneous_duo_template_expands_claude_and_antigravity_with_addressed_policy(
+    tmp_path: Path,
+) -> None:
+    RoomDatabase(tmp_path / "chat.db").initialize()
+    catalog = builtin_workroom_catalog()
+    template = catalog.roster_templates["builtin.heterogeneous-duo"]
+    assert template.collaboration == RosterCollaboration(mode="addressed", lead_role="architect")
+    validated = validate_roster_template(template, catalog=catalog)
+    participants = template_to_participant_inits(validated, catalog=catalog)
+    assert [item.cli_kind for item in participants] == ["claude", "antigravity"]
+    assert [item.role for item in participants] == ["architect", "research"]
+    assert [item.model for item in participants] == ["claude-acp-default", "flash"]
+
+    created = RoomSetupService(tmp_path).create_conversation(
+        RoomConversationCreate.model_validate(
+            {
+                "title": "Heterogeneous Duo",
+                "client_request_id": "setup-duo",
+                "roster_template_id": "builtin.heterogeneous-duo",
+            }
+        )
+    )
+    by_role = {item["role"]: item for item in created["participants"]}
+    assert by_role["architect"]["cli_kind"] == "claude"
+    assert by_role["research"]["cli_kind"] == "antigravity"
+    assert created["setup"]["collaboration"] == {
+        "mode": "addressed",
+        "lead_participant_id": by_role["architect"]["participant_id"],
+    }
+
+    kernel = RoomKernelStore(tmp_path / "chat.db")
+    posted = kernel.post_human_activity(
+        conversation_id=created["id"],
+        human_id="human",
+        content="introduce the pair",
+        client_request_id="duo-root",
+    )
+    assert [item["participant_id"] for item in posted["observations"]] == [
+        by_role["architect"]["participant_id"]
+    ]
+    assert posted["activity"]["payload"]["addressing"] == "lead"
+
+
 def test_collaboration_mode_is_broadcast_for_rooms_without_a_policy_row(tmp_path: Path) -> None:
     db, conversation_id, _members = _room(tmp_path)
     assert isinstance(RoomCollaborationInit(mode="broadcast").mode, str)

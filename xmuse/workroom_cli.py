@@ -39,6 +39,33 @@ def _add_start_options(parser: argparse.ArgumentParser) -> None:
         "--execution-profile",
         help="fixed server gate profile; required for a non-default workspace",
     )
+    claude_flags = parser.add_mutually_exclusive_group()
+    claude_flags.add_argument(
+        "--claude",
+        action="store_true",
+        default=None,
+        help="admit Claude Code Room participants (default: auto-detect)",
+    )
+    claude_flags.add_argument(
+        "--no-claude",
+        action="store_true",
+        help="refuse Claude Code Room participants even when available",
+    )
+    antigravity_flags = parser.add_mutually_exclusive_group()
+    antigravity_flags.add_argument(
+        "--antigravity",
+        action="store_true",
+        default=None,
+        help=(
+            "admit Antigravity Room participants (default: auto-detect); requires the "
+            "Room MCP on 127.0.0.1:8100"
+        ),
+    )
+    antigravity_flags.add_argument(
+        "--no-antigravity",
+        action="store_true",
+        help="refuse Antigravity Room participants even when available",
+    )
     memory_flags = parser.add_mutually_exclusive_group()
     memory_flags.add_argument(
         "--memory",
@@ -94,6 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _requested_provider(value: bool | None, disabled: bool) -> bool | None:
+    if value:
+        return True
+    if disabled:
+        return False
+    return None
+
+
 def run_cli(
     argv: Sequence[str] | None = None,
     *,
@@ -103,6 +138,12 @@ def run_cli(
     args = build_parser().parse_args(argv)
     deps = dependencies or WorkroomDependencies()
     paths = WorkroomPaths.resolve(args.root, deps.repo_root, deps.assets_root)
+    requested_claude = _requested_provider(
+        getattr(args, "claude", None), getattr(args, "no_claude", False)
+    )
+    requested_antigravity = _requested_provider(
+        getattr(args, "antigravity", None), getattr(args, "no_antigravity", False)
+    )
     requested_mode = getattr(args, "memory_mode", None)
     if requested_mode is None:
         requested_mode = (
@@ -161,6 +202,8 @@ def run_cli(
             memoryos_executable=executable,
             memory_profile=resolved_memory_profile,
             memory_disabled_code=disabled_code,
+            claude=requested_claude,
+            antigravity=requested_antigravity,
         )
     if args.command == "launch":
         if args.readiness_timeout_s <= 0 or args.stop_timeout_s <= 0:
@@ -187,6 +230,8 @@ def run_cli(
                 memoryos_executable=executable,
                 memory_profile=args.memory_profile,
                 open_browser=not args.no_open,
+                claude=requested_claude,
+                antigravity=requested_antigravity,
             ),
             dependencies=launch_dependencies,
         )

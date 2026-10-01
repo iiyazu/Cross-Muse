@@ -255,7 +255,8 @@ async def run_room_runner(
                 raise RoomRunnerError("room_runner_launcher_unavailable") from exc
             if not _has_room_persistent_session_launcher(launchers):
                 raise RoomRunnerError("room_runner_persistent_launcher_required")
-            if (executable_resolver or shutil.which)("codex") is None:
+            codex_available = (executable_resolver or shutil.which)("codex") is not None
+            if not codex_available and not claude_acp_enabled and not antigravity_enabled:
                 raise RoomRunnerError("room_runner_codex_executable_unavailable")
             readiness["persistent_launcher"] = True
 
@@ -278,19 +279,15 @@ async def run_room_runner(
                 agentapi_path = resolve_antigravity_agentapi_path()
                 if (executable_resolver or shutil.which)(str(agentapi_path)) is None:
                     raise RoomRunnerError("room_runner_antigravity_agentapi_unavailable")
+                if mcp_port != DEFAULT_MCP_PORT:
+                    # Antigravity agents reach the Room through the operator's global
+                    # Antigravity MCP configuration, which pins 127.0.0.1:8100.
+                    raise RoomRunnerError("room_runner_antigravity_mcp_port_required")
                 antigravity_config = AntigravityTransportConfig(
                     workspace=resolved_worktree,
                     agentapi_command=(str(agentapi_path),),
                     brain_dir=resolve_antigravity_brain_dir(),
                 )
-                if mcp_port != DEFAULT_MCP_PORT:
-                    logger.warning(
-                        "Antigravity agents mount the Room MCP through the external "
-                        "Antigravity MCP configuration, which points at "
-                        "http://127.0.0.1:%d/mcp/room; --mcp-port %d will not match",
-                        DEFAULT_MCP_PORT,
-                        mcp_port,
-                    )
                 logger.info(
                     "Antigravity participant transport enabled agentapi=%s",
                     agentapi_path,

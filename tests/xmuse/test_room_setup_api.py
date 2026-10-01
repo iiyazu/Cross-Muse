@@ -115,6 +115,7 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     assert payload["default_roster_template_id"] == "builtin.development"
     assert [item["template_id"] for item in payload["roster_templates"]] == [
         "builtin.development",
+        "builtin.heterogeneous-duo",
         "builtin.heterogeneous-trio",
         "custom.review",
     ]
@@ -129,6 +130,49 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     serialized = response.text
     assert "provider_profile" not in serialized
     assert "model" not in serialized
+
+
+def test_room_setup_options_mark_templates_with_unavailable_providers(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            tmp_path,
+            workroom_runtime_inspector=lambda *_: {
+                "state": "stopped",
+                "ready": False,
+                "code": "room_runtime_stopped",
+            },
+            provider_capabilities_provider=lambda: {
+                "codex": {
+                    "available": False,
+                    "enabled": False,
+                    "confinement": "read_only_sandbox",
+                },
+                "claude": {
+                    "available": True,
+                    "enabled": True,
+                    "confinement": "client_permission_gated",
+                },
+                "antigravity": {
+                    "available": False,
+                    "enabled": False,
+                    "confinement": "instructed_read_only",
+                },
+            },
+        )
+    )
+
+    payload = client.get("/api/chat/room-setup-options").json()
+
+    by_id = {item["template_id"]: item for item in payload["roster_templates"]}
+    assert by_id["builtin.development"]["available"] is False
+    assert by_id["builtin.development"]["unavailable_providers"] == ["codex"]
+    assert by_id["builtin.heterogeneous-duo"]["available"] is False
+    assert by_id["builtin.heterogeneous-duo"]["unavailable_providers"] == ["antigravity"]
+    assert by_id["builtin.heterogeneous-trio"]["available"] is False
+    assert by_id["builtin.heterogeneous-trio"]["unavailable_providers"] == [
+        "antigravity",
+        "codex",
+    ]
 
 
 @pytest.mark.parametrize("provider", ["a2a", "opencode"])
