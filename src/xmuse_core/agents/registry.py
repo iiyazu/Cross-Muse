@@ -8,6 +8,7 @@ from typing import Literal
 class AgentRuntime(StrEnum):
     CODEX = "codex"
     CLAUDE = "claude"
+    ANTIGRAVITY = "antigravity"
 
 
 RuntimeKey = AgentRuntime | str

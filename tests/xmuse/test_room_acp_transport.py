@@ -35,7 +35,6 @@ from xmuse_core.chat.room_acp_transport import (
     AcpTransportConfig,
     _is_room_outcome_tool_identifier,
     _tool_identity_candidates,
-    sanitized_agent_environment,
 )
 from xmuse_core.chat.room_agent_stream import (
     RoomAgentStreamCache,
@@ -51,6 +50,7 @@ from xmuse_core.chat.room_host import (
     RoomTransportResult,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.chat.room_observation_transport_base import sanitized_agent_environment
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 

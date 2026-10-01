@@ -14,6 +14,10 @@ from xmuse_core.chat.room_acp_transport import (
     AcpTransportConfig,
 )
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
+from xmuse_core.chat.room_antigravity_transport import (
+    AntigravityRoomObservationTransport,
+    AntigravityTransportConfig,
+)
 from xmuse_core.chat.room_codex_native_runtime import RoomCodexNativeRuntime
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
@@ -42,6 +46,7 @@ class RoomRuntimeComposition:
     stream_projector: RoomAgentStreamProjector
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None
     acp_transports: tuple[AcpRoomObservationTransport, ...] = ()
+    antigravity_transports: tuple[AntigravityRoomObservationTransport, ...] = ()
 
 
 def compose_room_runtime(
@@ -62,12 +67,14 @@ def compose_room_runtime(
     memory_context_receipts: RoomMemoryContextReceiptPort,
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
     claude_acp_config: AcpTransportConfig | None = None,
+    antigravity_config: AntigravityTransportConfig | None = None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks.
 
-    ``claude_acp_config`` enables the ``claude`` route by building the ACP
-    transport over the composition's shared disposable Agent preview projector.
-    The always-present ``codex`` route is the Codex app-server transport.
+    ``claude_acp_config`` and ``antigravity_config`` enable the ``claude`` and
+    ``antigravity`` routes by building each transport over the composition's
+    shared disposable Agent preview projector.  The always-present ``codex``
+    route is the Codex app-server transport.
     """
 
     session_layer = GodSessionLayer(
@@ -88,6 +95,7 @@ def compose_room_runtime(
     stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
     routes: dict[str, RoomObservationTransport] = {}
     acp_transports: list[AcpRoomObservationTransport] = []
+    antigravity_transports: list[AntigravityRoomObservationTransport] = []
     if claude_acp_config is not None:
         acp_transport = AcpRoomObservationTransport(
             config=claude_acp_config,
@@ -100,6 +108,18 @@ def compose_room_runtime(
         )
         acp_transports.append(acp_transport)
         routes["claude"] = acp_transport
+    if antigravity_config is not None:
+        antigravity_transport = AntigravityRoomObservationTransport(
+            config=antigravity_config,
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=skill_decisions,
+            execution_store=execution_store,
+            memory_runtime=memory_context_receipts,
+            stream_projector=stream_projector,
+        )
+        antigravity_transports.append(antigravity_transport)
+        routes["antigravity"] = antigravity_transport
     routes["codex"] = CodexRoomObservationTransport(
         session_layer,
         worktree=worktree,
@@ -134,4 +154,5 @@ def compose_room_runtime(
         stream_projector=stream_projector,
         memory_delivery_pump=memory_delivery_pump,
         acp_transports=tuple(acp_transports),
+        antigravity_transports=tuple(antigravity_transports),
     )

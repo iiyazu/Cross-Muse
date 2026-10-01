@@ -17,7 +17,6 @@ import asyncio
 import logging
 import math
 import os
-import signal
 from collections.abc import Callable, Collection, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -67,6 +66,8 @@ from xmuse_core.chat.room_observation_transport_base import (
     diagnostic_text,
     failed_result,
     normalized_text,
+    sanitized_agent_environment,
+    terminate_process_group,
 )
 from xmuse_core.chat.room_skill_decisions import (
     RoomAttemptSkillDecisionStore,
@@ -80,19 +81,9 @@ ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp"
 ROOM_ACP_DEFAULT_MCP_URL = "http://127.0.0.1:8100/mcp/room"
 ROOM_ACP_MCP_SERVER_NAME = "xmuse-room"
 ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value,)
-
-# Server-only credentials and provider API keys must never reach an agent
-# process; the Room agent authenticates only through the mounted MCP server.
-_AGENT_ENV_DENYLIST = frozenset(
-    {
-        "XMUSE_OPERATOR_TOKEN",
-        "XMUSE_MEMORYOS_API_KEY",
-        "MEMORYOS_API_KEY",
-        "ANTHROPIC_API_KEY",
-    }
-)
-_AGENT_ENV_SECRET_PREFIXES = ("XMUSE_", "MEMORYOS_")
-_AGENT_ENV_SECRET_SUFFIXES = ("_API_KEY", "_TOKEN")
+# Claude Code enforces the Room boundary in-process: ACP permission requests are
+# granted solely for the exact room outcome tool and every other tool is denied.
+ROOM_ACP_CONFINEMENT = "client_permission_gated"
 
 # Claude Code names a mounted MCP tool ``mcp__<server>__<tool>`` in the ACP
 # tool-call title (verified against claude-agent-acp 0.84).
@@ -134,19 +125,6 @@ class AcpTransportConfig:
                 or float(value) <= 0
             ):
                 raise ValueError(f"room_acp_{name}_invalid")
-
-
-def sanitized_agent_environment(environ: Mapping[str, str]) -> dict[str, str]:
-    """Copy an environment while stripping server-only secrets and API keys."""
-
-    sanitized: dict[str, str] = {}
-    for key, value in environ.items():
-        if key in _AGENT_ENV_DENYLIST:
-            continue
-        if key.startswith(_AGENT_ENV_SECRET_PREFIXES) and key.endswith(_AGENT_ENV_SECRET_SUFFIXES):
-            continue
-        sanitized[key] = value
-    return sanitized
 
 
 class _PreviewStreamClosed(Exception):
@@ -783,7 +761,7 @@ class AcpRoomObservationTransport:
                 "room_acp_agent_spawn_failed", f"{type(exc).__name__}: {exc}"
             ) from exc
         if process.stdin is None or process.stdout is None:
-            await _terminate_agent_process(process, grace_s=self._config.shutdown_grace_s)
+            await terminate_process_group(process, grace_s=self._config.shutdown_grace_s)
             raise RoomAcpTransportError("room_acp_agent_spawn_failed")
         session: _AcpSession | None = None
         try:
@@ -884,7 +862,7 @@ class AcpRoomObservationTransport:
                 await asyncio.wait_for(
                     session.connection.close(), timeout=self._config.shutdown_grace_s
                 )
-        await _terminate_agent_process(process, grace_s=self._config.shutdown_grace_s)
+        await terminate_process_group(process, grace_s=self._config.shutdown_grace_s)
 
     async def _cancel_prompt(self, session: _AcpSession) -> None:
         with suppress(Exception):
@@ -931,7 +909,7 @@ class AcpRoomObservationTransport:
             await asyncio.wait_for(
                 session.connection.close(), timeout=self._config.shutdown_grace_s
             )
-        await _terminate_agent_process(session.process, grace_s=self._config.shutdown_grace_s)
+        await terminate_process_group(session.process, grace_s=self._config.shutdown_grace_s)
         with suppress(Exception):
             self._registry.update_provider_binding(
                 session.god_session_id,
@@ -987,37 +965,3 @@ def _is_room_outcome_tool_identifier(value: str) -> bool:
     """Accept only the exact qualified outcome tool of the ``xmuse-room`` server."""
 
     return value == _ROOM_OUTCOME_QUALIFIED_TOOL_NAME
-
-
-async def _terminate_agent_process(process: asyncio.subprocess.Process, *, grace_s: float) -> None:
-    """Terminate one agent process group with SIGTERM, then SIGKILL."""
-
-    if process.returncode is not None:
-        with suppress(Exception):
-            await process.wait()
-        return
-    pgid: int | None = None
-    with suppress(Exception):
-        pgid = os.getpgid(process.pid)
-    if pgid is None or pgid == os.getpgid(0):
-        # Never signal the runner's own process group.
-        pgid = None
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            if pgid is not None:
-                os.killpg(pgid, sig)
-            elif sig == signal.SIGTERM:
-                process.terminate()
-            else:
-                process.kill()
-        except ProcessLookupError:
-            break
-        except OSError:
-            if sig == signal.SIGKILL:
-                with suppress(ProcessLookupError):
-                    process.kill()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=grace_s)
-            return
-        except TimeoutError:
-            continue

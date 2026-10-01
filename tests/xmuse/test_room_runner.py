@@ -14,6 +14,7 @@ import pytest
 
 from xmuse import room_runner, room_runner_composition, room_runner_memory
 from xmuse_core.chat.room_acp_transport import AcpTransportConfig
+from xmuse_core.chat.room_antigravity_transport import AntigravityTransportConfig
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
@@ -447,6 +448,50 @@ def test_runtime_composition_routes_claude_acp_only_when_configured(tmp_path: Pa
     claude_route = configured.host._transport._routes["claude"]
     assert claude_route is configured.acp_transports[0]
     assert claude_route._kit._stream_projector is configured.stream_projector
+
+
+def test_runtime_composition_routes_antigravity_only_when_configured(tmp_path: Path) -> None:
+    db_path = tmp_path / "chat.db"
+    RoomDatabase(db_path).initialize()
+    memory = room_runner_memory.compose_room_runner_memory(
+        db_path,
+        worker_id="memory-antigravity-composition-test",
+        environ={},
+    )
+    common: dict[str, Any] = {
+        "root": tmp_path,
+        "worktree": tmp_path,
+        "launchers": {},
+        "controls": RoomObservationControlStore(db_path),
+        "skill_decisions": RoomAttemptSkillDecisionStore(db_path),
+        "skill_catalog": SkillCatalog.load_bundled(),
+        "execution_store": RoomExecutionReviewStore(db_path),
+        "max_concurrent_rooms": 1,
+        "delivery_timeout_s": 10,
+        "cleanup_grace_s": 1,
+        "runner_generation": "generation-antigravity-route",
+        "runner_boot_id": "boot-antigravity-route",
+        "memory_recall": memory.recall,
+        "memory_context_receipts": memory.context_receipts,
+        "memory_delivery_pump": memory.delivery_pump,
+    }
+
+    codex_only = room_runner_composition.compose_room_runtime(**common)
+    assert codex_only.antigravity_transports == ()
+    assert "antigravity" not in codex_only.host._transport._routes
+
+    configured = room_runner_composition.compose_room_runtime(
+        **common,
+        antigravity_config=AntigravityTransportConfig(
+            workspace=tmp_path,
+            agentapi_command=(sys.executable, "-c", "pass"),
+            brain_dir=tmp_path / "brain",
+        ),
+    )
+    assert len(configured.antigravity_transports) == 1
+    antigravity_route = configured.host._transport._routes["antigravity"]
+    assert antigravity_route is configured.antigravity_transports[0]
+    assert antigravity_route._kit._stream_projector is configured.stream_projector
 
 
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(

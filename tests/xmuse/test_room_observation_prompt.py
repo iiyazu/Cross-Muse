@@ -16,16 +16,15 @@ def test_codex_prompt_is_byte_identical_to_the_frozen_contract() -> None:
     assert build_room_observation_prompt("codex") == GOLDEN_CODEX_PROMPT
 
 
-def test_neutral_providers_share_one_prompt_naming_the_room_mcp_tool() -> None:
+def test_claude_prompt_keeps_the_neutral_mcp_wording() -> None:
     claude = build_room_observation_prompt("claude")
-    antigravity = build_room_observation_prompt("antigravity")
 
-    assert claude == antigravity
     assert claude != GOLDEN_CODEX_PROMPT
     assert "chat_room_submit_outcome" in claude
     assert "xmuse-room MCP server" in claude
     assert "execution_patch" in claude
     assert "Never edit files, run state-changing commands" in claude
+    assert "call_mcp_tool" not in claude
     assert "Codex built-in" not in claude
     assert "5.6 provider" not in claude
     # The neutral variant only swaps the provider clause; the shared head and
@@ -36,6 +35,24 @@ def test_neutral_providers_share_one_prompt_naming_the_room_mcp_tool() -> None:
     assert claude.endswith(tail) and GOLDEN_CODEX_PROMPT.endswith(tail)
     shared = "When your decision is respond, handoff, or propose, first emit exactly one plain "
     assert shared in claude and shared in GOLDEN_CODEX_PROMPT
+
+
+def test_antigravity_prompt_names_the_call_mcp_tool_bridge() -> None:
+    antigravity = build_room_observation_prompt("antigravity")
+
+    assert antigravity != GOLDEN_CODEX_PROMPT
+    assert antigravity != build_room_observation_prompt("claude")
+    assert "call_mcp_tool" in antigravity
+    assert "server xmuse-room and tool chat_room_submit_outcome" in antigravity
+    assert "this is the ONLY way to reply" in antigravity
+    assert "A directly-named chat_room_submit_outcome tool does not exist" in antigravity
+    assert "do not use run_command, write_to_file, replace_file_content" in antigravity
+    assert "read_url_content" in antigravity
+    assert "Codex built-in" not in antigravity
+    assert "5.6 provider" not in antigravity
+    head = "Observe this durable Room batch as an independent participant. "
+    tail = "structured immutable-authority error that forbids that call."
+    assert antigravity.startswith(head) and antigravity.endswith(tail)
 
 
 def test_unknown_provider_is_rejected() -> None:
