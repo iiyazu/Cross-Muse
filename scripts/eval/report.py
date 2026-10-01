@@ -172,32 +172,46 @@ def render_table(aggregated: Mapping[str, Mapping[str, Any]], modes: Sequence[st
     return "\n".join(lines)
 
 
-def _critique_delta(rows: Sequence[Mapping[str, Any]]) -> tuple[str, bool]:
-    deltas = []
+def task_means(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str], float]:
+    """Mean judged score per (task_id, mode); unjudged cells are omitted."""
+
+    scores: dict[tuple[str, str], list[float]] = {}
     for row in rows:
-        if str(row.get("task_id")) not in {"T1", "T7"}:
-            continue
-        deltas.append((str(row.get("task_id")), str(row.get("mode")), effective_scores(row)))
-    broadcast = {
-        task_id: sum(scores) / len(scores)
-        for task_id, mode, scores in deltas
-        if mode == "broadcast" and scores
-    }
-    addressed = {
-        task_id: sum(scores) / len(scores)
-        for task_id, mode, scores in deltas
-        if mode == "addressed" and scores
-    }
-    if not broadcast or not addressed:
-        return "open-critique (T1/T7) comparison unavailable in this run", False
-    broadcast_wins = any(broadcast[task_id] > addressed.get(task_id, 0.0) for task_id in broadcast)
-    if broadcast_wins:
-        return (
-            "broadcast's edge showed up only in open critique tasks (T1/T7), where extra "
-            "peer perspectives surfaced fixes addressed sometimes missed",
-            True,
+        scores.setdefault((str(row.get("task_id")), str(row.get("mode"))), []).extend(
+            effective_scores(row)
         )
-    return "no open-critique (T1/T7) advantage for broadcast was detected in this run", False
+    return {key: sum(values) / len(values) for key, values in scores.items() if values}
+
+
+def _critique_delta(rows: Sequence[Mapping[str, Any]]) -> tuple[str, bool]:
+    """State the measured open-critique (T1/T7) scores; never infer a cause."""
+
+    means = task_means(rows)
+    parts = []
+    broadcast_wins = False
+    for task_id in ("T1", "T7"):
+        broadcast = means.get((task_id, "broadcast"))
+        addressed = means.get((task_id, "addressed"))
+        if broadcast is None or addressed is None:
+            continue
+        parts.append(f"{task_id} {broadcast:.1f} vs {addressed:.1f}")
+        broadcast_wins = broadcast_wins or broadcast > addressed
+    if not parts:
+        return "open-critique (T1/T7) comparison unavailable in this run", False
+    return (
+        "open-critique tasks scored broadcast vs addressed " + ", ".join(parts),
+        broadcast_wins,
+    )
+
+
+def render_task_table(rows: Sequence[Mapping[str, Any]], modes: Sequence[str]) -> str:
+    means = task_means(rows)
+    task_ids = sorted({str(row.get("task_id")) for row in rows})
+    lines = ["| Task | " + " | ".join(modes) + " |", "|---" * (len(modes) + 1) + "|"]
+    for task_id in task_ids:
+        cells = [_fmt(means.get((task_id, mode))) for mode in modes]
+        lines.append(f"| {task_id} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
 
 
 def render_takeaway(
@@ -225,19 +239,31 @@ def render_takeaway(
     else:
         turn_phrase = "with insufficient turn data"
     if b_ack is not None and a_ack is not None:
-        if a_ack <= b_ack:
+        if a_ack < b_ack:
             ack_phrase = f"cutting pure-ack noise from {b_ack:.1f} to {a_ack:.1f} messages per task"
+        elif a_ack == b_ack:
+            ack_phrase = f"pure-ack noise was {a_ack:.1f} messages per task in both modes"
         else:
             ack_phrase = f"pure-ack noise went from {b_ack:.1f} to {a_ack:.1f} messages per task"
     else:
         ack_phrase = "pure-ack noise not measured in this run"
+    if b_mean is None or a_mean is None:
+        score_phrase = "rubric scores are not judged yet"
+    elif abs(b_mean - a_mean) <= 0.25:
+        score_phrase = (
+            f"addressed scored within 0.25 of broadcast ({_fmt(b_mean)} vs {_fmt(a_mean)})"
+        )
+    else:
+        direction = "below" if a_mean < b_mean else "above"
+        score_phrase = (
+            f"addressed scored {abs(b_mean - a_mean):.1f} {direction} broadcast "
+            f"({_fmt(b_mean)} vs {_fmt(a_mean)})"
+        )
     critique_phrase, _ = _critique_delta(rows)
     return (
-        f'*Takeaway (filled from data):* "Same prompts, same roster: the addressed room '
-        f"matched broadcast's rubric mean ({_fmt(b_mean)} vs {_fmt(a_mean)}) while "
-        f"{turn_phrase} and {ack_phrase}; {critique_phrase}. We kept both modes — addressed "
-        f"as the default for directed work, broadcast as opt-in for open review — because "
-        f'the data, not the original design, chose the default."'
+        f"*Measured (same prompts, same roster):* {score_phrase}, {turn_phrase}, and "
+        f"{ack_phrase}; {critique_phrase}. Small samples: read per-task rows before "
+        f"drawing conclusions."
     )
 
 
@@ -255,6 +281,7 @@ def build_markdown(
     ]
     table = render_table(aggregated, modes).split("\n")
     sections.extend(table[2:])
+    sections.extend(["", "Judged rubric mean per task:", "", render_task_table(rows, modes)])
     sections.append("")
     sections.append(render_takeaway(aggregated, rows, modes))
     if judgments:

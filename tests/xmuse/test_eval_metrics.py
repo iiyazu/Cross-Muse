@@ -542,7 +542,20 @@ def test_takeaway_reflects_direction_and_critique_note() -> None:
     takeaway = report.render_takeaway(aggregated, rows, ["broadcast", "addressed"])
     assert "fewer agent turns" in takeaway
     assert "cutting pure-ack noise from" in takeaway
-    assert "open critique tasks (T1/T7)" in takeaway
+    assert "T1 3.0 vs 2.0" in takeaway
+    # The takeaway reports measurements only; it never asserts a cause or decision.
+    assert "chose the default" not in takeaway
+
+
+def test_takeaway_does_not_claim_a_reduction_when_noise_is_equal() -> None:
+    rows = [
+        _row("T2", "broadcast", judge_a="3", judge_b="3", agent_turns="4", pure_ack_msgs="0"),
+        _row("T2", "addressed", judge_a="1", judge_b="1", agent_turns="1", pure_ack_msgs="0"),
+    ]
+    aggregated = report.aggregate(rows, ["broadcast", "addressed"])
+    takeaway = report.render_takeaway(aggregated, rows, ["broadcast", "addressed"])
+    assert "cutting" not in takeaway
+    assert "addressed scored 2.0 below broadcast" in takeaway
 
 
 def test_build_markdown_includes_judging_stats_and_header() -> None:
