@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -78,6 +79,23 @@ class RoomSetupService:
     def __init__(self, root: Path | str) -> None:
         self._root = Path(root)
         self._db_path = self._root / "chat.db"
+
+    def has_setup_request(self, client_request_id: str | None) -> bool:
+        """Whether this idempotency key already created a Room (read-only, no schema init)."""
+
+        if not client_request_id or not self._db_path.exists():
+            return False
+        conn = sqlite3.connect(f"{self._db_path.as_uri()}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "select 1 from room_setup_requests where client_request_id = ?",
+                (client_request_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            conn.close()
+        return row is not None
 
     def create_conversation(self, request: RoomConversationCreate) -> dict[str, object]:
         if request.roster_template_id is not None and request.initial_participants is not None:

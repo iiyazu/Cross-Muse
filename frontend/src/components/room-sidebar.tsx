@@ -168,23 +168,30 @@ export function RoomSidebar({
               <input autoFocus id="room-title" maxLength={200} disabled={createPending} onChange={(event) => onTitleChange(event.target.value)} placeholder="例如：审视并完成发布方案" value={title} />
               <fieldset className="room-roster-options">
                 <legend>参与团队</legend>
-                {(setupOptions?.roster_templates ?? []).map((template) => (
-                  <label className={selectedTemplateId === template.template_id ? "is-selected" : ""} key={template.template_id}>
-                    <input checked={selectedTemplateId === template.template_id} name="roster" onChange={() => { setSelectedTemplateId(template.template_id); applyTemplatePreset(template); }} type="radio" value={template.template_id} />
-                    <span>
-                      <strong>{template.display_name}</strong>
-                      <small>{template.description}</small>
-                      <em className="room-roster-participants">
-                        {template.participants.map((participant) => (
-                          <span className="room-roster-participant" key={`${participant.role_id}:${participant.role}`}>
-                            {participant.display_name}
-                            <ProviderBadge cliKind={participant.cli_kind} />
-                          </span>
-                        ))}
-                      </em>
-                    </span>
-                  </label>
-                ))}
+                {(setupOptions?.roster_templates ?? []).map((template) => {
+                  const unavailable = template.available === false;
+                  const missingProviders = template.unavailable_providers ?? [];
+                  return (
+                    <label className={[selectedTemplateId === template.template_id ? "is-selected" : "", unavailable ? "is-unavailable" : ""].join(" ").trim()} key={template.template_id}>
+                      <input checked={selectedTemplateId === template.template_id} disabled={createPending || unavailable} name="roster" onChange={() => { setSelectedTemplateId(template.template_id); applyTemplatePreset(template); }} type="radio" value={template.template_id} />
+                      <span>
+                        <strong>{template.display_name}</strong>
+                        <small>{template.description}</small>
+                        {unavailable ? (
+                          <small className="room-roster-unavailable">不可用：缺少 {missingProviders.join("、") || "所需 provider"}</small>
+                        ) : null}
+                        <em className="room-roster-participants">
+                          {template.participants.map((participant) => (
+                            <span className="room-roster-participant" key={`${participant.role_id}:${participant.role}`}>
+                              {participant.display_name}
+                              <ProviderBadge cliKind={participant.cli_kind} />
+                            </span>
+                          ))}
+                        </em>
+                      </span>
+                    </label>
+                  );
+                })}
                 {!setupOptions ? <div className="room-roster-loading">{setupError ?? "正在读取 roster…"}</div> : null}
               </fieldset>
               <fieldset className="room-collaboration-options">

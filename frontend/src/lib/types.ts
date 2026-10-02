@@ -45,6 +45,9 @@ export type RoomSetupOption = {
   participants: RoomSetupOptionParticipant[];
   /** Template-preset collaboration policy; absent on older backends. */
   collaboration?: RoomCollaborationInit | null;
+  /** Provider admission reported by the backend; absent on older backends. */
+  available?: boolean;
+  unavailable_providers?: string[];
 };
 
 export type RoomSetupOptions = {

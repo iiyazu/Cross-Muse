@@ -202,6 +202,20 @@
   background: color-mix(in oklab, var(--accent), transparent 92%);
 }
 
+.room-roster-options > label.is-unavailable {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.room-roster-options > label.is-unavailable:hover {
+  transform: none;
+}
+
+.room-roster-options small.room-roster-unavailable {
+  color: color-mix(in oklab, var(--danger), var(--fg) 25%);
+  font-weight: 600;
+}
+
 .room-roster-options label span {
   display: grid;
   gap: 3px;
