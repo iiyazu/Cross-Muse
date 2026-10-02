@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from xmuse_core.chat.participant_store import PersonaSnapshot
+from xmuse_core.chat.participant_store import PersonaSnapshot, WorkspaceAccess
 from xmuse_core.chat.room_api_models import ParticipantInit
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
 from xmuse_core.providers.registry import (
@@ -84,6 +84,7 @@ class RosterRoleBinding(BaseModel):
     provider_profile_ref: str = Field(min_length=1)
     display_name: str | None = None
     model: str | None = None
+    workspace_access: WorkspaceAccess | None = None
 
     @field_validator("role_id", "provider_profile_ref", "display_name", "model", mode="before")
     @classmethod
@@ -611,6 +612,7 @@ def template_to_participant_inits(
                         allow_final_quality=False,
                     ),
                     display_name=binding.display_name or role.display_name,
+                    workspace_access=binding.workspace_access,
                 )
             )
         else:
@@ -623,6 +625,7 @@ def template_to_participant_inits(
                     cli_kind=provider.cli_kind,
                     model=binding.model,
                     display_name=binding.display_name or role.display_name,
+                    workspace_access=binding.workspace_access,
                 )
             )
     return participants

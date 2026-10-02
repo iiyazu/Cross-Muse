@@ -6,7 +6,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from xmuse_core.chat.participant_store import CurrentChatCliKind, StoredProviderIdValue
+from xmuse_core.chat.participant_store import (
+    CurrentChatCliKind,
+    StoredProviderIdValue,
+    WorkspaceAccess,
+)
 from xmuse_core.providers.models import ProviderProfileId
 
 
@@ -38,6 +42,7 @@ class ParticipantInit(BaseModel):
     model: str | None = Field(default=None, max_length=200)
     role_template_id: str | None = Field(default=None, max_length=200)
     display_name: str | None = Field(default=None, max_length=120)
+    workspace_access: WorkspaceAccess | None = None
 
     @field_validator("role", mode="before")
     @classmethod
