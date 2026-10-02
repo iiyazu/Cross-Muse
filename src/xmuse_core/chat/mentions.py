@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 
 DEFAULT_INTAKE_ROLE = "architect"
 MENTION_RE = re.compile(
@@ -306,7 +307,7 @@ class MentionResolver:
         return [
             participant
             for participant in self._participants.list_by_conversation(conversation_id)
-            if participant.status == "active" and participant.cli_kind == "codex"
+            if participant.status == "active" and participant.cli_kind in ROOM_AGENT_CLI_KINDS
         ]
 
     def _resolve_active(self, active: list[Participant], raw: str) -> ResolvedMention:

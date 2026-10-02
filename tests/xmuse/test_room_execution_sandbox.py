@@ -381,15 +381,20 @@ def test_resource_sampler_failure_fails_closed_and_reaps_child(tmp_path: Path) -
 
 def test_resource_probe_exit_race_preserves_a_successful_gate(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
+    spawned: list[subprocess.Popen[bytes]] = []
 
     def launch(_command, **kwargs):
-        return subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-c", "pass"],
             **kwargs,
         )
+        spawned.append(process)
+        return process
 
     def raced_sampler(_pid: int) -> GateResourceSample:
-        time.sleep(0.02)
+        deadline = time.monotonic() + 10.0
+        while spawned[0].poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
         raise FileNotFoundError("process exited during /proc sampling")
 
     result = run_gate(
@@ -487,6 +492,37 @@ def test_resource_monitor_reuses_one_timeout_but_three_timeouts_fail(
     with pytest.raises(RoomExecutionSandboxError) as error:
         monitor(123)
     assert error.value.code == "execution_gate_resource_probe_failed"
+
+
+def _unreaped_defunct_child() -> subprocess.Popen[bytes]:
+    child = subprocess.Popen(["/usr/bin/true"])
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            raw = Path(f"/proc/{child.pid}/stat").read_text(encoding="ascii")
+        except OSError:
+            break
+        if raw.rpartition(")")[2].split()[:1] == ["Z"]:
+            return child
+        time.sleep(0.01)
+    child.wait()
+    raise AssertionError("child never reached the unreaped defunct state")
+
+
+def test_scratch_probe_ignores_unreaped_defunct_child_processes() -> None:
+    child = _unreaped_defunct_child()
+    try:
+        assert sandbox._sandbox_scratch_bytes((child.pid,)) == 0
+    finally:
+        child.wait()
+
+
+def test_private_tmpfs_probe_ignores_unreaped_defunct_child_processes() -> None:
+    child = _unreaped_defunct_child()
+    try:
+        assert sandbox._process_has_private_tmpfs(child.pid) is False
+    finally:
+        child.wait()
 
 
 def test_resource_monitor_real_scan_error_fails_immediately(

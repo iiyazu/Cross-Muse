@@ -18,7 +18,7 @@ def test_ensure_workroom_runtime_serializes_config_discovery_and_start(
         "inspect_calls": 0,
     }
 
-    def fake_port(_base_dir):
+    def fake_port(_base_dir, _capabilities):
         return 8117
 
     def fake_inspect(config):

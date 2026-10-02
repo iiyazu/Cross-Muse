@@ -308,6 +308,43 @@ def test_restart_reclaims_once_fences_stale_token_and_stops_after_commit(tmp_pat
     assert not asyncio.run(_host(db, _Return(), clock[0]).pump_once(conversation_id=cid)).deliveries
 
 
+@pytest.mark.parametrize("proven", [True, False])
+def test_failed_attempt_reopens_at_once_only_when_provider_cleanup_is_proven(tmp_path, proven):
+    from xmuse_core.chat.room_controls import RoomObservationControlStore
+
+    db, registry, cid, people, sessions = _room(tmp_path)
+    _post(db, cid)
+    controls = RoomObservationControlStore(db)
+
+    class EnsureTimeout(_Return):
+        async def deliver(self, delivery, *, timeout_s):
+            self.deliveries.append(delivery)
+            binding = {
+                "observation_id": delivery.observation["observation_id"],
+                "attempt_id": delivery.attempt_id,
+                "delivery_generation": delivery.attempt_id,
+                "now": NOW,
+            }
+            controls.mark_provider_ensure_started(**binding)
+            if proven:
+                controls.mark_provider_cleanup(
+                    **binding, succeeded=True, reason_code="room_acp_session_ensure_timeout"
+                )
+            return rh.RoomTransportResult("failed", "room_acp_session_ensure_timeout")
+
+    out = asyncio.run(_host(db, EnsureTimeout()).pump_once(conversation_id=cid)).deliveries[0]
+    assert out.state == "failed" and out.retryable is True
+    observation = RoomKernelStore(db).list_observations(cid)[0]
+    # Same clock: only a proven-gone provider generation lets the retry start now.
+    retry = asyncio.run(_host(db, _Return()).pump_once(conversation_id=cid))
+    if proven:
+        assert observation["status"] == "pending" and observation["lease_token"] is None
+        assert retry.deliveries[0].attempt_count == 2
+    else:
+        assert observation["status"] == "claimed"
+        assert not retry.deliveries
+
+
 def test_attempt_cap_and_cooldown_are_stable(tmp_path):
     db, registry, cid, people, sessions = _room(tmp_path / "cap")
     _post(db, cid)

@@ -343,6 +343,193 @@ def test_start_requires_codex_before_spawning_services(
     assert runtime.specs == []
 
 
+def _start(
+    runtime_root: Path,
+    dependencies: WorkroomDependencies,
+    *argv: str,
+) -> int:
+    return workroom_cli.run_cli(
+        [
+            "start",
+            "--root",
+            str(runtime_root),
+            "--readiness-timeout-s",
+            "1",
+            "--stop-timeout-s",
+            "1",
+            *argv,
+        ],
+        dependencies=dependencies,
+    )
+
+
+def test_provider_flags_default_to_disabled_and_stay_out_of_the_frontend_env(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.environ = {
+        **dependencies.environ,
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+        "XMUSE_CLAUDE_ACP_COMMAND": "/opt/claude-acp-bridge",
+    }
+
+    exit_code = workroom_cli.run_cli(
+        [
+            "start",
+            "--root",
+            str(tmp_path / "runtime"),
+            "--readiness-timeout-s",
+            "1",
+            "--stop-timeout-s",
+            "1",
+        ],
+        dependencies=dependencies,
+    )
+
+    assert exit_code == 0
+    api, frontend = runtime.specs
+    assert api.env["XMUSE_CLAUDE_ACP"] == "0"
+    assert api.env["XMUSE_ANTIGRAVITY"] == "0"
+    assert api.env["XMUSE_CLAUDE_ACP_COMMAND"] == "/opt/claude-acp-bridge"
+    for key in (
+        "XMUSE_CLAUDE_ACP",
+        "XMUSE_ANTIGRAVITY",
+        "XMUSE_CLAUDE_ACP_COMMAND",
+        "XMUSE_ANTIGRAVITY_AGENTAPI",
+        "XMUSE_ANTIGRAVITY_BRAIN_DIR",
+    ):
+        assert key not in frontend.env
+
+
+def test_explicit_claude_flag_when_unavailable_is_refused_before_spawn(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.which = lambda name: "/usr/bin/node" if name == "node" else None
+
+    exit_code = workroom_cli.run_cli(
+        ["start", "--root", str(tmp_path / "runtime"), "--claude"],
+        dependencies=dependencies,
+    )
+
+    assert exit_code == 1
+    assert runtime.specs == []
+    assert _output_lines(capsys)[-1]["error"]["code"] == "claude_unavailable"
+
+
+def test_auto_detected_claude_enables_participants_without_codex_login(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.environ = {**dependencies.environ, "CODEX_HOME": str(tmp_path / "codex-home")}
+    dependencies.which = lambda name: {
+        "node": "/usr/bin/node",
+        "codex": "/usr/bin/codex",
+        "claude": "/usr/bin/claude",
+        "npx": "/usr/bin/npx",
+    }.get(name)
+
+    exit_code = _start(tmp_path / "runtime", dependencies)
+
+    assert exit_code == 0
+    assert runtime.specs[0].env["XMUSE_CLAUDE_ACP"] == "1"
+    assert runtime.specs[0].env["XMUSE_ANTIGRAVITY"] == "0"
+    assert "XMUSE_CLAUDE_ACP" not in runtime.specs[1].env
+
+
+def test_no_claude_flag_disables_an_available_provider(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.environ = {**dependencies.environ, "CODEX_HOME": str(tmp_path / "codex-home")}
+    dependencies.which = lambda name: {
+        "node": "/usr/bin/node",
+        "codex": "/usr/bin/codex",
+        "claude": "/usr/bin/claude",
+        "npx": "/usr/bin/npx",
+    }.get(name)
+
+    exit_code = _start(tmp_path / "runtime", dependencies, "--no-claude")
+
+    assert exit_code == 0
+    assert runtime.specs[0].env["XMUSE_CLAUDE_ACP"] == "0"
+
+
+def test_antigravity_auto_detection_enables_and_requires_the_pinned_port(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.environ = {
+        **dependencies.environ,
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+        "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
+    }
+    dependencies.which = lambda name: {
+        "node": "/usr/bin/node",
+        "codex": "/usr/bin/codex",
+        "/opt/agentapi": "/opt/agentapi",
+    }.get(name)
+    dependencies.discover_antigravity_language_server = lambda _environ: {
+        "ANTIGRAVITY_LS_ADDRESS": "127.0.0.1:65000",
+        "ANTIGRAVITY_CSRF_TOKEN": "observed",
+    }
+
+    exit_code = _start(tmp_path / "runtime", dependencies)
+
+    assert exit_code == 0
+    api, frontend = runtime.specs
+    assert api.env["XMUSE_ANTIGRAVITY"] == "1"
+    assert api.env["XMUSE_ANTIGRAVITY_AGENTAPI"] == "/opt/agentapi"
+    assert "XMUSE_ANTIGRAVITY_AGENTAPI" not in frontend.env
+
+
+def test_antigravity_requires_the_pinned_mcp_port_before_spawn(
+    built_repo: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runtime = FakeRuntime(built_repo)
+    dependencies = runtime.dependencies()
+    dependencies.environ = {
+        **dependencies.environ,
+        "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
+    }
+    dependencies.which = lambda name: {
+        "node": "/usr/bin/node",
+        "codex": "/usr/bin/codex",
+        "/opt/agentapi": "/opt/agentapi",
+    }.get(name)
+    dependencies.discover_antigravity_language_server = lambda _environ: {
+        "ANTIGRAVITY_LS_ADDRESS": "127.0.0.1:65000",
+        "ANTIGRAVITY_CSRF_TOKEN": "observed",
+    }
+    dependencies.port_available = lambda host, port: not (host == "127.0.0.1" and port == 8100)
+
+    exit_code = workroom_cli.run_cli(
+        ["start", "--root", str(tmp_path / "runtime"), "--antigravity"],
+        dependencies=dependencies,
+    )
+
+    assert exit_code == 1
+    assert runtime.specs == []
+    assert _output_lines(capsys)[-1]["error"]["code"] == "antigravity_room_mcp_port_required"
+
+
 def test_port_probe_treats_a_listener_as_occupied(monkeypatch) -> None:
     class Connection:
         def __enter__(self):

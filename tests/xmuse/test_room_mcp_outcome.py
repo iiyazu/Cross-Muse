@@ -139,10 +139,20 @@ def test_room_outcome_schema_is_exact_and_bounded():
         "target_participant_ids",
         "proposal_type",
         "references",
+        "handoff_note",
         "execution_patch",
         "wake_condition",
     }
     assert payload["additionalProperties"] is False
+    handoff_note = payload["properties"]["handoff_note"]
+    assert set(handoff_note["properties"]) == {
+        "what",
+        "why",
+        "tradeoffs",
+        "open_questions",
+        "next_action",
+    }
+    assert handoff_note["additionalProperties"] is False
     memory = input_schema["properties"]["memory_candidates"]
     assert memory["maxItems"] == 3
     assert memory["items"]["additionalProperties"] is False

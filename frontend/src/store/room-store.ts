@@ -35,6 +35,7 @@ import type {
   RoomChatProjection,
   RoomAgentStream,
   RoomAgentStreamProjection,
+  RoomCollaborationInit,
   RoomMessageReceipt,
   RoomTimelineItem,
   XmuseApiErrorShape
@@ -411,7 +412,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   async createRoom(
     title,
     clientRequestId = `ui_room_create_${crypto.randomUUID()}`,
-    rosterTemplateId = "builtin.development"
+    rosterTemplateId = "builtin.development",
+    collaboration: RoomCollaborationInit | null = null
   ) {
     const cleanTitle = title.trim();
     if (!cleanTitle) return null;
@@ -420,7 +422,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const conversation = await createConversation(cleanTitle, {
         ...apiOptions(),
         clientRequestId,
-        rosterTemplateId
+        rosterTemplateId,
+        collaboration
       });
       const id = String(conversation.id);
       await get().loadRooms();

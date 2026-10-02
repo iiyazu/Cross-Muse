@@ -7,13 +7,21 @@ import os
 import socket
 import threading
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
 
+from xmuse.provider_capabilities import (
+    ANTIGRAVITY_FLAG_ENV,
+    CLAUDE_FLAG_ENV,
+    OPENCODE_FLAG_ENV,
+    ROOM_MCP_PINNED_PORT,
+    ROOM_RUNNER_PROVIDER_ENV_KEYS,
+    detect_provider_capabilities,
+)
 from xmuse_core.chat.room_runtime import read_room_runner_status
 from xmuse_core.chat.room_runtime_supervisor import (
     ROOM_RUNTIME_SCHEMA,
@@ -38,7 +46,15 @@ _DIRECT_RUNTIME_GENERATIONS: dict[str, str] = {}
 logger = logging.getLogger(__name__)
 
 
-def _workroom_mcp_port(base_dir: Path) -> int:
+def _workroom_mcp_port(
+    base_dir: Path,
+    capabilities: Mapping[str, Mapping[str, object]],
+) -> int:
+    if capabilities["antigravity"]["enabled"]:
+        # Antigravity participants mount the Room MCP through the operator's global
+        # Antigravity MCP configuration, which points at the fixed 127.0.0.1:8100
+        # endpoint.  Never silently relocate the Room MCP for them.
+        return ROOM_MCP_PINNED_PORT
     for path, flag in (
         (base_dir / "workroom_room_runner.pid.json", "--mcp-port"),
         (base_dir / "workroom_room_mcp.pid.json", "--port"),
@@ -49,8 +65,8 @@ def _workroom_mcp_port(base_dir: Path) -> int:
         port = _command_int_arg(payload.get("command"), flag)
         if port is not None:
             return port
-    if _loopback_port_available(8100):
-        return 8100
+    if _loopback_port_available(ROOM_MCP_PINNED_PORT):
+        return ROOM_MCP_PINNED_PORT
     return _allocate_loopback_port()
 
 
@@ -125,23 +141,46 @@ def _workroom_room_generation(base_dir: Path) -> str:
     return _DIRECT_RUNTIME_GENERATIONS.setdefault(key, uuid.uuid4().hex)
 
 
+def _room_runner_provider_env(
+    capabilities: Mapping[str, Mapping[str, object]],
+) -> dict[str, str]:
+    """Resolve provider admission for the Room Runner child only.
+
+    The managed Workroom writes explicit flags; without them (source runs) the
+    Chat API resolves the same auto-detection the bootstrap projection reports.
+    """
+
+    environment = {
+        CLAUDE_FLAG_ENV: "1" if capabilities["claude"]["enabled"] else "0",
+        ANTIGRAVITY_FLAG_ENV: "1" if capabilities["antigravity"]["enabled"] else "0",
+        OPENCODE_FLAG_ENV: "1" if capabilities["opencode"]["enabled"] else "0",
+    }
+    for key in ROOM_RUNNER_PROVIDER_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            environment[key] = value
+    return environment
+
+
 def _workroom_room_runtime_config(
     base_dir: Path,
     execution_root: Path,
     *,
     generation: str | None = None,
 ) -> RoomRuntimeSupervisorConfig:
+    capabilities = detect_provider_capabilities()
     return RoomRuntimeSupervisorConfig(
         repo_root=REPO_ROOT,
         xmuse_root=base_dir,
         execution_worktree=execution_root,
         generation=generation or _workroom_room_generation(base_dir),
-        mcp_port=_workroom_mcp_port(base_dir),
+        mcp_port=_workroom_mcp_port(base_dir, capabilities),
         delivery_timeout_s=180.0,
         runner_pid_file=base_dir / "workroom_room_runner.pid.json",
         mcp_pid_file=base_dir / "workroom_room_mcp.pid.json",
         runner_log_path=base_dir / "logs" / "workroom-room-runner.log",
         mcp_log_path=base_dir / "logs" / "workroom-room-mcp.log",
+        room_runner_env=_room_runner_provider_env(capabilities),
     )
 
 

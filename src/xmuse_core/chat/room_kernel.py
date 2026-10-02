@@ -12,10 +12,19 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_batches import (
     batch_identity,
     batch_row_for_observation,
     create_observation_batch,
+)
+from xmuse_core.chat.room_collaboration import (
+    collaboration_policy_row,
+    collaboration_view,
+    is_addressed_mode,
 )
 from xmuse_core.chat.room_controls import (
     assert_room_outcome_allowed,
@@ -52,8 +61,12 @@ OUTCOME_PAYLOAD_FIELDS = frozenset(
         "references",
         "execution_patch",
         "wake_condition",
+        "handoff_note",
     }
 )
+HANDOFF_NOTE_FIELDS = ("what", "why", "tradeoffs", "open_questions", "next_action")
+HANDOFF_NOTE_TEXT_LIMIT = 2000
+HANDOFF_NOTE_QUESTION_LIMIT = 16
 
 
 @dataclass(frozen=True)
@@ -151,7 +164,41 @@ def normalize_participant_outcome(
             raise ValueError(f"room_{name}_invalid")
         return result
 
+    def handoff_note() -> dict[str, Any]:
+        value = payload.get("handoff_note")
+        if not isinstance(value, dict) or not value or set(value) - set(HANDOFF_NOTE_FIELDS):
+            raise ValueError("room_handoff_note_invalid")
+        normalized: dict[str, Any] = {}
+        for field in HANDOFF_NOTE_FIELDS:
+            if field not in value:
+                continue
+            item = value[field]
+            if field == "open_questions":
+                if not isinstance(item, list) or not item:
+                    raise ValueError("room_handoff_note_invalid")
+                questions: list[str] = []
+                for question in item:
+                    if not isinstance(question, str) or not question.strip():
+                        raise ValueError("room_handoff_note_invalid")
+                    cleaned_question = question.strip()
+                    if len(cleaned_question) > HANDOFF_NOTE_TEXT_LIMIT:
+                        raise ValueError("room_handoff_note_invalid")
+                    questions.append(cleaned_question)
+                if len(questions) > HANDOFF_NOTE_QUESTION_LIMIT:
+                    raise ValueError("room_handoff_note_invalid")
+                normalized[field] = questions
+            else:
+                if not isinstance(item, str) or not item.strip():
+                    raise ValueError("room_handoff_note_invalid")
+                cleaned = item.strip()
+                if len(cleaned) > HANDOFF_NOTE_TEXT_LIMIT:
+                    raise ValueError("room_handoff_note_invalid")
+                normalized[field] = cleaned
+        return normalized
+
     if outcome_type == "respond":
+        if "handoff_note" in payload:
+            raise ValueError("room_handoff_note_invalid")
         return {
             "content": text_field("content"),
             "mentioned_participant_ids": string_list("mentioned_participant_ids"),
@@ -159,12 +206,15 @@ def normalize_participant_outcome(
     if outcome_type == "handoff":
         target_ids = string_list("target_participant_ids", required=True)
         mentioned_ids = string_list("mentioned_participant_ids")
-        return {
+        handoff: dict[str, Any] = {
             "content": text_field("content"),
             "target_participant_ids": target_ids,
             "mentioned_participant_ids": mentioned_ids,
             "priority_participant_ids": list(dict.fromkeys(target_ids + mentioned_ids)),
         }
+        if "handoff_note" in payload:
+            handoff["handoff_note"] = handoff_note()
+        return handoff
     if outcome_type == "propose":
         result: dict[str, Any] = {
             "proposal_type": text_field("proposal_type"),
@@ -185,9 +235,15 @@ def normalize_participant_outcome(
             # A visible proposal is a bounded summary; exact bytes live only in
             # room_execution_candidates.unified_diff.
             result["content"] = patch.summary
+        if "handoff_note" in payload:
+            result["handoff_note"] = handoff_note()
         return result
     if outcome_type == "defer":
+        if "handoff_note" in payload:
+            raise ValueError("room_handoff_note_invalid")
         return {"wake_condition": text_field("wake_condition")}
+    if "handoff_note" in payload:
+        raise ValueError("room_handoff_note_invalid")
     return {}
 
 
@@ -327,6 +383,15 @@ def _outcome_policy_conn(
         "room.handoff",
     }
     explicitly_targeted = peer_speech and participant_id in directed_ids
+    if explicitly_targeted and is_addressed_mode(conn, observation["conversation_id"]):
+        # Addressed Rooms deliver directed observations only to explicit targets,
+        # so an explicit target may always respond (a directed baton).
+        return {
+            "schema_version": "room_outcome_policy/v1",
+            "allowed_outcomes": list(OUTCOME_ORDER),
+            "respond_available": True,
+            "reason": "explicit_peer_target",
+        }
     prior_response = conn.execute(
         """select 1
            from room_observations prior
@@ -484,7 +549,49 @@ class RoomKernelStore:
                         ),
                     )
                 audience = semantic["audience"]
+                participant_rows = conn.execute(
+                    "select participant_id from participants "
+                    "where conversation_id = ? and status = 'active' "
+                    f"and cli_kind in ({room_agent_cli_kind_placeholders()}) and role <> ? "
+                    "order by rowid",
+                    (conversation_id, *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE),
+                ).fetchall()
+                priority_ids = {
+                    mention.removeprefix("@participant:")
+                    for mention in effective_mentions
+                    if isinstance(mention, str) and mention.strip()
+                }
+                policy = collaboration_policy_row(conn, conversation_id)
+                addressed = policy is not None and str(policy["mode"]) == "addressed"
+                lead_participant_id = policy["lead_participant_id"] if policy is not None else None
                 payload = {"content": content, "mentions": effective_mentions}
+                if addressed:
+                    mentioned_rows = [
+                        participant
+                        for participant in participant_rows
+                        if participant["participant_id"] in priority_ids
+                    ]
+                    if mentioned_rows:
+                        target_rows = mentioned_rows
+                        addressing = "mentions"
+                    else:
+                        lead_row = next(
+                            (
+                                participant
+                                for participant in participant_rows
+                                if participant["participant_id"] == lead_participant_id
+                            ),
+                            None,
+                        )
+                        if lead_row is not None:
+                            target_rows = [lead_row]
+                            addressing = "lead"
+                        else:
+                            target_rows = list(participant_rows)
+                            addressing = "fallback_broadcast"
+                    payload["addressing"] = addressing
+                else:
+                    target_rows = list(participant_rows)
                 conn.execute(
                     """insert into room_activities
                     (activity_id, conversation_id, seq, activity_type, actor_kind,
@@ -510,20 +617,8 @@ class RoomKernelStore:
                         now,
                     ),
                 )
-                participant_rows = conn.execute(
-                    "select participant_id from participants "
-                    "where conversation_id = ? and status = 'active' "
-                    "and cli_kind = 'codex' and role <> ? "
-                    "order by rowid",
-                    (conversation_id, INIT_GOD_ROLE),
-                ).fetchall()
-                priority_ids = {
-                    mention.removeprefix("@participant:")
-                    for mention in effective_mentions
-                    if isinstance(mention, str) and mention.strip()
-                }
                 observations: list[dict[str, Any]] = []
-                for participant in participant_rows:
+                for participant in target_rows:
                     observations.append(
                         self._insert_observation_conn(
                             conn,
@@ -766,7 +861,7 @@ class RoomKernelStore:
         stamp = _timestamp(current)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 with unresolved as (
                     select o.conversation_id, o.participant_id, o.status,
                            o.expires_at, o.attempt_count, o.manual_retry_budget, a.seq,
@@ -795,7 +890,7 @@ class RoomKernelStore:
                               and t.state in ('claimed', 'delivering'))
                       )
                       and p.status = 'active'
-                      and p.cli_kind = 'codex'
+                      and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                       and p.role <> ?
                       and (
                           a.seq > coalesce(c.last_acknowledged_seq, 0)
@@ -825,13 +920,19 @@ class RoomKernelStore:
                             and root_o.delivery_mode = 'active'
                             and root_o.status <> 'completed'
                             and root_p.status = 'active'
-                            and root_p.cli_kind = 'codex'
+                            and root_p.cli_kind in ({room_agent_cli_kind_placeholders()})
                             and root_o.control_state not in ('cancelled','exhausted')
                       )
                   )
                 order by frontier_seq, conversation_id, participant_id
                 """,
-                (INIT_GOD_ROLE, max_attempts_per_observation, stamp),
+                (
+                    *ROOM_AGENT_CLI_KINDS,
+                    INIT_GOD_ROLE,
+                    max_attempts_per_observation,
+                    stamp,
+                    *ROOM_AGENT_CLI_KINDS,
+                ),
             ).fetchall()
         return [(str(row["conversation_id"]), str(row["participant_id"])) for row in rows]
 
@@ -887,7 +988,7 @@ class RoomKernelStore:
         conn: sqlite3.Connection, *, conversation_id: str, correlation_id: str
     ) -> bool:
         row = conn.execute(
-            """select count(*) as unresolved
+            f"""select count(*) as unresolved
                from room_observations o
                join room_activities a on a.activity_id = o.activity_id
                join participants p on p.participant_id = o.participant_id
@@ -896,9 +997,9 @@ class RoomKernelStore:
                  and o.delivery_mode = 'active'
                  and o.status <> 'completed'
                  and p.status = 'active'
-                 and p.cli_kind = 'codex'
+                 and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                  and o.control_state not in ('cancelled','exhausted')""",
-            (conversation_id, correlation_id),
+            (conversation_id, correlation_id, *ROOM_AGENT_CLI_KINDS),
         ).fetchone()
         return int(row["unresolved"]) == 0
 
@@ -1006,10 +1107,11 @@ class RoomKernelStore:
             conn.execute("begin immediate")
             try:
                 participant = conn.execute(
-                    """select participant_id from participants
-                    where conversation_id = ? and participant_id = ?
-                      and status = 'active' and cli_kind = 'codex'""",
-                    (conversation_id, participant_id),
+                    "select participant_id from participants "
+                    "where conversation_id = ? and participant_id = ? "
+                    "and status = 'active' "
+                    f"and cli_kind in ({room_agent_cli_kind_placeholders()})",
+                    (conversation_id, participant_id, *ROOM_AGENT_CLI_KINDS),
                 ).fetchone()
                 if participant is None:
                     raise ValueError("room_participant_not_active")
@@ -1364,7 +1466,10 @@ class RoomKernelStore:
                     raise ValueError("room_reply_to_activity_not_in_batch")
                 if row["status"] == "completed":
                     raise ValueError("room_observation_already_completed")
-                if participant["status"] != "active" or participant["cli_kind"] != "codex":
+                if (
+                    participant["status"] != "active"
+                    or participant["cli_kind"] not in ROOM_AGENT_CLI_KINDS
+                ):
                     raise ValueError("room_participant_not_active")
                 if (
                     row["status"] != "claimed"
@@ -1413,8 +1518,8 @@ class RoomKernelStore:
                     active_rows = conn.execute(
                         "select participant_id from participants "
                         "where conversation_id = ? and status = 'active' "
-                        "and cli_kind = 'codex' and role <> ?",
-                        (conversation_id, INIT_GOD_ROLE),
+                        f"and cli_kind in ({room_agent_cli_kind_placeholders()}) and role <> ?",
+                        (conversation_id, *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE),
                     ).fetchall()
                     active_ids = {item["participant_id"] for item in active_rows}
                     target_ids = normalized.get("target_participant_ids", [])
@@ -1429,6 +1534,28 @@ class RoomKernelStore:
                     ).fetchone()["next_seq"]
                     activity_id = _id("activity")
                     depth = int(reply_source["causal_depth"]) + 1
+                    addressed = is_addressed_mode(conn, conversation_id)
+                    addressed_fanout_ids: list[str] = []
+                    if addressed and depth < max_causal_depth:
+                        for target_id in dict.fromkeys(targets):
+                            if target_id == participant_id:
+                                continue
+                            peer_count = conn.execute(
+                                """select count(*) as count
+                                   from room_observations peer_o
+                                   join room_activities peer_a
+                                     on peer_a.activity_id = peer_o.activity_id
+                                   where peer_o.conversation_id = ?
+                                     and peer_o.participant_id = ?
+                                     and peer_a.correlation_id = ?
+                                     and not (peer_a.actor_kind = 'human'
+                                              and peer_a.activity_type = 'message.posted')
+                                     and peer_o.delivery_mode = 'active'""",
+                                (conversation_id, target_id, source["correlation_id"]),
+                            ).fetchone()
+                            if int(peer_count["count"]) >= 16:
+                                continue
+                            addressed_fanout_ids.append(target_id)
                     materialized_message_id = None
                     materialized_proposal_id = None
                     if outcome_type in {"respond", "handoff"}:
@@ -1537,14 +1664,20 @@ class RoomKernelStore:
                             public_normalized.pop("execution_patch", None)
                             public_normalized["execution_candidate_ref"] = execution_candidate
                             produced_proposal["execution_candidate"] = execution_candidate
+                    if addressed:
+                        # In addressed Rooms the downstream tail is active only when
+                        # this outcome actually fans out to explicit targets.
+                        context_only = not addressed_fanout_ids
+                    else:
+                        context_only = phase == "peer"
                     activity_payload = {
                         "outcome_type": outcome_type,
                         "source_observation_id": observation_id,
                         "source_observation_ids": member_ids,
                         "observation_batch_id": (batch["batch_id"] if batch is not None else None),
                         "observation_phase": phase,
-                        "context_only": phase == "peer",
-                        "downstream_mode": "context_only" if phase == "peer" else "active",
+                        "context_only": context_only,
+                        "downstream_mode": "context_only" if context_only else "active",
                         "reply_to_activity_id": reply_to_activity_id,
                         **public_normalized,
                     }
@@ -1584,7 +1717,23 @@ class RoomKernelStore:
                         if inserted != execution_candidate:
                             raise ValueError("room_execution_candidate_insert_conflict")
                     produced_activity = self._activity_from_conn(conn, activity_id)
-                    if phase == "root" and depth < max_causal_depth:
+                    if addressed:
+                        # Directed batons may continue from any phase (A -> B -> A),
+                        # so peer-phase outcomes fan out too; the chain stays bounded
+                        # by max_causal_depth and the per-participant peer cap.
+                        for target_id in addressed_fanout_ids:
+                            downstream.append(
+                                self._insert_observation_conn(
+                                    conn,
+                                    conversation_id=conversation_id,
+                                    activity_id=activity_id,
+                                    participant_id=target_id,
+                                    delivery_mode="active",
+                                    now=stamp,
+                                    priority=100,
+                                )
+                            )
+                    elif phase == "root" and depth < max_causal_depth:
                         priority_ids = set(
                             normalized.get("priority_participant_ids", [])
                             + normalized.get("mentioned_participant_ids", [])
@@ -1862,6 +2011,12 @@ class RoomKernelStore:
                 raise KeyError(f"unknown room observation: {observation_id}")
             source = self._activity_from_conn(conn, row["activity_id"])
             return _outcome_policy_conn(conn, observation=row, source=source)
+
+    def get_collaboration(self, conversation_id: str) -> dict[str, Any]:
+        """The Room's collaboration mode and lead (the broadcast default when unset)."""
+
+        with self._connect() as conn:
+            return collaboration_view(collaboration_policy_row(conn, conversation_id))
 
     def list_projection_events(
         self, conversation_id: str, *, after_seq: int = 0, limit: int = 100

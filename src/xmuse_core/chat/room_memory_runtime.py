@@ -17,6 +17,8 @@ ROOM_MEMORY_RECALL_TIMEOUT_S = 0.75
 # default archive-only path fail-fast, while allowing the explicitly opted-in
 # profile enough bounded time to return useful evidence on a cold CPU cache.
 ROOM_MEMORY_FULL_LOCAL_RECALL_TIMEOUT_S = 5.0
+# Bindings attach asynchronously; recall waits only briefly for that progress.
+ROOM_MEMORY_RECALL_BINDING_WAIT_MAX_S = 2.0
 ROOM_MEMORY_MAX_ITEMS = 8
 ROOM_MEMORY_MAX_TOKENS = 800
 ROOM_MEMORY_MAX_RESPONSE_BYTES = 8 * 1024
@@ -121,6 +123,14 @@ class RoomMemoryContextReceiptPort(Protocol):
 
 class RoomMemoryDeliveryPumpPort(Protocol):
     async def pump_once(self) -> bool: ...
+
+
+def room_memory_recall_wait_budget_s(recall_timeout_s: float) -> float:
+    # Independent of the recall timeout: the wait only happens while a new Room's
+    # bindings attach (sub-second), and the fail-fast archive-only timeout is too
+    # short to cover that.
+    del recall_timeout_s
+    return ROOM_MEMORY_RECALL_BINDING_WAIT_MAX_S
 
 
 def disabled_memory_evidence() -> RoomMemoryEvidence:

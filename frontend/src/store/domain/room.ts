@@ -1,6 +1,7 @@
 import type {
   RoomAgentStream,
   RoomChatProjection,
+  RoomCollaborationInit,
   RoomControlActionDescriptor,
   RoomMessageReceipt,
   RoomSummary,
@@ -65,7 +66,8 @@ export type RoomDomainActions = {
   createRoom: (
     title: string,
     clientRequestId?: string,
-    rosterTemplateId?: string
+    rosterTemplateId?: string,
+    collaboration?: RoomCollaborationInit | null
   ) => Promise<string | null>;
   selectRoom: (roomId: string) => Promise<void>;
   refreshRoom: (

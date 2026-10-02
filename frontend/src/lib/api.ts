@@ -8,6 +8,7 @@ import type {
   RoomCodexCapabilityId,
   RoomCodexProjection,
   RoomCodexSafeRequestByCapability,
+  RoomCollaborationInit,
   RoomControlActionDescriptor,
   RoomControlResult,
   RoomExecutionActionResult,
@@ -45,6 +46,7 @@ type CreateConversationOptions = ApiClientOptions & {
   rosterTemplateId?: string | null;
   initialParticipants?: Array<Record<string, unknown>> | null;
   clientRequestId?: string;
+  collaboration?: RoomCollaborationInit | null;
 };
 
 export class XmuseApiError extends Error implements XmuseApiErrorShape {
@@ -638,7 +640,17 @@ export async function createConversation(
         client_request_id: options.clientRequestId ?? `ui_room_create_${crypto.randomUUID()}`,
         ...(options.initialParticipants
           ? { initial_participants: options.initialParticipants }
-          : { roster_template_id: options.rosterTemplateId ?? "builtin.development" })
+          : { roster_template_id: options.rosterTemplateId ?? "builtin.development" }),
+        ...(options.collaboration
+          ? {
+              collaboration: {
+                mode: options.collaboration.mode,
+                ...(options.collaboration.lead_role
+                  ? { lead_role: options.collaboration.lead_role }
+                  : {})
+              }
+            }
+          : {})
       }),
       cache: "no-store",
       credentials: "same-origin"

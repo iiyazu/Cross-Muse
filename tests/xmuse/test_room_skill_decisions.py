@@ -57,6 +57,7 @@ def _claimed(
     content: str = "verify this risk",
     attempt_limit: int = 3,
     activity_override: tuple[str, str, dict[str, object]] | None = None,
+    cli_kind: str = "codex",
 ):
     path = tmp_path / "chat.db"
     conversation = RoomTestStore(path).create_conversation("skill room")
@@ -64,8 +65,8 @@ def _claimed(
         conversation_id=conversation.id,
         role="review",
         display_name="Reviewer",
-        cli_kind="codex",
-        model="gpt-5",
+        cli_kind=cli_kind,
+        model="gpt-5" if cli_kind == "codex" else "room-agent-default",
     )
     kernel = RoomKernelStore(path)
     posted = kernel.post_human_activity(
@@ -137,6 +138,36 @@ def test_bind_joins_durable_authority_and_exact_replay_emits_one_event(tmp_path)
             item[1] for item in conn.execute("pragma table_info(room_attempt_skill_decisions)")
         }
         assert not {"body", "path", "provider_output", "lease_token"} & columns
+
+
+@pytest.mark.parametrize("cli_kind", ["claude", "antigravity"])
+def test_every_admitted_agent_kind_binds_skill_decisions(tmp_path, cli_kind):
+    path, _, _, _, claim = _claimed(tmp_path, cli_kind=cli_kind)
+
+    record = RoomAttemptSkillDecisionStore(path).bind_for_attempt(
+        attempt_id=claim["attempt"]["attempt_id"],
+        catalog=_Catalog(_decision()),
+        now=NOW,
+    )
+
+    assert record.selection.decision == "selected"
+    assert record.selection.participant_role_snapshot == "review"
+
+
+def test_stored_only_agent_kind_stays_fail_closed(tmp_path):
+    path, _, participant, _, claim = _claimed(tmp_path, cli_kind="claude")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "update participants set cli_kind = 'a2a' where participant_id = ?",
+            (participant.participant_id,),
+        )
+
+    with pytest.raises(RoomSkillDecisionError, match="room_skill_binding_lost"):
+        RoomAttemptSkillDecisionStore(path).bind_for_attempt(
+            attempt_id=claim["attempt"]["attempt_id"],
+            catalog=_Catalog(_decision()),
+            now=NOW,
+        )
 
 
 def test_none_is_durable_and_changed_replay_conflicts(tmp_path):

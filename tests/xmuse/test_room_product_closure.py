@@ -17,6 +17,13 @@ from xmuse_core.chat.room_host import (
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
 
+AVAILABLE_PROVIDER_CAPABILITIES = {
+    "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
+    "claude": {"available": True, "enabled": True, "confinement": "client_permission_gated"},
+    "antigravity": {"available": True, "enabled": True, "confinement": "instructed_read_only"},
+    "opencode": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
+}
+
 
 def test_chat_api_room_closes_through_independent_agent_outcomes_and_projection(
     tmp_path,
@@ -27,7 +34,13 @@ def test_chat_api_room_closes_through_independent_agent_outcomes_and_projection(
         runtime_calls.append((base_dir, execution_root))
         return {"state": "test-runtime-stub"}
 
-    client = TestClient(create_app(tmp_path, workroom_runtime_starter=runtime_stub))
+    client = TestClient(
+        create_app(
+            tmp_path,
+            workroom_runtime_starter=runtime_stub,
+            provider_capabilities_provider=lambda: AVAILABLE_PROVIDER_CAPABILITIES,
+        )
+    )
     created = client.post(
         "/api/chat/conversations",
         json={
