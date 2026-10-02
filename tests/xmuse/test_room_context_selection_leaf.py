@@ -118,6 +118,63 @@ def test_selection_truncates_content_without_losing_root_or_batch_member() -> No
     }
 
 
+def test_primary_inputs_use_the_wider_bound_and_only_recent_burst_stays_tight() -> None:
+    # A long Human prompt and a long handed-off plan must reach the participant whole;
+    # an unrelated earlier message in the recent burst keeps the tight bound.
+    other = _activity("other", 1, correlation_id="corr-0", content="o" * 40)
+    root = _activity("root", 2, actor_kind="human", actor_participant_id=None, content="r" * 40)
+    ancestor = _activity("ancestor", 3, causation_id="root", content="a" * 40)
+    source = _activity("source", 4, causation_id="ancestor", content="s" * 40)
+    activities = {str(item["activity_id"]): item for item in (other, root, ancestor, source)}
+    observation = {"observation_id": "obs-source"}
+    selection = select_room_context(
+        source_activity=source,
+        member_activities=[source],
+        activities=activities,
+        batch=None,
+        batch_members=[{"ordinal": 0, "observation": observation, "activity": source}],
+        participant_directory={"agent-1": _Participant("Verifier", "review")},
+        fallback_observation=observation,
+        recent_activity_limit=8,
+        max_payload_chars=8,
+        max_primary_content_chars=64,
+    )
+
+    assert selection.human_root["content"] == "r" * 40
+    assert selection.source_activity["content"] == "s" * 40
+    assert selection.batch["members"][0]["activity"]["content"] == "s" * 40
+    assert selection.causal_ancestry[0]["content"] == "a" * 40
+    assert selection.human_root["content_truncated"] is False
+    assert len(selection.source_activity["payload_preview"]) == 8
+    recent = {item["activity_id"]: item for item in selection.recent_activities}
+    assert recent["other"]["content"] == "o" * 8
+    assert recent["other"]["content_truncated"] is True
+    # The recent copy of the source is shortened, but its primary copy is whole.
+    assert recent["source"]["content"] == "s" * 8
+    assert selection.coverage["content_truncated_activity_ids"] == ["other"]
+
+    over = select_room_context(
+        source_activity=source,
+        member_activities=[source],
+        activities=activities,
+        batch=None,
+        batch_members=[{"ordinal": 0, "observation": observation, "activity": source}],
+        participant_directory={"agent-1": _Participant("Verifier", "review")},
+        fallback_observation=observation,
+        recent_activity_limit=8,
+        max_payload_chars=8,
+        max_primary_content_chars=16,
+    )
+    assert over.source_activity["content"] == "s" * 16
+    assert over.source_activity["content_truncated"] is True
+    assert over.coverage["content_truncated_activity_ids"] == [
+        "root",
+        "source",
+        "ancestor",
+        "other",
+    ]
+
+
 def test_memory_exclusion_covers_every_context_source_once() -> None:
     assert memory_excluded_activity_ids(
         source_activity={"activity_id": "source"},

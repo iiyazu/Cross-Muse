@@ -16,12 +16,26 @@ export type ConversationSummary = {
   [key: string]: unknown;
 };
 
+export type RoomCollaborationMode = "broadcast" | "addressed";
+
+export type RoomCollaboration = {
+  mode: RoomCollaborationMode;
+  lead_participant_id: string | null;
+};
+
+export type RoomCollaborationInit = {
+  mode: RoomCollaborationMode;
+  lead_role?: string | null;
+};
+
 export type RoomSetupOptionParticipant = {
   role_id: string;
   role: string;
   display_name: string;
   description: string;
   collaboration_focus: string;
+  /** Provider kind for the badge; added by the backend setup-options projection. */
+  cli_kind?: string | null;
 };
 
 export type RoomSetupOption = {
@@ -29,6 +43,11 @@ export type RoomSetupOption = {
   display_name: string;
   description: string;
   participants: RoomSetupOptionParticipant[];
+  /** Template-preset collaboration policy; absent on older backends. */
+  collaboration?: RoomCollaborationInit | null;
+  /** Provider admission reported by the backend; absent on older backends. */
+  available?: boolean;
+  unavailable_providers?: string[];
 };
 
 export type RoomSetupOptions = {
@@ -149,6 +168,16 @@ export type RoomActor = {
   kind?: "human" | "agent" | "system" | string;
 };
 
+export type RoomAddressing = "mentions" | "lead" | "fallback_broadcast";
+
+export type RoomHandoffNote = {
+  what?: string;
+  why?: string;
+  tradeoffs?: string;
+  open_questions?: string[];
+  next_action?: string;
+};
+
 export type RoomTimelineItem = {
   id: string;
   room_seq: number;
@@ -173,6 +202,8 @@ export type RoomTimelineItem = {
   proof_boundary?: string | null;
   source_refs?: string[];
   context_only_tail?: boolean;
+  addressing?: RoomAddressing | null;
+  handoff_note?: RoomHandoffNote | null;
 };
 
 export type RoomAgentStreamState =
@@ -266,6 +297,8 @@ export type RoomParticipant = {
   status: RoomParticipantState;
   participant_status?: string;
   active: boolean;
+  /** Provider kind for the badge; absent until the backend projects it. */
+  cli_kind?: string | null;
   frontier?: RoomObservationFrontier | null;
   last_completed_outcome?: RoomOutcomeSummary | null;
   unresolved_count?: number;
@@ -281,6 +314,8 @@ export type RoomTurnParticipant = {
   observation_count?: number;
   response_count?: number;
   unresolved_count: number;
+  /** Provider kind for the badge; absent until the backend projects it. */
+  cli_kind?: string | null;
   frontier?: RoomObservationFrontier | null;
   latest_outcome?: RoomOutcomeSummary | null;
   root_skill_decision?: RoomSkillDecision;
@@ -315,6 +350,7 @@ export type RoomSummary = {
   } | null;
   members: RoomParticipant[];
   participants?: RoomParticipant[];
+  collaboration?: RoomCollaboration | null;
   state: RoomState;
   status?: RoomState;
   participant_count?: number;
@@ -338,6 +374,7 @@ export type RoomChatProjection = {
   status?: RoomState;
   latest_visible_room_seq?: number;
   conversation: ConversationSummary;
+  collaboration?: RoomCollaboration | null;
   participants: RoomParticipant[];
   turns: RoomTurn[];
   hidden_active_turn_count: number;

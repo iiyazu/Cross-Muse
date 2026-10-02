@@ -10,6 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from xmuse.provider_capabilities import detect_provider_capabilities
 from xmuse.workroom_contracts import (
     WORKROOM_REPO_ROOT,
     WorkroomDependencies,
@@ -351,6 +352,22 @@ def _stop_generation_runtime(
         ) from exc
 
 
+def _resolve_provider_enablement(
+    kind: str,
+    requested: bool | None,
+    capabilities: Mapping[str, Mapping[str, object]],
+) -> bool:
+    available = bool(capabilities[kind]["available"])
+    if requested is None:
+        return available
+    if requested and not available:
+        raise WorkroomError(
+            f"{kind}_unavailable",
+            f"--{kind} was requested but the provider is not available on this host",
+        )
+    return requested
+
+
 def start_workroom(
     paths: WorkroomPaths,
     deps: WorkroomDependencies,
@@ -363,6 +380,9 @@ def start_workroom(
     memoryos_executable: Path | None = None,
     memory_profile: str = "full-local",
     memory_disabled_code: str | None = None,
+    claude: bool | None = None,
+    antigravity: bool | None = None,
+    opencode: bool | None = None,
 ) -> int:
     controller = deps.shutdown_controller_factory()
     services = WorkroomServicesCoordinator(paths, deps)
@@ -371,6 +391,14 @@ def start_workroom(
     memory_runtime: MemoryOSRuntimeCoordinator | None = None
     controller_installed = False
     try:
+        capabilities = detect_provider_capabilities(
+            environ=deps.environ,
+            which=deps.which,
+            discover_language_server=deps.discover_antigravity_language_server,
+        )
+        claude_enabled = _resolve_provider_enablement("claude", claude, capabilities)
+        antigravity_enabled = _resolve_provider_enablement("antigravity", antigravity, capabilities)
+        opencode_enabled = _resolve_provider_enablement("opencode", opencode, capabilities)
         workspace, resolved_profile_id, execution_profile = _validate_start_configuration(
             paths,
             execution_workspace=execution_workspace,
@@ -392,7 +420,11 @@ def start_workroom(
                 if isinstance(previous_generation, str) and previous_generation:
                     _stop_generation_runtime(paths, deps, previous_generation)
 
-            node = services.preflight()
+            node = services.preflight(
+                claude_enabled=claude_enabled,
+                antigravity_enabled=antigravity_enabled,
+                opencode_enabled=opencode_enabled,
+            )
             manager_identity = deps.inspect_process(deps.current_pid())
             if manager_identity is None:
                 raise WorkroomError(
@@ -458,6 +490,9 @@ def start_workroom(
                 memoryos_api_key=(memory_binding.api_key if memory_binding is not None else None),
                 memoryos_profile=memory_profile,
                 cleanup_timeout_s=stop_timeout_s,
+                claude_enabled=claude_enabled,
+                antigravity_enabled=antigravity_enabled,
+                opencode_enabled=opencode_enabled,
             )
             _update_manifest(manifest, deps, state="ready")
             _atomic_write_manifest(paths.manifest, manifest)

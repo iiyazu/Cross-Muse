@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.providers.models import ProviderId, ProviderProfileId
 from xmuse_core.providers.registry import normalize_codex_model_id
@@ -33,13 +34,13 @@ def _new_id(prefix: str) -> str:
 # Pydantic models (match FRONTEND_API.md participant/role-template shapes)
 # ---------------------------------------------------------------------------
 
-CurrentChatCliKind = Literal["codex"]
-StoredChatCliKind = Literal["codex", "a2a", "opencode"]
-StoredProviderIdValue = ProviderId | Literal["a2a", "opencode"]
+CurrentChatCliKind = Literal["codex", "claude", "antigravity", "opencode"]
+StoredChatCliKind = Literal["codex", "claude", "antigravity", "opencode", "a2a"]
+StoredProviderIdValue = ProviderId | Literal["claude", "antigravity", "a2a", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
-_CURRENT_CHAT_CLI_KINDS = {"codex"}
-_STORED_ONLY_CLI_KINDS = {"a2a", "opencode"}
+_CURRENT_CHAT_CLI_KINDS = set(ROOM_AGENT_CLI_KINDS)
+_STORED_ONLY_CLI_KINDS = {"a2a"}
 _STORED_CHAT_CLI_KINDS = _CURRENT_CHAT_CLI_KINDS | _STORED_ONLY_CLI_KINDS
 PERSONA_SNAPSHOT_SCHEMA: Literal["persona_snapshot/v1"] = "persona_snapshot/v1"
 MAX_PERSONA_SNAPSHOT_BYTES = 2 * 1024
@@ -93,7 +94,9 @@ def _require_stored_cli_kind(cli_kind: str) -> StoredChatCliKind:
 def _require_current_cli_kind(cli_kind: str) -> CurrentChatCliKind:
     normalized = _require_stored_cli_kind(cli_kind)
     if normalized not in _CURRENT_CHAT_CLI_KINDS:
-        raise ValueError("xmuse Room participant writes support only cli_kind 'codex'")
+        raise ValueError(
+            f"xmuse Room participant writes support only cli_kind in {ROOM_AGENT_CLI_KINDS!r}"
+        )
     return cast(CurrentChatCliKind, normalized)
 
 
@@ -150,11 +153,9 @@ def provider_profile_id_for_cli_kind_role(
 
 
 def provider_id_for_cli_kind(cli_kind: StoredChatCliKind) -> StoredProviderIdValue:
-    if cli_kind == "opencode":
-        return "opencode"
-    if cli_kind == "a2a":
-        return "a2a"
-    return ProviderId.CODEX
+    if cli_kind == "codex":
+        return ProviderId.CODEX
+    return cli_kind
 
 
 def resolve_current_chat_cli_kind(
@@ -172,9 +173,9 @@ def resolve_current_chat_cli_kind(
         expected_profile_id=expected_profile_id,
         subject=subject,
     )
-    if resolved != "codex":
-        raise ValueError(f"{subject} supports only the local Codex provider")
-    return resolved
+    if resolved not in _CURRENT_CHAT_CLI_KINDS:
+        raise ValueError(f"{subject} supports only Room agent cli kinds {ROOM_AGENT_CLI_KINDS!r}")
+    return cast(CurrentChatCliKind, resolved)
 
 
 def _resolve_chat_cli_kind(
@@ -223,11 +224,9 @@ def _resolve_chat_cli_kind(
 
 
 def _cli_kind_for_provider_id(provider_id: StoredProviderIdValue) -> StoredChatCliKind:
-    if provider_id == "opencode":
-        return "opencode"
-    if provider_id == "a2a":
-        return "a2a"
-    return "codex"
+    if provider_id == ProviderId.CODEX:
+        return "codex"
+    return provider_id
 
 
 def _parse_provider_id(
@@ -238,7 +237,7 @@ def _parse_provider_id(
     if isinstance(value, ProviderId):
         return value
     normalized = value.strip().lower()
-    if normalized in {"a2a", "opencode"}:
+    if normalized in {"claude", "antigravity", "a2a", "opencode"}:
         return normalized  # type: ignore[return-value]
     return ProviderId(normalized)
 

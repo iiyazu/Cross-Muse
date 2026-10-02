@@ -21,6 +21,13 @@ from xmuse_core.chat.room_projection import (
     build_room_list_projection,
 )
 
+AVAILABLE_PROVIDER_CAPABILITIES = {
+    "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
+    "claude": {"available": True, "enabled": True, "confinement": "client_permission_gated"},
+    "antigravity": {"available": True, "enabled": True, "confinement": "instructed_read_only"},
+    "opencode": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
+}
+
 
 def _room(tmp_path, *, duplicate_roles: bool = False):
     path = tmp_path / "chat.db"
@@ -833,7 +840,13 @@ def test_room_list_is_batched_summary_and_mentions_fall_back_on_collision(tmp_pa
 
 
 def test_room_api_contract_events_and_idempotent_human_response(tmp_path):
-    client = TestClient(create_app(tmp_path, workroom_runtime_starter=lambda *_: {"state": "stub"}))
+    client = TestClient(
+        create_app(
+            tmp_path,
+            workroom_runtime_starter=lambda *_: {"state": "stub"},
+            provider_capabilities_provider=lambda: AVAILABLE_PROVIDER_CAPABILITIES,
+        )
+    )
     created = client.post(
         "/api/chat/conversations",
         json={
@@ -893,7 +906,9 @@ def test_room_api_contract_events_and_idempotent_human_response(tmp_path):
 
 
 def test_room_read_routes_do_not_mutate_schema_or_authority(tmp_path):
-    client = TestClient(create_app(tmp_path))
+    client = TestClient(
+        create_app(tmp_path, provider_capabilities_provider=lambda: AVAILABLE_PROVIDER_CAPABILITIES)
+    )
     created = client.post(
         "/api/chat/conversations",
         json={"title": "Read only", "client_request_id": "read-only-room"},
@@ -941,7 +956,9 @@ def test_room_read_routes_do_not_recreate_database_deleted_after_startup(tmp_pat
 
 
 def test_room_read_routes_return_stable_503_for_a_damaged_database(tmp_path):
-    client = TestClient(create_app(tmp_path))
+    client = TestClient(
+        create_app(tmp_path, provider_capabilities_provider=lambda: AVAILABLE_PROVIDER_CAPABILITIES)
+    )
     created = client.post(
         "/api/chat/conversations",
         json={"title": "Damage", "client_request_id": "damaged-room"},

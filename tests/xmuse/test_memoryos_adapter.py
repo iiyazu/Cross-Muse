@@ -395,6 +395,98 @@ def test_recall_timeout_is_bounded_and_returns_degraded_empty_evidence() -> None
     assert evidence.latency_ms < 950
 
 
+def test_recall_waits_through_pending_bindings_before_calling_adapter() -> None:
+    class ScriptedStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_calls = 0
+
+        def build_recall_request(self, **kwargs: Any) -> dict[str, Any]:
+            self.build_calls += 1
+            if self.build_calls <= 2:
+                raise _StoreError("room_memory_recall_binding_pending")
+            return super().build_recall_request(**kwargs)
+
+    class PatientAdapter(FakeAdapter):
+        def __init__(self, payload: Mapping[str, Any]) -> None:
+            super().__init__(payload)
+            self.build_context_calls = 0
+
+        @property
+        def recall_timeout_s(self) -> float:
+            return 5.0
+
+        def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
+            self.build_context_calls += 1
+            return self.payload
+
+    store = ScriptedStore()
+    adapter = PatientAdapter(_v3_payload(_v3_item()))
+    evidence = asyncio.run(_recall_runtime(store, adapter).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert store.build_calls == 3
+    assert adapter.build_context_calls == 1
+
+
+def test_recall_pending_binding_budget_ends_in_unavailable_receipt_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import xmuse_core.chat.room_memory_runtime as memory_runtime
+
+    monkeypatch.setattr(memory_runtime, "ROOM_MEMORY_RECALL_BINDING_WAIT_MAX_S", 0.3)
+
+    class AlwaysPendingStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_calls = 0
+
+        def build_recall_request(self, **_kwargs: Any) -> dict[str, Any]:
+            self.build_calls += 1
+            raise _StoreError("room_memory_recall_binding_pending")
+
+    store = AlwaysPendingStore()
+    started = time.monotonic()
+    evidence = asyncio.run(
+        _recall_runtime(store, FakeAdapter(_v3_payload(_v3_item()))).recall(_request())
+    )
+    elapsed = time.monotonic() - started
+
+    assert evidence.status == "unavailable"
+    assert evidence.reason_code == "room_memory_recall_binding_pending"
+    assert evidence.items == ()
+    assert store.build_calls >= 2
+    assert 0.1 <= elapsed < 1.0
+
+
+def test_recall_unusable_authority_returns_without_retry() -> None:
+    class BrokenStore(FakeStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_calls = 0
+
+        def build_recall_request(self, **_kwargs: Any) -> dict[str, Any]:
+            self.build_calls += 1
+            raise _StoreError("room_memory_recall_unavailable")
+
+    class PatientAdapter(FakeAdapter):
+        @property
+        def recall_timeout_s(self) -> float:
+            return 5.0
+
+    store = BrokenStore()
+    started = time.monotonic()
+    evidence = asyncio.run(
+        _recall_runtime(store, PatientAdapter(_v3_payload(_v3_item()))).recall(_request())
+    )
+    elapsed = time.monotonic() - started
+
+    assert evidence.status == "unavailable"
+    assert evidence.reason_code == "room_memory_recall_unavailable"
+    assert store.build_calls == 1
+    assert elapsed < 1.0
+
+
 def test_full_local_v2_message_source_is_reproved_to_room_activity() -> None:
     store = FakeStore()
     adapter = FakeAdapter(_v2_payload(_v2_message_item()))

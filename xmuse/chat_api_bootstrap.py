@@ -11,8 +11,30 @@ from typing import Any
 from fastapi import FastAPI
 
 from xmuse.memoryos_companion import MemoryOSCompanionError, discover_managed_companion
+from xmuse.provider_capabilities import ROOM_PROVIDER_KINDS, detect_provider_capabilities
 
 BOOTSTRAP_SCHEMA = "xmuse_bootstrap_projection/v1"
+
+
+def _provider_projection(
+    provider: Callable[[], Mapping[str, Mapping[str, object]]] | None,
+) -> dict[str, dict[str, object]]:
+    """Whitelist provider facts; executable paths and addresses never project."""
+
+    try:
+        detected = provider() if provider is not None else detect_provider_capabilities()
+    except Exception:  # pragma: no cover - detection failure is reported as unavailable
+        detected = {}
+    projection: dict[str, dict[str, object]] = {}
+    for kind in ROOM_PROVIDER_KINDS:
+        record = detected.get(kind)
+        record = record if isinstance(record, Mapping) else {}
+        projection[kind] = {
+            "available": bool(record.get("available", False)),
+            "enabled": bool(record.get("enabled", False)),
+            "confinement": str(record.get("confinement") or "unknown"),
+        }
+    return projection
 
 
 def _has_rooms(root: Path) -> bool:
@@ -32,6 +54,9 @@ def register_bootstrap_route(
     root: Path,
     memory_status_provider: Callable[[], Mapping[str, Any]],
     execution_profile_provider: Callable[[], Mapping[str, Any]],
+    provider_capabilities_provider: (
+        Callable[[], Mapping[str, Mapping[str, object]]] | None
+    ) = None,
 ) -> None:
     @app.get("/api/chat/bootstrap")
     def bootstrap() -> dict[str, object]:
@@ -54,6 +79,7 @@ def register_bootstrap_route(
         profile.pop("repository_manifest_digest", None)
         profile.pop("toolchain_capability_digest", None)
         codex_available = shutil.which("codex") is not None
+        providers = _provider_projection(provider_capabilities_provider)
         has_rooms = _has_rooms(root)
         recommended = (
             "open_room"
@@ -70,6 +96,7 @@ def register_bootstrap_route(
             "schema_version": BOOTSTRAP_SCHEMA,
             "has_rooms": has_rooms,
             "codex": {"launcher_available": codex_available},
+            "providers": providers,
             "memory": {
                 "mode": "auto",
                 "companion": companion_state,

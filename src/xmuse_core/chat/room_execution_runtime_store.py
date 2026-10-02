@@ -7,12 +7,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_candidates import (
+    CROSS_FAMILY_REVIEW_MISSING_REASON,
+    REVIEW_ROUND_LIMIT_REASON,
     _ensure_policy_conn,
     _participant_fingerprint,
     _refresh_consensus_state_conn,
+    cross_family_review_conn,
     patch_from_candidate,
+    review_round_limit_reached_conn,
     workspace_guard_digest,
 )
 from xmuse_core.chat.room_execution_common import (
@@ -139,6 +144,8 @@ class RoomExecutionRuntimeStore:
                     reason = "review_material_context_too_large"
                 elif candidate["consensus_state"] != "endorsed":
                     reason = str(candidate["reason_code"] or "consensus_incomplete")
+                elif review_round_limit_reached_conn(conn, candidate):
+                    reason = REVIEW_ROUND_LIMIT_REASON
                 elif gate_plan is None:
                     reason = "execution_gate_profile_unavailable"
                 members = conn.execute(
@@ -160,7 +167,7 @@ class RoomExecutionRuntimeStore:
                     if (
                         author is None
                         or author["status"] != "active"
-                        or author["cli_kind"] != "codex"
+                        or author["cli_kind"] not in ROOM_AGENT_CLI_KINDS
                         or _participant_fingerprint(author)
                         != candidate["author_identity_fingerprint"]
                     ):
@@ -169,7 +176,7 @@ class RoomExecutionRuntimeStore:
                     for member in members:
                         if (
                             member["current_status"] != "active"
-                            or member["cli_kind"] != "codex"
+                            or member["cli_kind"] not in ROOM_AGENT_CLI_KINDS
                             or _participant_fingerprint(member) != member["identity_fingerprint"]
                         ):
                             reason = "consensus_member_drift"
@@ -177,6 +184,10 @@ class RoomExecutionRuntimeStore:
                         if not bool(member["full_material_available"]):
                             reason = "consensus_review_material_unproven"
                             break
+                if reason is None:
+                    review = cross_family_review_conn(conn, candidate)
+                    if review["required"] and not review["satisfied"]:
+                        reason = CROSS_FAMILY_REVIEW_MISSING_REASON
                 patch = patch_from_candidate(candidate)
                 if reason is None and not low_risk_patch_eligible(patch):
                     reason = "consensus_low_risk_ceiling_failed"

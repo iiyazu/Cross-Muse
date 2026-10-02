@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,83 @@ def test_public_contract_types_and_policy_validation():
         RoomHostPolicy(delivery_timeout_s=True)
     with pytest.raises(ValueError):
         RoomHostPolicy(lease_ttl_s=185)
+
+
+def test_policy_provider_timeout_floor_and_lease_validation():
+    default = RoomHostPolicy()
+    assert default.effective_delivery_timeout_s("codex") == 180.0
+    assert default.effective_delivery_timeout_s(None) == 180.0
+
+    policy = RoomHostPolicy(
+        delivery_timeout_s=60.0,
+        cleanup_grace_s=5.0,
+        lease_ttl_s=640.0,
+        provider_min_delivery_timeout_s={"claude": 600.0, "antigravity": 420.0},
+    )
+    assert policy.effective_delivery_timeout_s("claude") == 600.0
+    assert policy.effective_delivery_timeout_s("antigravity") == 420.0
+    assert policy.effective_delivery_timeout_s("codex") == 60.0
+    assert policy.effective_delivery_timeout_s("unknown") == 60.0
+
+    # The lease TTL must cover the longest per-provider floor plus cleanup, or a
+    # slow provider could outlive its own claim.
+    with pytest.raises(ValueError, match="lease_ttl_s_too_short"):
+        RoomHostPolicy(provider_min_delivery_timeout_s={"claude": 600.0})
+    with pytest.raises(ValueError, match="lease_ttl_s_too_short"):
+        RoomHostPolicy(
+            delivery_timeout_s=60.0,
+            lease_ttl_s=605.0,
+            provider_min_delivery_timeout_s={"claude": 600.0},
+        )
+    for invalid in ({"claude": 0.0}, {"claude": True}, {"": 600.0}):
+        with pytest.raises(ValueError, match="provider_min_delivery_timeout_s_invalid"):
+            RoomHostPolicy(
+                lease_ttl_s=640.0,
+                provider_min_delivery_timeout_s=invalid,
+            )
+
+
+def test_core_uses_provider_timeout_floor_and_lease_covers_the_delivery(tmp_path):
+    db, registry, cid, people, sessions = _room(tmp_path, 1)
+    ParticipantStore(db).add(
+        conversation_id=cid,
+        role="review",
+        display_name="Claude",
+        cli_kind="claude",
+        model="claude-acp-default",
+    )
+    kernel = RoomKernelStore(db)
+    kernel.post_human_activity(
+        conversation_id=cid, human_id="h", content="hello", client_request_id="h"
+    )
+    timeouts: dict[str, float] = {}
+    claimed: dict[str, dict] = {}
+
+    class _RecordingTransport:
+        async def deliver(self, delivery, *, timeout_s):
+            timeouts[delivery.participant.cli_kind] = timeout_s
+            claimed[delivery.participant.cli_kind] = kernel.get_observation(
+                delivery.observation["observation_id"]
+            )
+            return RoomTransportResult("finished")
+
+    policy = RoomHostPolicy(
+        participant_cooldown_s=0,
+        delivery_timeout_s=60.0,
+        cleanup_grace_s=5.0,
+        lease_ttl_s=640.0,
+        provider_min_delivery_timeout_s={"claude": 600.0},
+    )
+    asyncio.run(
+        RoomParticipantHost(db, _RecordingTransport(), policy=policy).pump_once(conversation_id=cid)
+    )
+
+    assert timeouts == {"codex": 60.0, "claude": 600.0}
+    lease = claimed["claude"]
+    assert lease["status"] == "claimed"
+    acquired = datetime.fromisoformat(lease["acquired_at"].replace("Z", "+00:00"))
+    expires = datetime.fromisoformat(lease["expires_at"].replace("Z", "+00:00"))
+    assert (expires - acquired).total_seconds() >= 600.0 + 5.0
 
 
 def test_core_selects_oldest_frontier_then_priority_and_bounds_context(tmp_path):
