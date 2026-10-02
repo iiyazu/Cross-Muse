@@ -166,6 +166,52 @@ def agent_turns(transcript: Mapping[str, Any], correlation_id: str | None = None
     return len(agent_timeline_items(transcript, correlation))
 
 
+def agent_turns_by_cli(
+    transcript: Mapping[str, Any], correlation_id: str | None = None
+) -> dict[str, int]:
+    """``agent_turns`` split by provider ``cli_kind`` (the quota each provider spent).
+
+    Same sources as :func:`agent_turns`; a timeline-item fallback resolves the author's
+    ``cli_kind`` through ``projection.participants``.
+    """
+    correlation = correlation_id if correlation_id is not None else resolve_correlation(transcript)
+    turns = _projection(transcript).get("turns")
+    counts: dict[str, int] = {}
+    seen_turn = False
+    if isinstance(turns, list):
+        for turn in turns:
+            if not isinstance(turn, Mapping) or not _in_correlation(turn, correlation):
+                continue
+            seen_turn = True
+            members = turn.get("participants")
+            if not isinstance(members, list):
+                continue
+            for member in members:
+                if not isinstance(member, Mapping):
+                    continue
+                done = int(member.get("observation_count") or 0) - int(
+                    member.get("unresolved_count") or 0
+                )
+                if done > 0:
+                    kind = str(member.get("cli_kind") or "unknown")
+                    counts[kind] = counts.get(kind, 0) + done
+    if seen_turn:
+        return counts
+    kinds = {
+        str(item.get("participant_id")): str(item.get("cli_kind") or "unknown")
+        for item in participants(transcript)
+    }
+    for item in agent_timeline_items(transcript, correlation):
+        kind = kinds.get(str(item["actor"].get("participant_id")), "unknown")
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
+def format_turns_by_cli(counts: Mapping[str, int]) -> str:
+    """Stable CSV cell form, e.g. ``antigravity:1;claude:2``."""
+    return ";".join(f"{kind}:{counts[kind]}" for kind in sorted(counts))
+
+
 def max_causal_depth(transcript: Mapping[str, Any], correlation_id: str | None = None) -> int:
     correlation = correlation_id if correlation_id is not None else resolve_correlation(transcript)
     depths = [
@@ -293,9 +339,11 @@ def specialist_status(
 
     Passes when every expected participant role authored at least one message
     that passes the content check (non-empty, not a pure acknowledgment).  With
-    ``ordered=True`` the first qualifying message of each role must appear in the
-    given role order.  Empty ``expected_roles`` means "any specialist": passes
-    when any agent authored a qualifying message.
+    ``ordered=True`` the roles' qualifying messages must contain the given role
+    order as a subsequence, so a lead that first delegates step 1 and later
+    delivers its own step still passes, while one that answers every step alone
+    does not.  Empty ``expected_roles`` means "any specialist": passes when any
+    agent authored a qualifying message.
     """
     items = agent_timeline_items(transcript, correlation_id)
     qualifying: list[tuple[str, int]] = []
@@ -321,8 +369,16 @@ def specialist_status(
         detail["missing_roles"] = missing
         return {"ok": False, "detail": detail}
     if ordered:
-        seqs = [first_by_role[role] for role in expected_roles]
-        detail["sequence_ok"] = seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+        chain: list[int] = []
+        previous = -1
+        for role in expected_roles:
+            nxt = min((seq for r, seq in qualifying if r == role and seq > previous), default=None)
+            if nxt is None:
+                break
+            chain.append(nxt)
+            previous = nxt
+        detail["ordered_chain_seq"] = chain
+        detail["sequence_ok"] = len(chain) == len(expected_roles)
         return {"ok": detail["sequence_ok"], "detail": detail}
     return {"ok": True, "detail": detail}
 
@@ -369,6 +425,7 @@ def compute_metrics(transcript: Mapping[str, Any], task: Any) -> dict[str, Any]:
         notes.append("echo")
     return {
         "agent_turns": agent_turns(transcript, correlation),
+        "turns_by_cli": format_turns_by_cli(agent_turns_by_cli(transcript, correlation)),
         "visible_msgs": visible_messages(transcript, correlation),
         "echo_msgs": echo_message_count(transcript, correlation),
         "pure_ack_msgs": pure_ack_messages(transcript, correlation),

@@ -317,6 +317,14 @@ def _skip_entry(transcript: Mapping[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
+def _judge_once(cmd: str, prompt: str, *, timeout_s: float) -> dict[str, Any]:
+    """One judge pass; a failed command or malformed reply is retried once."""
+    try:
+        return parse_judge_output(run_judge_command(cmd, prompt, timeout_s=timeout_s))
+    except JudgeOutputError:
+        return parse_judge_output(run_judge_command(cmd, prompt, timeout_s=timeout_s))
+
+
 def command_backend(
     transcripts: list[dict[str, Any]],
     known_tasks: Mapping[str, tasks.EvalTask],
@@ -334,10 +342,12 @@ def command_backend(
         task = _task_for(transcript, known_tasks)
         blinded = blind_transcript(transcript, seed=seed)
         prompt = build_judge_prompt(task, blinded)
-        results = []
-        for _ in range(passes):
-            raw = run_judge_command(cmd, prompt, timeout_s=timeout_s)
-            results.append(parse_judge_output(raw))
+        try:
+            results = [_judge_once(cmd, prompt, timeout_s=timeout_s) for _ in range(passes)]
+        except JudgeOutputError as exc:
+            # One bad transcript must not discard the judgments already made.
+            entries.append(_skip_entry(transcript, f"judge failed: {exc}"[:300]))
+            continue
         scores = [result["score"] for result in results]
         entry: dict[str, Any] = {
             **blinded.to_json(),

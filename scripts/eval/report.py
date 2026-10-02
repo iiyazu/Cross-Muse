@@ -29,6 +29,7 @@ RESULTS_COLUMNS: tuple[str, ...] = (
     "judge_b",
     "agree",
     "agent_turns",
+    "turns_by_cli",
     "visible_msgs",
     "echo_msgs",
     "pure_ack_msgs",
@@ -98,6 +99,22 @@ def merge_judgments(rows: list[dict[str, Any]], judgments: Mapping[str, Any]) ->
     return matched
 
 
+def parse_turns_by_cli(value: Any) -> dict[str, int]:
+    """Inverse of the ``kind:count;kind:count`` cell; malformed parts are ignored."""
+    counts: dict[str, int] = {}
+    for part in str(value or "").split(";"):
+        kind, sep, count = part.partition(":")
+        if sep and kind.strip() and count.strip().isdigit():
+            counts[kind.strip()] = counts.get(kind.strip(), 0) + int(count)
+    return counts
+
+
+def _fmt_turns_by_cli(counts: Mapping[str, int]) -> str:
+    if not counts:
+        return "—"
+    return " · ".join(f"{kind} {counts[kind]}" for kind in sorted(counts))
+
+
 def aggregate(rows: Sequence[Mapping[str, Any]], modes: Sequence[str]) -> dict[str, dict[str, Any]]:
     aggregated: dict[str, dict[str, Any]] = {}
     for mode in modes:
@@ -107,6 +124,7 @@ def aggregate(rows: Sequence[Mapping[str, Any]], modes: Sequence[str]) -> dict[s
         echo_ack: list[float] = []
         wall: list[float] = []
         turns_total = 0
+        turns_by_cli: dict[str, int] = {}
         specialist_ok = 0
         specialist_total = 0
         for row in mode_rows:
@@ -121,6 +139,8 @@ def aggregate(rows: Sequence[Mapping[str, Any]], modes: Sequence[str]) -> dict[s
                 wall.append(_num(row.get("wall_s")) or 0.0)
             if _num(row.get("agent_turns")) is not None:
                 turns_total += int(_num(row.get("agent_turns")) or 0)
+            for kind, count in parse_turns_by_cli(row.get("turns_by_cli")).items():
+                turns_by_cli[kind] = turns_by_cli.get(kind, 0) + count
             if row.get("specialist_ok") not in (None, ""):
                 specialist_total += 1
                 specialist_ok += int(_truthy(row.get("specialist_ok")))
@@ -131,6 +151,7 @@ def aggregate(rows: Sequence[Mapping[str, Any]], modes: Sequence[str]) -> dict[s
             "cells": len(mode_rows),
             "rubric_mean": (sum(scores) / len(scores)) if scores else None,
             "turns_total": turns_total,
+            "turns_by_cli": turns_by_cli,
             "visible_mean": (sum(visible) / len(visible)) if visible else None,
             "echo_ack_mean": (sum(echo_ack) / len(echo_ack)) if echo_ack else None,
             "wall_median": statistics.median(wall) if wall else None,
@@ -153,6 +174,7 @@ def render_table(aggregated: Mapping[str, Mapping[str, Any]], modes: Sequence[st
     rows = [
         ("Rubric mean (0–3)", lambda agg: _fmt(agg.get("rubric_mean"))),
         ("Agent turns (total)", lambda agg: str(agg.get("turns_total") or 0)),
+        ("Turns by provider", lambda agg: _fmt_turns_by_cli(agg.get("turns_by_cli") or {})),
         ("Visible messages", lambda agg: _fmt(agg.get("visible_mean"))),
         ("Echo + pure-ack msgs", lambda agg: _fmt(agg.get("echo_ack_mean"))),
         ("Wall time (median)", lambda agg: _fmt(agg.get("wall_median"), suffix=" s")),

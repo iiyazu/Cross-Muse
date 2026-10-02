@@ -153,6 +153,50 @@ def test_agent_turns_falls_back_to_timeline_items() -> None:
     assert metrics.agent_turns(transcript) == 2
 
 
+def test_agent_turns_by_cli_splits_terminal_observations_by_provider() -> None:
+    transcript = make_transcript(
+        [],
+        [_participant("part_a", "architect", "A"), _participant("part_b", "review", "B")],
+        turns=[
+            {
+                "correlation_id": CORRELATION,
+                "root_activity_id": "act_root",
+                "participants": [
+                    {
+                        "participant_id": "part_a",
+                        "cli_kind": "claude",
+                        "observation_count": 3,
+                        "unresolved_count": 1,
+                    },
+                    {
+                        "participant_id": "part_b",
+                        "cli_kind": "opencode",
+                        "observation_count": 2,
+                        "unresolved_count": 0,
+                    },
+                ],
+            },
+            {
+                "correlation_id": "corr_other",
+                "participants": [
+                    {"participant_id": "part_a", "cli_kind": "claude", "observation_count": 9}
+                ],
+            },
+        ],
+    )
+    counts = metrics.agent_turns_by_cli(transcript)
+    assert counts == {"claude": 2, "opencode": 2}
+    assert sum(counts.values()) == metrics.agent_turns(transcript)
+    assert metrics.format_turns_by_cli(counts) == "claude:2;opencode:2"
+
+
+def test_agent_turns_by_cli_falls_back_to_participant_cli_kind() -> None:
+    transcript = two_agent_transcript("one two three", "four five six")
+    transcript["projection"]["turns"] = []
+    transcript["projection"]["participants"][0]["cli_kind"] = "claude"
+    assert metrics.agent_turns_by_cli(transcript) == {"claude": 1, "unknown": 1}
+
+
 def test_visible_messages_excludes_human_and_counts_handoffs() -> None:
     participants = [_participant("part_a", "architect", "A"), _participant("part_b", "review", "B")]
     items = [
@@ -304,11 +348,51 @@ def test_specialist_status_ordered_chain() -> None:
     assert result["detail"]["sequence_ok"] is False
 
 
+def test_specialist_status_ordered_chain_allows_a_delegating_lead_preamble() -> None:
+    participants = [
+        _participant("part_r", "research", "R"),
+        _participant("part_a", "architect", "A"),
+        _participant("part_v", "review", "V"),
+    ]
+    expected = ("research", "architect", "review")
+    relay = make_transcript(
+        [
+            _agent_item(1, "part_a", "architect", "A", "Step 1 is yours", kind="handoff"),
+            _agent_item(2, "part_r", "research", "R", "four retry-worthy modes", kind="handoff"),
+            _agent_item(3, "part_a", "architect", "A", "ten step retry plan", kind="handoff"),
+            _agent_item(4, "part_v", "review", "V", "gap: duplicates on partial writes"),
+        ],
+        participants,
+    )
+    result = metrics.specialist_status(relay, expected, ordered=True)
+    assert result["ok"] is True
+    assert result["detail"]["ordered_chain_seq"] == [2, 3, 4]
+
+    # The lead writing every section alone still fails: research never answers.
+    solo = make_transcript(
+        [_agent_item(1, "part_a", "architect", "A", "Researcher: ... Lead: ... Reviewer: ...")],
+        participants,
+    )
+    assert metrics.specialist_status(solo, expected, ordered=True)["ok"] is False
+
+    # Review before the plan exists does not count as auditing it.
+    early_review = make_transcript(
+        [
+            _agent_item(1, "part_r", "research", "R", "four retry-worthy modes"),
+            _agent_item(2, "part_v", "review", "V", "gap: duplicates on partial writes"),
+            _agent_item(3, "part_a", "architect", "A", "ten step retry plan"),
+        ],
+        participants,
+    )
+    assert metrics.specialist_status(early_review, expected, ordered=True)["ok"] is False
+
+
 def test_compute_metrics_keys_cover_csv_columns() -> None:
     transcript = two_agent_transcript("shared text body", "shared text body")
     computed = metrics.compute_metrics(transcript, tasks.tasks_by_id()["T1"])
     for key in (
         "agent_turns",
+        "turns_by_cli",
         "visible_msgs",
         "echo_msgs",
         "pure_ack_msgs",
@@ -459,6 +543,33 @@ def test_command_backend_with_monkeypatched_judge(monkeypatch: pytest.MonkeyPatc
     assert entry["agree"] is True
     assert entry["score_mean"] == 3.0
     assert payload["agreement"] == 1.0
+
+
+def test_command_backend_retries_once_then_skips_without_losing_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flaky = two_agent_transcript("Risk one is error placement.", "Fix: inline errors.")
+    broken = two_agent_transcript("Another answer.", "More text.")
+    broken["transcript_id"] = "T1_broadcast_r2"
+    calls = {"flaky": 0}
+    good = json.dumps({"score": 2, "rationale": "ok", "must_hits": {"risk": True}})
+
+    def fake_run(cmd: str, prompt: str, *, timeout_s: float = 300.0) -> str:
+        if "Another answer." in prompt:
+            raise judge.JudgeOutputError("judge command failed (1): Model unavailable")
+        calls["flaky"] += 1
+        return "not json" if calls["flaky"] == 1 else good
+
+    monkeypatch.setattr(judge, "run_judge_command", fake_run)
+    payload = judge.command_backend(
+        [flaky, broken], tasks.tasks_by_id(), cmd="fake-judge", passes=2, seed=0, timeout_s=5.0
+    )
+    scored, skipped = payload["entries"]
+    assert [result["score"] for result in scored["passes"]] == [2, 2]
+    assert calls["flaky"] == 3
+    assert skipped["skipped"] is True
+    assert "Model unavailable" in skipped["reason"]
+    assert payload["agreement"] == 1.0
     assert payload["cohen_kappa"] == 1.0
 
 
@@ -542,6 +653,18 @@ def test_aggregate_and_table_format() -> None:
     assert "| Agent turns (total) | 10 | 4 |" in lines
     assert "| Wall time (median) | 10.0 s | 10.0 s |" in lines
     assert "| Right specialist answered | 2/2 | 2/2 |" in lines
+    assert "| Turns by provider | — | — |" in lines
+
+
+def test_aggregate_sums_turns_by_provider() -> None:
+    rows = [
+        {**_row("T1", "addressed"), "turns_by_cli": "claude:2;opencode:1"},
+        {**_row("T2", "addressed"), "turns_by_cli": "antigravity:1;claude:1;bogus"},
+    ]
+    aggregated = report.aggregate(rows, ["addressed"])
+    assert aggregated["addressed"]["turns_by_cli"] == {"antigravity": 1, "claude": 3, "opencode": 1}
+    table = report.render_table(aggregated, ["addressed"])
+    assert "| Turns by provider | antigravity 1 · claude 3 · opencode 1 |" in table.split("\n")
 
 
 def test_takeaway_reflects_direction_and_critique_note() -> None:

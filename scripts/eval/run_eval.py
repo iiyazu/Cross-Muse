@@ -64,6 +64,7 @@ RESULTS_COLUMNS: tuple[str, ...] = (
     "judge_b",
     "agree",
     "agent_turns",
+    "turns_by_cli",
     "visible_msgs",
     "echo_msgs",
     "pure_ack_msgs",
