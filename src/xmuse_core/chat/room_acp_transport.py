@@ -670,7 +670,12 @@ class AcpRoomObservationTransport:
         prompt_text = _format_turn_prompt(
             role=delivery.participant.role,
             msg_type="room_observation",
-            prompt=build_room_observation_prompt(self._config.profile.runtime),
+            prompt=build_room_observation_prompt(
+                self._config.profile.runtime,
+                # Only a transport that really confines an owner tells it the
+                # workspace is writable.
+                owner=self._config.profile.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT,
+            ),
             context=submission.text,
         )
         preview = await self._kit.open_preview(
