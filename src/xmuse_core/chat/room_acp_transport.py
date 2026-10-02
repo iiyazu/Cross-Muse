@@ -144,6 +144,10 @@ class AcpProviderProfile:
     # When a turn ends while the attempt still holds no durable outcome, prompt
     # the same session once more inside the same lease and timeout budget.
     outcome_reminder: bool = False
+    # Dynamic models (e.g. OpenCode ACP server discovering third-party models
+    # asynchronously on startup) may take several seconds to settle.
+    model_settle_timeout_s: float = 15.0
+    model_settle_poll_interval_s: float = 0.5
 
 
 CLAUDE_ACP_PROFILE = AcpProviderProfile(
@@ -175,6 +179,8 @@ OPENCODE_ACP_PROFILE = AcpProviderProfile(
     # Low-cost models often answer the Room in plain text, which never becomes
     # Room truth; one in-lease reminder recovers most of those turns.
     outcome_reminder=True,
+    model_settle_timeout_s=15.0,
+    model_settle_poll_interval_s=0.5,
 )
 ROOM_ACP_OUTCOME_REMINDER = (
     "Your turn ended without a durable Room outcome, so the Room received nothing: "
@@ -1040,25 +1046,57 @@ class AcpRoomObservationTransport:
         logger.info("room_acp_permission_mode_selected mode_id=default")
 
     async def _select_model(self, session: _AcpSession, delivery: RoomObservationDelivery) -> None:
-        """Select the participant's model through the profile's ACP config option."""
+        """Select the participant's model through the profile's ACP config option.
+
+        Some providers (e.g. OpenCode) discover dynamic third-party models
+        asynchronously after starting their internal standalone server. Retry
+        until ``model_settle_timeout_s`` expires.
+        """
 
         option = self._config.profile.model_config_option
         if option is None:
             return
         model = resolve_acp_model(delivery.participant.model, self._config.default_model)
-        try:
-            await session.connection.set_config_option(
-                config_id=option,
-                session_id=session.acp_session_id,
-                value=model,
-            )
-        except Exception as exc:
-            # Never fall back to the agent's own default model: it may be a paid
-            # model the operator did not choose for this participant.
-            raise RoomAcpTransportError(
-                "room_acp_model_unavailable", f"{model}: {type(exc).__name__}: {exc}"
-            ) from exc
-        logger.info("room_acp_model_selected model=%s", model)
+        settle_timeout = min(
+            max(0.0, float(self._config.profile.model_settle_timeout_s)),
+            max(0.0, float(self._config.initialize_timeout_s)),
+        )
+        poll_interval = max(0.01, float(self._config.profile.model_settle_poll_interval_s))
+        deadline = asyncio.get_running_loop().time() + settle_timeout
+
+        last_error: Exception | None = None
+        while True:
+            if session.closed or session.process.returncode is not None:
+                raise RoomAcpTransportError(
+                    "room_acp_model_unavailable",
+                    f"{model}: agent process exited before model could be selected"
+                    + (f": {last_error}" if last_error else ""),
+                )
+            try:
+                await session.connection.set_config_option(
+                    config_id=option,
+                    session_id=session.acp_session_id,
+                    value=model,
+                )
+                logger.info("room_acp_model_selected model=%s", model)
+                return
+            except Exception as exc:
+                last_error = exc
+                now = asyncio.get_running_loop().time()
+                if now >= deadline or session.closed or session.process.returncode is not None:
+                    # Never fall back to the agent's own default model: it may be a paid
+                    # model the operator did not choose for this participant.
+                    raise RoomAcpTransportError(
+                        "room_acp_model_unavailable", f"{model}: {type(exc).__name__}: {exc}"
+                    ) from exc
+                logger.debug(
+                    "room_acp_model_waiting_settle model=%s remaining=%.1fs error=%s",
+                    model,
+                    deadline - now,
+                    exc,
+                )
+                sleep_duration = min(poll_interval, deadline - now)
+                await asyncio.sleep(sleep_duration)
 
     async def _reap_failed_spawn(
         self, session: _AcpSession | None, process: asyncio.subprocess.Process

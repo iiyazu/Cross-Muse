@@ -34,8 +34,10 @@ from xmuse_core.chat.room_acp_transport import (
     OPENCODE_ACP_PROFILE,
     ROOM_ACP_BUILTIN_TOOLS,
     ROOM_ACP_PROVIDER_SESSION_KIND,
+    AcpProviderProfile,
     AcpRoomObservationTransport,
     AcpTransportConfig,
+    RoomAcpTransportError,
     _tool_identity_candidates,
 )
 from xmuse_core.chat.room_agent_stream import (
@@ -696,3 +698,158 @@ async def _reconcile_scenario(tmp_path: Path, mcp_url: str) -> None:
     events = _read_events(tmp_path / "acp-agent.jsonl")
     assert _event(events, "cancel_received") is not None
     assert any(event["event"] in {"agent_exit", "sigterm_received"} for event in events)
+
+
+def _make_test_delivery(db: Path, model: str) -> RoomObservationDelivery:
+    conv_id = RoomTestStore(db).create_conversation("test").id
+    participant = ParticipantStore(db).add(
+        conversation_id=conv_id,
+        role="review",
+        display_name="Verifier",
+        cli_kind="opencode",
+        model=model,
+    )
+    return RoomObservationDelivery(
+        conversation_id=conv_id,
+        participant=participant,
+        observation={"observation_id": "obs-1"},
+        source_activity={"activity_id": "act-1"},
+        recent_activities=(),
+        active_participants=(),
+        transport_request_id="req-1",
+        outcome_client_request_id="out-1",
+    )
+
+
+def test_select_model_retries_until_settled(tmp_path: Path) -> None:
+    asyncio.run(_select_model_retries_scenario(tmp_path))
+
+
+async def _select_model_retries_scenario(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _FakeConnection:
+        async def set_config_option(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            if len(calls) < 3:
+                raise RuntimeError("model not found: opencode-go/muse-spark-1.3-contributor")
+            return SimpleNamespace()
+
+    profile = AcpProviderProfile(
+        runtime="opencode",
+        confinement="os_read_only_sandbox",
+        approvable_tool_titles=frozenset(),
+        model_config_option="model",
+        model_settle_timeout_s=5.0,
+        model_settle_poll_interval_s=0.01,
+    )
+    config = AcpTransportConfig(
+        workspace=tmp_path,
+        command=("true",),
+        profile=profile,
+        default_model="opencode-go/muse-spark-1.3-contributor",
+        initialize_timeout_s=10.0,
+    )
+    transport = AcpRoomObservationTransport(
+        config=config,
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    session = SimpleNamespace(
+        closed=False,
+        process=SimpleNamespace(returncode=None),
+        acp_session_id="test-session-1",
+        connection=_FakeConnection(),
+    )
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode-go/muse-spark-1.3-contributor")
+
+    await transport._select_model(session, delivery)
+    assert len(calls) == 3
+    assert calls[0]["value"] == "opencode-go/muse-spark-1.3-contributor"
+
+
+def test_select_model_fails_when_settle_deadline_expires(tmp_path: Path) -> None:
+    asyncio.run(_select_model_deadline_scenario(tmp_path))
+
+
+async def _select_model_deadline_scenario(tmp_path: Path) -> None:
+    class _FailingConnection:
+        async def set_config_option(self, **kwargs: Any) -> Any:
+            raise RuntimeError("model not found: non-existent-model")
+
+    profile = AcpProviderProfile(
+        runtime="opencode",
+        confinement="os_read_only_sandbox",
+        approvable_tool_titles=frozenset(),
+        model_config_option="model",
+        model_settle_timeout_s=0.05,
+        model_settle_poll_interval_s=0.01,
+    )
+    config = AcpTransportConfig(
+        workspace=tmp_path,
+        command=("true",),
+        profile=profile,
+        default_model="opencode/non-existent-model",
+        initialize_timeout_s=10.0,
+    )
+    transport = AcpRoomObservationTransport(
+        config=config,
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    session = SimpleNamespace(
+        closed=False,
+        process=SimpleNamespace(returncode=None),
+        acp_session_id="test-session-1",
+        connection=_FailingConnection(),
+    )
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/non-existent-model")
+
+    with pytest.raises(RoomAcpTransportError) as exc_info:
+        await transport._select_model(session, delivery)
+    assert exc_info.value.code == "room_acp_model_unavailable"
+    assert "non-existent-model" in str(exc_info.value)
+
+
+def test_select_model_aborts_immediately_on_process_exit(tmp_path: Path) -> None:
+    asyncio.run(_select_model_process_exit_scenario(tmp_path))
+
+
+async def _select_model_process_exit_scenario(tmp_path: Path) -> None:
+    class _FailingConnection:
+        async def set_config_option(self, **kwargs: Any) -> Any:
+            raise RuntimeError("connection closed")
+
+    profile = AcpProviderProfile(
+        runtime="opencode",
+        confinement="os_read_only_sandbox",
+        approvable_tool_titles=frozenset(),
+        model_config_option="model",
+        model_settle_timeout_s=10.0,
+        model_settle_poll_interval_s=0.5,
+    )
+    config = AcpTransportConfig(
+        workspace=tmp_path,
+        command=("true",),
+        profile=profile,
+        default_model="opencode/some-model",
+        initialize_timeout_s=10.0,
+    )
+    transport = AcpRoomObservationTransport(
+        config=config,
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    session = SimpleNamespace(
+        closed=False,
+        process=SimpleNamespace(returncode=1),
+        acp_session_id="test-session-1",
+        connection=_FailingConnection(),
+    )
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/some-model")
+
+    start = time.monotonic()
+    with pytest.raises(RoomAcpTransportError) as exc_info:
+        await transport._select_model(session, delivery)
+    duration = time.monotonic() - start
+
+    assert duration < 1.0
+    assert exc_info.value.code == "room_acp_model_unavailable"
+    assert "agent process exited" in str(exc_info.value)
