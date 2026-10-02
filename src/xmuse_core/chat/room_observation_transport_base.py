@@ -1047,7 +1047,9 @@ def _fit_context_envelope(context: dict[str, Any]) -> dict[str, Any]:
         [member["activity"] for member in room["observation_batch"]["members"]],
         room["causal_ancestry"],
     ]
-    for limit in (1024, 512, 256):
+    # Batch members and ancestry may arrive above the per-activity bound; shrink them
+    # back to it before going lower.
+    for limit in (4000, 2048, 1024, 512, 256):
         if encoded_size() <= ROOM_CONTEXT_BYTE_LIMIT:
             break
         for activities in activity_groups:

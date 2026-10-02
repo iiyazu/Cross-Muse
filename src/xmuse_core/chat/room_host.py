@@ -62,6 +62,9 @@ class RoomHostPolicy:
     max_batch_size: int = 4
     context_activity_limit: int = 8
     max_activity_payload_chars: int = 4000
+    # Human root, primary source, batch members, and ancestry: the inputs a participant
+    # acts on. The 64 KiB envelope fitter still bounds the whole delivery.
+    max_primary_payload_chars: int = 16000
     provider_min_delivery_timeout_s: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -79,8 +82,11 @@ class RoomHostPolicy:
             "max_batch_size",
             "context_activity_limit",
             "max_activity_payload_chars",
+            "max_primary_payload_chars",
         ):
             _positive_int(getattr(self, name), name)
+        if self.max_primary_payload_chars < self.max_activity_payload_chars:
+            raise ValueError("max_primary_payload_chars_below_activity_limit")
         for cli_kind, minimum in self.provider_min_delivery_timeout_s.items():
             if not isinstance(cli_kind, str) or not cli_kind.strip():
                 raise ValueError("provider_min_delivery_timeout_s_invalid")
@@ -1030,6 +1036,7 @@ class RoomParticipantHost:
                         fallback_observation=observation,
                         recent_activity_limit=self._policy.context_activity_limit,
                         max_payload_chars=self._policy.max_activity_payload_chars,
+                        max_primary_content_chars=self._policy.max_primary_payload_chars,
                     )
                     batch_delivery = selected_context.batch
                     execution_review_materials = self._execution_review_materials(
@@ -1154,6 +1161,7 @@ class RoomParticipantHost:
         fallback_observation: dict[str, Any],
         recent_activity_limit: int,
         max_payload_chars: int,
+        max_primary_content_chars: int,
     ) -> RoomContextSelection:
         return select_room_context(
             source_activity=source_activity,
@@ -1165,6 +1173,7 @@ class RoomParticipantHost:
             fallback_observation=fallback_observation,
             recent_activity_limit=recent_activity_limit,
             max_payload_chars=max_payload_chars,
+            max_primary_content_chars=max_primary_content_chars,
         )
 
     def _setup_failure_stage(
