@@ -805,6 +805,38 @@ def test_real_bwrap_hides_secrets_home_runtime_and_network(tmp_path: Path) -> No
     assert not hasattr(result, "output")
 
 
+def test_real_bwrap_probe_ignores_unreaped_defunct_children(tmp_path: Path) -> None:
+    if os.environ.get(SANDBOX_ACTIVE_ENV) == "1":
+        pytest.skip("nested user namespaces are disabled by the outer execution sandbox")
+    if shutil.which("bwrap") is None:
+        pytest.skip("bubblewrap unavailable")
+    repo = _repo(tmp_path)
+    stage = tmp_path / "defunct-stage"
+    _git(repo, "worktree", "add", "--detach", str(stage), "HEAD")
+    code = (
+        "import os,time\n"
+        "for _index in range(20):\n"
+        "    if os.fork() == 0:\n"
+        "        os._exit(0)\n"
+        "time.sleep(3)\n"
+    )
+    try:
+        layout = discover_sandbox_layout(stage=stage, execution_root=repo, gate_ids=())
+        result = run_gate(
+            layout,
+            probe=GateSpec(
+                "defunct_child_probe",
+                ("/usr/bin/python3", "-c", code),
+                "/workspace",
+                20.0,
+            ),
+        )
+    finally:
+        _git(repo, "worktree", "remove", "--force", str(stage))
+
+    assert result.status == "passed", result.reason_code
+
+
 def test_real_frontend_gate_ignores_candidate_controlled_npm_scripts(tmp_path: Path) -> None:
     if os.environ.get(SANDBOX_ACTIVE_ENV) == "1":
         pytest.skip("nested user namespaces are disabled by the outer execution sandbox")
