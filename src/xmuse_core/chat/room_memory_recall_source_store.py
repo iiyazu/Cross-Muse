@@ -119,7 +119,14 @@ class RoomMemoryRecallSourceStore:
                 row["session_state"] != "bound" or row["attachment_state"] != "attached"
                 for row in bindings
             ):
-                raise RoomMemoryStoreError("room_memory_recall_unavailable")
+                # Bindings attach asynchronously; unbound/attaching rows are still
+                # progressing, but an uncertain row is an error the pump must reopen.
+                if any(
+                    row["session_state"] == "uncertain" or row["attachment_state"] == "uncertain"
+                    for row in bindings
+                ):
+                    raise RoomMemoryStoreError("room_memory_recall_unavailable")
+                raise RoomMemoryStoreError("room_memory_recall_binding_pending")
             session_ids = {str(row["session_id"]) for row in bindings}
             if len(session_ids) != 1:
                 raise RoomMemoryStoreError("room_memory_recall_unavailable")

@@ -31,6 +31,7 @@ from xmuse_core.chat.room_memory_runtime import (
     RoomMemoryRecallInput,
     RoomMemoryRecallPort,
     disabled_memory_evidence,
+    room_memory_recall_wait_budget_s,
 )
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.skills.catalog import SkillCatalog
@@ -1591,8 +1592,9 @@ class RoomParticipantHost:
         timeout_s = float(runtime.recall_timeout_s)
         if not 0.1 <= timeout_s <= 10.0:
             timeout_s = ROOM_MEMORY_RECALL_TIMEOUT_S
+        recall_bound_s = timeout_s + room_memory_recall_wait_budget_s(timeout_s)
         try:
-            async with asyncio.timeout(timeout_s):
+            async with asyncio.timeout(recall_bound_s):
                 evidence = await runtime.recall(
                     RoomMemoryRecallInput(
                         conversation_id=delivery.conversation_id,
