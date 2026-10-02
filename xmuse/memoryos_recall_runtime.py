@@ -25,6 +25,7 @@ from xmuse_core.chat.room_memory_runtime import (
     ROOM_MEMORY_MAX_TOKENS,
     RoomMemoryEvidence,
     RoomMemoryRecallInput,
+    room_memory_recall_wait_budget_s,
 )
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -75,12 +76,7 @@ class MemoryOSRecallRuntime:
     async def recall(self, request: RoomMemoryRecallInput) -> RoomMemoryEvidence:
         started = time.perf_counter()
         try:
-            durable = self._source_store.build_recall_request(
-                conversation_id=request.conversation_id,
-                attempt_id=request.attempt_id,
-                correlation_id=request.correlation_id,
-                causal_activity_ids=request.causal_activity_ids,
-            )
+            durable = await self._await_recall_request(request)
             session_id = _required_id(durable, "session_id", "room_memory_binding_unavailable")
             task = str(durable.get("task") or request.task)
             query = durable.get("retrieval_query")
@@ -118,6 +114,24 @@ class MemoryOSRecallRuntime:
             if not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", code):
                 code = "room_memory_unavailable"
             return _degraded("unavailable", code, started)
+
+    async def _await_recall_request(self, request: RoomMemoryRecallInput) -> Mapping[str, Any]:
+        deadline = time.monotonic() + room_memory_recall_wait_budget_s(self.recall_timeout_s)
+        while True:
+            try:
+                return await asyncio.to_thread(
+                    self._source_store.build_recall_request,
+                    conversation_id=request.conversation_id,
+                    attempt_id=request.attempt_id,
+                    correlation_id=request.correlation_id,
+                    causal_activity_ids=request.causal_activity_ids,
+                )
+            except Exception as exc:
+                if getattr(exc, "code", "") != "room_memory_recall_binding_pending":
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.1)
 
     async def _record_advisories(
         self,

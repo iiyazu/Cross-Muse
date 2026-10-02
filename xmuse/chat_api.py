@@ -64,6 +64,9 @@ def create_app(
     workroom_runtime_reconcile_interval_s: float = DEFAULT_RUNTIME_RECONCILE_INTERVAL_S,
     execution_reconcile_interval_s: float = DEFAULT_EXECUTION_RECONCILE_INTERVAL_S,
     memory_runtime_status_provider: Callable[[], Mapping[str, Any]] | None = None,
+    provider_capabilities_provider: (
+        Callable[[], Mapping[str, Mapping[str, object]]] | None
+    ) = None,
 ) -> FastAPI:
     operator_token = resolve_operator_token(auth_token)
     resolved_root = Path(base_dir).expanduser().resolve()
@@ -89,7 +92,11 @@ def create_app(
         execution_stopper=execution_runtime.stop_all,
         execution_reconcile_interval_s=execution_reconcile_interval_s,
     )
-    register_room_setup_routes(app, root=context.root)
+    register_room_setup_routes(
+        app,
+        root=context.root,
+        provider_capabilities_provider=provider_capabilities_provider,
+    )
     register_bootstrap_route(
         app,
         root=context.root,
@@ -97,6 +104,7 @@ def create_app(
             memory_runtime_status_provider or (lambda: browser_memoryos_status(context.root))
         ),
         execution_profile_provider=execution_runtime.profile_status,
+        provider_capabilities_provider=provider_capabilities_provider,
     )
     register_room_projection_routes(app, root=context.root)
     register_room_control_routes(

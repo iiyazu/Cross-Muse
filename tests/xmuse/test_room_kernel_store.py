@@ -147,7 +147,7 @@ def test_bootstrap_init_god_is_not_a_room_observer(tmp_path):
     assert init_god.participant_id not in participant_ids
 
 
-@pytest.mark.parametrize("cli_kind", ["a2a", "opencode"])
+@pytest.mark.parametrize("cli_kind", ["a2a"])
 def test_historical_provider_cannot_receive_or_claim_room_work(tmp_path, cli_kind):
     path = tmp_path / "chat.db"
     conversation_id, participant = _single_participant_room(path, "historical")

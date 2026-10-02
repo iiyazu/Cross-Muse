@@ -17,6 +17,10 @@ from xmuse_core.chat.memoryos_supervisor import (
     memoryos_rebuildability,
     safe_memoryos_status,
 )
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_database import RoomDatabase, RoomDatabaseError
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
 from xmuse_core.chat.room_operations_schema import (
@@ -374,9 +378,10 @@ def _observation_rows(
                 on a.attempt_id = o.current_attempt_id
               {batch_join}
              where o.status <> 'completed'
-               and p.cli_kind = 'codex'
+               and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                {canonical_predicate}
-            """
+            """,
+            (*ROOM_AGENT_CLI_KINDS,),
         ).fetchone()
         assert aggregate is not None
         counts = {key: int(aggregate[key]) for key in zero}
@@ -395,7 +400,7 @@ def _observation_rows(
               left join room_observation_attempts a on a.attempt_id = o.current_attempt_id
               {batch_join}
              where o.status <> 'completed'
-               and p.cli_kind = 'codex'
+               and p.cli_kind in ({room_agent_cli_kind_placeholders()})
                {canonical_predicate}
                and (a.reason_code = 'room_skill_catalog_drift'
                     or o.control_state in ('cancel_requested','cancel_pending','exhausted')
@@ -413,7 +418,8 @@ def _observation_rows(
                       ) asc,
                       o.observation_id asc
              limit 20
-            """
+            """,
+            (*ROOM_AGENT_CLI_KINDS,),
         ).fetchall()
     incidents: list[dict[str, Any]] = []
     for row in rows:

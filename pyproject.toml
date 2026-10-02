@@ -5,6 +5,7 @@ description = "Durable runtime for agent group conversations and software work"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "agent-client-protocol>=0.12.1",
     "fastapi>=0.136.1",
     "pydantic>=2.13.3",
     "pyyaml>=6.0.3",
@@ -18,6 +19,7 @@ xmuse-room-runner = "xmuse.room_runner:main"
 xmuse-workroom = "xmuse.workroom_cli:main"
 xmuse-data = "xmuse.data_cli:main"
 xmuse-setup = "xmuse.setup_cli:main"
+xmuse-room-mcp-stdio = "xmuse.room_mcp_stdio:main"
 
 [build-system]
 requires = ["hatchling>=1.28.0"]

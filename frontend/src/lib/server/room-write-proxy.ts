@@ -10,6 +10,9 @@ const PARTICIPANT_KEYS = [
   "display_name"
 ];
 
+const PROVIDER_KINDS = ["codex", "claude", "antigravity", "opencode"];
+const COLLABORATION_MODES = ["broadcast", "addressed"];
+
 function optionalText(value: unknown, maximum = 200): string | null | undefined {
   if (value === undefined || value === null) return undefined;
   return boundedText(value, maximum);
@@ -34,8 +37,8 @@ function normalizeParticipant(value: unknown) {
     model === null ||
     roleTemplateId === null ||
     displayName === null ||
-    (providerId !== undefined && providerId !== "codex") ||
-    (cliKind !== undefined && cliKind !== "codex")
+    (providerId !== undefined && !PROVIDER_KINDS.includes(providerId)) ||
+    (cliKind !== undefined && !PROVIDER_KINDS.includes(cliKind))
   ) return null;
   return {
     role,
@@ -48,10 +51,29 @@ function normalizeParticipant(value: unknown) {
   };
 }
 
+function normalizeCollaboration(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  if (Object.keys(source).some((key) => key !== "mode" && key !== "lead_role")) return null;
+  const mode = boundedText(source.mode, 16);
+  const leadRole = optionalText(source.lead_role, 64);
+  if (!mode || !COLLABORATION_MODES.includes(mode) || leadRole === null) return null;
+  return {
+    mode,
+    ...(leadRole ? { lead_role: leadRole } : {})
+  };
+}
+
 function normalizeCreateBody(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
-  const allowed = new Set(["title", "client_request_id", "roster_template_id", "initial_participants"]);
+  const allowed = new Set([
+    "title",
+    "client_request_id",
+    "roster_template_id",
+    "initial_participants",
+    "collaboration"
+  ]);
   if (Object.keys(source).some((key) => !allowed.has(key))) return null;
   const title = boundedText(source.title, 200);
   const requestId = boundedText(source.client_request_id);
@@ -65,11 +87,17 @@ function normalizeCreateBody(value: unknown) {
     participants = source.initial_participants.map(normalizeParticipant);
     if (participants.some((item) => item === null)) return null;
   }
+  let collaboration: ReturnType<typeof normalizeCollaboration> | undefined;
+  if (source.collaboration !== undefined && source.collaboration !== null) {
+    collaboration = normalizeCollaboration(source.collaboration);
+    if (collaboration === null) return null;
+  }
   return {
     title,
     client_request_id: requestId,
     ...(rosterTemplateId ? { roster_template_id: rosterTemplateId } : {}),
-    ...(participants ? { initial_participants: participants } : {})
+    ...(participants ? { initial_participants: participants } : {}),
+    ...(collaboration ? { collaboration } : {})
   };
 }
 

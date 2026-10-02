@@ -8,6 +8,10 @@ from collections.abc import Sequence
 from typing import Literal
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_execution_common import json_value as _json
 from xmuse_core.chat.room_execution_common import new_id as _id
@@ -83,10 +87,11 @@ def insert_terminal_activity_conn(
         ),
     )
     active = conn.execute(
-        """select participant_id from participants where conversation_id = ?
-               and status = 'active' and cli_kind = 'codex'
+        f"""select participant_id from participants where conversation_id = ?
+               and status = 'active'
+               and cli_kind in ({room_agent_cli_kind_placeholders()})
                and role <> ? order by participant_id""",
-        (run["conversation_id"], INIT_GOD_ROLE),
+        (run["conversation_id"], *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE),
     ).fetchall()
     for participant in active:
         observation_id = _id("observation")

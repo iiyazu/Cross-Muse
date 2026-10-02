@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from xmuse_core.chat.room_execution_candidates import cross_family_review_conn
 from xmuse_core.chat.room_execution_common import RoomExecutionStoreError, decode_json
 from xmuse_core.chat.room_execution_runs import gate_plan_for_candidate_conn
 
@@ -104,6 +105,7 @@ def candidate_view_conn(
             "revision": int(row["policy_revision_snapshot"]),
             "risk_policy_revision": row["risk_policy_revision_snapshot"],
         },
+        "cross_family_review": cross_family_review_conn(conn, row),
         "state": row["state"],
         "consensus_state": row["consensus_state"],
         "reason_code": row["reason_code"],

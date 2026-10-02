@@ -2,10 +2,21 @@
 
 ## Direction and evidence
 
-xmuse implements natural, logically decentralized Agent group conversations. Persistent
-Agents observe shared Room events and independently choose whether and how to respond.
+xmuse is a heterogeneous Agent workroom: independent Agents from different vendors (Codex,
+Claude Code, Antigravity, OpenCode, ...) join one durable Room with a Human and collaborate by
+capability. A Room selects a collaboration mode:
+
+- `broadcast` (default, the original protocol): every active Agent observes Room events and
+  independently chooses whether and how to respond.
+- `addressed`: only Agents addressed by a Human mention or a peer handoff observe an
+  activity; an unaddressed Human message goes to the Room's default lead. The lead is a
+  fallback recipient, not a central router or speaker queue; any addressed Agent may defer
+  or hand off.
+
 Infrastructure owns delivery, identity, causality, attempts, safety, and privileged
-execution; it must not impersonate an Agent.
+execution; it must not impersonate an Agent. Provider transports differ (Codex app-server,
+ACP, Antigravity agentapi), but every Agent writes Room truth only through the same
+identity-, attempt-, and lease-bound outcome tool.
 
 Treat implementation and fresh tests as evidence. Documentation is descriptive.
 
@@ -52,10 +63,13 @@ do not load `.env`.
 
 - `chat.db` is durable Room authority; `god_sessions.json` is durable
   participant/provider binding state.
-- Human speech atomically creates root observations for every active participant. Once the
+- In `broadcast` mode, Human speech atomically creates root observations for every active
+  participant; in `addressed` mode, only for the addressed participants (or the lead). Once the
   root phase terminates, same-participant peer observations for that correlation are claimed
-  as an immutable batch with one attempt and outcome. Mentions affect priority, not
-  eligibility or the bounded response budget.
+  as an immutable batch with one attempt and outcome. In `broadcast` mode mentions affect
+  priority, not eligibility or the bounded response budget; in `addressed` mode they select
+  eligibility. Addressed deliveries carry `room_context.collaboration` (mode, lead, whether the
+  recipient is the lead, and handoff guidance) because peers never see unaddressed work.
 - The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`, and
   `room_operations_projection/v2`.
 - Room Agent response previews use a separate private disposable cache and
@@ -64,6 +78,21 @@ do not load `.env`.
 - The isolated Room Runner does not initialize a platform queue, scheduler, review plane,
   execution harness, self-evolution controller, or A2A transport.
 - Room Codex sessions are participant-bound, read-only, network-disabled, and config-isolated.
+  Other providers must deny or be instructed against workspace writes; their confinement
+  level is reported per provider and never assumed equal to Codex. Workspace changes still
+  enter only through exact-patch candidates. Claude ACP sessions run with built-in tools
+  limited to Read/Glob/Grep (no Bash), no workspace project/local settings, the `default`
+  permission mode pinned via `session/set_mode`, and only the exact room outcome MCP tool
+  approved by the ACP permission callback. OpenCode ACP sessions run its own tools without
+  asking the client, so the agent process runs under bubblewrap instead: filesystem and
+  workspace read-only, private `/tmp`, other tools' credential stores and the xmuse root
+  masked, only OpenCode's own state directories writable (`os_read_only_sandbox`). Its model
+  comes from `XMUSE_OPENCODE_MODEL` and an unknown model fails the attempt rather than
+  falling back. A turn that ends without a durable outcome gets at most one in-lease reminder
+  prompt for profiles that opt in (OpenCode); provider text is still never Room truth.
+- A failed attempt reopens immediately only when its transport proved the provider
+  generation gone (`cleanup_succeeded`); otherwise it waits out its lease. The attempt limit
+  applies either way.
 - Managed MCP exposes only `/health`, `/mcp/room`, and
   `chat_room_submit_outcome`. New batch deliveries bind that outcome to the exact batch and
   may name a reply target from the delivered members. Provider final text is not Room truth.
@@ -108,9 +137,11 @@ do not load `.env`.
 - Use Git history instead of repository `legacy/`, `archive/`, or source backups.
 - Preserve authority, identity, causality, idempotency, recovery, and data-safety invariants.
 - Avoid inventory and exact-document-wording tests; test behavior and package direction.
-- Do not reintroduce a central speaker queue, platform runner, broad MCP, Dashboard, A2A
+- Do not reintroduce a central speaker queue or LLM router that decides for Agents, platform
+  runner, broad MCP, Dashboard, A2A
   experiment, an always-on or authoritative MemoryOS runtime, Ray, repository-local OpenCode
-  orchestration, or LangGraph execution into the default product.
+  orchestration (OpenCode as a sandboxed Room participant is a provider, not orchestration),
+  or LangGraph execution into the default product.
 - Do not commit databases, logs, PID/receipt files, runtime roots, `node_modules`,
   `.next`, or caches.
 - Preserve unrelated user changes. Never use `git reset --hard`.

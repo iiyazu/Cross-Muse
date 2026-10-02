@@ -568,7 +568,20 @@ class RoomCodexBridgeStore:
         return _action_view(updated, include_request=False)
 
     def participant_accepts_delivery(self, participant_id: str) -> bool:
+        """Host-wide delivery gate: only Codex participants have a native hold.
+
+        Non-Codex Room agents are never held by the Codex native delivery plane; the
+        host's own active-participant filter owns their eligibility, so they pass the
+        gate unconditionally.
+        """
+
         with RoomDatabase(self._path).connect(readonly=True) as conn:
+            participant = conn.execute(
+                "select cli_kind from participants where participant_id = ?",
+                (participant_id,),
+            ).fetchone()
+            if participant is not None and participant["cli_kind"] != "codex":
+                return True
             row = conn.execute(
                 "select state from room_codex_delivery_holds where participant_id = ?",
                 (participant_id,),

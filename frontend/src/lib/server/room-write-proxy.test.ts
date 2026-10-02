@@ -87,7 +87,68 @@ describe("fixed Room create/message proxies", () => {
     expect(removeListenerSpy).toHaveBeenCalledWith("abort", expect.any(Function));
   });
 
-  it("rejects arbitrary fields, non-Codex participants, oversized messages, and public upstreams", async () => {
+  it("forwards a validated collaboration policy and heterogeneous provider kinds", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(Response.json({ id: "conv-1" }, { status: 201 }))
+    );
+    const roster = await proxyRoomCreate(request("/api/rooms", {
+      title: "Trio",
+      client_request_id: "create-trio",
+      roster_template_id: "builtin.heterogeneous-trio",
+      collaboration: { mode: "addressed", lead_role: "architect" }
+    }));
+    const manual = await proxyRoomCreate(request("/api/rooms", {
+      title: "Manual",
+      client_request_id: "create-manual",
+      initial_participants: [
+        { role: "architect", provider_id: "claude", cli_kind: "claude" },
+        { role: "researcher", provider_id: "antigravity", cli_kind: "antigravity" },
+        { role: "backend_reviewer", provider_id: "codex" }
+      ],
+      collaboration: { mode: "broadcast" }
+    }));
+
+    expect(roster.status).toBe(201);
+    expect(manual.status).toBe(201);
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)) as Record<string, unknown>);
+    expect(bodies[0]).toEqual({
+      title: "Trio",
+      client_request_id: "create-trio",
+      roster_template_id: "builtin.heterogeneous-trio",
+      collaboration: { mode: "addressed", lead_role: "architect" }
+    });
+    expect(bodies[1].collaboration).toEqual({ mode: "broadcast" });
+    expect(bodies[1].initial_participants).toEqual([
+      { role: "architect", provider_id: "claude", cli_kind: "claude" },
+      { role: "researcher", provider_id: "antigravity", cli_kind: "antigravity" },
+      { role: "backend_reviewer", provider_id: "codex" }
+    ]);
+  });
+
+  it("rejects invalid collaboration policies before touching the upstream", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    for (const collaboration of [
+      { mode: "router" },
+      { mode: "addressed", lead_role: "" },
+      { mode: "addressed", router: "architect" },
+      { mode: "addressed", lead_role: 7 },
+      { mode: "broadcast", lead_role: "a".repeat(65) }
+    ]) {
+      expect((await proxyRoomCreate(request("/api/rooms", {
+        title: "Bad policy",
+        client_request_id: "create-bad-policy",
+        collaboration
+      }))).status).toBe(400);
+    }
+    expect((await proxyRoomCreate(request("/api/rooms", {
+      title: "Bad policy",
+      client_request_id: "create-bad-policy",
+      collaboration: ["addressed"]
+    }))).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects arbitrary fields, unknown providers, oversized messages, and public upstreams", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     expect((await proxyRoomCreate(request("/api/rooms", {
       title: "Bad",

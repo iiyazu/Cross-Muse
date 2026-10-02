@@ -353,3 +353,29 @@ def test_stop_fences_pid_reuse_before_signalling(tmp_path, monkeypatch) -> None:
 )
 def test_room_mcp_health_validator_rejects_non_ready_contract(payload) -> None:
     assert supervisor.room_mcp_health_ready(payload) is False
+
+
+def test_room_runner_env_reaches_only_the_runner_child(tmp_path) -> None:
+    config = _config(
+        tmp_path,
+        room_runner_env={"XMUSE_CLAUDE_ACP": "1", "XMUSE_ANTIGRAVITY": "0"},
+    )
+    captured: dict[str, dict[str, str]] = {}
+
+    def popen(_command, **kwargs):
+        captured[kwargs["env"]["XMUSE_WORKROOM_SERVICE"]] = kwargs["env"]
+        return _Process(1)
+
+    for service in ("room_runner", "room_mcp"):
+        supervisor._spawn_service(
+            config,
+            service=service,
+            command=["true"],
+            log_path=tmp_path / "logs" / f"{service}.log",
+            popen=popen,
+        )
+
+    assert captured["room_runner"]["XMUSE_CLAUDE_ACP"] == "1"
+    assert captured["room_runner"]["XMUSE_ANTIGRAVITY"] == "0"
+    assert "XMUSE_CLAUDE_ACP" not in captured["room_mcp"]
+    assert "XMUSE_ANTIGRAVITY" not in captured["room_mcp"]

@@ -12,8 +12,20 @@ from xmuse.chat_api import create_app
 from xmuse_core.chat import room_setup
 from xmuse_core.chat.participant_store import ParticipantStore
 
+AVAILABLE_PROVIDER_CAPABILITIES = {
+    "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
+    "claude": {"available": True, "enabled": True, "confinement": "client_permission_gated"},
+    "antigravity": {"available": True, "enabled": True, "confinement": "instructed_read_only"},
+    "opencode": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
+}
 
-def _client(root: Path) -> TestClient:
+
+def _client(
+    root: Path,
+    *,
+    capabilities: dict[str, dict[str, object]] | None = None,
+) -> TestClient:
+    resolved = AVAILABLE_PROVIDER_CAPABILITIES if capabilities is None else capabilities
     return TestClient(
         create_app(
             root,
@@ -22,6 +34,7 @@ def _client(root: Path) -> TestClient:
                 "ready": False,
                 "code": "room_runtime_stopped",
             },
+            provider_capabilities_provider=lambda: resolved,
         )
     )
 
@@ -115,6 +128,9 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     assert payload["default_roster_template_id"] == "builtin.development"
     assert [item["template_id"] for item in payload["roster_templates"]] == [
         "builtin.development",
+        "builtin.heterogeneous-duo",
+        "builtin.heterogeneous-trio",
+        "builtin.heterogeneous-trio-opencode",
         "custom.review",
     ]
     assert len(payload["roster_templates"][0]["participants"]) == 4
@@ -130,7 +146,195 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     assert "model" not in serialized
 
 
-@pytest.mark.parametrize("provider", ["a2a", "opencode"])
+def test_room_setup_options_mark_templates_with_unavailable_providers(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            tmp_path,
+            workroom_runtime_inspector=lambda *_: {
+                "state": "stopped",
+                "ready": False,
+                "code": "room_runtime_stopped",
+            },
+            provider_capabilities_provider=lambda: {
+                "codex": {
+                    "available": False,
+                    "enabled": False,
+                    "confinement": "read_only_sandbox",
+                },
+                "claude": {
+                    "available": True,
+                    "enabled": True,
+                    "confinement": "client_permission_gated",
+                },
+                "antigravity": {
+                    "available": False,
+                    "enabled": False,
+                    "confinement": "instructed_read_only",
+                },
+            },
+        )
+    )
+
+    payload = client.get("/api/chat/room-setup-options").json()
+
+    by_id = {item["template_id"]: item for item in payload["roster_templates"]}
+    assert by_id["builtin.development"]["available"] is False
+    assert by_id["builtin.development"]["unavailable_providers"] == ["codex"]
+    assert by_id["builtin.heterogeneous-duo"]["available"] is False
+    assert by_id["builtin.heterogeneous-duo"]["unavailable_providers"] == ["antigravity"]
+    assert by_id["builtin.heterogeneous-trio"]["available"] is False
+    assert by_id["builtin.heterogeneous-trio"]["unavailable_providers"] == [
+        "antigravity",
+        "codex",
+    ]
+
+
+def test_room_setup_options_return_roster_collaboration_presets(tmp_path: Path) -> None:
+    payload = _client(tmp_path).get("/api/chat/room-setup-options").json()
+
+    by_id = {item["template_id"]: item for item in payload["roster_templates"]}
+    addressed = {"mode": "addressed", "lead_role": "architect"}
+    assert by_id["builtin.heterogeneous-duo"]["collaboration"] == addressed
+    assert by_id["builtin.heterogeneous-trio"]["collaboration"] == addressed
+    assert by_id["builtin.heterogeneous-trio-opencode"]["collaboration"] == addressed
+    assert by_id["builtin.development"]["collaboration"] is None
+
+
+def test_room_setup_rejects_unavailable_template_provider_before_writing(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        capabilities={
+            **AVAILABLE_PROVIDER_CAPABILITIES,
+            "antigravity": {
+                "available": False,
+                "enabled": False,
+                "confinement": "instructed_read_only",
+            },
+        },
+    )
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "Missing researcher provider",
+            "client_request_id": "setup-unavailable-template",
+            "roster_template_id": "builtin.heterogeneous-duo",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "room_provider_unavailable"
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+        assert conn.execute("select count(*) from participants").fetchone()[0] == 0
+        assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 0
+
+    allowed = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "Codex-only roster",
+            "client_request_id": "setup-available-template",
+            "roster_template_id": "builtin.development",
+        },
+    )
+    assert allowed.status_code == 201
+
+
+def test_room_setup_replay_survives_a_provider_becoming_unavailable(tmp_path: Path) -> None:
+    body = {
+        "title": "Duo",
+        "client_request_id": "setup-replay-duo",
+        "roster_template_id": "builtin.heterogeneous-duo",
+    }
+    created = _client(tmp_path).post("/api/chat/conversations", json=body)
+    assert created.status_code == 201
+
+    degraded = _client(
+        tmp_path,
+        capabilities={
+            **AVAILABLE_PROVIDER_CAPABILITIES,
+            "antigravity": {
+                "available": False,
+                "enabled": False,
+                "confinement": "instructed_read_only",
+            },
+        },
+    )
+    replay = degraded.post("/api/chat/conversations", json=body)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == created.json()["id"]
+
+    fresh = degraded.post(
+        "/api/chat/conversations", json={**body, "client_request_id": "setup-new-duo"}
+    )
+    assert fresh.status_code == 422
+    assert fresh.json()["detail"]["code"] == "room_provider_unavailable"
+
+
+def test_room_setup_rejects_default_roster_with_unavailable_provider(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        capabilities={
+            kind: {"available": False, "enabled": False, "confinement": "read_only_sandbox"}
+            for kind in ("codex", "claude", "antigravity", "opencode")
+        },
+    )
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={"title": "No providers", "client_request_id": "setup-default-unavailable"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "room_provider_unavailable"
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+
+
+def test_room_setup_rejects_unavailable_explicit_participant_provider(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        capabilities={
+            **AVAILABLE_PROVIDER_CAPABILITIES,
+            "codex": {
+                "available": False,
+                "enabled": False,
+                "confinement": "read_only_sandbox",
+            },
+        },
+    )
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "Unavailable participant provider",
+            "client_request_id": "setup-unavailable-participant",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "provider_id": "codex",
+                    "profile_id": "review",
+                    "cli_kind": "codex",
+                    "model": "gpt-5.4",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "room_provider_unavailable"
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+        assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("provider", ["a2a"])
 def test_room_setup_public_request_rejects_retired_providers_before_writing(
     tmp_path: Path,
     provider: str,
@@ -155,6 +359,65 @@ def test_room_setup_public_request_rejects_retired_providers_before_writing(
     assert response.status_code == 422
     with sqlite3.connect(tmp_path / "chat.db") as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("provider", ["claude", "antigravity"])
+def test_room_setup_accepts_multi_provider_local_agents(
+    tmp_path: Path,
+    provider: str,
+) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": f"{provider} Room",
+            "client_request_id": f"setup-{provider}-agent",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "display_name": f"{provider} Reviewer",
+                    "provider_id": provider,
+                    "cli_kind": provider,
+                    "model": "reviewer-v1",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    participant = response.json()["participants"][0]
+    assert participant["cli_kind"] == provider
+    assert participant["provider_id"] == provider
+    assert participant["model"] == "reviewer-v1"
+    stored = ParticipantStore(tmp_path / "chat.db").get(participant["participant_id"])
+    assert stored.cli_kind == provider
+    assert stored.provider_id == provider
+    assert stored.status == "active"
+
+
+def test_room_setup_rejects_unknown_cli_kind_without_writing(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/chat/conversations",
+        json={
+            "title": "Unknown provider",
+            "initial_participants": [
+                {
+                    "role": "review",
+                    "provider_id": "gemini",
+                    "cli_kind": "gemini",
+                    "model": "gemini-2.5-pro",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    with sqlite3.connect(tmp_path / "chat.db") as conn:
+        assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
+        assert conn.execute("select count(*) from participants").fetchone()[0] == 0
 
 
 def test_room_setup_accepts_bounded_custom_local_roster(tmp_path: Path) -> None:

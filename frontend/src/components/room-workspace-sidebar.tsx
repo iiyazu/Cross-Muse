@@ -54,9 +54,9 @@ export function WorkspaceSidebar({
       loaded={store.roomsLoaded}
       loading={store.roomsLoading}
       onClose={onRequestCloseMobile}
-      onCreate={async (name, clientRequestId, rosterTemplateId) => {
+      onCreate={async (name, clientRequestId, rosterTemplateId, collaboration) => {
         setCreateRequestId(clientRequestId);
-        const id = await store.createRoom(name, clientRequestId, rosterTemplateId);
+        const id = await store.createRoom(name, clientRequestId, rosterTemplateId, collaboration);
         if (id) {
           setTitle("");
           setCreateRequestId(null);

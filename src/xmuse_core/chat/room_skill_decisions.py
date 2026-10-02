@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_skill_schema import (
     create_room_skill_decision_schema as create_room_skill_decision_schema,
@@ -117,7 +118,7 @@ def _assert_live_authority(row: sqlite3.Row, *, attempt_id: str, now: datetime) 
     if (
         row["current_attempt_id"] != attempt_id
         or row["observation_status"] != "claimed"
-        or row["participant_cli_kind"] != "codex"
+        or row["participant_cli_kind"] not in ROOM_AGENT_CLI_KINDS
         or row["control_state"] != "active"
         or row["state"] not in {"claimed", "delivering"}
         or not row["lease_token"]

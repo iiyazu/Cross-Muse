@@ -9,20 +9,43 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.agents.god_session_layer import GodSessionLayer
+from xmuse_core.chat.room_acp_transport import (
+    AcpRoomObservationTransport,
+    AcpTransportConfig,
+)
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
+from xmuse_core.chat.room_antigravity_transport import (
+    AntigravityRoomObservationTransport,
+    AntigravityTransportConfig,
+)
 from xmuse_core.chat.room_codex_native_runtime import RoomCodexNativeRuntime
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_ports import ExecutionReviewPort
-from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
+from xmuse_core.chat.room_host import (
+    RoomHostPolicy,
+    RoomObservationTransport,
+    RoomParticipantHost,
+)
 from xmuse_core.chat.room_memory_runtime import (
     RoomMemoryContextReceiptPort,
     RoomMemoryDeliveryPumpPort,
     RoomMemoryRecallPort,
 )
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 from xmuse_core.skills.catalog import SkillCatalog
+
+# Live provider turns can legitimately exceed the configured Room default
+# (Claude turns of ~280s were observed); each enabled slow provider gets this
+# floor, and the lease TTL below covers the longest floor so a delivery can
+# never outlive its claim.
+PROVIDER_MIN_DELIVERY_TIMEOUT_S: Mapping[str, float] = {
+    "claude": 600.0,
+    "antigravity": 420.0,
+    "opencode": 420.0,
+}
 
 
 @dataclass(frozen=True)
@@ -32,6 +55,8 @@ class RoomRuntimeComposition:
     native_runtime: RoomCodexNativeRuntime
     stream_projector: RoomAgentStreamProjector
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None
+    acp_transports: tuple[AcpRoomObservationTransport, ...] = ()
+    antigravity_transports: tuple[AntigravityRoomObservationTransport, ...] = ()
 
 
 def compose_room_runtime(
@@ -51,16 +76,36 @@ def compose_room_runtime(
     memory_recall: RoomMemoryRecallPort,
     memory_context_receipts: RoomMemoryContextReceiptPort,
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
+    claude_acp_config: AcpTransportConfig | None = None,
+    antigravity_config: AntigravityTransportConfig | None = None,
+    opencode_acp_config: AcpTransportConfig | None = None,
 ) -> RoomRuntimeComposition:
-    """Wire one Room-only runtime without starting process lifecycle tasks."""
+    """Wire one Room-only runtime without starting process lifecycle tasks.
+
+    ``claude_acp_config``, ``antigravity_config`` and ``opencode_acp_config``
+    enable the ``claude``, ``antigravity`` and ``opencode`` routes by building
+    each transport over the composition's shared disposable Agent preview
+    projector.  The always-present ``codex`` route is the Codex app-server
+    transport.
+    """
 
     session_layer = GodSessionLayer(
         registry_path=root / "god_sessions.json",
         launchers=dict(launchers),
     )
+    provider_min_delivery_timeout_s = {
+        cli_kind: PROVIDER_MIN_DELIVERY_TIMEOUT_S[cli_kind]
+        for cli_kind, enabled in (
+            ("claude", claude_acp_config is not None),
+            ("antigravity", antigravity_config is not None),
+            ("opencode", opencode_acp_config is not None),
+        )
+        if enabled
+    }
+    max_delivery_timeout_s = max([delivery_timeout_s, *provider_min_delivery_timeout_s.values()])
     lease_ttl_s = max(
         240,
-        int(math.ceil(delivery_timeout_s + cleanup_grace_s + 30.0)),
+        int(math.ceil(max_delivery_timeout_s + cleanup_grace_s + 30.0)),
     )
     native_runtime = RoomCodexNativeRuntime(
         root / "chat.db",
@@ -70,22 +115,53 @@ def compose_room_runtime(
         projection_cache=RoomCodexProjectionCache(root),
     )
     stream_projector = RoomAgentStreamProjector(RoomAgentStreamCache(root))
-    host = RoomParticipantHost(
-        root / "chat.db",
-        CodexRoomObservationTransport(
-            session_layer,
-            worktree=worktree,
+    routes: dict[str, RoomObservationTransport] = {}
+    acp_transports: list[AcpRoomObservationTransport] = []
+    antigravity_transports: list[AntigravityRoomObservationTransport] = []
+    for acp_config in (claude_acp_config, opencode_acp_config):
+        if acp_config is None:
+            continue
+        acp_transport = AcpRoomObservationTransport(
+            config=acp_config,
+            registry_path=root / "god_sessions.json",
             control_store=controls,
             skill_decision_store=skill_decisions,
             execution_store=execution_store,
             memory_runtime=memory_context_receipts,
             stream_projector=stream_projector,
-        ),
+        )
+        acp_transports.append(acp_transport)
+        routes[acp_config.profile.runtime] = acp_transport
+    if antigravity_config is not None:
+        antigravity_transport = AntigravityRoomObservationTransport(
+            config=antigravity_config,
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=skill_decisions,
+            execution_store=execution_store,
+            memory_runtime=memory_context_receipts,
+            stream_projector=stream_projector,
+        )
+        antigravity_transports.append(antigravity_transport)
+        routes["antigravity"] = antigravity_transport
+    routes["codex"] = CodexRoomObservationTransport(
+        session_layer,
+        worktree=worktree,
+        control_store=controls,
+        skill_decision_store=skill_decisions,
+        execution_store=execution_store,
+        memory_runtime=memory_context_receipts,
+        stream_projector=stream_projector,
+    )
+    host = RoomParticipantHost(
+        root / "chat.db",
+        RoutingRoomObservationTransport(routes),
         policy=RoomHostPolicy(
             delivery_timeout_s=delivery_timeout_s,
             cleanup_grace_s=cleanup_grace_s,
             lease_ttl_s=lease_ttl_s,
             max_batch_size=max_concurrent_rooms,
+            provider_min_delivery_timeout_s=provider_min_delivery_timeout_s,
         ),
         control_store=controls,
         skill_catalog=skill_catalog,
@@ -102,4 +178,6 @@ def compose_room_runtime(
         native_runtime=native_runtime,
         stream_projector=stream_projector,
         memory_delivery_pump=memory_delivery_pump,
+        acp_transports=tuple(acp_transports),
+        antigravity_transports=tuple(antigravity_transports),
     )

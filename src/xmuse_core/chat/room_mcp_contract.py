@@ -42,6 +42,21 @@ ROOM_OUTCOME_TOOL_SCHEMA: dict[str, Any] = {
                     },
                     "proposal_type": {"type": "string"},
                     "references": {"type": "array", "items": {"type": "string"}},
+                    "handoff_note": {
+                        "type": "object",
+                        "properties": {
+                            "what": {"type": "string", "maxLength": 2000},
+                            "why": {"type": "string", "maxLength": 2000},
+                            "tradeoffs": {"type": "string", "maxLength": 2000},
+                            "open_questions": {
+                                "type": "array",
+                                "maxItems": 16,
+                                "items": {"type": "string", "maxLength": 2000},
+                            },
+                            "next_action": {"type": "string", "maxLength": 2000},
+                        },
+                        "additionalProperties": False,
+                    },
                     "execution_patch": {
                         "type": "object",
                         "properties": {

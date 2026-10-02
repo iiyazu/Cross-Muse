@@ -622,14 +622,14 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
     receipt_store = RoomMemoryRecallReceiptStore(db)
     attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
     activity_id = root["activity"]["activity_id"]
-    with pytest.raises(RoomMemoryStoreError) as unavailable:
+    with pytest.raises(RoomMemoryStoreError) as pending:
         source_store.build_recall_request(
             conversation_id=conversation_id,
             attempt_id=attempt_id,
             correlation_id=root["activity"]["correlation_id"],
             causal_activity_ids=[activity_id],
         )
-    assert unavailable.value.code == "room_memory_recall_unavailable"
+    assert pending.value.code == "room_memory_recall_binding_pending"
     _setup_memory_session(binding, conversation_id)
     request = source_store.build_recall_request(
         conversation_id=conversation_id,
@@ -708,6 +708,59 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
         }
     ]
     assert "context_included" not in bound["item_refs"][0]
+
+
+def test_recall_request_separates_pending_bindings_from_unusable_authority(
+    tmp_path: Path,
+) -> None:
+    db, _registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
+    binding = RoomMemoryBindingStore(db)
+    source_store = RoomMemoryRecallSourceStore(db)
+    attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    activity_id = root["activity"]["activity_id"]
+
+    def build():
+        return source_store.build_recall_request(
+            conversation_id=conversation_id,
+            attempt_id=attempt_id,
+            correlation_id=root["activity"]["correlation_id"],
+            causal_activity_ids=[activity_id],
+        )
+
+    with pytest.raises(RoomMemoryStoreError) as missing:
+        build()
+    assert missing.value.code == "room_memory_recall_binding_pending"
+
+    binding.ensure_binding(conversation_id=conversation_id, scope_type="room")
+    with pytest.raises(RoomMemoryStoreError) as in_progress:
+        build()
+    assert in_progress.value.code == "room_memory_recall_binding_pending"
+
+    _setup_memory_session(binding, conversation_id)
+    assert build()["session_id"] == f"session-{conversation_id}"
+
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """update room_memory_bindings set session_id = ?
+               where conversation_id = ? and scope_type = 'project'""",
+            ("session-foreign", conversation_id),
+        )
+        conn.commit()
+    with pytest.raises(RoomMemoryStoreError) as mismatch:
+        build()
+    assert mismatch.value.code == "room_memory_recall_unavailable"
+
+    # An uncertain binding is an error awaiting the pump's reopen, not progress.
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """update room_memory_bindings set session_id = ?, attachment_state = 'uncertain'
+               where conversation_id = ? and scope_type = 'project'""",
+            (f"session-{conversation_id}", conversation_id),
+        )
+        conn.commit()
+    with pytest.raises(RoomMemoryStoreError) as uncertain:
+        build()
+    assert uncertain.value.code == "room_memory_recall_unavailable"
 
 
 def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(

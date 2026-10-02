@@ -170,7 +170,7 @@ def test_retired_provider_observations_do_not_create_actionable_incidents(
     db = tmp_path / "chat.db"
     _bulk_observations(db, 3)
     with sqlite3.connect(db) as conn:
-        conn.execute("update participants set cli_kind = 'opencode', model = 'historical'")
+        conn.execute("update participants set cli_kind = 'a2a', model = 'historical'")
 
     projection = build_room_operations_projection(db, _runtime())
 

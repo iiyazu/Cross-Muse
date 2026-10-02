@@ -44,9 +44,15 @@ def activity_context(
     participant_directory: Mapping[str, ParticipantContextIdentity],
     *,
     max_payload_chars: int,
+    max_content_chars: int | None = None,
 ) -> dict[str, Any]:
-    """Shape one activity while bounding untrusted payload text."""
+    """Shape one activity while bounding untrusted payload text.
 
+    ``max_content_chars`` (default ``max_payload_chars``) bounds the message content;
+    the raw payload preview always stays within ``max_payload_chars``.
+    """
+
+    content_limit = max_payload_chars if max_content_chars is None else max_content_chars
     keys = (
         "activity_id",
         "conversation_id",
@@ -65,7 +71,7 @@ def activity_context(
     raw_content = payload.get("content")
     content = raw_content if isinstance(raw_content, str) else None
     if content is not None:
-        content = content[:max_payload_chars]
+        content = content[:content_limit]
     actor_participant_id = activity.get("actor_participant_id")
     actor = participant_directory.get(str(actor_participant_id))
     targets: list[str] = []
@@ -95,9 +101,7 @@ def activity_context(
         },
         "target_participant_ids": targets,
         "content": content,
-        "content_truncated": activity_content_truncated(
-            activity, max_payload_chars=max_payload_chars
-        ),
+        "content_truncated": activity_content_truncated(activity, max_payload_chars=content_limit),
         "context_only": payload.get("context_only") is True,
         "payload_preview": _preview(payload, max_payload_chars),
     }
@@ -136,6 +140,7 @@ def batch_context(
     fallback_observation: Mapping[str, Any],
     fallback_activity: Mapping[str, Any],
     max_payload_chars: int,
+    max_content_chars: int | None = None,
 ) -> dict[str, Any]:
     identity: dict[str, Any] = {
         "schema_version": "room_observation_batch/v1",
@@ -179,6 +184,7 @@ def batch_context(
                     activity,
                     participant_directory,
                     max_payload_chars=max_payload_chars,
+                    max_content_chars=max_content_chars,
                 ),
             }
         )
@@ -198,9 +204,19 @@ def select_room_context(
     fallback_observation: Mapping[str, Any],
     recent_activity_limit: int,
     max_payload_chars: int,
+    max_primary_content_chars: int | None = None,
 ) -> RoomContextSelection:
-    """Select root, ancestry, immutable batch, and a bounded recent Room burst."""
+    """Select root, ancestry, immutable batch, and a bounded recent Room burst.
 
+    The Human root, primary source, batch members, and causal ancestry are what the
+    participant must act on, so their content uses ``max_primary_content_chars``
+    (default ``max_payload_chars``); only the recent burst keeps the tighter bound.
+    The transport's envelope fitter still degrades everything to fit 64 KiB.
+    """
+
+    primary_chars = (
+        max_payload_chars if max_primary_content_chars is None else max_primary_content_chars
+    )
     correlation_id = str(source_activity.get("correlation_id") or "")
     correlation_activities = [
         activity
@@ -238,14 +254,23 @@ def select_room_context(
         fallback_observation=fallback_observation,
         fallback_activity=source_activity,
         max_payload_chars=max_payload_chars,
+        max_content_chars=primary_chars,
     )
-    truncation_candidates = [
-        human_root,
-        source_activity,
-        *member_activities,
-        *ancestry,
-        *recent_source,
-    ]
+    # An activity counts as truncated only when no delivered copy carries it whole; a
+    # recent-burst copy of a primary input is shortened but the primary copy is not.
+    primary_ids = {
+        str(item["activity_id"])
+        for item in (human_root, source_activity, *member_activities, *ancestry)
+    }
+    truncated_ids: list[str] = []
+    for item in (human_root, source_activity, *member_activities, *ancestry, *recent_source):
+        activity_id = str(item["activity_id"])
+        limit = primary_chars if activity_id in primary_ids else max_payload_chars
+        if (
+            activity_content_truncated(item, max_payload_chars=limit)
+            and activity_id not in truncated_ids
+        ):
+            truncated_ids.append(activity_id)
     coverage = {
         "schema_version": "room_context_coverage/v1",
         "room_seq_cutoff": cutoff_seq,
@@ -253,22 +278,22 @@ def select_room_context(
         "recent_burst_omitted_count": max(0, len(eligible) - len(recent_source)),
         "causal_ancestry_included_count": len(ancestry),
         "causal_ancestry_omitted_count": 0,
-        "content_truncated_activity_ids": [
-            str(item["activity_id"])
-            for item in truncation_candidates
-            if activity_content_truncated(item, max_payload_chars=max_payload_chars)
-        ],
+        "content_truncated_activity_ids": truncated_ids,
     }
-    shape = lambda activity: activity_context(  # noqa: E731
-        activity,
-        participant_directory,
-        max_payload_chars=max_payload_chars,
-    )
+
+    def shape(activity: Mapping[str, Any], *, primary: bool = True) -> dict[str, Any]:
+        return activity_context(
+            activity,
+            participant_directory,
+            max_payload_chars=max_payload_chars,
+            max_content_chars=primary_chars if primary else max_payload_chars,
+        )
+
     return RoomContextSelection(
         human_root=shape(human_root),
         source_activity=shape(source_activity),
         causal_ancestry=tuple(shape(activity) for activity in ancestry),
-        recent_activities=tuple(shape(activity) for activity in recent_source),
+        recent_activities=tuple(shape(activity, primary=False) for activity in recent_source),
         batch=selected_batch,
         coverage=coverage,
     )

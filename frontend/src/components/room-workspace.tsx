@@ -14,6 +14,8 @@ import {
 import { useShallow } from "zustand/react/shallow";
 
 import {
+  codexConsoleAvailable,
+  providerBadge,
   roomAgentWorkStateLabel,
   roomParticipantStateLabel,
   roomStateLabel
@@ -21,6 +23,7 @@ import {
 import type {
   RoomParticipant,
   RoomAgentStream,
+  RoomCollaboration,
   RoomControlActionDescriptor,
   RoomExecutionCancelDescriptor,
   RoomExecutionDecisionDescriptor,
@@ -234,11 +237,13 @@ export function snapTimelineToBottom(container: HTMLElement) {
 const DurableTimelineContent = memo(function DurableTimelineContent({
   items,
   pendingMessages,
+  leadName,
   onJumpToReference,
   onRetry
 }: {
   items: RoomTimelineItem[];
   pendingMessages: RoomWorkspaceCache["pendingMessages"];
+  leadName: string | null;
   onJumpToReference: (messageId?: string | null, activityId?: string | null) => void;
   onRetry: (clientRequestId: string) => void;
 }) {
@@ -248,7 +253,7 @@ const DurableTimelineContent = memo(function DurableTimelineContent({
         {new Date(item.created_at ?? 0).toDateString() !== new Date(items[index - 1]?.created_at ?? 0).toDateString() ? (
           <div className="room-date-separator" role="separator"><span>{formatTime(item.created_at)}</span></div>
         ) : null}
-        <RoomMessage item={item} onJumpToReference={onJumpToReference} />
+        <RoomMessage item={item} leadName={leadName} onJumpToReference={onJumpToReference} />
       </Fragment>
     ))}
     {pendingMessages.map((pending) => <RoomPendingBubble key={pending.clientRequestId} onRetry={() => onRetry(pending.clientRequestId)} pending={pending} />)}
@@ -323,6 +328,11 @@ const RoomTimeline = memo(function RoomTimeline({
     ),
     [cache.projection?.participants]
   );
+  const leadName = useMemo(() => {
+    const collaboration = cache.projection?.collaboration;
+    if (collaboration?.mode !== "addressed" || !collaboration.lead_participant_id) return null;
+    return participantNames.get(collaboration.lead_participant_id) ?? null;
+  }, [cache.projection?.collaboration, participantNames]);
   const streamPresenceKey = visibleStreams
     .map((stream) => `${stream.stream_id}:${stream.state}`)
     .join("|");
@@ -494,6 +504,7 @@ const RoomTimeline = memo(function RoomTimeline({
         ) : null}
         <DurableTimelineContent
           items={cache.timelineItems}
+          leadName={leadName}
           onJumpToReference={handleJumpToReference}
           onRetry={handleRetryMessage}
           pendingMessages={cache.pendingMessages}
@@ -882,12 +893,25 @@ function AgentInspectorTab({ onNotice }: Pick<WorkspaceInspectorProps, "onNotice
   const refresh = useRoomStore((state) => state.refreshCodexAgents);
   const participants = codexCache?.projection?.participants ?? [];
   const selected = participants.find((item) => item.participant.participant_id === codexCache?.selectedParticipantId) ?? participants[0] ?? null;
+  const requestedParticipantId = codexCache?.selectedParticipantId ?? null;
+  const requestedRoomParticipant = requestedParticipantId
+    ? roomProjection?.participants.find((item) => item.participant_id === requestedParticipantId) ?? null
+    : null;
   const roomParticipant = roomProjection?.participants.find((item) => item.participant_id === selected?.participant.participant_id);
   const skillDecisions = useMemo(() => {
     const decisions = [roomParticipant?.frontier?.current_attempt?.skill_decision, roomParticipant?.last_completed_outcome?.skill_decision]
       .filter((item): item is RoomSkillDecision => Boolean(item));
     return [...new Map(decisions.map((item) => [`${item.skill_id}:${item.version}:${item.context_status}`, item])).values()].slice(-8);
   }, [roomParticipant]);
+  if (requestedRoomParticipant && !codexConsoleAvailable(requestedRoomParticipant.cli_kind)) {
+    const badge = providerBadge(requestedRoomParticipant.cli_kind);
+    return <section className="room-agent-console-section" aria-label="Codex Agent Console">
+      <div className="agent-console agent-console--empty" role="status">
+        <h3>Codex Agent Console（仅 Codex）</h3>
+        <p>{requestedRoomParticipant.display_name} 是 {badge?.label ?? "非 Codex"} 参与者，Codex 原生控制台仅适用于 Codex Agent。</p>
+      </div>
+    </section>;
+  }
   return <section className="room-agent-console-section" aria-label="Codex Agent Console">
     <div className="room-agent-console-tabs" role="tablist" aria-label="选择 Codex Agent">
       {participants.map((item) => <button aria-label={item.participant.display_name} aria-selected={item.participant.participant_id === selected?.participant.participant_id} key={item.participant.participant_id} onClick={() => selectParticipant(item.participant.participant_id)} role="tab" type="button"><strong>{item.participant.display_name}</strong><small>{item.participant.role} · {roomAgentWorkStateLabel(item)}</small></button>)}
@@ -1057,10 +1081,11 @@ function useCompactLayout() {
 }
 
 function WorkspaceHeader({
-  cache, compactNavigationOpen, inspectorOpen, onToggleInspector, onToggleNavigation,
-  onToggleTheme, participants, theme, title
+  cache, collaboration, compactNavigationOpen, inspectorOpen, onToggleInspector,
+  onToggleNavigation, onToggleTheme, participants, theme, title
 }: {
   cache: RoomWorkspaceCache | null;
+  collaboration: RoomCollaboration | null;
   compactNavigationOpen: boolean;
   inspectorOpen: boolean;
   onToggleInspector: () => void;
@@ -1080,6 +1105,7 @@ function WorkspaceHeader({
         ? { className: "has-attention", label: "长期记忆需要关注", glyph: "·" }
         : null;
   return <RoomHeader
+    collaboration={collaboration}
     inspectorOpen={inspectorOpen}
     navigationOpen={compactNavigationOpen}
     onToggleInspector={onToggleInspector}
@@ -1158,6 +1184,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
   }));
   const projection = cache?.projection ?? null;
   const participants = projection?.participants ?? selectedRoom?.members ?? [];
+  const collaboration = projection?.collaboration ?? selectedRoom?.collaboration ?? null;
   const activeTurns = projection?.turns.filter((turn) => turn.state !== "settled") ?? [];
   const currentTurn = activeTurns.at(-1) ?? projection?.turns.at(-1) ?? null;
   const title = projection?.conversation.title ?? selectedRoom?.title ?? "选择一个房间";
@@ -1288,6 +1315,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
       <main className="room-main">
         <WorkspaceHeader
           cache={cache}
+          collaboration={collaboration}
           compactNavigationOpen={compactLayout ? mobileSidebarOpen : store.sidebarOpen}
           inspectorOpen={store.inspectorOpen}
           onToggleInspector={() => store.setInspectorOpen(!store.inspectorOpen)}
@@ -1351,6 +1379,7 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
             ) : null}
             <RoomTimeline roomId={store.selectedRoomId} />
             <RoomComposer
+              collaboration={collaboration}
               disabled={!projection && cache.loading}
               draft={draft}
               key={store.selectedRoomId}

@@ -7,6 +7,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+from xmuse_core.chat.room_agent_kinds import (
+    ROOM_AGENT_CLI_KINDS,
+    room_agent_cli_kind_placeholders,
+)
 from xmuse_core.chat.room_execution_common import (
     RoomExecutionStoreError,
     decode_json,
@@ -23,6 +27,11 @@ from xmuse_core.chat.room_execution_contracts import (
     ProposalAssessment,
     canonical_execution_path,
 )
+
+CROSS_FAMILY_REVIEW_MISSING_REASON = "room_execution_cross_family_review_missing"
+REVIEW_ROUND_LIMIT_REASON = "room_execution_review_round_limit"
+CROSS_FAMILY_REVIEW_MIN_FAMILIES = 2
+REVIEW_ROUND_LIMIT = 4
 
 
 def _participant_fingerprint(row: sqlite3.Row) -> str:
@@ -95,13 +104,17 @@ def prepare_execution_candidate_conn(
         "select * from participants where conversation_id = ? and participant_id = ?",
         (conversation_id, author_participant_id),
     ).fetchone()
-    if author is None or author["status"] != "active" or author["cli_kind"] != "codex":
+    if (
+        author is None
+        or author["status"] != "active"
+        or author["cli_kind"] not in ROOM_AGENT_CLI_KINDS
+    ):
         raise RoomExecutionStoreError("room_execution_candidate_author_invalid")
     peers = conn.execute(
-        """select * from participants where conversation_id = ? and status = 'active'
-           and cli_kind = 'codex'
+        f"""select * from participants where conversation_id = ? and status = 'active'
+           and cli_kind in ({room_agent_cli_kind_placeholders()})
            and role <> ? and participant_id <> ? order by participant_id""",
-        (conversation_id, INIT_GOD_ROLE, author_participant_id),
+        (conversation_id, *ROOM_AGENT_CLI_KINDS, INIT_GOD_ROLE, author_participant_id),
     ).fetchall()
     members = [
         {
@@ -285,6 +298,76 @@ def _refresh_consensus_state_conn(
     return candidate
 
 
+def cross_family_review_conn(conn: sqlite3.Connection, candidate: sqlite3.Row) -> dict[str, Any]:
+    """Compare the author family against families that endorsed this candidate.
+
+    A family is one admitted provider cli_kind.  The cross-family requirement
+    only applies while at least two families are active in the Room; the Human
+    (init role) and retired provider kinds never count as a family.
+    """
+
+    placeholders = room_agent_cli_kind_placeholders()
+    author = conn.execute(
+        "select cli_kind from participants where participant_id = ?",
+        (candidate["author_participant_id"],),
+    ).fetchone()
+    author_family = str(author["cli_kind"]) if author is not None else None
+    families = {
+        str(row["cli_kind"])
+        for row in conn.execute(
+            f"""select distinct cli_kind from participants
+                where conversation_id = ? and status = 'active' and role <> ?
+                  and cli_kind in ({placeholders})""",
+            (candidate["conversation_id"], INIT_GOD_ROLE, *ROOM_AGENT_CLI_KINDS),
+        )
+    }
+    reviewer_families = sorted(
+        {
+            str(row["cli_kind"])
+            for row in conn.execute(
+                f"""select distinct p.cli_kind from room_execution_assessments a
+                    join participants p on p.participant_id = a.assessor_participant_id
+                    where a.candidate_id = ? and a.assessment = 'endorse'
+                      and p.cli_kind in ({placeholders})""",
+                (candidate["candidate_id"], *ROOM_AGENT_CLI_KINDS),
+            )
+        }
+    )
+    return {
+        "required": len(families) >= CROSS_FAMILY_REVIEW_MIN_FAMILIES,
+        "satisfied": author_family is not None
+        and any(family != author_family for family in reviewer_families),
+        "author_family": author_family,
+        "reviewer_families": reviewer_families,
+    }
+
+
+def review_round_limit_reached_conn(conn: sqlite3.Connection, candidate: sqlite3.Row) -> bool:
+    """Count the author's earlier questioned rounds in this Room.
+
+    A review round is one earlier candidate of the same author that an
+    assessment questioned (object) or that the operator rejected.  Consensus
+    authorization pauses once the author has spent REVIEW_ROUND_LIMIT rounds.
+    """
+
+    row = conn.execute(
+        """select count(distinct c.candidate_id) from room_execution_candidates c
+           where c.conversation_id = ? and c.author_participant_id = ?
+             and c.candidate_id <> ?
+             and (c.state = 'rejected'
+                  or exists (select 1 from room_execution_assessments a
+                             where a.candidate_id = c.candidate_id
+                               and a.assessment = 'object'))""",
+        (
+            candidate["conversation_id"],
+            candidate["author_participant_id"],
+            candidate["candidate_id"],
+        ),
+    ).fetchone()
+    assert row is not None
+    return int(row[0]) >= REVIEW_ROUND_LIMIT
+
+
 def record_proposal_assessments_conn(
     conn: sqlite3.Connection,
     *,
@@ -307,7 +390,7 @@ def record_proposal_assessments_conn(
     if (
         participant is None
         or participant["status"] != "active"
-        or participant["cli_kind"] != "codex"
+        or participant["cli_kind"] not in ROOM_AGENT_CLI_KINDS
     ):
         raise RoomExecutionStoreError("room_execution_assessor_invalid")
     current_fingerprint = _participant_fingerprint(participant)

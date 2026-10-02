@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
-import type { RoomParticipant } from "@/lib/types";
+import type { RoomCollaboration, RoomParticipant } from "@/lib/types";
+import { ProviderBadge } from "./room-header";
 
 type MentionMatch = {
   start: number;
@@ -12,6 +13,7 @@ type MentionMatch = {
 type RoomComposerProps = {
   roomId: string;
   participants: RoomParticipant[];
+  collaboration?: RoomCollaboration | null;
   draft: string;
   disabled?: boolean;
   onDraftChange: (draft: string) => void;
@@ -32,11 +34,13 @@ function mentionAt(value: string, caret: number): MentionMatch | null {
 export function RoomComposer({
   roomId,
   participants,
+  collaboration = null,
   draft,
   disabled = false,
   onDraftChange,
   onSend
 }: RoomComposerProps) {
+  const addressed = collaboration?.mode === "addressed";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const [mention, setMention] = useState<MentionMatch | null>(null);
@@ -153,7 +157,8 @@ export function RoomComposer({
                 </span>
                 <span>
                   <strong>{participant.display_name}</strong>
-                  <small>{participant.mention_handle} · 仅提高关注优先级</small>
+                  <ProviderBadge cliKind={participant.cli_kind} />
+                  <small>{participant.mention_handle} · {addressed ? "决定谁被唤起" : "仅提高关注优先级"}</small>
                 </span>
               </li>
             ))}
@@ -180,7 +185,9 @@ export function RoomComposer({
             composingRef.current = true;
           }}
           onKeyDown={handleKeyDown}
-          placeholder="在房间里说点什么，输入 @ 提高某位 Agent 的关注优先级…"
+          placeholder={addressed
+            ? "在房间里说点什么，输入 @ 指定要唤起的 Agent；未提及时发给 lead…"
+            : "在房间里说点什么，输入 @ 提高某位 Agent 的关注优先级…"}
           ref={textareaRef}
           role="combobox"
           rows={1}
@@ -188,7 +195,7 @@ export function RoomComposer({
         />
       </div>
       <div className="room-composer__footer">
-        <span>房间内当前活跃 Agent 都会观察，@ 只提高关注优先级</span>
+        <span>{addressed ? "只有被 @ 提及的 Agent（或未提及时的 lead）会观察" : "房间内当前活跃 Agent 都会观察，@ 只提高关注优先级"}</span>
         <button className="room-primary-button" disabled={disabled || !draft.trim()} type="submit">
           发送
         </button>

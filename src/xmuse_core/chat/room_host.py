@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from xmuse_core.chat.participant_store import INIT_GOD_ROLE, Participant, ParticipantStore
+from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_context_selection import (
     RoomContextSelection,
     memory_excluded_activity_ids,
@@ -30,6 +31,7 @@ from xmuse_core.chat.room_memory_runtime import (
     RoomMemoryRecallInput,
     RoomMemoryRecallPort,
     disabled_memory_evidence,
+    room_memory_recall_wait_budget_s,
 )
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.skills.catalog import SkillCatalog
@@ -61,6 +63,10 @@ class RoomHostPolicy:
     max_batch_size: int = 4
     context_activity_limit: int = 8
     max_activity_payload_chars: int = 4000
+    # Human root, primary source, batch members, and ancestry: the inputs a participant
+    # acts on. The 64 KiB envelope fitter still bounds the whole delivery.
+    max_primary_payload_chars: int = 16000
+    provider_min_delivery_timeout_s: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("delivery_timeout_s", "cleanup_grace_s", "lease_ttl_s"):
@@ -77,10 +83,41 @@ class RoomHostPolicy:
             "max_batch_size",
             "context_activity_limit",
             "max_activity_payload_chars",
+            "max_primary_payload_chars",
         ):
             _positive_int(getattr(self, name), name)
-        if self.lease_ttl_s <= self.delivery_timeout_s + self.cleanup_grace_s:
+        if self.max_primary_payload_chars < self.max_activity_payload_chars:
+            raise ValueError("max_primary_payload_chars_below_activity_limit")
+        for cli_kind, minimum in self.provider_min_delivery_timeout_s.items():
+            if not isinstance(cli_kind, str) or not cli_kind.strip():
+                raise ValueError("provider_min_delivery_timeout_s_invalid")
+            _positive_real(minimum, "provider_min_delivery_timeout_s")
+        object.__setattr__(
+            self,
+            "provider_min_delivery_timeout_s",
+            dict(self.provider_min_delivery_timeout_s),
+        )
+        if self.lease_ttl_s <= self.max_effective_delivery_timeout_s() + self.cleanup_grace_s:
             raise ValueError("lease_ttl_s_too_short")
+
+    def effective_delivery_timeout_s(self, cli_kind: str | None = None) -> float:
+        """Return the delivery timeout for one participant CLI kind.
+
+        Slow providers get a per-provider floor so the configured Room default
+        never aborts and retries a turn the provider legitimately needs longer
+        for.
+        """
+
+        minimum = self.provider_min_delivery_timeout_s.get(cli_kind or "", 0.0)
+        return max(self.delivery_timeout_s, float(minimum))
+
+    def max_effective_delivery_timeout_s(self) -> float:
+        """Return the longest per-delivery timeout any CLI kind can receive."""
+
+        return max(
+            [self.delivery_timeout_s]
+            + [float(value) for value in self.provider_min_delivery_timeout_s.values()]
+        )
 
 
 _DEFAULT_ROOM_HOST_POLICY = RoomHostPolicy()
@@ -114,6 +151,8 @@ class RoomObservationDelivery:
     context_coverage: dict[str, Any] | None = None
     execution_review_materials: tuple[dict[str, Any], ...] = ()
     memory_evidence: RoomMemoryEvidence = field(default_factory=disabled_memory_evidence)
+    # ``room_collaboration`` view; ``None`` keeps the historical broadcast envelope.
+    collaboration: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -712,7 +751,9 @@ class RoomParticipantHost:
         active = [
             p
             for p in participants
-            if p.status == "active" and p.cli_kind == "codex" and p.role != INIT_GOD_ROLE
+            if p.status == "active"
+            and p.cli_kind in ROOM_AGENT_CLI_KINDS
+            and p.role != INIT_GOD_ROLE
         ]
         kernel = RoomKernelStore(self._db_path)
         observations = kernel.list_observations(conversation_id)
@@ -955,6 +996,12 @@ class RoomParticipantHost:
                         )
                         setup_outcomes.append(blocked.outcome)
                         continue
+                    try:
+                        collaboration = kernel.get_collaboration(conversation_id)
+                    except Exception:
+                        # Advisory context only: an unreadable policy falls back to
+                        # the historical broadcast envelope instead of blocking.
+                        collaboration = None
                     active_meta = tuple(
                         {
                             "participant_id": p.participant_id,
@@ -990,6 +1037,7 @@ class RoomParticipantHost:
                         fallback_observation=observation,
                         recent_activity_limit=self._policy.context_activity_limit,
                         max_payload_chars=self._policy.max_activity_payload_chars,
+                        max_primary_content_chars=self._policy.max_primary_payload_chars,
                     )
                     batch_delivery = selected_context.batch
                     execution_review_materials = self._execution_review_materials(
@@ -1020,6 +1068,7 @@ class RoomParticipantHost:
                         causal_ancestry=selected_context.causal_ancestry,
                         context_coverage=selected_context.coverage,
                         execution_review_materials=execution_review_materials,
+                        collaboration=collaboration,
                     )
                     try:
                         self._controls.bind_delivery(
@@ -1113,6 +1162,7 @@ class RoomParticipantHost:
         fallback_observation: dict[str, Any],
         recent_activity_limit: int,
         max_payload_chars: int,
+        max_primary_content_chars: int,
     ) -> RoomContextSelection:
         return select_room_context(
             source_activity=source_activity,
@@ -1124,6 +1174,7 @@ class RoomParticipantHost:
             fallback_observation=fallback_observation,
             recent_activity_limit=recent_activity_limit,
             max_payload_chars=max_payload_chars,
+            max_primary_content_chars=max_primary_content_chars,
         )
 
     def _setup_failure_stage(
@@ -1314,12 +1365,15 @@ class RoomParticipantHost:
         release_permit_on_exit = True
         try:
             delivery = await self._with_memory_evidence(delivery)
+            delivery_timeout_s = self._policy.effective_delivery_timeout_s(
+                delivery.participant.cli_kind
+            )
             loop = asyncio.get_running_loop()
             task = asyncio.create_task(
-                self._transport.deliver(delivery, timeout_s=self._policy.delivery_timeout_s),
+                self._transport.deliver(delivery, timeout_s=delivery_timeout_s),
                 name=delivery.transport_request_id,
             )
-            deadline = loop.time() + self._policy.delivery_timeout_s
+            deadline = loop.time() + delivery_timeout_s
             transport_status: str | None
             reason: str | None
             diagnostic: str | None
@@ -1477,6 +1531,13 @@ class RoomParticipantHost:
                             )
                     except Exception:
                         reopen_immediately = False
+            elif transport_status == "failed":
+                # A failed attempt whose transport proved its provider generation
+                # gone cannot commit late, so it need not hold the lease until
+                # expiry; anything unproven still waits it out.
+                reopen_immediately = self._failed_attempt_cleanup_proven(
+                    current["observation_id"], attempt_id
+                )
             try:
                 finished_attempt = self._controls.finish_attempt(
                     observation_id=current["observation_id"],
@@ -1507,6 +1568,17 @@ class RoomParticipantHost:
             if release_permit_on_exit:
                 permit.release()
 
+    def _failed_attempt_cleanup_proven(self, observation_id: str, attempt_id: str) -> bool:
+        try:
+            binding = self._controls.reconcile_state(observation_id).get("reconcile_binding")
+        except (KeyError, RoomControlError):
+            return False
+        return (
+            isinstance(binding, dict)
+            and binding.get("attempt_id") == attempt_id
+            and binding.get("provider_phase") == "cleanup_succeeded"
+        )
+
     async def _with_memory_evidence(
         self, delivery: RoomObservationDelivery
     ) -> RoomObservationDelivery:
@@ -1520,8 +1592,9 @@ class RoomParticipantHost:
         timeout_s = float(runtime.recall_timeout_s)
         if not 0.1 <= timeout_s <= 10.0:
             timeout_s = ROOM_MEMORY_RECALL_TIMEOUT_S
+        recall_bound_s = timeout_s + room_memory_recall_wait_budget_s(timeout_s)
         try:
-            async with asyncio.timeout(timeout_s):
+            async with asyncio.timeout(recall_bound_s):
                 evidence = await runtime.recall(
                     RoomMemoryRecallInput(
                         conversation_id=delivery.conversation_id,
