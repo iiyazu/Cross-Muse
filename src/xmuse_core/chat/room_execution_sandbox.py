@@ -1068,24 +1068,35 @@ def _sandbox_scratch_bytes(pids: Iterable[int]) -> int:
             if os.readlink(f"/proc/{pid}/ns/mnt") == own_namespace:
                 continue
         except OSError:
-            if not Path(f"/proc/{pid}").exists():
+            if not Path(f"/proc/{pid}").exists() or _process_is_defunct(pid):
                 continue
             raise
         if _process_has_private_tmpfs(pid):
             try:
                 return _directory_size(Path(f"/proc/{pid}/root/tmp"))
             except (_DirectoryScanDeadline, RoomExecutionSandboxError):
-                if not Path(f"/proc/{pid}").exists():
+                if not Path(f"/proc/{pid}").exists() or _process_is_defunct(pid):
                     return 0
                 raise
     return 0
+
+
+def _process_is_defunct(pid: int) -> bool:
+    """Report an exited process that still exists only until it is reaped."""
+
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    except OSError:
+        return False
+    state = raw.rpartition(")")[2].split()
+    return bool(state) and state[0] in {"Z", "X", "x"}
 
 
 def _process_has_private_tmpfs(pid: int) -> bool:
     try:
         lines = Path(f"/proc/{pid}/mountinfo").read_text(encoding="utf-8").splitlines()
     except OSError:
-        if not Path(f"/proc/{pid}").exists():
+        if not Path(f"/proc/{pid}").exists() or _process_is_defunct(pid):
             return False
         raise
     for line in lines:
