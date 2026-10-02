@@ -1076,7 +1076,8 @@ def _sandbox_scratch_bytes(pids: Iterable[int]) -> int:
                 return _directory_size(Path(f"/proc/{pid}/root/tmp"))
             except (_DirectoryScanDeadline, RoomExecutionSandboxError):
                 if not Path(f"/proc/{pid}").exists() or _process_is_defunct(pid):
-                    return 0
+                    # A live process may still share this namespace's tmpfs.
+                    continue
                 raise
     return 0
 
