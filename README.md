@@ -4,10 +4,17 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 xmuse is a local runtime for natural, logically decentralized Agent group conversations.
-Its Room Collaboration Protocol lets persistent Agents observe the same durable Room
-activity and independently choose whether to `respond`, `handoff`, `propose`, `defer`, or
-`noop`. Infrastructure owns
+Independent Agents from different vendors (Codex, Claude Code, Antigravity, OpenCode) join
+one durable Room with a Human and collaborate by capability. Its Room Collaboration Protocol
+lets persistent Agents observe the same durable Room activity and independently choose
+whether to `respond`, `handoff`, `propose`, `defer`, or `noop`. Infrastructure owns
 delivery, identity, causality, attempts, safety, and recovery; it never speaks as an Agent.
+
+A Room runs in `broadcast` mode (every active Agent observes and decides independently) or
+`addressed` mode (only Agents addressed by a mention or a peer handoff observe; an
+unaddressed Human message goes to the Room's lead, which is a fallback recipient, not a
+router). What each mode costs and what the measurement exposed is in
+[docs/xmuse/evaluation.md](docs/xmuse/evaluation.md).
 
 ## Current product loop
 
@@ -17,7 +24,8 @@ Browser
   -> Room-only Chat API
   -> RoomDatabase / RoomKernel
   -> isolated Room Runner
-  -> participant-bound read-only Codex session
+  -> participant-bound provider session (Codex app-server, Claude Code ACP,
+     Antigravity agentapi, or OpenCode ACP under bubblewrap)
   -> bundled Skill decision and context evidence
   -> Room-only MCP chat_room_submit_outcome
   -> durable outcome
@@ -43,15 +51,20 @@ optional source-backed memory
   receipts; the MemoryOS database is a disposable index, never Room authority.
 - `god_sessions.json` records durable participant/provider bindings. Provider stdout,
   browser state, screenshots, and telemetry are not authority.
-- Human speech atomically creates one root observation for every active participant. After
+- In `broadcast` mode, Human speech atomically creates one root observation for every active
+  participant; in `addressed` mode, only for the addressed participants (or the lead). After
   that root phase terminates, peer activities for the same participant and correlation are
   claimed as one immutable batch (at most 16 items), with one attempt, Skill decision, and
-  durable outcome. Mentions and handoffs change attention priority, never eligibility or the
-  per-turn response budget.
+  durable outcome. In `broadcast` mode mentions and handoffs change attention priority, never
+  eligibility or the per-turn response budget; in `addressed` mode they select eligibility.
 - Only the identity-, attempt-, and lease-bound MCP outcome becomes Agent speech. Provider
   final text is diagnostic.
 - Room Codex sessions use a config-isolated home, read-only filesystem policy, no network,
-  and exactly one pre-approved MCP outcome tool.
+  and exactly one pre-approved MCP outcome tool. Other providers report their own
+  confinement level, never assumed equal to Codex: Claude Code is limited to Read/Glob/Grep
+  with only the exact outcome tool approved; OpenCode runs its own tools without asking the
+  client, so its process runs in a read-only bubblewrap sandbox; Antigravity is instructed
+  read-only and relies on lease fencing.
 - Agents can author or assess an exact unified diff through that same durable outcome tool;
   they never receive a writable workspace or arbitrary command surface. Execution is manual
   by default. Consensus execution additionally requires the startup kill-switch, a Room
@@ -204,7 +217,8 @@ Python ABI fail closed.
 ## Run locally
 
 Requirements: Linux or WSL, Python 3.11+, `uv`, Git, Bubblewrap, Node.js 20.9+, npm,
-and an authenticated Codex CLI on `PATH`.
+and an authenticated Codex CLI on `PATH` for the default Codex roster (heterogeneous rosters
+use whichever provider CLIs are logged in; see below).
 
 ```bash
 uv sync --frozen --all-groups
@@ -222,6 +236,17 @@ Open `http://127.0.0.1:3000`. From another terminal:
 ```bash
 uv run xmuse-workroom status
 uv run xmuse-workroom stop
+```
+
+A heterogeneous Workroom uses the provider CLIs already logged in on the host; xmuse never
+authenticates a provider. Enable the transports you have, then pick a heterogeneous roster
+template (for example `builtin.heterogeneous-trio-opencode`: Claude lead, Antigravity
+researcher, OpenCode Verifier) when creating a Room. Templates whose provider is unavailable
+are disabled.
+
+```bash
+export XMUSE_OPENCODE_MODEL=opencode-go/muse-spark-1.3-contributor  # unknown model fails the attempt
+uv run xmuse-workroom launch --root "$XMUSE_ROOT" --no-open --claude --antigravity --opencode
 ```
 
 The default execution workspace is this xmuse checkout with
