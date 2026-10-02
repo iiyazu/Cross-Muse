@@ -367,6 +367,27 @@ class RoomMemoryDocumentOutboxStore:
                            where candidate_id = ?""",
                         (status, reason_code, stamp, row["candidate_id"]),
                     )
+                    if status == "delivered":
+                        # The superseding candidate only takes over once its own
+                        # document is delivered; the first delivered successor
+                        # wins so a single chain never forks.
+                        successor = conn.execute(
+                            """select supersedes_candidate_id from room_memory_candidates
+                               where candidate_id = ?""",
+                            (row["candidate_id"],),
+                        ).fetchone()
+                        superseded_id = (
+                            successor["supersedes_candidate_id"] if successor is not None else None
+                        )
+                        if superseded_id is not None:
+                            conn.execute(
+                                """update room_memory_candidates
+                                   set superseded_by_candidate_id = ?,
+                                   revision = revision + 1, updated_at = ?
+                                   where candidate_id = ?
+                                     and superseded_by_candidate_id is null""",
+                                (row["candidate_id"], stamp, superseded_id),
+                            )
                 updated = conn.execute(
                     "select * from room_memory_outbox where outbox_id = ?", (outbox_id,)
                 ).fetchone()

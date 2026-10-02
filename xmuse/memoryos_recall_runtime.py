@@ -7,7 +7,7 @@ import re
 import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from xmuse.memoryos_evidence import (
     MEMORYOS_CONTEXT_SCHEMA,
@@ -15,6 +15,10 @@ from xmuse.memoryos_evidence import (
     canonical_digest,
 )
 from xmuse.memoryos_http_client import MemoryOSAdapterError
+from xmuse_core.chat.memoryos_supervisor import (
+    MemoryOSProfile,
+    memoryos_profile_is_full_local,
+)
 from xmuse_core.chat.room_memory_ports import (
     RoomMemoryAdvisoryGovernancePort,
     RoomMemoryRecallReceiptContextPort,
@@ -33,7 +37,7 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 class MemoryOSRecallClient(Protocol):
     @property
-    def profile(self) -> Literal["archive-only", "full-local"]: ...
+    def profile(self) -> MemoryOSProfile: ...
 
     @property
     def recall_timeout_s(self) -> float: ...
@@ -93,7 +97,7 @@ class MemoryOSRecallRuntime:
                 ),
                 timeout=self.recall_timeout_s,
             )
-            if self._client.profile == "full-local":
+            if memoryos_profile_is_full_local(self._client.profile):
                 await self._record_advisories(
                     session_id=session_id,
                     conversation_id=request.conversation_id,

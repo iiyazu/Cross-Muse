@@ -81,8 +81,21 @@ class RoomMemoryMessageOutboxStore:
             conversation_id=str(outbox["conversation_id"]),
             activity_id=str(outbox["activity_id"]),
         )
-        actor_kind = str(source["actor_kind"])
-        role = "user" if actor_kind == "human" else "assistant"
+        actor_origin = str(source["actor_kind"])
+        role = "user" if actor_origin == "human" else "assistant"
+        # Speaker labels are derived from immutable participation fields, so the
+        # request for one external_id stays byte-stable across redeliveries.
+        speaker_label = "Human" if actor_origin == "human" else "Agent"
+        participant_id = source.get("actor_participant_id")
+        if actor_origin != "human" and isinstance(participant_id, str) and participant_id:
+            participant = conn.execute(
+                "select display_name from participants where participant_id = ?",
+                (participant_id,),
+            ).fetchone()
+            if participant is not None:
+                candidate_label = str(participant["display_name"]).strip()
+                if candidate_label and len(candidate_label.encode("utf-8")) <= 200:
+                    speaker_label = candidate_label
         metadata: dict[str, Any] = {
             "schema_version": "xmuse_room_memory_message/v1",
             "conversation_id": source["conversation_id"],
@@ -90,10 +103,12 @@ class RoomMemoryMessageOutboxStore:
             "room_seq": source["seq"],
             "correlation_id": source["correlation_id"],
             "activity_type": source["activity_type"],
-            "speaker_kind": actor_kind,
+            "speaker_kind": actor_origin,
+            "speaker_label": speaker_label,
+            "actor_kind": "human" if actor_origin == "human" else "agent",
         }
-        if source.get("actor_participant_id") is not None:
-            metadata["participant_id"] = source["actor_participant_id"]
+        if participant_id is not None:
+            metadata["participant_id"] = participant_id
         return {
             "external_id": outbox["external_id"],
             "role": role,

@@ -117,6 +117,10 @@ do not load `.env`.
   delivery evidence, and recall receipts; the MemoryOS archive database is derived and
   rebuildable. Recall accepts only bounded archival items whose source documents/activities
   can be re-proved, and any failure remains Host attention rather than Room Runtime failure.
+  With the opt-in `full-local-curated` profile, the MemoryOS Curator may propose memory
+  candidates as an external proposer (`proposer_kind=memoryos_curator`), never as an Agent;
+  every proposal cites Room activities with verbatim quotes that are re-proved in `chat.db`
+  and passes the same approval rules. Its LLM key reaches only the MemoryOS sidecar.
 - The MemoryOS sidecar and Room Runner may receive the server-only MemoryOS API key. Room
   MCP, Codex sessions, the browser, Operations, commands, receipts, and logs must not.
 - The Workroom manager automatically restarts only its identity-confirmed-dead MemoryOS

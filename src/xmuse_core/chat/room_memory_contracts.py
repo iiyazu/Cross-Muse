@@ -9,12 +9,14 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 MAX_MEMORY_CANDIDATES_PER_OUTCOME = 3
+MAX_MEMORY_CURATOR_CANDIDATES_PER_ATTEMPT = 8
 MAX_MEMORY_CANDIDATE_BYTES = 4096
 MAX_MEMORY_CANDIDATE_SOURCES = 8
 MAX_MEMORY_RECEIPT_ITEMS = 8
 MEMORY_CANDIDATE_KINDS = frozenset(
     {"room_fact", "room_decision", "user_preference", "project_rule"}
 )
+MEMORY_CANDIDATE_PROPOSER_KINDS = frozenset({"participant", "memoryos_curator"})
 MEMORY_RECEIPT_STATUSES = frozenset(
     {
         "disabled",
@@ -46,6 +48,9 @@ class MemoryCandidateInput:
     kind: MemoryCandidateKind
     content: str
     source_activity_ids: tuple[str, ...]
+    # Only the external Curator path sets this: the Room candidate the proposal
+    # replaces, already re-proved through its advisory receipt.
+    supersedes_candidate_id: str | None = None
 
 
 @dataclass(frozen=True)

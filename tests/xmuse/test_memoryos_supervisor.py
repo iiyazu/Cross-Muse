@@ -89,6 +89,50 @@ def test_full_local_sidecar_selects_offline_hybrid_and_external_governance(
     assert environment["TRANSFORMERS_OFFLINE"] == "1"
 
 
+def test_curated_sidecar_gets_only_its_named_llm_key_and_model(
+    tmp_path: Path,
+) -> None:
+    environment = memoryos_child_environment(
+        {
+            "PATH": "/safe/bin",
+            "XMUSE_MEMORYOS_LLM_API_KEY": "curator-llm-secret",
+            "XMUSE_MEMORYOS_LLM_MODEL": "deepseek-chat",
+            "DEEPSEEK_API_KEY": "ambient-must-not-pass",
+        },
+        xmuse_root=tmp_path,
+        generation="generation-curated",
+        api_key="memory-server-key",
+        profile="full-local-curated",
+    )
+
+    assert environment["MEMORYOS_CURATOR_ENABLED"] == "true"
+    assert environment["MEMORYOS_LLM_PROVIDER"] == "deepseek"
+    # full-local readiness is unchanged by curation.
+    assert environment["MEMORYOS_AGENT_KERNEL"] == "external"
+    assert environment["MEMORYOS_ITEM_EXTRACTION"] == "true"
+    assert environment["DEEPSEEK_API_KEY"] == "curator-llm-secret"
+    assert environment["DEEPSEEK_MODEL"] == "deepseek-chat"
+    assert "XMUSE_MEMORYOS_LLM_API_KEY" not in environment
+    assert "XMUSE_MEMORYOS_LLM_MODEL" not in environment
+
+
+def test_curated_sidecar_starts_without_llm_key_for_degraded_curator(
+    tmp_path: Path,
+) -> None:
+    environment = memoryos_child_environment(
+        {},
+        xmuse_root=tmp_path,
+        generation="generation-curated-no-key",
+        api_key="memory-server-key",
+        profile="full-local-curated",
+    )
+
+    assert environment["MEMORYOS_CURATOR_ENABLED"] == "true"
+    assert environment["MEMORYOS_LLM_PROVIDER"] == "deepseek"
+    assert "DEEPSEEK_API_KEY" not in environment
+    assert "DEEPSEEK_MODEL" not in environment
+
+
 def test_executable_and_command_are_fixed_loopback_without_api_key(
     tmp_path: Path,
 ) -> None:

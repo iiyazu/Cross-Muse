@@ -72,6 +72,14 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
                 publish_state in ('not_queued','queued','delivered','failed','conflict')
             ),
             target_scope text not null check (target_scope in ('room','local_user','project')),
+            -- The opt-in MemoryOS Curator proposes as an external proposer.  A
+            -- curator candidate still names the participant of the carrying
+            -- attempt for authority, but is never rendered as that Agent.
+            proposer_kind text not null default 'participant' check (
+                proposer_kind in ('participant','memoryos_curator')
+            ),
+            supersedes_candidate_id text,
+            superseded_by_candidate_id text,
             revision integer not null check (revision >= 0),
             reason_code text,
             resolved_by text,
@@ -275,6 +283,20 @@ def create_room_memory_schema(conn: sqlite3.Connection) -> None:
     outbox_columns = {str(row[1]) for row in conn.execute("pragma table_info(room_memory_outbox)")}
     if "next_attempt_at" not in outbox_columns:
         conn.execute("alter table room_memory_outbox add column next_attempt_at text")
+    candidate_columns = {
+        str(row[1]) for row in conn.execute("pragma table_info(room_memory_candidates)")
+    }
+    for name, definition in (
+        (
+            "proposer_kind",
+            "text not null default 'participant' check "
+            "(proposer_kind in ('participant','memoryos_curator'))",
+        ),
+        ("supersedes_candidate_id", "text"),
+        ("superseded_by_candidate_id", "text"),
+    ):
+        if name not in candidate_columns:
+            conn.execute(f"alter table room_memory_candidates add column {name} {definition}")
     message_delivery_columns = {
         str(row[1]) for row in conn.execute("pragma table_info(room_memory_message_deliveries)")
     }

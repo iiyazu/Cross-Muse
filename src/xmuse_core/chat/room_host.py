@@ -320,6 +320,7 @@ class RoomParticipantHost:
         self._memory_runtime = memory_runtime
         self._memory_recall_attention_reason: str | None = None
         self._memory_outbox_attention_reason: str | None = None
+        self._memory_curator_attention_reason: str | None = None
         self._skill_runtime_unhealthy_reason: str | None = None
         self._active_deliveries: dict[str, _ActiveDelivery] = {}
         self._retained_tasks: set[asyncio.Task[Any]] = set()
@@ -350,6 +351,9 @@ class RoomParticipantHost:
         ):
             state = "attention"
             code = "room_memory_degraded"
+        elif self._memory_curator_attention_reason is not None:
+            state = "attention"
+            code = "memoryos_curator_degraded"
         else:
             state = "healthy"
             code = "ready"
@@ -364,6 +368,20 @@ class RoomParticipantHost:
         """Publish optional derived-index health without blocking Room delivery."""
 
         self._memory_outbox_attention_reason = reason_code
+
+    def set_memory_curator_attention(self, reason_code: str | None) -> None:
+        """Publish the opt-in Curator's degraded state without blocking Room delivery.
+
+        The sidecar's ``reason_code`` is retained verbatim when it matches
+        ``[a-z_]+``; the bounded Host code stays ``memoryos_curator_degraded``.
+        """
+
+        if reason_code is None:
+            self._memory_curator_attention_reason = None
+        elif isinstance(reason_code, str) and re.fullmatch(r"[a-z_]{1,127}", reason_code):
+            self._memory_curator_attention_reason = reason_code
+        else:
+            self._memory_curator_attention_reason = "memoryos_curator_degraded"
 
     async def shutdown(self) -> None:
         """Cancel and drain transport tasks retained after timeout cleanup."""

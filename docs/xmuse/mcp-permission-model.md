@@ -45,8 +45,10 @@ one of `room_fact`, `room_decision`, `user_preference`, or `project_rule`, conta
 4 KiB of text, and cites one to eight activity IDs that were actually available in the
 current batch/causal envelope. The server re-proves those sources in `chat.db`; candidate
 text is stored only in memory-candidate authority, while the outcome/activity/request-log
-surfaces retain safe IDs and digests. Infrastructure never creates a candidate or summarizes
-conversation into long-term memory.
+surfaces retain safe IDs and digests. Infrastructure never creates a candidate on an Agent's
+behalf. The only non-Agent proposer is the opt-in MemoryOS Curator: its proposals are labeled
+as such, cite Room activities with verbatim quotes re-proved in `chat.db`, and follow the same
+approval rules.
 
 Source-valid Room facts and decisions are automatically queued only for the current Room.
 User preferences and project rules remain pending until a guarded operator approval queues

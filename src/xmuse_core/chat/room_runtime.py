@@ -61,7 +61,13 @@ _STATUS_KEYS_V1 = frozenset(
 )
 _STATUS_KEYS_V2 = (_STATUS_KEYS_V1 - {"xmuse_root"}) | {"host"}
 _HOST_STATES = frozenset({"healthy", "attention", "blocked"})
-_HOST_ATTENTION_CODES = frozenset({"room_transport_cleanup_pending", "room_memory_degraded"})
+_HOST_ATTENTION_CODES = frozenset(
+    {
+        "room_transport_cleanup_pending",
+        "room_memory_degraded",
+        "memoryos_curator_degraded",
+    }
+)
 _HOST_KEYS = frozenset({"state", "code", "active_delivery_count", "retained_cleanup_count"})
 _UNKNOWN_HOST = {
     "state": "unknown",
