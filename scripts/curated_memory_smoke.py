@@ -345,6 +345,11 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_CURATOR_WAIT_S,
         help="idle wait covering the Curator flush and its polling interval",
     )
+    parser.add_argument(
+        "--helper-role",
+        default="research",
+        help="roster role addressed by the trigger, update and Room B recall messages",
+    )
     return parser.parse_args()
 
 
@@ -372,7 +377,7 @@ def _pull_curator_candidate(
     args: argparse.Namespace, room_a: str, timings: dict[str, float]
 ) -> Mapping[str, Any]:
     with _stage("curator_pull_1", timings, conversation_id=room_a):
-        researcher = _participant(args.root, room_a, "research")
+        researcher = _participant(args.root, room_a, args.helper_role)
         _mark("curator_wait", conversation_id=room_a, wait_s=args.curator_wait_s)
         time.sleep(args.curator_wait_s)
         seq = _post(
@@ -420,7 +425,7 @@ def _record_update(
     timings: dict[str, float],
 ) -> Mapping[str, Any]:
     with _stage("record_update", timings, conversation_id=room_a):
-        researcher = _participant(args.root, room_a, "research")
+        researcher = _participant(args.root, room_a, args.helper_role)
         seq = _post(
             args.frontend,
             room_a,
@@ -479,7 +484,7 @@ def _recall(
 ) -> None:
     with _stage("recall", timings):
         room_b = _create_room(args.frontend, "Curated smoke B (recall)")
-        researcher = _participant(args.root, room_b, "research")
+        researcher = _participant(args.root, room_b, args.helper_role)
         _mark(
             "room_b",
             conversation_id=room_b,
