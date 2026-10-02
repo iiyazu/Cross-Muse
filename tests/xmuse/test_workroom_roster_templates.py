@@ -51,7 +51,7 @@ def test_builtin_development_roster_exposes_product_roles_and_codex_profiles() -
     assert catalog.provider_profiles["antigravity.default"].cli_kind == "antigravity"
     assert catalog.provider_profiles["antigravity.default"].model_id == "flash"
     assert "claude-code.default" not in catalog.provider_profiles
-    assert "opencode.default" not in catalog.provider_profiles
+    assert "a2a.default" not in catalog.provider_profiles
 
 
 def test_validate_roster_template_accepts_user_copy_with_known_roles_and_profiles() -> None:
@@ -111,7 +111,7 @@ def test_validate_roster_template_rejects_future_provider_slots() -> None:
         roles=(
             RosterRoleBinding(
                 role_id="architect",
-                provider_profile_ref="opencode.default",
+                provider_profile_ref="a2a.default",
             ),
         ),
     )
@@ -119,7 +119,7 @@ def test_validate_roster_template_rejects_future_provider_slots() -> None:
     with pytest.raises(ValueError) as excinfo:
         validate_roster_template(template, catalog=catalog)
 
-    assert "unknown provider profile: opencode.default" in str(excinfo.value)
+    assert "unknown provider profile: a2a.default" in str(excinfo.value)
 
 
 def test_validate_roster_template_rejects_duplicate_product_roles() -> None:

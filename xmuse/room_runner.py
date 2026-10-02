@@ -36,6 +36,7 @@ from xmuse.room_runner_memory import (
 from xmuse_core.agents.codex_app_server_transport import CODEX_ROOM_READ_ONLY_SANDBOX
 from xmuse_core.agents.room_codex_launcher import build_room_launchers
 from xmuse_core.chat.room_acp_transport import (
+    OPENCODE_ACP_PROFILE,
     ROOM_ACP_DEFAULT_COMMAND,
     AcpTransportConfig,
 )
@@ -50,6 +51,11 @@ from xmuse_core.chat.room_codex_native_runtime import (
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
+from xmuse_core.chat.room_opencode_sandbox import (
+    build_opencode_sandbox_command,
+    resolve_bwrap_executable,
+    resolve_opencode_executable,
+)
 from xmuse_core.chat.room_runtime import (
     ROOM_MCP_PATH,
     ROOM_MCP_SURFACE,
@@ -81,6 +87,11 @@ CODEX_AUTH_FILE_NAME = "auth.json"
 CLAUDE_ACP_FLAG_ENV = "XMUSE_CLAUDE_ACP"
 CLAUDE_ACP_COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
 ANTIGRAVITY_FLAG_ENV = "XMUSE_ANTIGRAVITY"
+OPENCODE_FLAG_ENV = "XMUSE_OPENCODE"
+OPENCODE_MODEL_ENV = "XMUSE_OPENCODE_MODEL"
+# OpenCode Go subscription model; the hosted free variant
+# ``opencode/muse-spark-1.3-contributor-free`` needs no subscription.
+OPENCODE_DEFAULT_MODEL = "opencode-go/muse-spark-1.3-contributor"
 _SAFE_GENERATION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 logger = logging.getLogger(__name__)
@@ -136,6 +147,7 @@ async def run_room_runner(
     executable_resolver: Callable[[str], str | None] | None = None,
     claude_acp: bool | None = None,
     antigravity: bool | None = None,
+    opencode: bool | None = None,
 ) -> None:
     """Compose and run only the participant-owned Room delivery path."""
 
@@ -153,6 +165,7 @@ async def run_room_runner(
     antigravity_enabled = (
         antigravity if antigravity is not None else _env_flag(ANTIGRAVITY_FLAG_ENV)
     )
+    opencode_enabled = opencode if opencode is not None else _env_flag(OPENCODE_FLAG_ENV)
     resolved_worktree = _resolve_worktree(worktree)
     stop = shutdown or asyncio.Event()
     process_identity = read_process_start_identity(os.getpid())
@@ -256,7 +269,12 @@ async def run_room_runner(
             if not _has_room_persistent_session_launcher(launchers):
                 raise RoomRunnerError("room_runner_persistent_launcher_required")
             codex_available = (executable_resolver or shutil.which)("codex") is not None
-            if not codex_available and not claude_acp_enabled and not antigravity_enabled:
+            if (
+                not codex_available
+                and not claude_acp_enabled
+                and not antigravity_enabled
+                and not opencode_enabled
+            ):
                 raise RoomRunnerError("room_runner_codex_executable_unavailable")
             readiness["persistent_launcher"] = True
 
@@ -293,6 +311,18 @@ async def run_room_runner(
                     agentapi_path,
                 )
 
+            opencode_acp_config: AcpTransportConfig | None = None
+            if opencode_enabled:
+                opencode_acp_config = _opencode_acp_config(
+                    root=root,
+                    worktree=resolved_worktree,
+                    room_mcp_url=f"http://{DEFAULT_MCP_HOST}:{mcp_port}{ROOM_MCP_PATH}",
+                )
+                logger.info(
+                    "OpenCode participant transport enabled sandbox=bwrap default_model=%s",
+                    opencode_acp_config.default_model,
+                )
+
             try:
                 composition = compose_room_runtime(
                     root=root,
@@ -312,6 +342,7 @@ async def run_room_runner(
                     runner_boot_id=boot_id,
                     claude_acp_config=claude_acp_config,
                     antigravity_config=antigravity_config,
+                    opencode_acp_config=opencode_acp_config,
                 )
             except Exception as exc:
                 raise RoomRunnerError("room_runner_host_composition_failed") from exc
@@ -868,6 +899,40 @@ def _resolve_claude_acp_command(
     return command
 
 
+def _opencode_acp_config(
+    *,
+    root: Path,
+    worktree: Path,
+    room_mcp_url: str,
+    environ: Mapping[str, str] | None = None,
+) -> AcpTransportConfig:
+    """Build the sandboxed OpenCode ACP attachment; never run OpenCode unconfined."""
+
+    source = os.environ if environ is None else environ
+    opencode = resolve_opencode_executable(source)
+    if opencode is None:
+        raise RoomRunnerError("room_runner_opencode_executable_unavailable")
+    bwrap = resolve_bwrap_executable(source)
+    if bwrap is None:
+        raise RoomRunnerError("room_runner_opencode_sandbox_unavailable")
+    model = source.get(OPENCODE_MODEL_ENV, "").strip() or OPENCODE_DEFAULT_MODEL
+    command = build_opencode_sandbox_command(
+        bwrap=bwrap,
+        opencode=opencode,
+        home=Path(str(source.get("HOME") or Path.home())),
+        workspace=worktree,
+        # The xmuse data root holds every Room's chat.db and session bindings.
+        masked_paths=(root,),
+    )
+    return AcpTransportConfig(
+        workspace=worktree,
+        command=command,
+        room_mcp_url=room_mcp_url,
+        profile=OPENCODE_ACP_PROFILE,
+        default_model=model,
+    )
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -920,6 +985,14 @@ def main_arg_parser() -> argparse.ArgumentParser:
             "(also enabled by XMUSE_ANTIGRAVITY=1)"
         ),
     )
+    parser.add_argument(
+        "--opencode",
+        action="store_true",
+        help=(
+            "admit OpenCode participants through the sandboxed ACP transport "
+            "(also enabled by XMUSE_OPENCODE=1)"
+        ),
+    )
     parser.add_argument("--worktree", type=Path, default=None)
     return parser
 
@@ -941,6 +1014,7 @@ def main() -> None:
                 worktree=args.worktree,
                 claude_acp=True if args.claude_acp else None,
                 antigravity=True if args.antigravity else None,
+                opencode=True if args.opencode else None,
             )
         )
     except (RoomRunnerError, RoomRunnerStatusError) as exc:

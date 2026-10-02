@@ -19,6 +19,7 @@ from typing import Any
 from xmuse.provider_capabilities import (
     ANTIGRAVITY_FLAG_ENV,
     CLAUDE_FLAG_ENV,
+    OPENCODE_FLAG_ENV,
     ROOM_MCP_PINNED_HOST,
     ROOM_MCP_PINNED_PORT,
     ROOM_RUNNER_PROVIDER_ENV_KEYS,
@@ -67,6 +68,7 @@ class WorkroomServicesCoordinator:
         *,
         claude_enabled: bool = False,
         antigravity_enabled: bool = False,
+        opencode_enabled: bool = False,
     ) -> str:
         """Prove required binaries, build assets, operation state, and ports."""
 
@@ -78,11 +80,16 @@ class WorkroomServicesCoordinator:
         node = self._deps.which("node")
         if not node:
             raise WorkroomError("node_missing", "Node.js is required to run the Workroom frontend")
-        if not self._deps.which("codex") and not claude_enabled and not antigravity_enabled:
+        if (
+            not self._deps.which("codex")
+            and not claude_enabled
+            and not antigravity_enabled
+            and not opencode_enabled
+        ):
             raise WorkroomError(
                 "codex_missing",
-                "Codex CLI is required to run Workroom Room Agents unless Claude or "
-                "Antigravity is enabled",
+                "Codex CLI is required to run Workroom Room Agents unless Claude, "
+                "Antigravity, or OpenCode is enabled",
             )
         if antigravity_enabled and not self._deps.port_available(
             ROOM_MCP_PINNED_HOST, ROOM_MCP_PINNED_PORT
@@ -151,6 +158,7 @@ class WorkroomServicesCoordinator:
         cleanup_timeout_s: float = 2.0,
         claude_enabled: bool = False,
         antigravity_enabled: bool = False,
+        opencode_enabled: bool = False,
     ) -> RequiredServiceRuntime:
         """Start required children in dependency order and clean partial starts.
 
@@ -172,6 +180,7 @@ class WorkroomServicesCoordinator:
                 memoryos_profile=memoryos_profile,
                 claude_enabled=claude_enabled,
                 antigravity_enabled=antigravity_enabled,
+                opencode_enabled=opencode_enabled,
             )
             started.append((chat_api, None))
             chat_record = self._record(
@@ -308,6 +317,7 @@ class WorkroomServicesCoordinator:
         memoryos_profile: str,
         claude_enabled: bool,
         antigravity_enabled: bool,
+        opencode_enabled: bool = False,
     ) -> tuple[ManagedProcess, ProcessSpec]:
         environment = self._child_environment(
             generation=generation,
@@ -324,6 +334,7 @@ class WorkroomServicesCoordinator:
                 # child only; the frontend never receives transport environment.
                 CLAUDE_FLAG_ENV: "1" if claude_enabled else "0",
                 ANTIGRAVITY_FLAG_ENV: "1" if antigravity_enabled else "0",
+                OPENCODE_FLAG_ENV: "1" if opencode_enabled else "0",
             }
         )
         if memoryos_url is not None and memoryos_api_key is not None:

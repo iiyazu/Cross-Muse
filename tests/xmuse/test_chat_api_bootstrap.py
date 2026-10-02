@@ -112,6 +112,12 @@ def test_bootstrap_projects_only_whitelisted_provider_capabilities(tmp_path: Pat
                 "address": "127.0.0.1:65000",
                 "csrf_token": "secret-token",
             },
+            "opencode": {
+                "available": True,
+                "enabled": True,
+                "confinement": "os_read_only_sandbox",
+                "command": ["/secret/bin/bwrap", "--ro-bind", "/", "/", "/secret/bin/opencode"],
+            },
         },
     )
 
@@ -128,6 +134,11 @@ def test_bootstrap_projects_only_whitelisted_provider_capabilities(tmp_path: Pat
             "available": True,
             "enabled": False,
             "confinement": "instructed_read_only",
+        },
+        "opencode": {
+            "available": True,
+            "enabled": True,
+            "confinement": "os_read_only_sandbox",
         },
     }
     serialized = json.dumps(payload)
@@ -155,4 +166,5 @@ def test_bootstrap_provider_detection_failure_reports_unavailable(tmp_path: Path
         "codex": {"available": False, "enabled": False, "confinement": "unknown"},
         "claude": {"available": False, "enabled": False, "confinement": "unknown"},
         "antigravity": {"available": False, "enabled": False, "confinement": "unknown"},
+        "opencode": {"available": False, "enabled": False, "confinement": "unknown"},
     }

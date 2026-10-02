@@ -61,6 +61,21 @@ def _add_start_options(parser: argparse.ArgumentParser) -> None:
             "Room MCP on 127.0.0.1:8100"
         ),
     )
+    opencode_flags = parser.add_mutually_exclusive_group()
+    opencode_flags.add_argument(
+        "--opencode",
+        action="store_true",
+        default=None,
+        help=(
+            "admit OpenCode Room participants in a read-only bubblewrap sandbox "
+            "(default: auto-detect); the model comes from XMUSE_OPENCODE_MODEL"
+        ),
+    )
+    opencode_flags.add_argument(
+        "--no-opencode",
+        action="store_true",
+        help="refuse OpenCode Room participants even when available",
+    )
     antigravity_flags.add_argument(
         "--no-antigravity",
         action="store_true",
@@ -144,6 +159,9 @@ def run_cli(
     requested_antigravity = _requested_provider(
         getattr(args, "antigravity", None), getattr(args, "no_antigravity", False)
     )
+    requested_opencode = _requested_provider(
+        getattr(args, "opencode", None), getattr(args, "no_opencode", False)
+    )
     requested_mode = getattr(args, "memory_mode", None)
     if requested_mode is None:
         requested_mode = (
@@ -204,6 +222,7 @@ def run_cli(
             memory_disabled_code=disabled_code,
             claude=requested_claude,
             antigravity=requested_antigravity,
+            opencode=requested_opencode,
         )
     if args.command == "launch":
         if args.readiness_timeout_s <= 0 or args.stop_timeout_s <= 0:
@@ -232,6 +251,7 @@ def run_cli(
                 open_browser=not args.no_open,
                 claude=requested_claude,
                 antigravity=requested_antigravity,
+                opencode=requested_opencode,
             ),
             dependencies=launch_dependencies,
         )

@@ -44,6 +44,7 @@ from xmuse_core.skills.catalog import SkillCatalog
 PROVIDER_MIN_DELIVERY_TIMEOUT_S: Mapping[str, float] = {
     "claude": 600.0,
     "antigravity": 420.0,
+    "opencode": 420.0,
 }
 
 
@@ -77,13 +78,15 @@ def compose_room_runtime(
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
     claude_acp_config: AcpTransportConfig | None = None,
     antigravity_config: AntigravityTransportConfig | None = None,
+    opencode_acp_config: AcpTransportConfig | None = None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks.
 
-    ``claude_acp_config`` and ``antigravity_config`` enable the ``claude`` and
-    ``antigravity`` routes by building each transport over the composition's
-    shared disposable Agent preview projector.  The always-present ``codex``
-    route is the Codex app-server transport.
+    ``claude_acp_config``, ``antigravity_config`` and ``opencode_acp_config``
+    enable the ``claude``, ``antigravity`` and ``opencode`` routes by building
+    each transport over the composition's shared disposable Agent preview
+    projector.  The always-present ``codex`` route is the Codex app-server
+    transport.
     """
 
     session_layer = GodSessionLayer(
@@ -95,6 +98,7 @@ def compose_room_runtime(
         for cli_kind, enabled in (
             ("claude", claude_acp_config is not None),
             ("antigravity", antigravity_config is not None),
+            ("opencode", opencode_acp_config is not None),
         )
         if enabled
     }
@@ -114,9 +118,11 @@ def compose_room_runtime(
     routes: dict[str, RoomObservationTransport] = {}
     acp_transports: list[AcpRoomObservationTransport] = []
     antigravity_transports: list[AntigravityRoomObservationTransport] = []
-    if claude_acp_config is not None:
+    for acp_config in (claude_acp_config, opencode_acp_config):
+        if acp_config is None:
+            continue
         acp_transport = AcpRoomObservationTransport(
-            config=claude_acp_config,
+            config=acp_config,
             registry_path=root / "god_sessions.json",
             control_store=controls,
             skill_decision_store=skill_decisions,
@@ -125,7 +131,7 @@ def compose_room_runtime(
             stream_projector=stream_projector,
         )
         acp_transports.append(acp_transport)
-        routes["claude"] = acp_transport
+        routes[acp_config.profile.runtime] = acp_transport
     if antigravity_config is not None:
         antigravity_transport = AntigravityRoomObservationTransport(
             config=antigravity_config,

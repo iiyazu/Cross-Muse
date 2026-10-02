@@ -55,6 +55,24 @@ def test_antigravity_prompt_names_the_call_mcp_tool_bridge() -> None:
     assert antigravity.startswith(head) and antigravity.endswith(tail)
 
 
+def test_opencode_prompt_names_the_code_execution_bridge_and_read_only_filesystem() -> None:
+    opencode = build_room_observation_prompt("opencode")
+
+    assert opencode not in {
+        GOLDEN_CODEX_PROMPT,
+        build_room_observation_prompt("claude"),
+        build_room_observation_prompt("antigravity"),
+    }
+    assert 'tools["xmuse-room"].chat_room_submit_outcome' in opencode
+    assert "Your filesystem is read-only" in opencode
+    assert "execution_patch" in opencode
+    assert "call_mcp_tool" not in opencode
+    assert "Codex built-in" not in opencode
+    head = "Observe this durable Room batch as an independent participant. "
+    tail = "structured immutable-authority error that forbids that call."
+    assert opencode.startswith(head) and opencode.endswith(tail)
+
+
 def test_unknown_provider_is_rejected() -> None:
     with pytest.raises(ValueError, match="room_observation_prompt_provider_unsupported"):
         build_room_observation_prompt("gemini")

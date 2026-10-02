@@ -957,7 +957,7 @@ export function roomStateLabel(state: RoomState): string {
 }
 
 export type RoomProviderBadge = {
-  id: "codex" | "claude" | "antigravity";
+  id: "codex" | "claude" | "antigravity" | "opencode";
   label: string;
   confinement: string;
 };
@@ -965,7 +965,8 @@ export type RoomProviderBadge = {
 const PROVIDER_BADGES: Record<string, RoomProviderBadge> = {
   codex: { id: "codex", label: "Codex", confinement: "sandboxed read-only" },
   claude: { id: "claude", label: "Claude", confinement: "permission-gated" },
-  antigravity: { id: "antigravity", label: "Antigravity", confinement: "instructed read-only" }
+  antigravity: { id: "antigravity", label: "Antigravity", confinement: "instructed read-only" },
+  opencode: { id: "opencode", label: "OpenCode", confinement: "OS sandbox read-only" }
 };
 
 function normalizedCliKind(cliKind: unknown): string {

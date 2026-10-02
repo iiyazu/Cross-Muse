@@ -7,7 +7,7 @@ widen their own capability checks.
 
 from __future__ import annotations
 
-ROOM_AGENT_CLI_KINDS: tuple[str, ...] = ("codex", "claude", "antigravity")
+ROOM_AGENT_CLI_KINDS: tuple[str, ...] = ("codex", "claude", "antigravity", "opencode")
 
 
 def room_agent_cli_kind_placeholders() -> str:

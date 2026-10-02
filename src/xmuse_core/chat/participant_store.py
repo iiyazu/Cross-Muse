@@ -34,13 +34,13 @@ def _new_id(prefix: str) -> str:
 # Pydantic models (match FRONTEND_API.md participant/role-template shapes)
 # ---------------------------------------------------------------------------
 
-CurrentChatCliKind = Literal["codex", "claude", "antigravity"]
-StoredChatCliKind = Literal["codex", "claude", "antigravity", "a2a", "opencode"]
+CurrentChatCliKind = Literal["codex", "claude", "antigravity", "opencode"]
+StoredChatCliKind = Literal["codex", "claude", "antigravity", "opencode", "a2a"]
 StoredProviderIdValue = ProviderId | Literal["claude", "antigravity", "a2a", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
 _CURRENT_CHAT_CLI_KINDS = set(ROOM_AGENT_CLI_KINDS)
-_STORED_ONLY_CLI_KINDS = {"a2a", "opencode"}
+_STORED_ONLY_CLI_KINDS = {"a2a"}
 _STORED_CHAT_CLI_KINDS = _CURRENT_CHAT_CLI_KINDS | _STORED_ONLY_CLI_KINDS
 PERSONA_SNAPSHOT_SCHEMA: Literal["persona_snapshot/v1"] = "persona_snapshot/v1"
 MAX_PERSONA_SNAPSHOT_BYTES = 2 * 1024

@@ -382,6 +382,7 @@ def start_workroom(
     memory_disabled_code: str | None = None,
     claude: bool | None = None,
     antigravity: bool | None = None,
+    opencode: bool | None = None,
 ) -> int:
     controller = deps.shutdown_controller_factory()
     services = WorkroomServicesCoordinator(paths, deps)
@@ -397,6 +398,7 @@ def start_workroom(
         )
         claude_enabled = _resolve_provider_enablement("claude", claude, capabilities)
         antigravity_enabled = _resolve_provider_enablement("antigravity", antigravity, capabilities)
+        opencode_enabled = _resolve_provider_enablement("opencode", opencode, capabilities)
         workspace, resolved_profile_id, execution_profile = _validate_start_configuration(
             paths,
             execution_workspace=execution_workspace,
@@ -421,6 +423,7 @@ def start_workroom(
             node = services.preflight(
                 claude_enabled=claude_enabled,
                 antigravity_enabled=antigravity_enabled,
+                opencode_enabled=opencode_enabled,
             )
             manager_identity = deps.inspect_process(deps.current_pid())
             if manager_identity is None:
@@ -489,6 +492,7 @@ def start_workroom(
                 cleanup_timeout_s=stop_timeout_s,
                 claude_enabled=claude_enabled,
                 antigravity_enabled=antigravity_enabled,
+                opencode_enabled=opencode_enabled,
             )
             _update_manifest(manifest, deps, state="ready")
             _atomic_write_manifest(paths.manifest, manifest)

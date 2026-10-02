@@ -659,12 +659,14 @@ describe("Provider identity and collaboration view helpers", () => {
     expect(providerBadge("codex")).toEqual({ id: "codex", label: "Codex", confinement: "sandboxed read-only" });
     expect(providerBadge("Claude")).toEqual({ id: "claude", label: "Claude", confinement: "permission-gated" });
     expect(providerBadge("antigravity")).toEqual({ id: "antigravity", label: "Antigravity", confinement: "instructed read-only" });
+    expect(providerBadge("opencode")).toEqual({ id: "opencode", label: "OpenCode", confinement: "OS sandbox read-only" });
     expect(providerBadge("unknown")).toBeNull();
     expect(providerBadge(null)).toBeNull();
     expect(codexConsoleAvailable("codex")).toBe(true);
     expect(codexConsoleAvailable(null)).toBe(true);
     expect(codexConsoleAvailable("claude")).toBe(false);
     expect(codexConsoleAvailable("antigravity")).toBe(false);
+    expect(codexConsoleAvailable("opencode")).toBe(false);
     expect(collaborationModeLabel("addressed")).toBe("Addressed");
     expect(collaborationModeLabel("broadcast")).toBe("Broadcast");
   });

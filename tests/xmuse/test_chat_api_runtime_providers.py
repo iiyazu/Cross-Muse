@@ -13,6 +13,7 @@ DISABLED_CAPS = {
         "enabled": False,
         "confinement": "instructed_read_only",
     },
+    "opencode": {"available": False, "enabled": False, "confinement": "os_read_only_sandbox"},
 }
 ANTIGRAVITY_CAPS = {
     **DISABLED_CAPS,
@@ -41,6 +42,10 @@ def _clear_provider_env(monkeypatch) -> None:
         "XMUSE_ANTIGRAVITY",
         "XMUSE_ANTIGRAVITY_AGENTAPI",
         "XMUSE_ANTIGRAVITY_BRAIN_DIR",
+        "XMUSE_OPENCODE",
+        "XMUSE_OPENCODE_MODEL",
+        "XMUSE_OPENCODE_BIN",
+        "XMUSE_OPENCODE_BWRAP",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -68,6 +73,7 @@ def test_runtime_config_forwards_runner_env_only_without_browser_keys(
     assert config.room_runner_env == {
         "XMUSE_CLAUDE_ACP": "0",
         "XMUSE_ANTIGRAVITY": "1",
+        "XMUSE_OPENCODE": "0",
         "XMUSE_CLAUDE_ACP_COMMAND": "/opt/claude-acp-bridge",
         "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
     }
@@ -91,4 +97,8 @@ def test_runtime_config_omits_blank_runner_env_overrides(
         generation="generation-provider",
     )
 
-    assert config.room_runner_env == {"XMUSE_CLAUDE_ACP": "0", "XMUSE_ANTIGRAVITY": "0"}
+    assert config.room_runner_env == {
+        "XMUSE_CLAUDE_ACP": "0",
+        "XMUSE_ANTIGRAVITY": "0",
+        "XMUSE_OPENCODE": "0",
+    }

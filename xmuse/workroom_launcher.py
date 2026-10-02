@@ -124,6 +124,7 @@ class WorkroomLaunchRequest:
     open_browser: bool = True
     claude: bool | None = None
     antigravity: bool | None = None
+    opencode: bool | None = None
 
 
 def _payload(*, state: str, **values: object) -> dict[str, object]:
@@ -198,6 +199,10 @@ def _start_argv(
         argv.append("--antigravity")
     elif request.antigravity is False:
         argv.append("--no-antigravity")
+    if request.opencode is True:
+        argv.append("--opencode")
+    elif request.opencode is False:
+        argv.append("--no-opencode")
     if explicit_memory:
         assert memoryos is not None
         argv.extend(("--memory", "--memoryos-executable", str(memoryos)))

@@ -12,14 +12,20 @@ import shutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from xmuse_core.chat.room_acp_transport import ROOM_ACP_CONFINEMENT
+from xmuse_core.chat.room_acp_transport import ROOM_ACP_CONFINEMENT, ROOM_OPENCODE_CONFINEMENT
 from xmuse_core.chat.room_antigravity_transport import (
     ROOM_ANTIGRAVITY_CONFINEMENT,
     discover_antigravity_language_server_env,
     resolve_antigravity_agentapi_path,
 )
+from xmuse_core.chat.room_opencode_sandbox import (
+    OPENCODE_BWRAP_ENV,
+    OPENCODE_EXECUTABLE_ENV,
+    resolve_bwrap_executable,
+    resolve_opencode_executable,
+)
 
-ROOM_PROVIDER_KINDS = ("codex", "claude", "antigravity")
+ROOM_PROVIDER_KINDS = ("codex", "claude", "antigravity", "opencode")
 CODEX_CONFINEMENT = "read_only_sandbox"
 ROOM_MCP_PINNED_PORT = 8100
 ROOM_MCP_PINNED_HOST = "127.0.0.1"
@@ -28,12 +34,18 @@ CLAUDE_COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
 ANTIGRAVITY_FLAG_ENV = "XMUSE_ANTIGRAVITY"
 ANTIGRAVITY_AGENTAPI_ENV = "XMUSE_ANTIGRAVITY_AGENTAPI"
 ANTIGRAVITY_BRAIN_DIR_ENV = "XMUSE_ANTIGRAVITY_BRAIN_DIR"
+OPENCODE_FLAG_ENV = "XMUSE_OPENCODE"
+OPENCODE_MODEL_ENV = "XMUSE_OPENCODE_MODEL"
 ROOM_RUNNER_PROVIDER_ENV_KEYS = (
     CLAUDE_FLAG_ENV,
     CLAUDE_COMMAND_ENV,
     ANTIGRAVITY_FLAG_ENV,
     ANTIGRAVITY_AGENTAPI_ENV,
     ANTIGRAVITY_BRAIN_DIR_ENV,
+    OPENCODE_FLAG_ENV,
+    OPENCODE_MODEL_ENV,
+    OPENCODE_EXECUTABLE_ENV,
+    OPENCODE_BWRAP_ENV,
 )
 
 
@@ -64,8 +76,8 @@ def detect_provider_capabilities(
 ) -> dict[str, dict[str, object]]:
     """Detect one safe capability record per provider kind.
 
-    ``enabled`` honors an explicit ``XMUSE_CLAUDE_ACP``/``XMUSE_ANTIGRAVITY``
-    flag (the managed Workroom always writes one); without a flag a provider is
+    ``enabled`` honors an explicit ``XMUSE_CLAUDE_ACP``/``XMUSE_ANTIGRAVITY``/
+    ``XMUSE_OPENCODE`` flag (the managed Workroom always writes one); without a flag a provider is
     enabled exactly when it is available.  Codex has no admission flag and is
     enabled by the persistent Room composition whenever it is usable.
     """
@@ -81,6 +93,11 @@ def detect_provider_capabilities(
             discovery(source)
         except Exception:
             antigravity_available = False
+    # OpenCode runs only inside its read-only bubblewrap sandbox.
+    opencode_available = (
+        resolve_opencode_executable(source, which) is not None
+        and resolve_bwrap_executable(source, which) is not None
+    )
 
     def resolved_enabled(name: str, available: bool) -> bool:
         if _flag_configured(name, source):
@@ -102,5 +119,10 @@ def detect_provider_capabilities(
             "available": antigravity_available,
             "enabled": resolved_enabled(ANTIGRAVITY_FLAG_ENV, antigravity_available),
             "confinement": ROOM_ANTIGRAVITY_CONFINEMENT,
+        },
+        "opencode": {
+            "available": opencode_available,
+            "enabled": resolved_enabled(OPENCODE_FLAG_ENV, opencode_available),
+            "confinement": ROOM_OPENCODE_CONFINEMENT,
         },
     }

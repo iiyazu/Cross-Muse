@@ -91,7 +91,7 @@ ROOM_ACP_PROVIDER_SESSION_KIND = "acp_session"
 ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp")
 ROOM_ACP_DEFAULT_MCP_URL = "http://127.0.0.1:8100/mcp/room"
 ROOM_ACP_MCP_SERVER_NAME = "xmuse-room"
-ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value,)
+ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value, AgentRuntime.OPENCODE.value)
 # Claude Code enforces the Room boundary in-process: the session's built-in tool
 # set is limited to ROOM_ACP_BUILTIN_TOOLS with workspace settings not loaded,
 # and ACP permission requests are granted solely for the exact room outcome tool
@@ -117,6 +117,60 @@ ROOM_ACP_SETTING_SOURCES: tuple[str, ...] = ("user",)
 _ROOM_OUTCOME_QUALIFIED_TOOL_NAME = f"mcp__{ROOM_ACP_MCP_SERVER_NAME}__{ROOM_OUTCOME_TOOL_NAME}"
 _READ_TEXT_FILE_BYTE_LIMIT = 8 * 1024 * 1024
 
+# OpenCode never asks the ACP client before running its own tools (shell, write,
+# and MCP calls through its code-execution tool all run unprompted), so the
+# client cannot gate it.  Its agent process instead runs inside a read-only OS
+# sandbox (``room_opencode_sandbox``); OpenCode's own tool configuration stays
+# untouched because altering it disables OpenCode's hosted free tier.
+ROOM_OPENCODE_CONFINEMENT = "os_read_only_sandbox"
+
+
+@dataclass(frozen=True)
+class AcpProviderProfile:
+    """Provider-specific facts of one ACP agent family sharing this transport.
+
+    ``approvable_tool_titles`` are the exact ACP tool-call titles the permission
+    callback may approve; every other request is rejected.  ``session_meta`` is
+    sent as ``session/new`` ``_meta`` and ``model_config_option`` names the ACP
+    session config option that selects the participant's model.
+    """
+
+    runtime: str
+    confinement: str
+    approvable_tool_titles: frozenset[str]
+    session_meta: Mapping[str, Any] = field(default_factory=dict)
+    pin_default_mode: bool = False
+    model_config_option: str | None = None
+
+
+CLAUDE_ACP_PROFILE = AcpProviderProfile(
+    runtime=AgentRuntime.CLAUDE.value,
+    confinement=ROOM_ACP_CONFINEMENT,
+    approvable_tool_titles=frozenset({_ROOM_OUTCOME_QUALIFIED_TOOL_NAME}),
+    # claude-agent-acp forwards ``claudeCode.options`` to the Claude Agent SDK:
+    # only the Read/Glob/Grep built-ins remain, and only the operator's user
+    # settings load (they may carry the provider credential); workspace
+    # project/local settings cannot add allow rules, hooks, or CLAUDE.md.  User
+    # allow rules cannot re-enable tools removed from the base set.
+    session_meta={
+        "claudeCode": {
+            "options": {
+                "tools": list(ROOM_ACP_BUILTIN_TOOLS),
+                "settingSources": list(ROOM_ACP_SETTING_SOURCES),
+            }
+        }
+    },
+    pin_default_mode=True,
+)
+OPENCODE_ACP_PROFILE = AcpProviderProfile(
+    runtime=AgentRuntime.OPENCODE.value,
+    confinement=ROOM_OPENCODE_CONFINEMENT,
+    # OpenCode calls MCP tools without a permission request; nothing it asks
+    # for (only tools its configuration sets to ``ask``) is ever approved.
+    approvable_tool_titles=frozenset(),
+    model_config_option="model",
+)
+
 
 class RoomAcpTransportError(RuntimeError):
     """Stable ACP transport failure carrying a Room reason code."""
@@ -137,10 +191,16 @@ class AcpTransportConfig:
     client_version: str = "0.1.0"
     initialize_timeout_s: float = 60.0
     shutdown_grace_s: float = 5.0
+    profile: AcpProviderProfile = CLAUDE_ACP_PROFILE
+    # Model selected through ``profile.model_config_option`` when the
+    # participant's own model is not a provider-qualified ``provider/model`` id.
+    default_model: str | None = None
 
     def __post_init__(self) -> None:
         if not self.command or not all(isinstance(part, str) and part for part in self.command):
             raise ValueError("room_acp_command_invalid")
+        if self.profile.model_config_option is not None and not normalized_text(self.default_model):
+            raise ValueError("room_acp_default_model_invalid")
         if not isinstance(self.room_mcp_url, str) or not self.room_mcp_url.strip():
             raise ValueError("room_acp_room_mcp_url_invalid")
         for name in ("initialize_timeout_s", "shutdown_grace_s"):
@@ -263,7 +323,7 @@ class _RoomAcpClient:
             return
         if kind in {"tool_call", "tool_call_update"}:
             identifiers = _tool_identity_candidates(update, kwargs)
-            if not any(_is_room_outcome_tool_identifier(item) for item in identifiers):
+            if not any(self._transport.is_room_outcome_tool(item) for item in identifiers):
                 return
             status = getattr(update, "status", None)
             if kind == "tool_call" or status in {"pending", "in_progress"}:
@@ -284,7 +344,7 @@ class _RoomAcpClient:
     ) -> RequestPermissionResponse:
         identifiers = _tool_identity_candidates(tool_call, kwargs)
         allowed = session_id == self._session.acp_session_id and any(
-            _is_room_outcome_tool_identifier(item) for item in identifiers
+            self._transport.is_room_outcome_tool(item) for item in identifiers
         )
         # The adapter's ``claudeCode.toolName`` metadata is observation-only
         # evidence; authorization stays with the exact tool-call title because
@@ -377,6 +437,15 @@ class AcpRoomObservationTransport:
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._next_generation = 1
 
+    @property
+    def profile(self) -> AcpProviderProfile:
+        return self._config.profile
+
+    def is_room_outcome_tool(self, value: str) -> bool:
+        """Accept only this provider's exact qualified room outcome tool title."""
+
+        return value in self._config.profile.approvable_tool_titles
+
     def resolve_workspace_path(self, path: str) -> Path:
         """Resolve an ACP filesystem path and require it inside the workspace."""
 
@@ -401,7 +470,7 @@ class AcpRoomObservationTransport:
         invalid = self._kit.validate_delivery(
             delivery,
             reason_prefix="room_acp",
-            supported_cli_kinds=ROOM_ACP_SUPPORTED_CLI_KINDS,
+            supported_cli_kinds=(self._config.profile.runtime,),
         )
         if invalid is not None:
             return RoomTransportResult("failed", invalid)
@@ -473,7 +542,7 @@ class AcpRoomObservationTransport:
         prompt_text = _format_turn_prompt(
             role=delivery.participant.role,
             msg_type="room_observation",
-            prompt=build_room_observation_prompt(AgentRuntime.CLAUDE.value),
+            prompt=build_room_observation_prompt(self._config.profile.runtime),
             context=submission.text,
         )
         preview = await self._kit.open_preview(
@@ -746,7 +815,7 @@ class AcpRoomObservationTransport:
             return self._registry.create(
                 role=participant.role,
                 agent_name=participant.display_name,
-                runtime=AgentRuntime.CLAUDE.value,
+                runtime=self._config.profile.runtime,
                 session_address=session_address,
                 session_inbox_id=session_inbox_id,
                 conversation_id=delivery.conversation_id,
@@ -757,7 +826,7 @@ class AcpRoomObservationTransport:
                 feature_scope_id=ROOM_DELIVERY_SESSION_SCOPE,
             )
         if (
-            record.runtime != AgentRuntime.CLAUDE.value
+            record.runtime != self._config.profile.runtime
             or record.role != participant.role
             or record.conversation_id != delivery.conversation_id
             or record.participant_id != participant.participant_id
@@ -848,24 +917,16 @@ class AcpRoomObservationTransport:
                         )
                     ],
                     # Agent-client-protocol sends extra kwargs as the request
-                    # ``_meta``.  claude-agent-acp forwards ``claudeCode.options``
-                    # to the Claude Agent SDK: only the Read/Glob/Grep built-ins
-                    # remain, and only the operator's user settings load (they may
-                    # carry the provider credential); workspace project/local
-                    # settings cannot add allow rules, hooks, or CLAUDE.md.  User
-                    # allow rules cannot re-enable tools removed from the base set.
-                    claudeCode={
-                        "options": {
-                            "tools": list(ROOM_ACP_BUILTIN_TOOLS),
-                            "settingSources": list(ROOM_ACP_SETTING_SOURCES),
-                        }
-                    },
+                    # ``_meta`` (see ``AcpProviderProfile.session_meta``).
+                    **dict(self._config.profile.session_meta),
                 )
                 acp_session_id = normalized_text(created.session_id)
                 if acp_session_id is None:
                     raise RoomAcpTransportError("room_acp_session_id_missing")
                 session.acp_session_id = acp_session_id
-                await self._select_default_mode(session, created)
+                if self._config.profile.pin_default_mode:
+                    await self._select_default_mode(session, created)
+                await self._select_model(session, delivery)
         except RoomAcpTransportError:
             await self._reap_failed_spawn(session, process)
             raise
@@ -922,6 +983,27 @@ class AcpRoomObservationTransport:
             )
             return
         logger.info("room_acp_permission_mode_selected mode_id=default")
+
+    async def _select_model(self, session: _AcpSession, delivery: RoomObservationDelivery) -> None:
+        """Select the participant's model through the profile's ACP config option."""
+
+        option = self._config.profile.model_config_option
+        if option is None:
+            return
+        model = resolve_acp_model(delivery.participant.model, self._config.default_model)
+        try:
+            await session.connection.set_config_option(
+                config_id=option,
+                session_id=session.acp_session_id,
+                value=model,
+            )
+        except Exception as exc:
+            # Never fall back to the agent's own default model: it may be a paid
+            # model the operator did not choose for this participant.
+            raise RoomAcpTransportError(
+                "room_acp_model_unavailable", f"{model}: {type(exc).__name__}: {exc}"
+            ) from exc
+        logger.info("room_acp_model_selected model=%s", model)
 
     async def _reap_failed_spawn(
         self, session: _AcpSession | None, process: asyncio.subprocess.Process
@@ -1009,6 +1091,18 @@ class AcpRoomObservationTransport:
             )
 
 
+def resolve_acp_model(participant_model: str | None, default_model: str | None) -> str:
+    """Use a provider-qualified participant model, else the configured default."""
+
+    candidate = normalized_text(participant_model)
+    if candidate is not None and "/" in candidate:
+        return candidate
+    fallback = normalized_text(default_model)
+    if fallback is None:
+        raise RoomAcpTransportError("room_acp_model_unavailable", "no model configured")
+    return fallback
+
+
 def _permission_option(options: Collection[PermissionOption], kind: str) -> PermissionOption | None:
     for option in options:
         if getattr(option, "kind", None) == kind:
@@ -1029,12 +1123,6 @@ def _tool_identity_candidates(tool_call: object, extra: Mapping[str, Any]) -> li
         if isinstance(value, str) and value and value not in candidates:
             candidates.append(value)
     return candidates
-
-
-def _is_room_outcome_tool_identifier(value: str) -> bool:
-    """Accept only the exact qualified outcome tool of the ``xmuse-room`` server."""
-
-    return value == _ROOM_OUTCOME_QUALIFIED_TOOL_NAME
 
 
 def _field_meta_tool_name(tool_call: object) -> str | None:

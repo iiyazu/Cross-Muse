@@ -39,7 +39,7 @@ def test_projection_records_only_safe_fields_per_provider(tmp_path: Path) -> Non
         ),
     )
 
-    assert set(capabilities) == {"codex", "claude", "antigravity"}
+    assert set(capabilities) == {"codex", "claude", "antigravity", "opencode"}
     for record in capabilities.values():
         assert set(record) == SAFE_KEYS
         assert isinstance(record["available"], bool)
@@ -47,6 +47,7 @@ def test_projection_records_only_safe_fields_per_provider(tmp_path: Path) -> Non
     assert capabilities["claude"]["confinement"] == "client_permission_gated"
     assert capabilities["antigravity"]["confinement"] == "instructed_read_only"
     assert capabilities["codex"]["confinement"] == "read_only_sandbox"
+    assert capabilities["opencode"]["confinement"] == "os_read_only_sandbox"
     serialized = json.dumps(capabilities)
     assert "/secret" not in serialized
 
@@ -67,6 +68,24 @@ def test_claude_availability_requires_cli_and_npx(tmp_path: Path) -> None:
     )
     assert both["claude"]["available"] is True
     assert both["claude"]["enabled"] is True
+
+
+def test_opencode_availability_requires_cli_and_bubblewrap(tmp_path: Path) -> None:
+    environ = _base_environ(tmp_path, HOME=str(tmp_path / "home"))
+
+    only_cli = detect_provider_capabilities(
+        environ=environ,
+        which=_which({"opencode": "/usr/bin/opencode"}),
+    )
+    assert only_cli["opencode"]["available"] is False
+    assert only_cli["opencode"]["enabled"] is False
+
+    sandboxed = detect_provider_capabilities(
+        environ=environ,
+        which=_which({"opencode": "/usr/bin/opencode", "bwrap": "/usr/bin/bwrap"}),
+    )
+    assert sandboxed["opencode"]["available"] is True
+    assert sandboxed["opencode"]["enabled"] is True
 
 
 def test_codex_availability_requires_an_authentication_carrier(tmp_path: Path) -> None:

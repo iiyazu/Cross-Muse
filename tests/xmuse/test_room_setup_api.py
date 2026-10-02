@@ -117,6 +117,7 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
         "builtin.development",
         "builtin.heterogeneous-duo",
         "builtin.heterogeneous-trio",
+        "builtin.heterogeneous-trio-opencode",
         "custom.review",
     ]
     assert len(payload["roster_templates"][0]["participants"]) == 4
@@ -175,7 +176,7 @@ def test_room_setup_options_mark_templates_with_unavailable_providers(tmp_path: 
     ]
 
 
-@pytest.mark.parametrize("provider", ["a2a", "opencode"])
+@pytest.mark.parametrize("provider", ["a2a"])
 def test_room_setup_public_request_rejects_retired_providers_before_writing(
     tmp_path: Path,
     provider: str,

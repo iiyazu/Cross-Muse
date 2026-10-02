@@ -10,7 +10,7 @@ const PARTICIPANT_KEYS = [
   "display_name"
 ];
 
-const PROVIDER_KINDS = ["codex", "claude", "antigravity"];
+const PROVIDER_KINDS = ["codex", "claude", "antigravity", "opencode"];
 const COLLABORATION_MODES = ["broadcast", "addressed"];
 
 function optionalText(value: unknown, maximum = 200): string | null | undefined {

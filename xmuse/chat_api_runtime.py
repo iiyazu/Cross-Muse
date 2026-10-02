@@ -17,6 +17,7 @@ from fastapi import HTTPException, Request
 from xmuse.provider_capabilities import (
     ANTIGRAVITY_FLAG_ENV,
     CLAUDE_FLAG_ENV,
+    OPENCODE_FLAG_ENV,
     ROOM_MCP_PINNED_PORT,
     ROOM_RUNNER_PROVIDER_ENV_KEYS,
     detect_provider_capabilities,
@@ -152,6 +153,7 @@ def _room_runner_provider_env(
     environment = {
         CLAUDE_FLAG_ENV: "1" if capabilities["claude"]["enabled"] else "0",
         ANTIGRAVITY_FLAG_ENV: "1" if capabilities["antigravity"]["enabled"] else "0",
+        OPENCODE_FLAG_ENV: "1" if capabilities["opencode"]["enabled"] else "0",
     }
     for key in ROOM_RUNNER_PROVIDER_ENV_KEYS:
         value = os.environ.get(key, "").strip()

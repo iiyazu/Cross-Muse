@@ -15,7 +15,7 @@ from xmuse_core.providers.registry import (
     normalize_codex_model_id,
 )
 
-ProviderRuntimeKind = Literal["codex", "claude", "antigravity"]
+ProviderRuntimeKind = Literal["codex", "claude", "antigravity", "opencode"]
 
 
 class RoleProfile(BaseModel):
@@ -348,6 +348,20 @@ def _builtin_role_profiles() -> dict[str, RoleProfile]:
             ),
             default_provider_profile_ref="codex.review",
         ),
+        "verifier": RoleProfile(
+            role_id="verifier",
+            participant_role="review",
+            display_name="Verifier",
+            description=(
+                "Runs high-volume, mechanical verification: checks claims, steps, and "
+                "results against the stated requirements and reports concrete gaps."
+            ),
+            collaboration_focus=(
+                "Use for repeated checklist-style review and audits of a handed-off plan "
+                "or result; not for product judgment or open-ended design."
+            ),
+            default_provider_profile_ref="opencode.default",
+        ),
     }
 
 
@@ -407,6 +421,19 @@ def _builtin_provider_profiles(
             implemented=True,
             cli_kind="antigravity",
         ),
+        "opencode.default": WorkroomProviderProfile(
+            provider_profile_ref="opencode.default",
+            provider_id="opencode",
+            profile_id="default",
+            display_name="OpenCode Default",
+            description=(
+                "OpenCode CLI participant over the Agent Client Protocol in a read-only "
+                "sandbox; the Room runner selects its model (XMUSE_OPENCODE_MODEL)."
+            ),
+            model_id="opencode-default",
+            implemented=True,
+            cli_kind="opencode",
+        ),
     }
 
 
@@ -450,6 +477,30 @@ def _builtin_roster_templates() -> dict[str, RosterTemplate]:
                 RosterRoleBinding(
                     role_id="researcher",
                     provider_profile_ref="antigravity.default",
+                ),
+            ),
+            collaboration=RosterCollaboration(mode="addressed", lead_role="architect"),
+        ),
+        "builtin.heterogeneous-trio-opencode": RosterTemplate(
+            template_id="builtin.heterogeneous-trio-opencode",
+            display_name="Heterogeneous Trio (OpenCode verifier)",
+            description=(
+                "Cost-aware trio: Claude leads product judgment, Antigravity researches "
+                "broadly, and a low-cost OpenCode Agent verifies results; no Codex login "
+                "required."
+            ),
+            roles=(
+                RosterRoleBinding(
+                    role_id="product_lead",
+                    provider_profile_ref="claude.default",
+                ),
+                RosterRoleBinding(
+                    role_id="researcher",
+                    provider_profile_ref="antigravity.default",
+                ),
+                RosterRoleBinding(
+                    role_id="verifier",
+                    provider_profile_ref="opencode.default",
                 ),
             ),
             collaboration=RosterCollaboration(mode="addressed", lead_role="architect"),

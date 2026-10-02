@@ -135,7 +135,7 @@ class TestParticipantStore:
                 model="a2a-remote",
             )
 
-    @pytest.mark.parametrize("cli_kind", ["a2a", "opencode"])
+    @pytest.mark.parametrize("cli_kind", ["a2a"])
     def test_retired_participant_rows_are_readable_but_cannot_be_reactivated(
         self,
         db_path: Path,
@@ -336,17 +336,21 @@ class TestParticipantStore:
                 model="  ",
             )
 
-    def test_add_rejects_opencode_cli_kind(self, db_path: Path, conv_id: str) -> None:
+    def test_add_accepts_opencode_as_a_current_room_agent(
+        self, db_path: Path, conv_id: str
+    ) -> None:
         store = ParticipantStore(db_path)
 
-        with pytest.raises(ValueError, match="support only cli_kind in"):
-            store.add(
-                conversation_id=conv_id,
-                role="review",
-                display_name="OpenCode Review",
-                cli_kind="opencode",  # type: ignore[arg-type]
-                model="gpt-oss",
-            )
+        participant = store.add(
+            conversation_id=conv_id,
+            role="review",
+            display_name="OpenCode Review",
+            cli_kind="opencode",
+            model="opencode-go/muse-spark-1.3-contributor",
+        )
+
+        assert participant.cli_kind == "opencode"
+        assert participant.model == "opencode-go/muse-spark-1.3-contributor"
 
     def test_ensure_init_god_reuses_same_participant_per_conversation(
         self,

@@ -30,11 +30,12 @@ from xmuse_core.agents.god_session_registry import GodSessionRecord, GodSessionR
 from xmuse_core.agents.room_codex_scopes import ROOM_DELIVERY_SESSION_SCOPE
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_acp_transport import (
+    CLAUDE_ACP_PROFILE,
+    OPENCODE_ACP_PROFILE,
     ROOM_ACP_BUILTIN_TOOLS,
     ROOM_ACP_PROVIDER_SESSION_KIND,
     AcpRoomObservationTransport,
     AcpTransportConfig,
-    _is_room_outcome_tool_identifier,
     _tool_identity_candidates,
 )
 from xmuse_core.chat.room_agent_stream import (
@@ -275,7 +276,10 @@ def test_permission_allows_only_the_exact_room_outcome_tool(
     tool_call: SimpleNamespace, extra: dict[str, Any], allowed: bool
 ) -> None:
     identifiers = _tool_identity_candidates(tool_call, extra)
-    assert any(_is_room_outcome_tool_identifier(item) for item in identifiers) is allowed
+    titles = CLAUDE_ACP_PROFILE.approvable_tool_titles
+    assert any(item in titles for item in identifiers) is allowed
+    # OpenCode never asks before calling MCP tools; whatever it does ask for is denied.
+    assert not any(item in OPENCODE_ACP_PROFILE.approvable_tool_titles for item in identifiers)
 
 
 def test_sanitized_agent_environment_strips_only_server_secrets() -> None:

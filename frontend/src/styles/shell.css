@@ -567,6 +567,15 @@
   color: #b7acf2;
 }
 
+.room-provider-badge.provider-opencode {
+  border-color: color-mix(in oklab, #7fbf8e, transparent 62%);
+  color: #93c9a0;
+}
+
+:root[data-theme="light"] .room-provider-badge.provider-opencode {
+  color: #3d7a4c;
+}
+
 :root[data-theme="light"] .room-provider-badge.provider-codex {
   color: #3f6f9e;
 }
@@ -603,6 +612,10 @@
 
 .room-avatar__provider.provider-antigravity {
   background: #a89af0;
+}
+
+.room-avatar__provider.provider-opencode {
+  background: #7fbf8e;
 }
 
 .room-collaboration-chip {
