@@ -1521,6 +1521,13 @@ class RoomParticipantHost:
                             )
                     except Exception:
                         reopen_immediately = False
+            elif transport_status == "failed":
+                # A failed attempt whose transport proved its provider generation
+                # gone cannot commit late, so it need not hold the lease until
+                # expiry; anything unproven still waits it out.
+                reopen_immediately = self._failed_attempt_cleanup_proven(
+                    current["observation_id"], attempt_id
+                )
             try:
                 finished_attempt = self._controls.finish_attempt(
                     observation_id=current["observation_id"],
@@ -1550,6 +1557,17 @@ class RoomParticipantHost:
         finally:
             if release_permit_on_exit:
                 permit.release()
+
+    def _failed_attempt_cleanup_proven(self, observation_id: str, attempt_id: str) -> bool:
+        try:
+            binding = self._controls.reconcile_state(observation_id).get("reconcile_binding")
+        except (KeyError, RoomControlError):
+            return False
+        return (
+            isinstance(binding, dict)
+            and binding.get("attempt_id") == attempt_id
+            and binding.get("provider_phase") == "cleanup_succeeded"
+        )
 
     async def _with_memory_evidence(
         self, delivery: RoomObservationDelivery
