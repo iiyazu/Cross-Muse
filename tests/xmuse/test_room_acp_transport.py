@@ -515,6 +515,93 @@ async def _silent_scenario(tmp_path: Path, mcp_url: str) -> None:
     assert any(event["event"] in {"agent_exit", "sigterm_received"} for event in events)
 
 
+def _opencode_room(db: Path) -> tuple[str, Participant, RoomKernelStore]:
+    conversation_id = RoomTestStore(db).create_conversation("OpenCode room").id
+    verifier = ParticipantStore(db).add(
+        conversation_id=conversation_id,
+        role="review",
+        display_name="Verifier",
+        cli_kind="opencode",
+        model="opencode-default",
+    )
+    kernel = RoomKernelStore(db)
+    kernel.post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="Verify one fact.",
+        client_request_id="human-1",
+    )
+    return conversation_id, verifier, kernel
+
+
+@pytest.mark.parametrize("profile", ["opencode", "claude"])
+def test_plain_text_turn_gets_one_in_lease_reminder_only_when_profile_opts_in(
+    tmp_path: Path, profile: str
+) -> None:
+    with _serve_room_mcp(tmp_path) as mcp_url:
+        asyncio.run(_forgetful_scenario(tmp_path, mcp_url, profile))
+
+
+async def _forgetful_scenario(tmp_path: Path, mcp_url: str, profile: str) -> None:
+    db = tmp_path / "chat.db"
+    if profile == "opencode":
+        conversation_id, participant, kernel = _opencode_room(db)
+        config = AcpTransportConfig(
+            workspace=tmp_path,
+            command=(sys.executable, str(FAKE_AGENT)),
+            room_mcp_url=mcp_url,
+            initialize_timeout_s=30.0,
+            shutdown_grace_s=2.0,
+            profile=OPENCODE_ACP_PROFILE,
+            default_model="opencode/test-model",
+        )
+    else:
+        conversation_id, participant, kernel = _claude_only_room(db)
+        config = AcpTransportConfig(
+            workspace=tmp_path,
+            command=(sys.executable, str(FAKE_AGENT)),
+            room_mcp_url=mcp_url,
+            initialize_timeout_s=30.0,
+            shutdown_grace_s=2.0,
+        )
+    controls = RoomObservationControlStore(db)
+    decisions = RoomAttemptSkillDecisionStore(db)
+    transport = AcpRoomObservationTransport(
+        config=config,
+        registry_path=tmp_path / "god_sessions.json",
+        control_store=controls,
+        skill_decision_store=decisions,
+        environ=_agent_environment(tmp_path, "forgetful", content="verified in a reminder"),
+    )
+    host = _host(db, transport, controls=controls, decisions=decisions)
+    try:
+        result = await host.pump_once(conversation_id=conversation_id)
+    finally:
+        await transport.aclose()
+
+    state = next(
+        item for item in result.deliveries if item.participant_id == participant.participant_id
+    )
+    events = _read_events(tmp_path / "acp-agent.jsonl")
+    if profile == "claude":
+        assert state.reason == "durable_outcome_missing"
+        assert _event(events, "reminder_received") is None
+        assert _event(events, "outcome_submission") is None
+        return
+    assert state.state == "completed"
+    reminder = _event(events, "reminder_received")
+    assert reminder is not None
+    assert "chat_room_submit_outcome" in reminder["text"]
+    assert len([event for event in events if event["event"] == "prompt_received"]) == 1
+    submission = _event(events, "outcome_submission")
+    assert submission is not None
+    assert submission["http_status"] == 200
+    assert submission["result"]["produced_message"]["content"] == "verified in a reminder"
+    selected = _event(events, "set_config_option")
+    assert selected is not None
+    assert (selected["config_id"], selected["value"]) == ("model", "opencode/test-model")
+
+
 def test_slow_turn_times_out_and_cancels_the_provider_turn(tmp_path: Path) -> None:
     with _serve_room_mcp(tmp_path) as mcp_url:
         asyncio.run(_slow_scenario(tmp_path, mcp_url))

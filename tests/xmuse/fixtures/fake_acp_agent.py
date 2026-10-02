@@ -13,6 +13,8 @@ Modes (``XMUSE_TEST_ACP_MODE``):
 - ``forbidden`` request ``Bash`` first (must be rejected), then submit normally.
 - ``silent``    end the turn without submitting any durable outcome.
 - ``slow``      block the turn until ``session/cancel`` delivers it.
+- ``forgetful`` answer the observation in plain text only, then submit the
+  outcome (without asking permission, like OpenCode) on the next prompt.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from acp.schema import (
     PromptResponse,
     SessionMode,
     SessionModeState,
+    SetSessionConfigOptionResponse,
     ToolCallUpdate,
 )
 
@@ -78,6 +81,7 @@ class FakeAcpAgent:
         self._conn: Any = None
         self._cancel_event = asyncio.Event()
         self._mcp_urls: dict[str, str | None] = {}
+        self._pending_context: dict[str, dict[str, Any]] = {}
 
     def on_connect(self, conn: Any) -> None:
         self._conn = conn
@@ -138,12 +142,24 @@ class FakeAcpAgent:
     async def set_session_mode(self, session_id: str, mode_id: str, **kwargs: Any) -> None:
         _log("set_session_mode", session_id=session_id, mode_id=mode_id)
 
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: str | bool, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse:
+        _log("set_config_option", session_id=session_id, config_id=config_id, value=value)
+        return SetSessionConfigOptionResponse(config_options=[])
+
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         text = "".join(
             str(block.text) for block in prompt if getattr(block, "type", None) == "text"
         )
         match = _CONTEXT_RE.search(text)
         if match is None:
+            pending = self._pending_context.pop(session_id, None)
+            if pending is not None:
+                _log("reminder_received", session_id=session_id, text=text)
+                payload, status = self._submit_outcome(session_id, pending, _CONTENT)
+                _log("outcome_submission", http_status=status, result=payload)
+                return PromptResponse(stop_reason="end_turn")
             _log("prompt_without_context", session_id=session_id)
             return PromptResponse(stop_reason="end_turn")
         context = json.loads(match.group("body"))
@@ -159,6 +175,10 @@ class FakeAcpAgent:
             _log("slow_turn_released", session_id=session_id)
             return PromptResponse(stop_reason="cancelled")
         if _MODE == "silent":
+            return PromptResponse(stop_reason="end_turn")
+        if _MODE == "forgetful":
+            self._pending_context[session_id] = context
+            await self._conn.session_update(session_id, update_agent_message_text(_CONTENT))
             return PromptResponse(stop_reason="end_turn")
         if _MODE == "forbidden":
             allowed = await self._request_permission(

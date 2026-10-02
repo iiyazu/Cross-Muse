@@ -141,6 +141,9 @@ class AcpProviderProfile:
     session_meta: Mapping[str, Any] = field(default_factory=dict)
     pin_default_mode: bool = False
     model_config_option: str | None = None
+    # When a turn ends while the attempt still holds no durable outcome, prompt
+    # the same session once more inside the same lease and timeout budget.
+    outcome_reminder: bool = False
 
 
 CLAUDE_ACP_PROFILE = AcpProviderProfile(
@@ -169,6 +172,17 @@ OPENCODE_ACP_PROFILE = AcpProviderProfile(
     # for (only tools its configuration sets to ``ask``) is ever approved.
     approvable_tool_titles=frozenset(),
     model_config_option="model",
+    # Low-cost models often answer the Room in plain text, which never becomes
+    # Room truth; one in-lease reminder recovers most of those turns.
+    outcome_reminder=True,
+)
+ROOM_ACP_OUTCOME_REMINDER = (
+    "Your turn ended without a durable Room outcome, so the Room received nothing: "
+    "plain-text replies are never shown to the Human or other participants. Decide "
+    "now and call chat_room_submit_outcome exactly once with the identifiers from "
+    "xmuse_context.durable_outcome and one of its allowed_outcomes, putting your "
+    "visible text in outcome_payload.content. If you have nothing to add, submit the "
+    "allowed outcome that records that instead of replying in text."
 )
 
 
@@ -592,17 +606,42 @@ class AcpRoomObservationTransport:
             except RoomSkillDecisionError as exc:
                 await self._fail_session(session, delivery, reason_code=exc.code)
                 return failed_result(exc.code, exc)
-            try:
-                async with asyncio.timeout(float(timeout_s)):
-                    response = await asyncio.shield(prompt_task)
-            except TimeoutError:
-                await self._cancel_prompt(session)
-                await self._fail_session(session, delivery, reason_code="room_acp_timeout")
-                return RoomTransportResult("failed", "room_acp_timeout")
-            except Exception as exc:
-                await self._fail_session(session, delivery, reason_code="room_acp_prompt_failed")
-                return failed_result("room_acp_prompt_failed", exc)
-            stop_reason = normalized_text(getattr(response, "stop_reason", None))
+            deadline = asyncio.get_running_loop().time() + float(timeout_s)
+            reminded = False
+            while True:
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        response = await asyncio.shield(prompt_task)
+                except TimeoutError:
+                    await self._cancel_prompt(session)
+                    await self._fail_session(session, delivery, reason_code="room_acp_timeout")
+                    return RoomTransportResult("failed", "room_acp_timeout")
+                except Exception as exc:
+                    await self._fail_session(
+                        session, delivery, reason_code="room_acp_prompt_failed"
+                    )
+                    return failed_result("room_acp_prompt_failed", exc)
+                stop_reason = normalized_text(getattr(response, "stop_reason", None))
+                if (
+                    stop_reason != "end_turn"
+                    or reminded
+                    or not self._outcome_reminder_due(delivery)
+                ):
+                    break
+                reminded = True
+                logger.info(
+                    "room_acp_outcome_reminder conversation=%s participant=%s",
+                    delivery.conversation_id,
+                    delivery.participant.participant_id,
+                )
+                prompt_task = asyncio.create_task(
+                    session.connection.prompt(
+                        session.acp_session_id,
+                        [acp.text_block(ROOM_ACP_OUTCOME_REMINDER)],
+                    ),
+                    name=f"room-acp-reminder:{delivery.transport_request_id}",
+                )
+                session.prompt_task = prompt_task
             if stop_reason == "end_turn":
                 # "finished" only means the provider turn ended. The host accepts
                 # completion only from durable Room state.
@@ -623,6 +662,22 @@ class AcpRoomObservationTransport:
             session.prompt_task = None
             session.client.end_turn()
             await self._kit.finalize_preview(preview, provider_succeeded=provider_succeeded)
+
+    def _outcome_reminder_due(self, delivery: RoomObservationDelivery) -> bool:
+        """True only while this exact attempt still owns an uncommitted observation."""
+
+        if not self._config.profile.outcome_reminder or self._controls is None:
+            return False
+        try:
+            state = self._controls.reconcile_state(str(delivery.observation["observation_id"]))
+        except (KeyError, RoomControlError):
+            return False
+        binding = state.get("reconcile_binding") or {}
+        return (
+            state.get("observation_status") == "claimed"
+            and state.get("control_state") == "active"
+            and binding.get("attempt_id") == delivery.attempt_id
+        )
 
     async def reconcile_cancel(
         self,
