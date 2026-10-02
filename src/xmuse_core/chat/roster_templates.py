@@ -353,12 +353,17 @@ def _builtin_role_profiles() -> dict[str, RoleProfile]:
             participant_role="review",
             display_name="Verifier",
             description=(
-                "Runs high-volume, mechanical verification: checks claims, steps, and "
-                "results against the stated requirements and reports concrete gaps."
+                "Low-cost participant for high-volume, mechanical verification: checks "
+                "claims, steps, and results item by item against the source material and "
+                "the stated requirements, and reports concrete gaps."
             ),
             collaboration_focus=(
-                "Use for repeated checklist-style review and audits of a handed-off plan "
-                "or result; not for product judgment or open-ended design."
+                "Use for repeated checklist-style review, fact-checking a summary or plan "
+                "against its source, and audits of a handed-off result; prefer it over a "
+                "costlier participant for routine checks. Back each pass or fail with the "
+                "exact source line or the read-only check you ran, then hand the findings "
+                "to whoever owns the next step. Not for product judgment or open-ended "
+                "design."
             ),
             default_provider_profile_ref="opencode.default",
         ),
