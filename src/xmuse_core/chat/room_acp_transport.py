@@ -1083,7 +1083,14 @@ class AcpRoomObservationTransport:
             except Exception as exc:
                 last_error = exc
                 now = asyncio.get_running_loop().time()
-                if now >= deadline or session.closed or session.process.returncode is not None:
+                # Only a definite agent reply (e.g. "model not found" while models are
+                # still loading) is worth waiting out; transport failures fail fast.
+                if (
+                    not isinstance(exc, acp.RequestError)
+                    or now >= deadline
+                    or session.closed
+                    or session.process.returncode is not None
+                ):
                     # Never fall back to the agent's own default model: it may be a paid
                     # model the operator did not choose for this participant.
                     raise RoomAcpTransportError(

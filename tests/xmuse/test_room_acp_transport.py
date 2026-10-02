@@ -21,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import acp
 import pytest
 import uvicorn
 
@@ -732,7 +733,9 @@ async def _select_model_retries_scenario(tmp_path: Path) -> None:
         async def set_config_option(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             if len(calls) < 3:
-                raise RuntimeError("model not found: opencode-go/muse-spark-1.3-contributor")
+                raise acp.RequestError.invalid_params(
+                    {"detail": "model not found: opencode-go/muse-spark-1.3-contributor"}
+                )
             return SimpleNamespace()
 
     profile = AcpProviderProfile(
@@ -774,7 +777,7 @@ def test_select_model_fails_when_settle_deadline_expires(tmp_path: Path) -> None
 async def _select_model_deadline_scenario(tmp_path: Path) -> None:
     class _FailingConnection:
         async def set_config_option(self, **kwargs: Any) -> Any:
-            raise RuntimeError("model not found: non-existent-model")
+            raise acp.RequestError.invalid_params({"detail": "model not found: non-existent-model"})
 
     profile = AcpProviderProfile(
         runtime="opencode",
@@ -807,6 +810,50 @@ async def _select_model_deadline_scenario(tmp_path: Path) -> None:
         await transport._select_model(session, delivery)
     assert exc_info.value.code == "room_acp_model_unavailable"
     assert "non-existent-model" in str(exc_info.value)
+
+
+def test_select_model_does_not_wait_out_transport_failures(tmp_path: Path) -> None:
+    asyncio.run(_select_model_transport_failure_scenario(tmp_path))
+
+
+async def _select_model_transport_failure_scenario(tmp_path: Path) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _BrokenConnection:
+        async def set_config_option(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            raise ConnectionResetError("stdio closed")
+
+    profile = AcpProviderProfile(
+        runtime="opencode",
+        confinement="os_read_only_sandbox",
+        approvable_tool_titles=frozenset(),
+        model_config_option="model",
+        model_settle_timeout_s=10.0,
+        model_settle_poll_interval_s=0.5,
+    )
+    transport = AcpRoomObservationTransport(
+        config=AcpTransportConfig(
+            workspace=tmp_path,
+            command=("true",),
+            profile=profile,
+            default_model="opencode/some-model",
+            initialize_timeout_s=10.0,
+        ),
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    session = SimpleNamespace(
+        closed=False,
+        process=SimpleNamespace(returncode=None),
+        acp_session_id="test-session-1",
+        connection=_BrokenConnection(),
+    )
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/some-model")
+
+    with pytest.raises(RoomAcpTransportError) as exc_info:
+        await transport._select_model(session, delivery)
+    assert exc_info.value.code == "room_acp_model_unavailable"
+    assert len(calls) == 1
 
 
 def test_select_model_aborts_immediately_on_process_exit(tmp_path: Path) -> None:
