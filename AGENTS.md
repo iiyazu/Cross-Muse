@@ -3,7 +3,7 @@
 ## Direction and evidence
 
 xmuse is a heterogeneous Agent workroom: independent Agents from different vendors (Codex,
-Claude Code, Antigravity, ...) join one durable Room with a Human and collaborate by
+Claude Code, Antigravity, OpenCode, ...) join one durable Room with a Human and collaborate by
 capability. A Room selects a collaboration mode:
 
 - `broadcast` (default, the original protocol): every active Agent observes Room events and
@@ -83,7 +83,16 @@ do not load `.env`.
   enter only through exact-patch candidates. Claude ACP sessions run with built-in tools
   limited to Read/Glob/Grep (no Bash), no workspace project/local settings, the `default`
   permission mode pinned via `session/set_mode`, and only the exact room outcome MCP tool
-  approved by the ACP permission callback.
+  approved by the ACP permission callback. OpenCode ACP sessions run its own tools without
+  asking the client, so the agent process runs under bubblewrap instead: filesystem and
+  workspace read-only, private `/tmp`, other tools' credential stores and the xmuse root
+  masked, only OpenCode's own state directories writable (`os_read_only_sandbox`). Its model
+  comes from `XMUSE_OPENCODE_MODEL` and an unknown model fails the attempt rather than
+  falling back. A turn that ends without a durable outcome gets at most one in-lease reminder
+  prompt for profiles that opt in (OpenCode); provider text is still never Room truth.
+- A failed attempt reopens immediately only when its transport proved the provider
+  generation gone (`cleanup_succeeded`); otherwise it waits out its lease. The attempt limit
+  applies either way.
 - Managed MCP exposes only `/health`, `/mcp/room`, and
   `chat_room_submit_outcome`. New batch deliveries bind that outcome to the exact batch and
   may name a reply target from the delivered members. Provider final text is not Room truth.
@@ -131,7 +140,8 @@ do not load `.env`.
 - Do not reintroduce a central speaker queue or LLM router that decides for Agents, platform
   runner, broad MCP, Dashboard, A2A
   experiment, an always-on or authoritative MemoryOS runtime, Ray, repository-local OpenCode
-  orchestration, or LangGraph execution into the default product.
+  orchestration (OpenCode as a sandboxed Room participant is a provider, not orchestration),
+  or LangGraph execution into the default product.
 - Do not commit databases, logs, PID/receipt files, runtime roots, `node_modules`,
   `.next`, or caches.
 - Preserve unrelated user changes. Never use `git reset --hard`.
