@@ -76,3 +76,30 @@ def test_opencode_prompt_names_the_code_execution_bridge_and_read_only_filesyste
 def test_unknown_provider_is_rejected() -> None:
     with pytest.raises(ValueError, match="room_observation_prompt_provider_unsupported"):
         build_room_observation_prompt("gemini")
+
+
+@pytest.mark.parametrize("provider", ["claude", "opencode"])
+def test_owner_prompt_grants_the_writable_clone_and_keeps_the_outcome_contract(
+    provider: str,
+) -> None:
+    owner = build_room_observation_prompt(provider, owner=True)
+    reader = build_room_observation_prompt(provider)
+
+    assert owner != reader
+    assert "your own private git clone and it is writable" in owner
+    assert "commit hash" in owner
+    assert "chat_room_submit_outcome" in owner
+    # No read-only instruction may contradict the writable sandbox.
+    assert "read-only" not in owner
+    assert "Never edit files" not in owner
+    # The shared outcome contract is kept.
+    assert "observation_batch_id" in owner
+    assert "Obey durable_outcome.allowed_outcomes" in owner
+    # The non-owner prompt is untouched by the owner variant.
+    assert build_room_observation_prompt(provider, owner=False) == reader
+
+
+@pytest.mark.parametrize("provider", ["codex", "antigravity"])
+def test_owner_prompt_is_only_for_confinable_providers(provider: str) -> None:
+    with pytest.raises(ValueError, match="room_observation_prompt_owner_unsupported"):
+        build_room_observation_prompt(provider, owner=True)

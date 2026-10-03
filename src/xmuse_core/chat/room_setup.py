@@ -11,8 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from xmuse_core.chat.participant_store import (
+    WORKSPACE_WRITE_CLI_KINDS,
     CurrentChatCliKind,
+    Participant,
     PersonaSnapshot,
+    WorkspaceAccess,
     insert_participant_conn,
     prepare_participant,
     provider_id_for_cli_kind,
@@ -58,6 +61,7 @@ class _ParticipantSpec:
     cli_kind: CurrentChatCliKind
     model: str
     role_template_id: str | None
+    workspace_access: WorkspaceAccess
     persona_snapshot: PersonaSnapshot | None
 
 
@@ -130,6 +134,7 @@ class RoomSetupService:
                 cli_kind=spec.cli_kind,
                 model=spec.model,
                 role_template_id=spec.role_template_id,
+                workspace_access=spec.workspace_access,
                 persona_snapshot=spec.persona_snapshot,
                 created_at=created_at,
             )
@@ -156,7 +161,7 @@ class RoomSetupService:
             "title": request.title,
             "created_at": created_at,
             "client_request_id": client_request_id,
-            "participants": [item.model_dump(mode="json") for item in created],
+            "participants": [_setup_participant_payload(item) for item in created],
             "participant_sessions": [],
             "setup": setup,
         }
@@ -321,12 +326,19 @@ class RoomSetupService:
                     "non-codex Room participants require an explicit model",
                 )
         display_name = participant.display_name or participant.role.replace("_", " ").title()
+        workspace_access: WorkspaceAccess = participant.workspace_access or "read_only"
+        if workspace_access == "workspace_write" and cli_kind not in WORKSPACE_WRITE_CLI_KINDS:
+            raise RoomSetupError(
+                "room_participant_workspace_access_unsupported",
+                "workspace_write Room participants require cli_kind 'claude' or 'opencode'",
+            )
         return _ParticipantSpec(
             role=participant.role,
             display_name=display_name,
             cli_kind=cli_kind,
             model=model,
             role_template_id=participant.role_template_id,
+            workspace_access=workspace_access,
             persona_snapshot=requested.persona_snapshot,
         )
 
@@ -347,6 +359,15 @@ def _utc_now() -> str:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _setup_participant_payload(participant: Participant) -> dict[str, object]:
+    """Dump a setup participant while hiding the default read-only access level."""
+
+    payload = participant.model_dump(mode="json")
+    if participant.workspace_access == "read_only":
+        payload.pop("workspace_access", None)
+    return payload
 
 
 def _request_fingerprint(
@@ -372,6 +393,11 @@ def _request_fingerprint(
                 ),
                 "provider_id": str(provider_id_for_cli_kind(item.cli_kind)),
                 "cli_kind": item.cli_kind,
+                **(
+                    {"workspace_access": item.workspace_access}
+                    if item.workspace_access == "workspace_write"
+                    else {}
+                ),
             }
             for item in specs
         ],

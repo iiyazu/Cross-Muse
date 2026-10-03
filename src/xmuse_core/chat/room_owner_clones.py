@@ -10,6 +10,7 @@ external diff drivers, textconv filters, and color disabled.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -21,6 +22,7 @@ from pathlib import Path
 OWNER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _OWNER_BRANCH_PREFIX = "owner/"
 _MIRROR_DIR_NAME = ".mirror.git"
+_META_DIR_NAME = ".meta"
 
 
 class OwnerCloneError(RuntimeError):
@@ -55,6 +57,28 @@ class OwnerCloneManager:
         self._clones_root = clones_root
         self._git = git
         self._timeout_s = timeout_s
+
+    def ensure(
+        self,
+        source_repo: Path,
+        owner_id: str,
+        *,
+        base_ref: str = "HEAD",
+        prepare: Callable[[Path], None] | None = None,
+    ) -> OwnerClone:
+        """Return the existing clone for ``owner_id`` or create it.
+
+        Reuse never runs git inside the existing clone (its config is
+        owner-controlled): the branch and base commit come from host-owned
+        metadata written by :meth:`create`.
+        """
+
+        if OWNER_ID_RE.fullmatch(owner_id) is None:
+            raise OwnerCloneError("owner_id_invalid")
+        target = self._clones_root / owner_id
+        if target.exists() or target.is_symlink():
+            return self._read_metadata_clone(owner_id)
+        return self.create(source_repo, owner_id, base_ref=base_ref, prepare=prepare)
 
     def create(
         self,
@@ -95,7 +119,17 @@ class OwnerCloneManager:
                 "owner_clone_create_failed", f"{type(exc).__name__}: {exc}"
             ) from exc
         if prepare is not None:
-            prepare(target)
+            try:
+                prepare(target)
+            except Exception as exc:
+                shutil.rmtree(target, ignore_errors=True)
+                self._remove_metadata(owner_id)
+                if isinstance(exc, OwnerCloneError):
+                    raise
+                raise OwnerCloneError(
+                    "owner_clone_prepare_failed", f"{type(exc).__name__}: {exc}"
+                ) from exc
+        self._write_metadata_clone(owner_id, branch=branch, base_commit=base_commit)
         return OwnerClone(owner_id=owner_id, path=target, branch=branch, base_commit=base_commit)
 
     def export_patch(
@@ -199,12 +233,63 @@ class OwnerCloneManager:
                 pass
         elif target.is_dir():
             shutil.rmtree(target, ignore_errors=True)
+        self._remove_metadata(owner_id)
         mirror = self._clones_root / _MIRROR_DIR_NAME
         if mirror.is_dir():
             try:
                 self._run_git(["update-ref", "-d", f"refs/owners/{owner_id}"], cwd=mirror)
             except OwnerCloneError:
                 pass
+
+    def _meta_path(self, owner_id: str) -> Path:
+        return self._clones_root / _META_DIR_NAME / f"{owner_id}.json"
+
+    def _write_metadata_clone(self, owner_id: str, *, branch: str, base_commit: str) -> None:
+        meta_dir = self._clones_root / _META_DIR_NAME
+        try:
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            self._meta_path(owner_id).write_text(
+                json.dumps(
+                    {"owner_id": owner_id, "branch": branch, "base_commit": base_commit},
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            shutil.rmtree(self._clones_root / owner_id, ignore_errors=True)
+            self._remove_metadata(owner_id)
+            raise OwnerCloneError("owner_clone_create_failed", str(exc)) from exc
+
+    def _read_metadata_clone(self, owner_id: str) -> OwnerClone:
+        try:
+            payload = json.loads(self._meta_path(owner_id).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise OwnerCloneError("owner_clone_metadata_invalid", str(exc)) from exc
+        if not isinstance(payload, dict):
+            raise OwnerCloneError("owner_clone_metadata_invalid")
+        branch = payload.get("branch")
+        base_commit = payload.get("base_commit")
+        expected_branch = f"{_OWNER_BRANCH_PREFIX}{owner_id}"
+        if (
+            payload.get("owner_id") != owner_id
+            or branch != expected_branch
+            or not isinstance(base_commit, str)
+            or not base_commit.strip()
+        ):
+            raise OwnerCloneError("owner_clone_metadata_invalid")
+        return OwnerClone(
+            owner_id=owner_id,
+            path=self._clones_root / owner_id,
+            branch=branch,
+            base_commit=base_commit,
+        )
+
+    def _remove_metadata(self, owner_id: str) -> None:
+        try:
+            self._meta_path(owner_id).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _is_inside_root(self, path: Path) -> bool:
         root = self._clones_root.resolve()

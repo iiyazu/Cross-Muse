@@ -36,6 +36,8 @@ def _new_id(prefix: str) -> str:
 
 CurrentChatCliKind = Literal["codex", "claude", "antigravity", "opencode"]
 StoredChatCliKind = Literal["codex", "claude", "antigravity", "opencode", "a2a"]
+WorkspaceAccess = Literal["read_only", "workspace_write"]
+WORKSPACE_WRITE_CLI_KINDS: tuple[str, str] = ("claude", "opencode")
 StoredProviderIdValue = ProviderId | Literal["claude", "antigravity", "a2a", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"
@@ -268,6 +270,7 @@ class Participant(BaseModel):
     cli_kind: StoredChatCliKind
     model: str
     role_template_id: str | None
+    workspace_access: WorkspaceAccess = "read_only"
     persona_snapshot: PersonaSnapshot | None = None
     persona_snapshot_sha256: str | None = None
     status: Literal["active", "stopped"]
@@ -294,6 +297,7 @@ def prepare_participant(
     cli_kind: CurrentChatCliKind,
     model: str,
     role_template_id: str | None = None,
+    workspace_access: WorkspaceAccess = "read_only",
     persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
     status: Literal["active", "stopped"] = "active",
     participant_id: str | None = None,
@@ -302,6 +306,8 @@ def prepare_participant(
     """Build and validate a participant without opening a database connection."""
 
     normalized_cli_kind = _require_current_cli_kind(cli_kind)
+    if workspace_access not in ("read_only", "workspace_write"):
+        raise ValueError("participant_workspace_access_invalid")
     profile_id = provider_profile_id_for_cli_kind_role(normalized_cli_kind, role)
     normalized_persona = (
         PersonaSnapshot.model_validate(persona_snapshot) if persona_snapshot is not None else None
@@ -320,6 +326,7 @@ def prepare_participant(
             profile_id=profile_id,
         ),
         role_template_id=role_template_id,
+        workspace_access=workspace_access,
         persona_snapshot=normalized_persona,
         persona_snapshot_sha256=(
             persona_snapshot_digest(normalized_persona) if normalized_persona is not None else None
@@ -367,6 +374,17 @@ def insert_participant_conn(conn: sqlite3.Connection, participant: Participant) 
         )
     elif participant.persona_snapshot is not None:
         raise ValueError("participant_persona_schema_unavailable")
+    if "workspace_access" in columns:
+        # Read-only rows store NULL so they stay identical to rows written
+        # before this attribute existed; only writers persist a value.
+        insert_columns.append("workspace_access")
+        values.append(
+            participant.workspace_access
+            if participant.workspace_access == "workspace_write"
+            else None
+        )
+    elif participant.workspace_access == "workspace_write":
+        raise ValueError("participant_workspace_schema_unavailable")
     insert_columns.extend(("status", "last_seen_at", "created_at"))
     values.extend((participant.status, participant.last_seen_at, participant.created_at))
     placeholders = ", ".join("?" for _ in insert_columns)
@@ -419,6 +437,7 @@ class ParticipantStore:
         cli_kind: CurrentChatCliKind,
         model: str,
         role_template_id: str | None = None,
+        workspace_access: WorkspaceAccess = "read_only",
         persona_snapshot: PersonaSnapshot | dict[str, Any] | None = None,
         status: Literal["active", "stopped"] = "active",
     ) -> Participant:
@@ -429,6 +448,7 @@ class ParticipantStore:
             cli_kind=cli_kind,
             model=model,
             role_template_id=role_template_id,
+            workspace_access=workspace_access,
             persona_snapshot=persona_snapshot,
             status=status,
         )
@@ -609,6 +629,12 @@ class ParticipantStore:
             if isinstance(raw_persona, str) and raw_persona.strip()
             else None
         )
+        raw_workspace_access = d.get("workspace_access")
+        workspace_access: WorkspaceAccess = (
+            raw_workspace_access
+            if raw_workspace_access in ("read_only", "workspace_write")
+            else "read_only"
+        )
         return Participant(
             participant_id=d["participant_id"],
             conversation_id=d["conversation_id"],
@@ -619,6 +645,7 @@ class ParticipantStore:
             cli_kind=cli_kind,
             model=_read_model(d["cli_kind"], d["model"], profile_id=profile_id),
             role_template_id=d.get("role_template_id"),
+            workspace_access=workspace_access,
             persona_snapshot=persona,
             persona_snapshot_sha256=d.get("persona_snapshot_sha256"),
             status=d["status"],

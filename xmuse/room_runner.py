@@ -56,6 +56,12 @@ from xmuse_core.chat.room_opencode_sandbox import (
     resolve_bwrap_executable,
     resolve_opencode_executable,
 )
+from xmuse_core.chat.room_owner_transport import (
+    OwnerWorkspaceWriteSettings,
+    resolve_owner_masked_paths,
+    resolve_owner_prepare_command,
+    resolve_owner_prepare_timeout_s,
+)
 from xmuse_core.chat.room_runtime import (
     ROOM_MCP_PATH,
     ROOM_MCP_SURFACE,
@@ -343,6 +349,13 @@ async def run_room_runner(
                     claude_acp_config=claude_acp_config,
                     antigravity_config=antigravity_config,
                     opencode_acp_config=opencode_acp_config,
+                    owner_settings=_owner_workspace_write_settings(
+                        root=root,
+                        worktree=resolved_worktree,
+                        room_mcp_url=f"http://{DEFAULT_MCP_HOST}:{mcp_port}{ROOM_MCP_PATH}",
+                        claude_acp_command=claude_acp_command,
+                        opencode_enabled=opencode_enabled,
+                    ),
                 )
             except Exception as exc:
                 raise RoomRunnerError("room_runner_host_composition_failed") from exc
@@ -930,6 +943,59 @@ def _opencode_acp_config(
         room_mcp_url=room_mcp_url,
         profile=OPENCODE_ACP_PROFILE,
         default_model=model,
+    )
+
+
+def _owner_workspace_write_settings(
+    *,
+    root: Path,
+    worktree: Path,
+    room_mcp_url: str,
+    claude_acp_command: tuple[str, ...] | None,
+    opencode_enabled: bool,
+    environ: Mapping[str, str] | None = None,
+) -> OwnerWorkspaceWriteSettings | None:
+    """Wire owner-clone writer transports only where the sandbox can confine them.
+
+    Returns None when bubblewrap is unavailable; writers then fail closed.
+    Each provider's writer route additionally requires that provider's own
+    transport to be enabled, otherwise that provider fails closed.
+    """
+
+    source = os.environ if environ is None else environ
+    bwrap = resolve_bwrap_executable(source)
+    if bwrap is None:
+        return None
+    opencode_argv: tuple[str, ...] | None = None
+    opencode_model: str | None = None
+    if opencode_enabled:
+        opencode_exe = resolve_opencode_executable(source)
+        if opencode_exe is not None:
+            opencode_argv = (str(opencode_exe), "acp")
+            opencode_model = (
+                str(source.get(OPENCODE_MODEL_ENV, "") or "").strip() or OPENCODE_DEFAULT_MODEL
+            )
+    try:
+        prepare_command = resolve_owner_prepare_command(source)
+    except ValueError as exc:
+        raise RoomRunnerError("room_runner_owner_prepare_command_invalid") from exc
+    try:
+        prepare_timeout_s = resolve_owner_prepare_timeout_s(source)
+    except ValueError as exc:
+        raise RoomRunnerError("room_runner_owner_prepare_timeout_invalid") from exc
+    return OwnerWorkspaceWriteSettings(
+        clones_root=root / "runtime" / "owner-clones",
+        source_repo=worktree,
+        xmuse_root=root,
+        home=Path(str(source.get("HOME") or Path.home())),
+        room_mcp_url=room_mcp_url,
+        bwrap=bwrap,
+        claude_agent_argv=claude_acp_command,
+        opencode_argv=opencode_argv,
+        opencode_default_model=opencode_model,
+        extra_masked_paths=resolve_owner_masked_paths(source),
+        prepare_command=prepare_command,
+        prepare_timeout_s=prepare_timeout_s,
     )
 
 

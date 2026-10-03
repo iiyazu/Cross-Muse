@@ -116,6 +116,7 @@ ROOM_REQUIRED_COLUMNS: Mapping[str, frozenset[str]] = {
             "created_at",
             "persona_snapshot_json",
             "persona_snapshot_sha256",
+            "workspace_access",
         }
     ),
     "chat_request_log": frozenset(
@@ -883,6 +884,7 @@ def _create_room_core_schema_conn(conn: sqlite3.Connection) -> None:
                    last_seen_at text,
                    persona_snapshot_json text,
                    persona_snapshot_sha256 text,
+                   workspace_access text,
                    created_at text not null
                )""",
             """create table if not exists chat_request_log (
@@ -931,7 +933,7 @@ def _create_room_core_schema_conn(conn: sqlite3.Connection) -> None:
         if name not in message_columns:
             conn.execute(f"alter table messages add column {name} {definition}")
     participant_columns = _table_columns(conn, "participants")
-    for name in ("persona_snapshot_json", "persona_snapshot_sha256"):
+    for name in ("persona_snapshot_json", "persona_snapshot_sha256", "workspace_access"):
         if name not in participant_columns:
             conn.execute(f"alter table participants add column {name} text")
 
