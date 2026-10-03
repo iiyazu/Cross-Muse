@@ -26,9 +26,23 @@ ITEM_KEYS = {
     "rank",
     "truncated",
 }
+ADVISORY_V2_DIGEST = "sha256:5358e9965e419bc01cb1408c14a297ec72260a94ffa122ce517b0f1f4b14ae81"
+ADVISORY_V2_ITEM_KEYS = {
+    "advisory_id",
+    "fingerprint",
+    "proposal_type",
+    "kind",
+    "topic_key",
+    "content",
+    "source_refs",
+    "supersedes_advisory_id",
+}
+ADVISORY_V2_REF_KEYS = {"source_type", "source_id", "session_id", "quote"}
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "contracts"
 GOLDEN = FIXTURES / "memoryos_source_evidence_v1.json"
 DIGEST = FIXTURES / "memoryos_source_evidence_v1.sha256"
+GOLDEN_V2 = FIXTURES / "memoryos_external_advisories_v2.json"
+DIGEST_V2 = FIXTURES / "memoryos_external_advisories_v2.sha256"
 
 
 def _sha256(value: bytes) -> str:
@@ -81,3 +95,38 @@ def test_source_evidence_golden_freezes_exact_wire_and_proofs() -> None:
     }
     assert payload["diagnostics_digest"] == DIAGNOSTICS_DIGEST
     assert payload["diagnostics_digest"] == _sha256(_canonical(diagnostic_payload))
+
+
+def test_advisory_v2_golden_is_canonical_utf8_and_digest_frozen() -> None:
+    raw = GOLDEN_V2.read_bytes()
+    payload = json.loads(raw)
+
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert not raw.endswith(b"\n")
+    assert raw == _canonical(payload)
+    assert _sha256(raw) == ADVISORY_V2_DIGEST
+    assert DIGEST_V2.read_bytes() == ADVISORY_V2_DIGEST.encode("ascii")
+
+
+def test_advisory_v2_golden_freezes_exact_wire_and_quote_proof_fields() -> None:
+    payload = json.loads(GOLDEN_V2.read_bytes())
+
+    assert set(payload) == {"schema", "items"}
+    assert payload["schema"] == "memoryos_external_advisories/v2"
+    items = payload["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert set(item) == ADVISORY_V2_ITEM_KEYS
+    assert item["proposal_type"] == "curated_memory"
+    assert item["kind"] in {"room_fact", "room_decision", "project_rule", "user_preference"}
+    assert len(item["fingerprint"]) == 64
+    assert int(item["fingerprint"], 16) >= 0
+    assert item["supersedes_advisory_id"] is None
+    assert 0 < len(item["content"].encode("utf-8")) <= 4096
+    refs = item["source_refs"]
+    assert 1 <= len(refs) <= 8
+    for ref in refs:
+        assert set(ref) == ADVISORY_V2_REF_KEYS
+        assert ref["source_type"] == "message"
+        assert len(ref["quote"]) >= 8
+        assert ref["quote"].strip()

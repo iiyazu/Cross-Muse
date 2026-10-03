@@ -293,6 +293,12 @@ def _runtime_incidents(
                 "Room causal delivery remains available while archive sync and recall "
                 "wait for MemoryOS."
             )
+        elif host_code == "memoryos_curator_degraded":
+            host_title = "MemoryOS Curator is degraded"
+            host_detail = (
+                "Optional curated memory proposals are paused; Room causal delivery "
+                "and recall continue."
+            )
         else:
             host_title = "Room host cleanup is pending"
             host_detail = "The Room host reported a durable operational condition."

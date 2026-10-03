@@ -367,6 +367,8 @@ function normalizeMemoryCandidate(
     candidate_id: candidateId,
     conversation_id: candidateConversationId,
     author_participant_id: boundedOptionalText(source.author_participant_id, 200),
+    proposer_kind: source.proposer_kind === "memoryos_curator" ? "memoryos_curator" : "participant",
+    proposer_label: boundedOptionalText(source.proposer_label, 100),
     kind,
     content,
     digest,

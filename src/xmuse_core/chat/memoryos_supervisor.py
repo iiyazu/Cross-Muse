@@ -27,7 +27,18 @@ MEMORYOS_PORT = 8301
 MEMORYOS_HEARTBEAT_TTL_S = 20.0
 
 MEMORYOS_RESTART_BACKOFF_S = (1, 2, 4, 8, 16, 30)
-MEMORYOS_PROFILES = ("archive-only", "full-local")
+MEMORYOS_PROFILES = ("archive-only", "full-local", "full-local-curated")
+MEMORYOS_FULL_LOCAL_PROFILES = frozenset({"full-local", "full-local-curated"})
+MEMORYOS_CURATOR_PROFILE = "full-local-curated"
+
+MemoryOSProfile = Literal["archive-only", "full-local", "full-local-curated"]
+
+
+def memoryos_profile_is_full_local(profile: str) -> bool:
+    """Return whether a profile requires the full-local capability set."""
+
+    return profile in MEMORYOS_FULL_LOCAL_PROFILES
+
 
 MemoryOSRuntimeState = Literal[
     "disabled",
@@ -124,12 +135,19 @@ def memoryos_child_environment(
     api_key: str,
     profile: str = "archive-only",
 ) -> dict[str, str]:
-    """Return a strict allow-list environment with all network providers disabled."""
+    """Return a strict allow-list environment for the sidecar child.
+
+    The curated profile reads ``XMUSE_MEMORYOS_LLM_API_KEY`` (and optionally
+    ``XMUSE_MEMORYOS_LLM_MODEL``) from the raw ambient mapping and exports them
+    only to this child as ``DEEPSEEK_API_KEY``/``DEEPSEEK_MODEL``; a raw
+    ``DEEPSEEK_API_KEY`` in the ambient never passes through.
+    """
 
     if not api_key or not generation:
         raise MemoryOSSupervisorError("memoryos_runtime_configuration_invalid")
     if profile not in MEMORYOS_PROFILES:
         raise MemoryOSSupervisorError("memoryos_profile_invalid")
+    full_local = memoryos_profile_is_full_local(profile)
     environment = {
         key: value
         for key, value in ambient.items()
@@ -142,24 +160,24 @@ def memoryos_child_environment(
             # managed model cache to the Workroom runtime so offline startup
             # can prove the preloaded model without using a global temp path.
             "FASTEMBED_CACHE_PATH": str(xmuse_root / "runtime" / "fastembed-cache"),
-            "MEMORYOS_AGENT_KERNEL": "external" if profile == "full-local" else "off",
+            "MEMORYOS_AGENT_KERNEL": "external" if full_local else "off",
             "MEMORYOS_API_KEY": api_key,
             # full-local uses MemoryOS' bounded process-local FastEmbed index.
             # archive-only deliberately remains lexical and dependency-light.
-            "MEMORYOS_ARCHIVAL_VECTOR_ENABLED": "true" if profile == "full-local" else "false",
+            "MEMORYOS_ARCHIVAL_VECTOR_ENABLED": "true" if full_local else "false",
             "MEMORYOS_CORS_ORIGINS": "[]",
-            "MEMORYOS_ITEM_EXTRACTION": "true" if profile == "full-local" else "false",
+            "MEMORYOS_ITEM_EXTRACTION": "true" if full_local else "false",
             "MEMORYOS_MEMORY_ARCH": "v3",
-            "MEMORYOS_PAGING_MODE": "heuristic" if profile == "full-local" else "off",
+            "MEMORYOS_PAGING_MODE": "heuristic" if full_local else "off",
             "MEMORYOS_RECALL_CACHE_ENABLED": "false",
             "MEMORYOS_RECALL_PIPELINE": "v2",
-            "MEMORYOS_EMBEDDING_PROVIDER": "fastembed" if profile == "full-local" else "auto",
+            "MEMORYOS_EMBEDDING_PROVIDER": "fastembed" if full_local else "auto",
             "MEMORYOS_EMBEDDING_MODEL": (
-                "BAAI/bge-small-en-v1.5" if profile == "full-local" else "text-embedding-3-small"
+                "BAAI/bge-small-en-v1.5" if full_local else "text-embedding-3-small"
             ),
-            "MEMORYOS_FASTEMBED_OFFLINE": "1" if profile == "full-local" else "0",
-            "HF_HUB_OFFLINE": "1" if profile == "full-local" else "0",
-            "TRANSFORMERS_OFFLINE": "1" if profile == "full-local" else "0",
+            "MEMORYOS_FASTEMBED_OFFLINE": "1" if full_local else "0",
+            "HF_HUB_OFFLINE": "1" if full_local else "0",
+            "TRANSFORMERS_OFFLINE": "1" if full_local else "0",
             "MEMORYOS_RERANK_ENABLED": "false",
             "MEMORYOS_REWRITE_ENABLED": "false",
             "PYTHONUNBUFFERED": "1",
@@ -168,6 +186,15 @@ def memoryos_child_environment(
             "XMUSE_WORKROOM_SERVICE": "memoryos",
         }
     )
+    if profile == MEMORYOS_CURATOR_PROFILE:
+        environment["MEMORYOS_CURATOR_ENABLED"] = "true"
+        environment["MEMORYOS_LLM_PROVIDER"] = "deepseek"
+        llm_api_key = ambient.get("XMUSE_MEMORYOS_LLM_API_KEY")
+        if isinstance(llm_api_key, str) and llm_api_key:
+            environment["DEEPSEEK_API_KEY"] = llm_api_key
+        llm_model = ambient.get("XMUSE_MEMORYOS_LLM_MODEL")
+        if isinstance(llm_model, str) and llm_model:
+            environment["DEEPSEEK_MODEL"] = llm_model
     return environment
 
 

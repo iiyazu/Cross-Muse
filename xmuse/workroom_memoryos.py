@@ -17,6 +17,7 @@ from xmuse.workroom_processes import ManagedProcess, ProcessIdentity
 from xmuse_core.chat.memoryos_supervisor import (
     MEMORYOS_HOST,
     MEMORYOS_PORT,
+    MemoryOSProfile,
     memoryos_restart_backoff_seconds,
 )
 
@@ -30,7 +31,7 @@ class MemoryOSRuntimeControl:
     executable: Path
     api_key: str = field(repr=False)
     url: str
-    profile: Literal["archive-only", "full-local"] = "archive-only"
+    profile: MemoryOSProfile = "archive-only"
     process: ManagedProcess | None = None
     record: dict[str, Any] | None = None
     started_at: str | None = None

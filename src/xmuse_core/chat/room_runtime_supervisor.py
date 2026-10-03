@@ -438,6 +438,10 @@ def _spawn_service(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     environment = normalize_child_temp_env(os.environ)
     environment.pop("XMUSE_OPERATOR_TOKEN", None)
+    # The Curator LLM key belongs only to the MemoryOS sidecar child spawned by
+    # the Workroom; no Room service or agent transport may inherit it.
+    environment.pop("XMUSE_MEMORYOS_LLM_API_KEY", None)
+    environment.pop("DEEPSEEK_API_KEY", None)
     if service == "room_runner":
         environment.update(config.room_runner_env)
     else:

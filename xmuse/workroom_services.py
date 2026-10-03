@@ -294,6 +294,10 @@ class WorkroomServicesCoordinator:
         service: str,
     ) -> dict[str, str]:
         environment = normalize_child_temp_env(self._deps.environ)
+        # The optional Curator LLM key reaches only the MemoryOS sidecar child,
+        # never a required Workroom service.
+        for key in ("XMUSE_MEMORYOS_LLM_API_KEY", "DEEPSEEK_API_KEY"):
+            environment.pop(key, None)
         environment.update(
             {
                 "XMUSE_ROOT": str(self._paths.xmuse_root),

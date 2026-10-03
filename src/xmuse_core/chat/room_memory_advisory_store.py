@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_memory_common import (
@@ -16,8 +16,16 @@ from xmuse_core.chat.room_memory_common import (
     new_id,
     timestamp,
 )
-from xmuse_core.chat.room_memory_contracts import MemoryCandidateInput, sha256_json
+from xmuse_core.chat.room_memory_contracts import (
+    MAX_MEMORY_CANDIDATES_PER_OUTCOME,
+    MAX_MEMORY_CURATOR_CANDIDATES_PER_ATTEMPT,
+    MEMORY_CANDIDATE_KINDS,
+    MemoryCandidateInput,
+    MemoryCandidateKind,
+    sha256_json,
+)
 from xmuse_core.chat.room_memory_source_conn import (
+    resolve_curated_source_refs_conn,
     resolve_external_source_activity_ids_conn,
 )
 
@@ -43,11 +51,14 @@ class RoomMemoryAdvisoryStore:
         recalled sources are allowed through the explicitly external path;
         ordinary Agent candidates still use the causal batch authority.  Every
         advisory receives a durable accepted/duplicate/rejected receipt.
+
+        v2 ``curated_memory`` advisories re-prove each verbatim quote against
+        the delivered Room text and may supersede one earlier curated
+        candidate once that candidate is delivered.
         """
 
         if not advisories or len(advisories) > 32:
             return []
-        from xmuse_core.chat.room_memory_governance_store import record_memory_candidates_conn
 
         stamp = timestamp(now)
         with self._database.connect() as conn:
@@ -85,7 +96,8 @@ class RoomMemoryAdvisoryStore:
                             ).fetchone()[0]
                         )
                     )
-                candidates: list[tuple[str, str, MemoryCandidateInput]] = []
+                participant_group: list[tuple[str, str, bool, MemoryCandidateInput]] = []
+                curator_group: list[tuple[str, str, bool, MemoryCandidateInput]] = []
                 for advisory in advisories:
                     advisory_id = advisory.get("advisory_id")
                     fingerprint = advisory.get("fingerprint")
@@ -120,6 +132,19 @@ class RoomMemoryAdvisoryStore:
                                 candidate_digest=None,
                                 stamp=stamp,
                             )
+                        continue
+                    if advisory.get("proposal_type") == "curated_memory":
+                        curated = self._curated_advisory_entry_conn(
+                            conn,
+                            conversation_id=conversation_id,
+                            attempt_id=attempt_id,
+                            advisory=advisory,
+                            advisory_id=advisory_id,
+                            fingerprint=fingerprint,
+                            stamp=stamp,
+                        )
+                        if curated is not None:
+                            curator_group.append(curated)
                         continue
                     proposal_type = advisory.get("proposal_type")
                     kind: Literal["room_fact", "project_rule"] | None
@@ -171,10 +196,11 @@ class RoomMemoryAdvisoryStore:
                             stamp=stamp,
                         )
                         continue
-                    candidates.append(
+                    participant_group.append(
                         (
                             advisory_id,
                             fingerprint,
+                            False,
                             MemoryCandidateInput(
                                 kind=kind,
                                 content=content.strip(),
@@ -182,83 +208,274 @@ class RoomMemoryAdvisoryStore:
                             ),
                         )
                     )
-                unique: list[MemoryCandidateInput] = []
-                candidate_meta: dict[str, tuple[str, str, tuple[str, ...]]] = {}
-                seen: set[str] = set()
-                for advisory_id, fingerprint, item in candidates:
-                    digest = sha256_json(
-                        {
-                            "conversation_id": conversation_id,
-                            "author_participant_id": authority["participant_id"],
-                            "kind": item.kind,
-                            "content": item.content,
-                            "source_activity_ids": tuple(sorted(item.source_activity_ids)),
-                        }
+                result: list[dict[str, Any]] = []
+                if participant_group:
+                    result.extend(
+                        self._record_candidate_group_conn(
+                            conn,
+                            conversation_id=conversation_id,
+                            attempt_id=attempt_id,
+                            author_participant_id=str(authority["participant_id"]),
+                            source_observation_id=primary_observation_id,
+                            source_batch_id=batch_id,
+                            batch_activity_ids=batch_activity_ids,
+                            group=participant_group,
+                            proposer_kind="participant",
+                            cap=MAX_MEMORY_CANDIDATES_PER_OUTCOME,
+                            stamp=stamp,
+                        )
                     )
-                    if digest in seen:
-                        continue
-                    seen.add(digest)
-                    existing = conn.execute(
-                        """select 1 from room_memory_candidates
-                           where conversation_id = ? and candidate_digest = ? limit 1""",
-                        (conversation_id, digest),
-                    ).fetchone()
-                    if existing is None:
-                        unique.append(item)
-                        candidate_meta[digest] = (
-                            advisory_id,
-                            fingerprint,
-                            tuple(sorted(item.source_activity_ids)),
-                        )
-                    else:
-                        self._write_advisory_receipt_conn(
+                if curator_group:
+                    result.extend(
+                        self._record_candidate_group_conn(
                             conn,
                             conversation_id=conversation_id,
                             attempt_id=attempt_id,
-                            advisory_id=advisory_id,
-                            fingerprint=fingerprint,
-                            status="duplicate",
-                            reason_code="room_memory_advisory_duplicate",
-                            source_activity_ids=item.source_activity_ids,
-                            candidate_digest=digest,
+                            author_participant_id=str(authority["participant_id"]),
+                            source_observation_id=primary_observation_id,
+                            source_batch_id=batch_id,
+                            batch_activity_ids=batch_activity_ids,
+                            group=curator_group,
+                            proposer_kind="memoryos_curator",
+                            cap=MAX_MEMORY_CURATOR_CANDIDATES_PER_ATTEMPT,
                             stamp=stamp,
                         )
-                if not unique:
-                    conn.commit()
-                    return []
-                result = record_memory_candidates_conn(
-                    conn,
-                    conversation_id=conversation_id,
-                    author_participant_id=str(authority["participant_id"]),
-                    source_observation_id=primary_observation_id,
-                    source_batch_id=batch_id,
-                    source_attempt_id=attempt_id,
-                    batch_activity_ids=batch_activity_ids,
-                    candidates=unique[:3],
-                    stamp=stamp,
-                    allow_external_sources=True,
-                )
-                for reference in result:
-                    digest = str(reference["candidate_digest"])
-                    meta = candidate_meta.get(digest)
-                    if meta is not None:
-                        self._write_advisory_receipt_conn(
-                            conn,
-                            conversation_id=conversation_id,
-                            attempt_id=attempt_id,
-                            advisory_id=meta[0],
-                            fingerprint=meta[1],
-                            status="accepted",
-                            reason_code="room_memory_advisory_accepted",
-                            source_activity_ids=meta[2],
-                            candidate_digest=digest,
-                            stamp=stamp,
-                        )
+                    )
                 conn.commit()
                 return result
             except Exception:
                 conn.rollback()
                 raise
+
+    def _curated_advisory_entry_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        attempt_id: str,
+        advisory: Mapping[str, Any],
+        advisory_id: str,
+        fingerprint: str,
+        stamp: str,
+    ) -> tuple[str, str, bool, MemoryCandidateInput] | None:
+        """Validate one v2 advisory, re-proving quotes and the supersede target.
+
+        Returns ``(advisory_id, fingerprint, supersede_ignored, item)`` or
+        ``None`` after persisting the rejection/duplicate receipt.
+        """
+
+        def reject(reason_code: str, *, duplicate_digest: str | None = None) -> None:
+            self._write_advisory_receipt_conn(
+                conn,
+                conversation_id=conversation_id,
+                attempt_id=attempt_id,
+                advisory_id=advisory_id,
+                fingerprint=fingerprint,
+                status=("duplicate" if duplicate_digest is not None else "rejected"),
+                reason_code=reason_code,
+                source_activity_ids=(),
+                candidate_digest=duplicate_digest,
+                stamp=stamp,
+            )
+
+        kind = advisory.get("kind")
+        content = advisory.get("content")
+        refs = advisory.get("source_refs")
+        supersedes = advisory.get("supersedes_advisory_id")
+        if (
+            kind not in MEMORY_CANDIDATE_KINDS
+            or not isinstance(content, str)
+            or not content.strip()
+            or len(content.strip().encode("utf-8", errors="strict")) > 4096
+            or not isinstance(refs, list)
+            or not refs
+            or len(refs) > 8
+            or not (
+                supersedes is None or (isinstance(supersedes, str) and bool(supersedes.strip()))
+            )
+        ):
+            reject("memoryos_advisory_contract_invalid")
+            return None
+        accepted = conn.execute(
+            """select candidate_digest from room_memory_advisory_receipts
+               where conversation_id = ? and advisory_id = ? and status = 'accepted'
+               order by created_at desc, receipt_id desc limit 1""",
+            (conversation_id, advisory_id),
+        ).fetchone()
+        if accepted is not None:
+            reject(
+                "room_memory_advisory_duplicate",
+                duplicate_digest=(
+                    str(accepted["candidate_digest"]) if accepted["candidate_digest"] else None
+                ),
+            )
+            return None
+        source_activity_ids = resolve_curated_source_refs_conn(
+            conn,
+            conversation_id=conversation_id,
+            source_refs=refs,
+        )
+        if not source_activity_ids:
+            reject("room_memory_advisory_quote_rejected")
+            return None
+        supersedes_candidate_id: str | None = None
+        supersede_ignored = False
+        if isinstance(supersedes, str):
+            supersedes_candidate_id, supersede_ignored = self._resolve_supersede_conn(
+                conn,
+                conversation_id=conversation_id,
+                kind=str(kind),
+                supersedes_advisory_id=supersedes,
+            )
+        return (
+            advisory_id,
+            fingerprint,
+            supersede_ignored,
+            MemoryCandidateInput(
+                kind=cast(MemoryCandidateKind, kind),
+                content=content.strip(),
+                source_activity_ids=tuple(source_activity_ids),
+                supersedes_candidate_id=supersedes_candidate_id,
+            ),
+        )
+
+    @staticmethod
+    def _resolve_supersede_conn(
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        kind: str,
+        supersedes_advisory_id: str,
+    ) -> tuple[str | None, bool]:
+        """Map a superseded advisory to its delivered candidate, or ignore it.
+
+        The old candidate must be accepted in this conversation, already
+        delivered, of the same kind, and not itself superseded — the chain has
+        a single writer, so a fork is ignored instead of overwritten.
+        """
+
+        receipt = conn.execute(
+            """select candidate_digest from room_memory_advisory_receipts
+               where conversation_id = ? and advisory_id = ? and status = 'accepted'
+               order by created_at desc, receipt_id desc limit 1""",
+            (conversation_id, supersedes_advisory_id),
+        ).fetchone()
+        if receipt is None or not receipt["candidate_digest"]:
+            return None, True
+        old = conn.execute(
+            """select candidate_id, kind, approval_state, publish_state,
+                      superseded_by_candidate_id
+               from room_memory_candidates
+               where conversation_id = ? and candidate_digest = ? limit 1""",
+            (conversation_id, str(receipt["candidate_digest"])),
+        ).fetchone()
+        if (
+            old is None
+            or str(old["kind"]) != kind
+            or old["approval_state"] != "approved"
+            or old["publish_state"] != "delivered"
+            or old["superseded_by_candidate_id"] is not None
+        ):
+            return None, True
+        return str(old["candidate_id"]), False
+
+    def _record_candidate_group_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        attempt_id: str,
+        author_participant_id: str,
+        source_observation_id: str,
+        source_batch_id: str,
+        batch_activity_ids: set[str],
+        group: Sequence[tuple[str, str, bool, MemoryCandidateInput]],
+        proposer_kind: str,
+        cap: int,
+        stamp: str,
+    ) -> list[dict[str, Any]]:
+        from xmuse_core.chat.room_memory_governance_store import (
+            memory_candidate_digest,
+            record_memory_candidates_conn,
+        )
+
+        unique: list[MemoryCandidateInput] = []
+        candidate_meta: dict[str, tuple[str, str, bool, tuple[str, ...]]] = {}
+        seen: set[str] = set()
+        for advisory_id, fingerprint, supersede_ignored, item in group:
+            digest = memory_candidate_digest(
+                conversation_id=conversation_id,
+                author_participant_id=author_participant_id,
+                kind=item.kind,
+                content=item.content,
+                source_activity_ids=item.source_activity_ids,
+                proposer_kind=proposer_kind,
+            )
+            if digest in seen:
+                continue
+            seen.add(digest)
+            existing = conn.execute(
+                """select 1 from room_memory_candidates
+                   where conversation_id = ? and candidate_digest = ? limit 1""",
+                (conversation_id, digest),
+            ).fetchone()
+            if existing is not None:
+                self._write_advisory_receipt_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    attempt_id=attempt_id,
+                    advisory_id=advisory_id,
+                    fingerprint=fingerprint,
+                    status="duplicate",
+                    reason_code="room_memory_advisory_duplicate",
+                    source_activity_ids=item.source_activity_ids,
+                    candidate_digest=digest,
+                    stamp=stamp,
+                )
+                continue
+            unique.append(item)
+            candidate_meta[digest] = (
+                advisory_id,
+                fingerprint,
+                supersede_ignored,
+                tuple(sorted(item.source_activity_ids)),
+            )
+        if not unique:
+            return []
+        result = record_memory_candidates_conn(
+            conn,
+            conversation_id=conversation_id,
+            author_participant_id=author_participant_id,
+            source_observation_id=source_observation_id,
+            source_batch_id=source_batch_id,
+            source_attempt_id=attempt_id,
+            batch_activity_ids=batch_activity_ids,
+            candidates=unique[:cap],
+            stamp=stamp,
+            proposer_kind=proposer_kind,
+            allow_external_sources=True,
+        )
+        for reference in result:
+            digest = str(reference["candidate_digest"])
+            meta = candidate_meta.get(digest)
+            if meta is not None:
+                self._write_advisory_receipt_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    attempt_id=attempt_id,
+                    advisory_id=meta[0],
+                    fingerprint=meta[1],
+                    status="accepted",
+                    reason_code=(
+                        "room_memory_advisory_supersede_ignored"
+                        if meta[2]
+                        else "room_memory_advisory_accepted"
+                    ),
+                    source_activity_ids=meta[3],
+                    candidate_digest=digest,
+                    stamp=stamp,
+                )
+        return result
 
     def record_external_advisory_failure(
         self,

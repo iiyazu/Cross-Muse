@@ -26,6 +26,7 @@ from xmuse_core.chat.room_memory_common import (
     timestamp,
 )
 from xmuse_core.chat.room_memory_contracts import (
+    MEMORY_CANDIDATE_PROPOSER_KINDS,
     MemoryCandidateInput,
     require_digest,
     sha256_json,
@@ -83,6 +84,9 @@ def _candidate_safe_reference(row: sqlite3.Row) -> dict[str, Any]:
         "approval_state": row["approval_state"],
         "publish_state": row["publish_state"],
         "target_scope": row["target_scope"],
+        "proposer_kind": row["proposer_kind"],
+        "supersedes_candidate_id": row["supersedes_candidate_id"],
+        "superseded_by_candidate_id": row["superseded_by_candidate_id"],
         "revision": int(row["revision"]),
     }
 
@@ -102,12 +106,43 @@ def _candidate_view(row: sqlite3.Row) -> dict[str, Any]:
         "approval_mode": row["approval_mode"],
         "publish_state": row["publish_state"],
         "target_scope": row["target_scope"],
+        "proposer_kind": row["proposer_kind"],
+        "supersedes_candidate_id": row["supersedes_candidate_id"],
+        "superseded_by_candidate_id": row["superseded_by_candidate_id"],
         "revision": int(row["revision"]),
         "reason_code": row["reason_code"],
         "created_at": row["created_at"],
         "resolved_at": row["resolved_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def memory_candidate_digest(
+    *,
+    conversation_id: str,
+    author_participant_id: str,
+    kind: str,
+    content: str,
+    source_activity_ids: Sequence[str],
+    proposer_kind: str = "participant",
+) -> str:
+    """Compute the dedupe digest shared by governance and advisory replay.
+
+    Curator proposals deliberately exclude the carrying participant so the
+    same proposal recalled through different attempts stays one candidate.
+    """
+
+    payload: dict[str, Any] = {
+        "conversation_id": conversation_id,
+        "kind": kind,
+        "content": content,
+        "source_activity_ids": tuple(sorted(source_activity_ids)),
+    }
+    if proposer_kind == "memoryos_curator":
+        payload["proposer_kind"] = proposer_kind
+    else:
+        payload["author_participant_id"] = author_participant_id
+    return sha256_json(payload)
 
 
 def record_memory_candidates_conn(
@@ -121,12 +156,21 @@ def record_memory_candidates_conn(
     batch_activity_ids: set[str],
     candidates: Sequence[MemoryCandidateInput],
     stamp: str,
+    proposer_kind: str = "participant",
     allow_external_sources: bool = False,
 ) -> list[dict[str, Any]]:
-    """Persist candidate authority in the caller's Room outcome transaction."""
+    """Persist candidate authority in the caller's Room outcome transaction.
+
+    ``author_participant_id`` always names the participant of the carrying
+    attempt.  For ``proposer_kind='memoryos_curator'`` that participant is only
+    the authority carrier for the opt-in external proposer, which is never
+    rendered as the Agent.
+    """
 
     if not conn.in_transaction:
         raise RoomMemoryStoreError("room_memory_candidate_transaction_required")
+    if proposer_kind not in MEMORY_CANDIDATE_PROPOSER_KINDS:
+        raise RoomMemoryStoreError("room_memory_candidate_proposer_invalid")
     if not candidates:
         return []
     if source_batch_id is None:
@@ -176,15 +220,19 @@ def record_memory_candidates_conn(
             raise RoomMemoryStoreError("room_memory_candidate_source_forbidden")
         content_sha256 = sha256_text(item.content)
         candidate_id = new_id("memory_candidate")
-        digest = sha256_json(
-            {
-                "conversation_id": conversation_id,
-                "author_participant_id": author_participant_id,
-                "kind": item.kind,
-                "content": item.content,
-                "source_activity_ids": sources,
-            }
+        digest = memory_candidate_digest(
+            conversation_id=conversation_id,
+            author_participant_id=author_participant_id,
+            kind=item.kind,
+            content=item.content,
+            source_activity_ids=sources,
+            proposer_kind=proposer_kind,
         )
+        supersedes_candidate_id = item.supersedes_candidate_id
+        if supersedes_candidate_id is not None:
+            supersedes_candidate_id = require_text(
+                supersedes_candidate_id, "room_memory_candidate_supersedes_invalid"
+            )
         automatic = item.kind in {"room_fact", "room_decision"}
         approval_state = "approved" if automatic else "pending"
         publish_state = "queued" if automatic else "not_queued"
@@ -194,9 +242,10 @@ def record_memory_candidates_conn(
                (candidate_id, conversation_id, author_participant_id,
                 source_observation_id, source_batch_id, source_attempt_id, kind,
                 content, content_sha256, source_activity_ids_json, candidate_digest,
-                approval_state, approval_mode, publish_state, target_scope, revision,
+                approval_state, approval_mode, publish_state, target_scope,
+                proposer_kind, supersedes_candidate_id, revision,
                 reason_code, created_at, resolved_at, updated_at)
-               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
             (
                 candidate_id,
                 conversation_id,
@@ -213,6 +262,8 @@ def record_memory_candidates_conn(
                 "automatic" if automatic else "operator",
                 publish_state,
                 target_scope,
+                proposer_kind,
+                supersedes_candidate_id,
                 "source_validated_auto_approval" if automatic else "operator_approval_required",
                 stamp,
                 stamp if automatic else None,

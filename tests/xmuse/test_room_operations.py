@@ -311,6 +311,20 @@ def test_memory_attention_is_not_misreported_as_host_cleanup(tmp_path: Path) -> 
     assert incident["next_action"] == "wait"
 
 
+def test_curator_attention_is_scoped_to_optional_curated_memory(tmp_path: Path) -> None:
+    projection = build_room_operations_projection(
+        tmp_path / "chat.db",
+        _runtime(host_state="attention", host_code="memoryos_curator_degraded"),
+    )
+
+    incident = next(item for item in projection["incidents"] if item["kind"] == "host")
+    assert incident["code"] == "memoryos_curator_degraded"
+    assert incident["title"] == "MemoryOS Curator is degraded"
+    assert "Room causal delivery" in incident["detail"]
+    assert incident["next_action"] == "wait"
+    assert projection["overall"] != "blocked"
+
+
 def test_component_codes_do_not_blame_healthy_mcp_for_runner_failure(
     tmp_path: Path,
 ) -> None:

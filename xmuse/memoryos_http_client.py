@@ -14,6 +14,12 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from xmuse_core.chat.memoryos_supervisor import (
+    MEMORYOS_CURATOR_PROFILE,
+    MEMORYOS_PROFILES,
+    MemoryOSProfile,
+    memoryos_profile_is_full_local,
+)
 from xmuse_core.chat.room_memory_runtime import (
     ROOM_MEMORY_FULL_LOCAL_RECALL_TIMEOUT_S,
     ROOM_MEMORY_MAX_RESPONSE_BYTES,
@@ -25,6 +31,32 @@ MEMORYOS_SOURCE_EVIDENCE_PROFILE = "source_evidence/v1"
 MEMORYOS_SOURCE_EVIDENCE_V2_PROFILE = "source_evidence/v2"
 _MAX_REQUEST_BYTES = 64 * 1024
 _MEMORYOS_CONTEXT_HTTP_MAX_BYTES = 128 * 1024
+_ADVISORY_V1_KEYS = frozenset(
+    {
+        "advisory_id",
+        "session_id",
+        "fingerprint",
+        "proposal_type",
+        "content",
+        "source_refs",
+        "created_at",
+    }
+)
+_ADVISORY_V2_KEYS = frozenset(
+    {
+        "advisory_id",
+        "fingerprint",
+        "proposal_type",
+        "kind",
+        "topic_key",
+        "content",
+        "source_refs",
+        "supersedes_advisory_id",
+    }
+)
+_ADVISORY_V2_KINDS = frozenset({"room_fact", "room_decision", "project_rule", "user_preference"})
+_FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}\Z")
+_TOPIC_KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
 class MemoryOSAdapterError(RuntimeError):
@@ -45,7 +77,7 @@ class MemoryOSHTTPClient:
     base_url: str
     api_key: str = field(repr=False)
     default_timeout_s: float = 2.0
-    profile: Literal["archive-only", "full-local"] = "archive-only"
+    profile: MemoryOSProfile = "archive-only"
     _build_context_profiles: frozenset[str] | None = field(
         default=None,
         init=False,
@@ -69,7 +101,7 @@ class MemoryOSHTTPClient:
     def recall_timeout_s(self) -> float:
         return (
             ROOM_MEMORY_FULL_LOCAL_RECALL_TIMEOUT_S
-            if self.profile == "full-local"
+            if memoryos_profile_is_full_local(self.profile)
             else ROOM_MEMORY_RECALL_TIMEOUT_S
         )
 
@@ -91,7 +123,7 @@ class MemoryOSHTTPClient:
             raise MemoryOSAdapterError("memoryos_api_key_missing")
         if self.default_timeout_s <= 0:
             raise MemoryOSAdapterError("memoryos_timeout_invalid")
-        if self.profile not in {"archive-only", "full-local"}:
+        if self.profile not in MEMORYOS_PROFILES:
             raise MemoryOSAdapterError("memoryos_profile_invalid")
         object.__setattr__(self, "base_url", self.base_url.rstrip("/"))
 
@@ -210,15 +242,14 @@ class MemoryOSHTTPClient:
         if self._build_context_profiles is None:
             self.health(timeout_s=min(timeout_s, 0.25))
         profiles = self._build_context_profiles or ()
+        full_local = memoryos_profile_is_full_local(self.profile)
         selected_profile = (
-            MEMORYOS_SOURCE_EVIDENCE_V2_PROFILE
-            if self.profile == "full-local"
-            else MEMORYOS_SOURCE_EVIDENCE_PROFILE
+            MEMORYOS_SOURCE_EVIDENCE_V2_PROFILE if full_local else MEMORYOS_SOURCE_EVIDENCE_PROFILE
         )
         if selected_profile not in profiles:
             raise MemoryOSAdapterError("memoryos_source_evidence_unsupported")
         request_key = (session_id, task, retrieval_query)
-        if self.profile == "full-local":
+        if full_local:
             now = time.monotonic()
             with self._context_cache_lock:
                 cached = self._context_cache.get(request_key)
@@ -226,7 +257,7 @@ class MemoryOSHTTPClient:
                     return cached[1]
                 self._context_cache.pop(request_key, None)
         try:
-            with self._context_cache_lock if self.profile == "full-local" else nullcontext():
+            with self._context_cache_lock if full_local else nullcontext():
                 payload = self._request_json(
                     "POST",
                     f"/sessions/{urllib.parse.quote(session_id, safe='')}/build-context",
@@ -240,7 +271,7 @@ class MemoryOSHTTPClient:
                     timeout_s=timeout_s,
                     max_response_bytes=_MEMORYOS_CONTEXT_HTTP_MAX_BYTES,
                 )
-                if self.profile == "full-local":
+                if full_local:
                     self._context_cache[request_key] = (time.monotonic(), payload)
                     if len(self._context_cache) > 16:
                         oldest = min(
@@ -255,9 +286,12 @@ class MemoryOSHTTPClient:
             raise
 
     def list_advisories(self, *, session_id: str) -> list[Mapping[str, Any]]:
+        path = f"/sessions/{urllib.parse.quote(session_id, safe='')}/advisories"
+        if self.profile == MEMORYOS_CURATOR_PROFILE:
+            return self._list_curated_advisories(path)
         payload = self._request_json(
             "GET",
-            f"/sessions/{urllib.parse.quote(session_id, safe='')}/advisories",
+            path,
             None,
             max_response_bytes=64 * 1024,
         )
@@ -268,22 +302,14 @@ class MemoryOSHTTPClient:
             raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
         result: list[Mapping[str, Any]] = []
         for item in raw_items:
-            if not isinstance(item, Mapping) or set(item) != {
-                "advisory_id",
-                "session_id",
-                "fingerprint",
-                "proposal_type",
-                "content",
-                "source_refs",
-                "created_at",
-            }:
+            if not isinstance(item, Mapping) or set(item) != _ADVISORY_V1_KEYS:
                 raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
             if (
                 not isinstance(item.get("advisory_id"), str)
                 or not isinstance(item.get("session_id"), str)
                 or item.get("session_id") != session_id
                 or not isinstance(item.get("fingerprint"), str)
-                or not re.fullmatch(r"[0-9a-f]{64}", item["fingerprint"])
+                or not _FINGERPRINT_RE.fullmatch(item["fingerprint"])
                 or item.get("proposal_type") not in {"archive_write", "core_promotion_request"}
                 or not isinstance(item.get("content"), str)
                 or not item["content"].strip()
@@ -293,6 +319,67 @@ class MemoryOSHTTPClient:
                 or not isinstance(item.get("created_at"), str)
             ):
                 raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
+            result.append(item)
+        return result
+
+    def _list_curated_advisories(self, path: str) -> list[Mapping[str, Any]]:
+        payload = self._request_json(
+            "GET",
+            f"{path}?version=2",
+            None,
+            max_response_bytes=64 * 1024,
+        )
+        if payload.get("schema") != "memoryos_external_advisories/v2":
+            raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list) or len(raw_items) > 32:
+            raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
+        result: list[Mapping[str, Any]] = []
+        for item in raw_items:
+            if (
+                not isinstance(item, Mapping)
+                or set(item) != _ADVISORY_V2_KEYS
+                or not isinstance(item.get("advisory_id"), str)
+                or not item["advisory_id"]
+                or len(item["advisory_id"].encode("utf-8")) > 512
+                or not isinstance(item.get("fingerprint"), str)
+                or not _FINGERPRINT_RE.fullmatch(item["fingerprint"])
+                or item.get("proposal_type") != "curated_memory"
+                or item.get("kind") not in _ADVISORY_V2_KINDS
+                or not isinstance(item.get("topic_key"), str)
+                or not _TOPIC_KEY_RE.fullmatch(item["topic_key"])
+                or not isinstance(item.get("content"), str)
+                or not item["content"].strip()
+                or len(item["content"].encode("utf-8")) > 4096
+                or not isinstance(item.get("supersedes_advisory_id"), str | None)
+                or (
+                    isinstance(item.get("supersedes_advisory_id"), str)
+                    and (
+                        not item["supersedes_advisory_id"]
+                        or len(item["supersedes_advisory_id"].encode("utf-8")) > 512
+                    )
+                )
+            ):
+                raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
+            refs = item.get("source_refs")
+            if not isinstance(refs, list) or not 0 < len(refs) <= 8:
+                raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
+            for ref in refs:
+                if (
+                    not isinstance(ref, Mapping)
+                    or set(ref) != {"source_type", "source_id", "session_id", "quote"}
+                    or ref.get("source_type") != "message"
+                    or not isinstance(ref.get("source_id"), str)
+                    or not ref["source_id"]
+                    or len(ref["source_id"].encode("utf-8")) > 512
+                    or not isinstance(ref.get("session_id"), str)
+                    or not ref["session_id"]
+                    or len(ref["session_id"].encode("utf-8")) > 512
+                    or not isinstance(ref.get("quote"), str)
+                    or len(ref["quote"]) < 8
+                    or not ref["quote"].strip()
+                ):
+                    raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
             result.append(item)
         return result
 

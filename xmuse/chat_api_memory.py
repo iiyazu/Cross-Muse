@@ -10,6 +10,7 @@ from typing import Any, Literal, Protocol
 from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from xmuse.operator_auth import require_operator_token
+from xmuse_core.chat.memoryos_supervisor import memoryos_profile_is_full_local
 from xmuse_core.chat.room_api_models import RoomMemoryCandidateResolveRequest
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_memory_projection import (
@@ -175,9 +176,8 @@ def register_room_memory_routes(
             governance = governance_store()
             delivery = delivery_store()
             recall = recall_store()
-            if (
-                isinstance(runtime_status, Mapping)
-                and runtime_status.get("profile") == "full-local"
+            if isinstance(runtime_status, Mapping) and memoryos_profile_is_full_local(
+                str(runtime_status.get("profile") or "")
             ):
                 return build_room_memory_projection_v2(
                     conversation_id,

@@ -175,6 +175,7 @@ def test_v2_status_omits_local_workspace_path(tmp_path: Path) -> None:
     [
         (_host("attention", "room_transport_cleanup_pending", retained=1), True, "ready"),
         (_host("attention", "room_memory_degraded"), True, "ready"),
+        (_host("attention", "memoryos_curator_degraded"), True, "ready"),
         (_host("blocked", "room_skill_catalog_drift"), False, "room_runner_host_blocked"),
     ],
 )

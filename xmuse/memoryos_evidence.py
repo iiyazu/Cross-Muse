@@ -193,7 +193,10 @@ class MemoryOSEvidenceDecoder:
                     excluded_document_ids=excluded_documents,
                 )
             except MemoryOSAdapterError as exc:
-                if exc.code != "room_memory_source_rejected":
+                if exc.code not in {
+                    "room_memory_source_rejected",
+                    "room_memory_candidate_superseded",
+                }:
                     raise
                 rejected_item = True
                 continue
@@ -269,6 +272,10 @@ class MemoryOSEvidenceDecoder:
         except Exception as exc:
             if isinstance(exc, MemoryOSAdapterError):
                 raise
+            if str(getattr(exc, "code", "")) == "room_memory_candidate_superseded":
+                # Supersession is a drop the Room proved in chat.db; keep the
+                # attribution instead of degrading it to a generic rejection.
+                raise MemoryOSAdapterError("room_memory_candidate_superseded") from exc
             raise MemoryOSAdapterError("room_memory_source_rejected") from exc
         activities = authority.get("source_activities")
         if not isinstance(activities, list) or not activities:

@@ -986,6 +986,8 @@ export type RoomMemoryCandidate = {
   candidate_id: string;
   conversation_id: string;
   author_participant_id: string | null;
+  proposer_kind?: "participant" | "memoryos_curator";
+  proposer_label?: string | null;
   kind: "room_fact" | "room_decision" | "user_preference" | "project_rule";
   content: string;
   digest: string;

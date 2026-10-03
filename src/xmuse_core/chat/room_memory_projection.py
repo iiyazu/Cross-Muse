@@ -15,6 +15,13 @@ from typing import Any, Protocol
 ROOM_MEMORY_PROJECTION_SCHEMA = "room_memory_projection/v1"
 ROOM_MEMORY_PROJECTION_V2_SCHEMA = "room_memory_projection/v2"
 ROOM_MEMORY_PROOF_BOUNDARY = "memory_projection_not_room_or_memory_index_authority"
+# The browser contract exposes only the archive-only and full-local families;
+# the curated profile belongs to the full-local family.
+_MEMORY_PROFILE_FAMILIES = {
+    "archive-only": "archive-only",
+    "full-local": "full-local",
+    "full-local-curated": "full-local",
+}
 _CANDIDATE_KINDS = {"room_fact", "room_decision", "user_preference", "project_rule"}
 _APPROVAL_STATES = {"pending", "approved", "rejected"}
 _PUBLISH_STATES = {"not_queued", "queued", "delivered", "failed", "conflict"}
@@ -212,6 +219,7 @@ def _safe_candidate(value: Mapping[str, Any]) -> dict[str, Any] | None:
     publish_state = _identifier(value.get("publish_state")) or "not_queued"
     target_scope = _identifier(value.get("target_scope")) or "room"
     content = _text(value.get("content"), maximum=8 * 1024)
+    proposer_kind = value.get("proposer_kind", "participant")
     if (
         candidate_id is None
         or conversation_id is None
@@ -221,14 +229,22 @@ def _safe_candidate(value: Mapping[str, Any]) -> dict[str, Any] | None:
         or publish_state not in _PUBLISH_STATES
         or target_scope not in _TARGET_SCOPES
         or content is None
+        or proposer_kind not in {"participant", "memoryos_curator"}
     ):
         return None
     revision = _integer(value.get("revision"))
     actionable = approval_state == "pending"
+    curator_proposed = proposer_kind == "memoryos_curator"
     return {
         "candidate_id": candidate_id,
         "conversation_id": conversation_id,
-        "author_participant_id": _identifier(value.get("author_participant_id")),
+        # A curator proposal is never attributed to the Agent whose attempt
+        # carried it; the browser contract shows the external proposer label.
+        "author_participant_id": (
+            None if curator_proposed else _identifier(value.get("author_participant_id"))
+        ),
+        "proposer_kind": proposer_kind,
+        "proposer_label": "MemoryOS Curator" if curator_proposed else None,
         "kind": kind,
         "content": content,
         "digest": digest,
@@ -368,19 +384,19 @@ def build_room_memory_projection(
     }
     if schema_version == ROOM_MEMORY_PROJECTION_V2_SCHEMA:
         profile = _identifier((runtime_status or {}).get("profile"))
-        if profile not in {"full-local", "archive-only"}:
-            profile = "archive-only"
+        normalized_profile = _MEMORY_PROFILE_FAMILIES.get(profile or "", "archive-only")
+        full_local = normalized_profile == "full-local"
         raw_message_counts = (
             message_delivery_store.count_message_outbox_by_state(conversation_id=conversation_id)
             if message_delivery_store is not None
             else {}
         )
         message_counts = raw_message_counts if isinstance(raw_message_counts, Mapping) else {}
-        projection["profile"] = profile
+        projection["profile"] = normalized_profile
         projection["capabilities"] = {
-            "hybrid": profile == "full-local" and runtime["state"] == "ready",
-            "message_ingest": profile == "full-local" and runtime["state"] == "ready",
-            "agentic_advisory": profile == "full-local" and runtime["state"] == "ready",
+            "hybrid": full_local and runtime["state"] == "ready",
+            "message_ingest": full_local and runtime["state"] == "ready",
+            "agentic_advisory": full_local and runtime["state"] == "ready",
         }
         projection["sync"]["messages"] = _outbox_counts(message_counts)
     return projection

@@ -322,10 +322,10 @@ def _validate_start_configuration(
             "execution_profile_required",
             "a non-default workspace requires an explicit --execution-profile",
         )
-    if memory_profile not in {"archive-only", "full-local"}:
+    if memory_profile not in {"archive-only", "full-local", "full-local-curated"}:
         raise WorkroomError(
             "memory_profile_invalid",
-            "memory profile must be archive-only or full-local",
+            "memory profile must be archive-only, full-local, or full-local-curated",
         )
     resolved_profile_id = execution_profile_id or DEFAULT_EXECUTION_PROFILE_ID
     try:
