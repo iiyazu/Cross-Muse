@@ -81,9 +81,10 @@ do not load `.env`.
   Other providers must deny or be instructed against workspace writes; their confinement
   level is reported per provider and never assumed equal to Codex. Workspace changes still
   enter only through exact-patch candidates. Claude ACP sessions run with built-in tools
-  limited to Read/Glob/Grep (no Bash), no workspace project/local settings, the `default`
-  permission mode pinned via `session/set_mode`, and only the exact room outcome MCP tool
-  approved by the ACP permission callback. OpenCode ACP sessions run its own tools without
+  limited to Read/Glob/Grep (no Bash), no workspace project/local settings, no MCP servers
+  from the operator's user config (`strictMcpConfig`), the `default` permission mode pinned
+  via `session/set_mode`, and only the exact room outcome MCP tool approved by the ACP
+  permission callback. OpenCode ACP sessions run its own tools without
   asking the client, so the agent process runs under bubblewrap instead: filesystem and
   workspace read-only, private `/tmp`, other tools' credential stores and the xmuse root
   masked, only OpenCode's own state directories writable (`os_read_only_sandbox`). Its model

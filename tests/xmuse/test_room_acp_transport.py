@@ -420,6 +420,7 @@ async def _mixed_roster_scenario(tmp_path: Path, mcp_url: str) -> None:
         "options": {
             "tools": list(ROOM_ACP_BUILTIN_TOOLS),
             "settingSources": ["user"],
+            "strictMcpConfig": True,
         }
     }
     mode_event = _event(events, "set_session_mode")
@@ -900,3 +901,223 @@ async def _select_model_process_exit_scenario(tmp_path: Path) -> None:
     assert duration < 1.0
     assert exc_info.value.code == "room_acp_model_unavailable"
     assert "agent process exited" in str(exc_info.value)
+
+
+def _permission_options() -> list[Any]:
+    from acp.schema import PermissionOption
+
+    return [
+        PermissionOption(option_id="allow-once", name="Allow once", kind="allow_once"),
+        PermissionOption(option_id="allow-always", name="Allow always", kind="allow_always"),
+        PermissionOption(option_id="reject-once", name="Reject", kind="reject_once"),
+    ]
+
+
+def _permission_transport(tmp_path: Path, profile: AcpProviderProfile) -> Any:
+    from xmuse_core.chat.room_acp_transport import _AcpSession, _RoomAcpClient
+
+    kwargs: dict[str, Any] = {"workspace": tmp_path, "command": ("true",), "profile": profile}
+    if profile.model_config_option is not None:
+        kwargs["default_model"] = "opencode/test-model"
+    transport = AcpRoomObservationTransport(
+        config=AcpTransportConfig(**kwargs),
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    session = _AcpSession(
+        generation=1,
+        god_session_id="god-1",
+        acp_session_id="sess-1",
+        process=SimpleNamespace(returncode=None),
+    )
+    client = _RoomAcpClient(transport, session)
+    return transport, client
+
+
+async def _is_allowed(client: Any, session_id: str, title: str, **kwargs: Any) -> bool:
+    from acp.schema import ToolCallUpdate
+
+    response = await client.request_permission(
+        session_id,
+        ToolCallUpdate(tool_call_id="call-1", title=title, status="pending"),
+        _permission_options(),
+        **kwargs,
+    )
+    outcome = getattr(response, "outcome", None)
+    return getattr(outcome, "outcome", None) == "selected" and getattr(
+        outcome, "option_id", None
+    ) in {"allow-once", "allow-always"}
+
+
+def test_workspace_write_profile_permission_rules(tmp_path: Path) -> None:
+    from xmuse_core.chat.room_acp_transport import CLAUDE_ACP_WORKSPACE_WRITE_PROFILE
+
+    asyncio.run(_workspace_write_permission_scenario(tmp_path, CLAUDE_ACP_WORKSPACE_WRITE_PROFILE))
+
+
+async def _workspace_write_permission_scenario(tmp_path: Path, profile: AcpProviderProfile) -> None:
+    _transport, client = _permission_transport(tmp_path, profile)
+    assert await _is_allowed(client, "sess-1", "Write foo.txt") is True
+    assert await _is_allowed(client, "sess-1", "git commit -m x") is True
+    assert await _is_allowed(client, "sess-1", OUTCOME_TOOL_TITLE) is True
+    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is False
+    assert await _is_allowed(client, "sess-1", "mcp__xmuse-room__other") is False
+    # Wrong session never authorizes, even for the exact outcome tool.
+    assert await _is_allowed(client, "other-session", OUTCOME_TOOL_TITLE) is False
+    # A name smuggled into model-controlled input never authorizes: the mcp__
+    # title stays denied even when raw input names the outcome tool.
+    assert (
+        await _is_allowed(
+            client,
+            "sess-1",
+            "mcp__other__tool",
+            raw_input="mcp__xmuse-room__chat_room_submit_outcome",
+        )
+        is False
+    )
+
+
+def test_read_only_claude_profile_still_rejects_builtins(tmp_path: Path) -> None:
+    asyncio.run(_read_only_permission_scenario(tmp_path))
+
+
+async def _read_only_permission_scenario(tmp_path: Path) -> None:
+    _transport, client = _permission_transport(tmp_path, CLAUDE_ACP_PROFILE)
+    assert await _is_allowed(client, "sess-1", "Write foo.txt") is False
+    assert await _is_allowed(client, "sess-1", "Bash") is False
+    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is False
+    assert await _is_allowed(client, "sess-1", OUTCOME_TOOL_TITLE) is True
+
+
+def test_both_claude_profiles_send_strict_mcp_config() -> None:
+    from xmuse_core.chat.room_acp_transport import (
+        CLAUDE_ACP_WORKSPACE_WRITE_PROFILE,
+        OPENCODE_ACP_PROFILE,
+        OPENCODE_ACP_WORKSPACE_WRITE_PROFILE,
+        ROOM_WORKSPACE_WRITE_CONFINEMENT,
+    )
+    from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEMENT as _CONF
+
+    assert _CONF == ROOM_WORKSPACE_WRITE_CONFINEMENT
+    for profile in (CLAUDE_ACP_PROFILE, CLAUDE_ACP_WORKSPACE_WRITE_PROFILE):
+        options = profile.session_meta["claudeCode"]["options"]
+        assert options["strictMcpConfig"] is True
+        assert options["settingSources"] == ["user"]
+    assert "tools" not in CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.session_meta["claudeCode"]["options"]
+    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.session_meta["claudeCode"]["options"][
+        "disallowedTools"
+    ] == ["Skill"]
+    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.approve_builtin_tools is True
+    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.pin_default_mode is True
+    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT
+    assert OPENCODE_ACP_WORKSPACE_WRITE_PROFILE.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT
+    assert OPENCODE_ACP_PROFILE.early_exit_spawn_retries == 1
+    assert OPENCODE_ACP_WORKSPACE_WRITE_PROFILE.early_exit_spawn_retries == 1
+
+
+def test_cold_start_retry_once_for_early_exit(tmp_path: Path) -> None:
+    asyncio.run(_cold_start_retry_scenario(tmp_path, exited_early=True))
+
+
+def test_cold_start_no_retry_for_live_process(tmp_path: Path) -> None:
+    asyncio.run(_cold_start_retry_scenario(tmp_path, exited_early=False))
+
+
+async def _cold_start_retry_scenario(tmp_path: Path, *, exited_early: bool) -> None:
+    from unittest.mock import patch
+
+    from xmuse_core.chat.room_acp_transport import OPENCODE_ACP_PROFILE
+
+    transport = AcpRoomObservationTransport(
+        config=AcpTransportConfig(
+            workspace=tmp_path,
+            command=("true",),
+            profile=OPENCODE_ACP_PROFILE,
+            default_model="opencode/test-model",
+        ),
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    calls: list[int] = []
+    sentinel = SimpleNamespace(god_session_id="god-1")
+
+    async def _fail_once(delivery: Any, *, record: Any) -> Any:
+        calls.append(1)
+        raise RoomAcpTransportError(
+            "room_acp_session_ensure_failed", "boom", agent_exited=exited_early
+        )
+
+    transport._spawn_session_once = _fail_once  # type: ignore[method-assign]
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/test-model")
+    with patch("asyncio.sleep", return_value=None):
+        with pytest.raises(RoomAcpTransportError):
+            await transport._spawn_session(delivery, record=sentinel)
+    assert len(calls) == (2 if exited_early else 1)
+
+
+def test_cold_start_real_early_exit_is_retried_exactly_once(tmp_path: Path) -> None:
+    asyncio.run(_real_early_exit_scenario(tmp_path))
+
+
+async def _real_early_exit_scenario(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from xmuse_core.chat.room_acp_transport import OPENCODE_ACP_PROFILE
+
+    counter = tmp_path / "spawns.txt"
+    transport = AcpRoomObservationTransport(
+        config=AcpTransportConfig(
+            workspace=tmp_path,
+            # Dies before speaking ACP, like a cold-start crash.
+            command=("sh", "-c", f"echo spawn >> {counter}; exit 3"),
+            profile=OPENCODE_ACP_PROFILE,
+            default_model="opencode/test-model",
+        ),
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/test-model")
+    real_sleep = asyncio.sleep
+
+    async def _fast_sleep(delay: float, *args: Any, **kwargs: Any) -> Any:
+        return await real_sleep(min(delay, 0.01))
+
+    with patch("asyncio.sleep", _fast_sleep):
+        with pytest.raises(RoomAcpTransportError) as caught:
+            await transport._spawn_session(delivery, record=SimpleNamespace(god_session_id="god-1"))
+    assert caught.value.agent_exited is True
+    assert counter.read_text().splitlines() == ["spawn", "spawn"]
+
+
+def test_cold_start_retry_recovers_on_second_attempt(tmp_path: Path) -> None:
+    asyncio.run(_cold_start_recovery_scenario(tmp_path))
+
+
+async def _cold_start_recovery_scenario(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from xmuse_core.chat.room_acp_transport import OPENCODE_ACP_PROFILE
+
+    transport = AcpRoomObservationTransport(
+        config=AcpTransportConfig(
+            workspace=tmp_path,
+            command=("true",),
+            profile=OPENCODE_ACP_PROFILE,
+            default_model="opencode/test-model",
+        ),
+        registry_path=tmp_path / "god_sessions.json",
+    )
+    calls: list[int] = []
+    sentinel_session = SimpleNamespace(god_session_id="god-1")
+
+    async def _flaky(delivery: Any, *, record: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RoomAcpTransportError(
+                "room_acp_session_ensure_failed", "cold start", agent_exited=True
+            )
+        return sentinel_session
+
+    transport._spawn_session_once = _flaky  # type: ignore[method-assign]
+    delivery = _make_test_delivery(tmp_path / "chat.db", "opencode/test-model")
+    with patch("asyncio.sleep", return_value=None):
+        result = await transport._spawn_session(delivery, record=sentinel_session)
+    assert result is sentinel_session
+    assert len(calls) == 2
