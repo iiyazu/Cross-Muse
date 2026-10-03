@@ -19,6 +19,7 @@ from xmuse_core.chat.room_agent_kinds import (
 from xmuse_core.chat.room_batches import (
     batch_identity,
     batch_row_for_observation,
+    canonical_observation_id,
     create_observation_batch,
 )
 from xmuse_core.chat.room_collaboration import (
@@ -1318,6 +1319,88 @@ class RoomKernelStore:
                     "attempt": attempt,
                     "batch": self._batch_view_conn(conn, batch),
                 }
+            except Exception:
+                conn.rollback()
+                raise
+
+    def renew_observation_lease(
+        self,
+        *,
+        observation_id: str,
+        attempt_id: str,
+        lease_token: str,
+        now: datetime | None = None,
+        lease_ttl_s: int | float = 300,
+    ) -> str:
+        """Extend one claimed lease while its exact attempt still owns it.
+
+        The observation and its current attempt row share the renewed
+        ``expires_at`` in one transaction, only when the observation is still
+        claimed by this token, its current attempt is still ``attempt_id``,
+        that attempt row is still live, and the lease has not already lapsed.
+        A lapsed or superseded lease is never resurrected, and an expiry is
+        never shortened.  Returns the new ``expires_at``.
+        """
+
+        if not isinstance(observation_id, str) or not observation_id.strip():
+            raise ValueError("room_observation_field_required")
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            raise ValueError("room_observation_field_required")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_observation_lease_lost")
+        if (
+            isinstance(lease_ttl_s, bool)
+            or not isinstance(lease_ttl_s, (int, float))
+            or lease_ttl_s <= 0
+        ):
+            raise ValueError("room_lease_ttl_invalid")
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            raise ValueError("room_observation_now_timezone_required")
+        stamp = _timestamp(current)
+        candidate = _timestamp(current + timedelta(seconds=float(lease_ttl_s)))
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                primary_id = canonical_observation_id(conn, observation_id)
+                row = conn.execute(
+                    "select * from room_observations where observation_id = ?",
+                    (primary_id,),
+                ).fetchone()
+                attempt = conn.execute(
+                    "select * from room_observation_attempts where attempt_id = ?",
+                    (attempt_id,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row["status"] != "claimed"
+                    or row["control_state"] != "active"
+                    or row["lease_token"] != lease_token
+                    or not row["expires_at"]
+                    or _parse_timestamp(row["expires_at"]) <= current
+                    or row["current_attempt_id"] != attempt_id
+                    or attempt is None
+                    or attempt["state"] not in {"claimed", "delivering"}
+                    or attempt["lease_token_digest"] != sha256(lease_token.encode()).hexdigest()
+                ):
+                    raise ValueError("room_observation_lease_lost")
+                renewed = candidate
+                if str(row["expires_at"]) > renewed:
+                    renewed = str(row["expires_at"])
+                if str(attempt["expires_at"]) > renewed:
+                    renewed = str(attempt["expires_at"])
+                conn.execute(
+                    "update room_observations set expires_at = ?, updated_at = ? "
+                    "where observation_id = ?",
+                    (renewed, stamp, primary_id),
+                )
+                conn.execute(
+                    "update room_observation_attempts set expires_at = ?, updated_at = ? "
+                    "where attempt_id = ?",
+                    (renewed, stamp, attempt_id),
+                )
+                conn.commit()
+                return renewed
             except Exception:
                 conn.rollback()
                 raise

@@ -27,6 +27,8 @@ means the provider turn ended, never that the Room commit happened.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
 import os
@@ -69,6 +71,7 @@ from xmuse_core.chat.room_host import (
     RoomCancelReconcileResult,
     RoomObservationDelivery,
     RoomTransportResult,
+    RoomTurnProgress,
 )
 from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME
 from xmuse_core.chat.room_memory_runtime import RoomMemoryContextReceiptPort
@@ -345,16 +348,27 @@ class _RoomAcpClient:
         self._session = session
         self._turn_id: str | None = None
         self._outcome_tool_seen = False
+        self._progress: Callable[[RoomTurnProgress], None] | None = None
+        # Partial tool-call identity per ACP tool_call_id until the call finishes.
+        self._tool_calls: dict[str, dict[str, Any]] = {}
 
-    def begin_turn(self, turn_id: str) -> None:
+    def begin_turn(
+        self,
+        turn_id: str,
+        *,
+        progress: Callable[[RoomTurnProgress], None] | None = None,
+    ) -> None:
         self._turn_id = turn_id
         self._outcome_tool_seen = False
+        self._progress = progress
+        self._tool_calls = {}
         for listener in tuple(self._session.preview_listeners):
             listener.push({"method": "turn/started", "params": {"turnId": turn_id}})
 
     def end_turn(self) -> None:
         turn_id = self._turn_id
         self._turn_id = None
+        self._progress = None
         if turn_id is None:
             return
         for listener in tuple(self._session.preview_listeners):
@@ -380,20 +394,69 @@ class _RoomAcpClient:
             text = getattr(content, "text", None)
             if isinstance(text, str) and text:
                 self._push_event("item/agentMessage/delta", {"delta": text})
+            self._report_progress(RoomTurnProgress(kind="message"))
+            return
+        if kind == "agent_thought_chunk":
+            self._report_progress(RoomTurnProgress(kind="thought"))
+            return
+        if kind == "plan":
+            self._report_progress(RoomTurnProgress(kind="plan"))
             return
         if kind in {"tool_call", "tool_call_update"}:
             identifiers = _tool_identity_candidates(update, kwargs)
-            if not any(self._transport.is_room_outcome_tool(item) for item in identifiers):
-                return
-            status = getattr(update, "status", None)
-            if kind == "tool_call" or status in {"pending", "in_progress"}:
-                self._outcome_tool_seen = True
-                self._push_event("item/started", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
-            elif self._outcome_tool_seen and status == "completed":
-                self._push_event("item/completed", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+            if any(self._transport.is_room_outcome_tool(item) for item in identifiers):
+                status = getattr(update, "status", None)
+                if kind == "tool_call" or status in {"pending", "in_progress"}:
+                    self._outcome_tool_seen = True
+                    self._push_event("item/started", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+                elif self._outcome_tool_seen and status == "completed":
+                    self._push_event("item/completed", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+            self._report_progress(self._tool_progress(kind, update))
             return
-        # Thought chunks, usage updates, plans, and future kinds are tolerated
-        # without becoming Room speech or preview text.
+        # Usage updates and future kinds are tolerated without becoming Room
+        # speech or preview text, but they still prove the provider is alive.
+        self._report_progress(RoomTurnProgress(kind="other"))
+
+    def _tool_progress(self, kind: str, update: object) -> RoomTurnProgress:
+        """Merge one tool call's updates and fingerprint it only once it finishes.
+
+        Adapters often announce a call with a placeholder title and empty
+        arguments (Claude: ``Terminal`` with ``{}``) and fill both in later
+        updates, so fingerprinting the announcement would make every distinct
+        shell command look identical to the loop probe.
+        """
+
+        call_id = getattr(update, "tool_call_id", None)
+        key = call_id if isinstance(call_id, str) and call_id else None
+        title = getattr(update, "title", None) or getattr(update, "name", None)
+        raw_input = getattr(update, "raw_input", None)
+        merged = self._tool_calls.get(key, {}) if key is not None else {}
+        if title:
+            merged["title"] = title
+        if raw_input is not None:
+            merged["raw_input"] = raw_input
+        status = getattr(update, "status", None)
+        if status in {"completed", "failed"}:
+            if key is not None:
+                self._tool_calls.pop(key, None)
+            return RoomTurnProgress(
+                kind="tool_call",
+                fingerprint=_tool_call_fingerprint(merged.get("title"), merged.get("raw_input")),
+            )
+        if key is not None:
+            self._tool_calls[key] = merged
+        return RoomTurnProgress(kind="tool_update")
+
+    def _report_progress(self, progress: RoomTurnProgress) -> None:
+        """Forward one progress event to the host without failing the turn."""
+
+        callback = self._progress
+        if callback is None:
+            return
+        try:
+            callback(progress)
+        except Exception:
+            logger.warning("room_acp_progress_callback_failed", exc_info=True)
 
     async def request_permission(
         self,
@@ -626,7 +689,7 @@ class AcpRoomObservationTransport:
                 name=f"room-acp-prompt:{delivery.transport_request_id}",
             )
             session.prompt_task = prompt_task
-            session.client.begin_turn(delivery.transport_request_id)
+            session.client.begin_turn(delivery.transport_request_id, progress=delivery.progress)
             # Let the prompt request reach the agent before the context receipts
             # claim the exact bounded context was handed to this session.
             await asyncio.sleep(0)
@@ -1298,6 +1361,17 @@ def _permission_option(options: Collection[PermissionOption], kind: str) -> Perm
         if getattr(option, "kind", None) == kind:
             return option
     return None
+
+
+def _tool_call_fingerprint(title: object, raw_input: object) -> str:
+    """Return a stable identity for one ACP tool call: title plus arguments."""
+
+    title = title if isinstance(title, str) else ""
+    try:
+        canonical = json.dumps(raw_input, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = json.dumps(str(raw_input))
+    return hashlib.sha256(f"{title}\0{canonical}".encode()).hexdigest()
 
 
 def _tool_identity_candidates(tool_call: object, extra: Mapping[str, Any]) -> list[str]:
