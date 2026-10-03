@@ -94,7 +94,11 @@ from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEM
 logger = logging.getLogger(__name__)
 
 ROOM_ACP_PROVIDER_SESSION_KIND = "acp_session"
-ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp")
+# Pinned: an unpinned ``npx -y`` silently picks up new bridge releases, and
+# claude-agent-acp 0.85.1 failed every Room prompt (room_acp_prompt_failed right
+# after session/new). Bump only after a live Room smoke on the new version;
+# XMUSE_CLAUDE_ACP_COMMAND still overrides the whole command.
+ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp@0.85.0")
 ROOM_ACP_DEFAULT_MCP_URL = "http://127.0.0.1:8100/mcp/room"
 ROOM_ACP_MCP_SERVER_NAME = "xmuse-room"
 ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value, AgentRuntime.OPENCODE.value)
