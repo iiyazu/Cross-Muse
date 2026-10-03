@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_identity import verify_room_participant_identity
 from xmuse_core.chat.room_kernel import RoomKernelStore, normalize_participant_outcome
@@ -72,6 +73,275 @@ class RoomApplicationService:
                 memory_candidates=memory_candidates,
                 now=now,
                 max_causal_depth=self._max_causal_depth,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_read(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        contract_ref: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).read(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                contract_ref=contract_ref,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_propose_split(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        modules: list[dict[str, Any]],
+        assignments: dict[str, str],
+        contracts: list[dict[str, Any]],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).propose_split(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                modules=modules,
+                assignments=assignments,
+                contracts=contracts,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_decide_split(
+        self,
+        *,
+        conversation_id: str,
+        split_id: str,
+        decision: str,
+        operator_identity: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).decide_split(
+                conversation_id=conversation_id,
+                split_id=split_id,
+                decision=decision,
+                operator_identity=operator_identity,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_claim(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        module_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).claim(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                module_id=module_id,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_publish_contract(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        contract_id: str,
+        kind: str,
+        content: str,
+        base_version: int | None,
+        rationale: str = "",
+        provider_module_id: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).publish_contract(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                contract_id=contract_id,
+                kind=kind,
+                content=content,
+                base_version=base_version,
+                rationale=rationale,
+                provider_module_id=provider_module_id,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_report_progress(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        module_id: str,
+        status: str,
+        summary: str,
+        claims: list[str] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).report_progress(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                module_id=module_id,
+                status=status,
+                summary=summary,
+                claims=claims,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_ask(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        target_participant_id: str,
+        question: str,
+        references: list[str] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).ask(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                target_participant_id=target_participant_id,
+                question=question,
+                references=references,
+                now=now,
             )
         except RoomApplicationError:
             raise

@@ -38,11 +38,14 @@ def build_workspace_write_sandbox_command(
     workspace: Path,
     agent_argv: Sequence[str],
     masked_paths: Iterable[Path] = (),
+    readonly_binds: Sequence[tuple[Path, Path]] = (),
 ) -> tuple[str, ...]:
     """Return the bubblewrap argv that runs ``agent_argv`` with a writable workspace.
 
     Only the workspace and this provider's own state stay writable; every other
     provider's state and every :data:`MASKED_HOME_PATHS` entry is masked.
+    ``readonly_binds`` mounts host directories read-only at destinations strictly
+    inside the workspace (the board's charter/contract view at ``.xmuse``).
     """
 
     if provider not in PROVIDER_STATE_HOME_PATHS:
@@ -59,6 +62,23 @@ def build_workspace_write_sandbox_command(
         raise ValueError("room_workspace_sandbox_workspace_unsafe")
     if home_resolved.is_relative_to(workspace_resolved):
         raise ValueError("room_workspace_sandbox_workspace_unsafe")
+    binds: list[tuple[Path, Path]] = []
+    for source, destination in readonly_binds:
+        source_resolved = Path(source).expanduser().resolve()
+        destination_path = Path(destination)
+        # The destination must be a real (non-symlink) path strictly inside the
+        # workspace; the owner controls the workspace, so a symlinked component
+        # could otherwise redirect the mount elsewhere.
+        if (
+            not source_resolved.is_dir()
+            or not destination_path.is_absolute()
+            or ".." in destination_path.parts
+            or destination_path.resolve() != destination_path
+            or destination_path == workspace_resolved
+            or not destination_path.is_relative_to(workspace_resolved)
+        ):
+            raise ValueError("room_workspace_sandbox_bind_unsafe")
+        binds.append((source_resolved, destination_path))
 
     own_rels = PROVIDER_STATE_HOME_PATHS[provider]
     own_resolved = {(home_expanded / rel).resolve() for rel in own_rels}
@@ -106,6 +126,8 @@ def build_workspace_write_sandbox_command(
             path.mkdir(parents=True, exist_ok=True)
             argv.extend(["--bind", str(path), str(path)])
     argv.extend(["--bind", str(workspace_resolved), str(workspace_resolved)])
+    for source_resolved, destination_path in binds:
+        argv.extend(["--ro-bind", str(source_resolved), str(destination_path)])
     for path in others:
         argv.extend(_mask(path))
     argv.extend(["--chdir", str(workspace_resolved), "--die-with-parent", "--new-session"])

@@ -89,6 +89,8 @@ def test_owner_prompt_grants_the_writable_clone_and_keeps_the_outcome_contract(
     assert "your own private git clone and it is writable" in owner
     assert "commit hash" in owner
     assert "chat_room_submit_outcome" in owner
+    assert "chat_room_board_read" in owner
+    assert ".xmuse/" in owner
     # No read-only instruction may contradict the writable sandbox.
     assert "read-only" not in owner
     assert "Never edit files" not in owner

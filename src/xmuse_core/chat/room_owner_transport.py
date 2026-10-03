@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 import shlex
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -47,10 +47,12 @@ from xmuse_core.chat.room_host import (
 from xmuse_core.chat.room_memory_runtime import RoomMemoryContextReceiptPort
 from xmuse_core.chat.room_observation_transport_base import sanitized_agent_environment
 from xmuse_core.chat.room_owner_clones import (
+    OWNER_BOARD_DIR_NAME,
     OwnerClone,
     OwnerCloneError,
     OwnerCloneManager,
 )
+from xmuse_core.chat.room_owner_ids import owner_id_for_participant
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 from xmuse_core.chat.room_workspace_sandbox import build_workspace_write_sandbox_command
@@ -65,12 +67,7 @@ OWNER_PREPARE_TIMEOUT_DEFAULT_S = 900.0
 
 OwnerTransportFactory = Callable[[Participant, OwnerClone], RoomObservationTransport | None]
 
-
-def owner_id_for_participant(conversation_id: str, participant_id: str) -> str:
-    """Derive the host-owned clone id for one participant (always OWNER_ID_RE)."""
-
-    digest = sha256(f"{conversation_id}\0{participant_id}".encode()).hexdigest()[:20]
-    return f"p-{digest}"
+logger = logging.getLogger(__name__)
 
 
 def is_workspace_write_participant(participant: Participant) -> bool:
@@ -98,6 +95,19 @@ class OwnerWorkspaceWriteSettings:
     extra_masked_paths: tuple[Path, ...] = ()
     prepare_command: tuple[str, ...] | None = None
     prepare_timeout_s: float = OWNER_PREPARE_TIMEOUT_DEFAULT_S
+    # Host-owned root of per-owner board views; each owner's directory is
+    # mounted read-only at ``<clone>/.xmuse``.  None disables the mount.
+    board_root: Path | None = None
+
+
+def owner_board_dir(settings: OwnerWorkspaceWriteSettings, owner_id: str) -> Path | None:
+    """Return (creating) the host-owned board view directory for one owner."""
+
+    if settings.board_root is None:
+        return None
+    path = Path(settings.board_root) / owner_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def resolve_owner_prepare_command(
@@ -214,6 +224,13 @@ def build_owner_acp_config(
         return None
     if agent_argv is None or not agent_argv:
         return None
+    readonly_binds: tuple[tuple[Path, Path], ...] = ()
+    board_dir = owner_board_dir(settings, clone.owner_id)
+    if board_dir is not None:
+        mount_point = clone.path.resolve() / OWNER_BOARD_DIR_NAME
+        # Clones created before the board existed lack the mount point.
+        mount_point.mkdir(exist_ok=True)
+        readonly_binds = ((board_dir, mount_point),)
     command = build_workspace_write_sandbox_command(
         bwrap=Path(settings.bwrap),
         provider=participant.cli_kind,
@@ -223,6 +240,7 @@ def build_owner_acp_config(
         # The xmuse root encloses the clones root, so the existing enclosing
         # mask order keeps other owners' clones hidden from this one.
         masked_paths=(settings.xmuse_root, *settings.extra_masked_paths),
+        readonly_binds=readonly_binds,
     )
     return AcpTransportConfig(
         workspace=clone.path,
@@ -310,6 +328,29 @@ class RoomOwnerTransportRouter(RoutingRoomObservationTransport):
             return RoomTransportResult("failed", WORKSPACE_WRITE_UNAVAILABLE, str(exc))
         if transport is None:
             return RoomTransportResult("failed", WORKSPACE_WRITE_UNAVAILABLE)
+        settings = self._owner_settings
+        if settings is not None and settings.board_root is not None:
+            try:
+                from xmuse_core.chat.room_board_view import materialize_owner_board_view
+
+                db_path = Path(settings.xmuse_root) / "chat.db"
+                board_dir = owner_board_dir(
+                    settings,
+                    owner_id_for_participant(
+                        delivery.conversation_id,
+                        delivery.participant.participant_id,
+                    ),
+                )
+                if board_dir is not None:
+                    await asyncio.to_thread(
+                        materialize_owner_board_view,
+                        db_path,
+                        delivery.conversation_id,
+                        delivery.participant.participant_id,
+                        board_dir,
+                    )
+            except Exception as exc:
+                logger.warning("room owner board materialize failed: %s", exc)
         return await transport.deliver(delivery, timeout_s=timeout_s)
 
     async def reconcile_cancel(
@@ -420,6 +461,7 @@ __all__ = [
     "build_owner_acp_transport_factory",
     "build_owner_prepare",
     "is_workspace_write_participant",
+    "owner_board_dir",
     "owner_id_for_participant",
     "resolve_owner_masked_paths",
     "resolve_owner_prepare_command",

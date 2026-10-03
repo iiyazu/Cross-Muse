@@ -997,6 +997,7 @@ def _owner_workspace_write_settings(
         extra_masked_paths=resolve_owner_masked_paths(source),
         prepare_command=prepare_command,
         prepare_timeout_s=prepare_timeout_s,
+        board_root=root / "runtime" / "board",
     )
 
 

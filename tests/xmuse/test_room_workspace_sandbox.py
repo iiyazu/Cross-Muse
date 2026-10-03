@@ -195,6 +195,58 @@ def test_unsafe_workspaces(tmp_path: Path, kind: str) -> None:
         )
 
 
+def test_readonly_bind_follows_workspace_bind(tmp_path: Path) -> None:
+    home, workspace = _make_home(tmp_path)
+    board = tmp_path / "board"
+    board.mkdir()
+    mount = workspace.resolve() / ".xmuse"
+    argv = build_workspace_write_sandbox_command(
+        bwrap=Path("/usr/bin/bwrap"),
+        provider="claude",
+        home=home,
+        workspace=workspace,
+        agent_argv=("claude",),
+        readonly_binds=((board, mount),),
+    )
+    workspace_bind = next(i for i, t in _pairs(argv, "--bind") if t == str(workspace.resolve()))
+    ro_bind = next(i for i, t in _pairs(argv, "--ro-bind") if t == str(board.resolve()))
+    assert workspace_bind < ro_bind
+    assert argv[ro_bind + 2] == str(mount)
+
+
+@pytest.mark.parametrize(
+    "kind", ["outside", "workspace_itself", "relative", "symlink", "no_source"]
+)
+def test_readonly_bind_rejects_unsafe_destinations(tmp_path: Path, kind: str) -> None:
+    home, workspace = _make_home(tmp_path)
+    resolved = workspace.resolve()
+    board = tmp_path / "board"
+    board.mkdir()
+    source = board
+    destination: Path
+    if kind == "outside":
+        destination = tmp_path / "elsewhere"
+    elif kind == "workspace_itself":
+        destination = resolved
+    elif kind == "relative":
+        destination = Path(".xmuse")
+    elif kind == "symlink":
+        (resolved / ".xmuse").symlink_to(home / ".ssh")
+        destination = resolved / ".xmuse"
+    else:
+        source = tmp_path / "missing"
+        destination = resolved / ".xmuse"
+    with pytest.raises(ValueError, match="room_workspace_sandbox_bind_unsafe"):
+        build_workspace_write_sandbox_command(
+            bwrap=Path("/usr/bin/bwrap"),
+            provider="claude",
+            home=home,
+            workspace=workspace,
+            agent_argv=("claude",),
+            readonly_binds=((source, destination),),
+        )
+
+
 def _bwrap_works() -> bool:
     bwrap = shutil.which("bwrap")
     if bwrap is None:
@@ -254,3 +306,39 @@ def test_bwrap_workspace_writable_home_not_writable_masked_empty(tmp_path: Path)
     assert "masked" in result.stdout
     assert (workspace / "created.txt").exists()
     assert (masked / "secret").read_text() == "token"
+
+
+@pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is not usable here")
+def test_bwrap_board_view_is_read_only_inside_writable_workspace(tmp_path: Path) -> None:
+    import os
+
+    bwrap = Path(str(shutil.which("bwrap")))
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    (workspace / ".xmuse").mkdir(parents=True)
+    board = tmp_path / "board"
+    board.mkdir()
+    (board / "charter.md").write_text("module: api\n")
+    argv = build_workspace_write_sandbox_command(
+        bwrap=bwrap,
+        provider="claude",
+        home=home,
+        workspace=workspace,
+        agent_argv=(
+            "/bin/sh",
+            "-c",
+            "cat .xmuse/charter.md; "
+            "echo x > .xmuse/charter.md && echo board_writable || echo board_read_only; "
+            "touch work.txt && echo workspace_ok",
+        ),
+        readonly_binds=((board, workspace.resolve() / ".xmuse"),),
+    )
+    env = {"HOME": str(Path.home()), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False, env=env)
+    if "Operation not permitted" in result.stderr or "No permissions" in result.stderr:
+        pytest.skip("unprivileged user namespaces are unavailable")
+    assert "module: api" in result.stdout
+    assert "board_read_only" in result.stdout
+    assert "workspace_ok" in result.stdout
+    assert (board / "charter.md").read_text() == "module: api\n"

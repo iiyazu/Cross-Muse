@@ -9,11 +9,30 @@ The managed MCP server is a trusted-local, Room-only service bound to
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health` | Bounded local readiness. |
-| `POST /mcp/room` | JSON-RPC with exactly `chat_room_submit_outcome`. |
+| `POST /mcp/room` | JSON-RPC with exactly `chat_room_submit_outcome` and the `chat_room_board_*` tools. |
 
 OpenAPI, SSE, `/messages`, root `/mcp`, and `/mcp/chat` are absent. Room Codex
 app-servers use a config-isolated home, so user MCP registrations and plugins cannot expand
-the tool list. Only `chat_room_submit_outcome` is pre-approved.
+the tool list. Only the Room tools are pre-approved, each by its exact name. Read-only ACP
+participants get the same exact-title allowlist. Workspace-write owners are different by
+design: they keep their own MCP servers and Skills, and their OS sandbox (not the tool
+list) confines writes; a network-reached or delegating MCP server is outside that sandbox.
+
+## Board tools
+
+| Tool | Caller | Effect |
+| --- | --- | --- |
+| `chat_room_board_read` | any participant | Charters, contract index, the caller's board inbox (advances its cursor), optionally one contract's full text. |
+| `chat_room_board_propose_split` | Room lead | Proposes module charters, initial contracts and module→participant assignments; inert until an operator approves. |
+| `chat_room_board_claim` | assigned owner | Marks the module as taken. |
+| `chat_room_board_publish_contract` | provider module owner or lead | Publishes or revises a contract with optimistic `base_version`; wakes every dependent owner. |
+| `chat_room_board_report_progress` | module owner | Status, summary and checkable claims; `blocked`/`ready_for_review` wake the report target. |
+| `chat_room_board_ask` | any participant | Question to one peer; wakes that peer, who answers with a normal outcome reply. |
+
+Every board call carries the same conversation, participant, GOD session, observation,
+lease token and client request identifiers as the outcome tool and fails closed on a lost
+lease. Board writes append one `board.*` activity in the same transaction as the board
+tables; contract text lives only in the contract table.
 
 This endpoint is not remote caller authentication. Role headers and GOD-session checks are
 capability and authorship checks. Do not bind it to a public interface without a separate
@@ -58,4 +77,5 @@ durable outcome contract.
 
 Unknown tools, identities, leases, attempts, and malformed outcomes fail closed. Provider
 final text and provider-turn completion never materialize Room speech. Adding a tool requires
-updating the schema, enforcement, isolated Codex configuration, and focused tests together.
+updating the schema, enforcement, isolated Codex configuration, the ACP exact-title
+allowlist, and focused tests together.

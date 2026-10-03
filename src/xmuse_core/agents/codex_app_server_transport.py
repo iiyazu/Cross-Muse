@@ -21,6 +21,7 @@ from xmuse_core.agents.codex_native_adapter import (
     NativeModelCatalog,
 )
 from xmuse_core.agents.protocol import StdoutMessage
+from xmuse_core.chat.room_mcp_contract import ROOM_TOOL_NAMES
 
 APP_SERVER_STREAM_LIMIT_BYTES = 16 * 1024 * 1024
 _APP_SERVER_WAIT_HEARTBEAT_INTERVAL_S = 5.0
@@ -747,13 +748,13 @@ class CodexAppServerTransport:
             ]
             if isolated_room:
                 mcp_configuration[0:0] = ["-c", "mcp_servers={}"]
-                mcp_configuration.extend(
-                    [
-                        "-c",
-                        "mcp_servers.xmuse-room.tools."
-                        'chat_room_submit_outcome.approval_mode="approve"',
-                    ]
-                )
+                for tool_name in ROOM_TOOL_NAMES:
+                    mcp_configuration.extend(
+                        [
+                            "-c",
+                            f'mcp_servers.xmuse-room.tools.{tool_name}.approval_mode="approve"',
+                        ]
+                    )
             command[2:2] = mcp_configuration
         elif isolated_room:
             command[2:2] = ["-c", "mcp_servers={}"]
