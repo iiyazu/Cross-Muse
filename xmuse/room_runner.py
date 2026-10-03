@@ -417,6 +417,7 @@ async def run_room_runner(
                     run_room_memory_pump(
                         composition.memory_delivery_pump,
                         report_attention=composition.host.set_memory_runtime_attention,
+                        report_curator_attention=composition.host.set_memory_curator_attention,
                         stop=stop,
                     ),
                     name="xmuse-room-memory-outbox",

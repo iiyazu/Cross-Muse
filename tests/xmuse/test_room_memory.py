@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from xmuse_core.chat.room_memory_contracts import (
 from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
 from xmuse_core.chat.room_memory_message_outbox_store import RoomMemoryMessageOutboxStore
+from xmuse_core.chat.room_memory_projection import build_room_memory_projection
 from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
 from xmuse_core.chat.room_memory_recall_source_store import RoomMemoryRecallSourceStore
 from xmuse_core.chat.room_setup import RoomSetupService
@@ -41,6 +43,36 @@ def _candidate(kind: str, content: str, activity_id: str) -> dict[str, object]:
         "kind": kind,
         "content": content,
         "source_activity_ids": [activity_id],
+    }
+
+
+def _curated_advisory(
+    advisory_id: str,
+    *,
+    kind: str,
+    content: str,
+    quote: str,
+    activity_id: str,
+    conversation_id: str,
+    source_id: str | None = None,
+    supersedes: str | None = None,
+) -> dict[str, object]:
+    return {
+        "advisory_id": advisory_id,
+        "fingerprint": hashlib.sha256(advisory_id.encode()).hexdigest(),
+        "proposal_type": "curated_memory",
+        "kind": kind,
+        "topic_key": "room.chat_db.authority",
+        "content": content,
+        "source_refs": [
+            {
+                "source_type": "message",
+                "source_id": source_id or f"memoryos-message-{activity_id}",
+                "session_id": f"session-{conversation_id}",
+                "quote": quote,
+            }
+        ],
+        "supersedes_advisory_id": supersedes,
     }
 
 
@@ -87,6 +119,22 @@ def _deliver_all(store: RoomMemoryDocumentOutboxStore) -> None:
             status="delivered",
             request_digest=claim["delivery"]["request_digest"],
             response_digest=DIGEST,
+        )
+
+
+def _deliver_all_messages(db: Path, conversation_id: str) -> None:
+    store = RoomMemoryMessageOutboxStore(db)
+    while claim := store.claim_next_message_outbox(worker_id="message-worker"):
+        activity_id = str(claim["outbox"]["activity_id"])
+        store.complete_message_delivery(
+            message_outbox_id=claim["outbox"]["message_outbox_id"],
+            delivery_id=claim["delivery"]["delivery_id"],
+            lease_token=claim["delivery"]["lease_token"],
+            status="delivered",
+            request_digest=claim["delivery"]["request_digest"],
+            response_digest=DIGEST,
+            memoryos_message_id=f"memoryos-message-{activity_id}",
+            memoryos_session_id=f"session-{conversation_id}",
         )
 
 
@@ -1129,3 +1177,421 @@ def test_candidate_recall_scope_chunk_and_source_proof_are_strict(
     ):
         with pytest.raises(RoomMemoryStoreError):
             recall_store.resolve_recall_source(conversation_id=recall_room, **forged)
+
+
+def _seed_curated_room(tmp_path: Path):
+    db, registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
+    binding = RoomMemoryBindingStore(db)
+    _setup_memory_session(binding, conversation_id)
+    seeded = RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="We agreed chat.db stays the single durable authority for every Room.",
+        client_request_id="human-2",
+    )
+    _deliver_all_messages(db, conversation_id)
+    return db, registry, conversation_id, records, root, claims, seeded["activity"]["activity_id"]
+
+
+def test_curated_advisory_reproves_quotes_and_labels_external_proposer(tmp_path: Path) -> None:
+    (
+        db,
+        _registry,
+        conversation_id,
+        records,
+        _root,
+        claims,
+        activity_id,
+    ) = _seed_curated_room(tmp_path)
+    store = RoomMemoryAdvisoryStore(db)
+    attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    result = store.record_external_advisories(
+        conversation_id=conversation_id,
+        attempt_id=attempt_id,
+        advisories=[
+            _curated_advisory(
+                "curated-fact",
+                kind="room_fact",
+                content="chat.db is the single durable authority.",
+                quote="single durable authority",
+                activity_id=activity_id,
+                conversation_id=conversation_id,
+            ),
+            _curated_advisory(
+                "curated-preference",
+                kind="user_preference",
+                content="The operator prefers terse status summaries.",
+                quote="single durable authority",
+                activity_id=activity_id,
+                conversation_id=conversation_id,
+            ),
+            _curated_advisory(
+                "curated-forged-quote",
+                kind="room_fact",
+                content="A forged claim that must never persist.",
+                quote="this text was never spoken",
+                activity_id=activity_id,
+                conversation_id=conversation_id,
+            ),
+            _curated_advisory(
+                "curated-short-quote",
+                kind="room_fact",
+                content="Another forged claim that must never persist.",
+                quote="short",
+                activity_id=activity_id,
+                conversation_id=conversation_id,
+            ),
+            _curated_advisory(
+                "curated-unknown-source",
+                kind="room_fact",
+                content="A claim cited to a missing delivery.",
+                quote="single durable authority",
+                activity_id=activity_id,
+                conversation_id=conversation_id,
+                source_id="memoryos-message-missing",
+            ),
+        ],
+    )
+    assert [item["kind"] for item in result] == ["room_fact", "user_preference"]
+    assert {item["proposer_kind"] for item in result} == {"memoryos_curator"}
+    receipts = {
+        item["advisory_id"]: item for item in store.list_external_advisory_receipts(conversation_id)
+    }
+    assert receipts["curated-fact"]["status"] == "accepted"
+    assert receipts["curated-fact"]["reason_code"] == "room_memory_advisory_accepted"
+    assert receipts["curated-preference"]["status"] == "accepted"
+    for soundly_rejected in (
+        "curated-forged-quote",
+        "curated-short-quote",
+        "curated-unknown-source",
+    ):
+        assert receipts[soundly_rejected]["status"] == "rejected"
+        assert receipts[soundly_rejected]["reason_code"] == "room_memory_advisory_quote_rejected"
+
+    governance = RoomMemoryGovernanceStore(db)
+    assert governance.count_candidates(conversation_id) == 2
+    with sqlite3.connect(db) as conn:
+        contents = {
+            str(row[0])
+            for row in conn.execute(
+                "select content from room_memory_candidates where conversation_id = ?",
+                (conversation_id,),
+            )
+        }
+    assert contents == {
+        "chat.db is the single durable authority.",
+        "The operator prefers terse status summaries.",
+    }
+
+    projection = build_room_memory_projection(
+        conversation_id,
+        binding_store=RoomMemoryBindingStore(db),
+        governance_store=governance,
+        delivery_store=RoomMemoryDocumentOutboxStore(db),
+        recall_store=RoomMemoryRecallReceiptStore(db),
+        advisory_store=store,
+        message_delivery_store=RoomMemoryMessageOutboxStore(db),
+    )
+    assert projection["pending_candidate_total"] == 1
+    assert len(projection["pending_candidates"]) == 1
+    pending = projection["pending_candidates"][0]
+    assert pending["proposer_kind"] == "memoryos_curator"
+    assert pending["proposer_label"] == "MemoryOS Curator"
+    assert pending["author_participant_id"] is None
+    assert pending["content"] == "The operator prefers terse status summaries."
+
+
+def test_curated_candidates_dedupe_across_attempts_and_authors(tmp_path: Path) -> None:
+    (
+        db,
+        _registry,
+        conversation_id,
+        records,
+        _root,
+        claims,
+        activity_id,
+    ) = _seed_curated_room(tmp_path)
+    store = RoomMemoryAdvisoryStore(db)
+
+    def shared(advisory_id: str) -> dict[str, object]:
+        return _curated_advisory(
+            advisory_id,
+            kind="room_fact",
+            content="chat.db is the single durable authority.",
+            quote="single durable authority",
+            activity_id=activity_id,
+            conversation_id=conversation_id,
+        )
+
+    first_attempt = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    second_attempt = claims[records[1][0].participant_id]["attempt"]["attempt_id"]
+    first = store.record_external_advisories(
+        conversation_id=conversation_id,
+        attempt_id=first_attempt,
+        advisories=[shared("curated-shared")],
+    )
+    assert len(first) == 1
+    assert first[0]["proposer_kind"] == "memoryos_curator"
+    governance = RoomMemoryGovernanceStore(db)
+    stored = governance.get_candidate(str(first[0]["candidate_id"]))
+    assert stored is not None
+    # The carrying attempt's participant stays the authority carrier only; the
+    # public projection re-attributes the proposal to MemoryOS Curator.
+    assert stored["author_participant_id"] == records[0][0].participant_id
+    assert stored["proposer_kind"] == "memoryos_curator"
+
+    replay = store.record_external_advisories(
+        conversation_id=conversation_id,
+        attempt_id=second_attempt,
+        advisories=[shared("curated-shared"), shared("curated-copy")],
+    )
+    assert replay == []
+    assert governance.count_candidates(conversation_id) == 1
+    receipts = {
+        item["advisory_id"]: item
+        for item in store.list_external_advisory_receipts(conversation_id)
+        if item["attempt_id"] == second_attempt
+    }
+    for advisory_id in ("curated-shared", "curated-copy"):
+        assert receipts[advisory_id]["status"] == "duplicate"
+        assert receipts[advisory_id]["reason_code"] == "room_memory_advisory_duplicate"
+        assert receipts[advisory_id]["candidate_digest"] == first[0]["candidate_digest"]
+
+
+def test_curated_attempt_cap_is_eight_and_agent_path_stays_three(tmp_path: Path) -> None:
+    (
+        db,
+        _registry,
+        conversation_id,
+        records,
+        _root,
+        claims,
+        activity_id,
+    ) = _seed_curated_room(tmp_path)
+    store = RoomMemoryAdvisoryStore(db)
+    attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    advisories: list[dict[str, object]] = [
+        _curated_advisory(
+            f"curated-cap-{index}",
+            kind="room_fact",
+            content=f"Curated fact number {index}.",
+            quote="single durable authority",
+            activity_id=activity_id,
+            conversation_id=conversation_id,
+        )
+        for index in range(9)
+    ]
+    advisories.extend(
+        {
+            "advisory_id": f"archive-cap-{index}",
+            "fingerprint": hashlib.sha256(f"archive-cap-{index}".encode()).hexdigest(),
+            "proposal_type": "archive_write",
+            "content": f"Archive fact number {index}.",
+            "source_refs": [
+                {
+                    "source_type": "document",
+                    "source_id": f"xmuse-room-activity-{activity_id}",
+                }
+            ],
+        }
+        for index in range(4)
+    )
+    result = store.record_external_advisories(
+        conversation_id=conversation_id,
+        attempt_id=attempt_id,
+        advisories=advisories,
+    )
+    proposers = Counter(str(item["proposer_kind"]) for item in result)
+    assert proposers == {"participant": 3, "memoryos_curator": 8}
+    assert RoomMemoryGovernanceStore(db).count_candidates(conversation_id) == 11
+    with sqlite3.connect(db) as conn:
+        stored_kinds = {
+            str(row[0])
+            for row in conn.execute(
+                """select content from room_memory_candidates
+                   where conversation_id = ? and proposer_kind = 'memoryos_curator'""",
+                (conversation_id,),
+            )
+        }
+    assert stored_kinds == {f"Curated fact number {index}." for index in range(8)}
+
+
+def test_supersede_chain_links_delivery_and_filters_recall(tmp_path: Path) -> None:
+    (
+        db,
+        _registry,
+        conversation_id,
+        records,
+        _root,
+        claims,
+        activity_id,
+    ) = _seed_curated_room(tmp_path)
+    store = RoomMemoryAdvisoryStore(db)
+    governance = RoomMemoryGovernanceStore(db)
+    delivery = RoomMemoryDocumentOutboxStore(db)
+    attempt_id = claims[records[0][0].participant_id]["attempt"]["attempt_id"]
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+
+    def advisory(
+        advisory_id: str, kind: str, content: str, supersedes: str | None
+    ) -> dict[str, object]:
+        return _curated_advisory(
+            advisory_id,
+            kind=kind,
+            content=content,
+            quote="single durable authority",
+            activity_id=activity_id,
+            conversation_id=conversation_id,
+            supersedes=supersedes,
+        )
+
+    def record(advisories: list[dict[str, object]], minutes: int) -> list[dict[str, object]]:
+        return store.record_external_advisories(
+            conversation_id=conversation_id,
+            attempt_id=attempt_id,
+            advisories=advisories,
+            now=base + timedelta(minutes=minutes),
+        )
+
+    original = record(
+        [advisory("supersede-old", "room_fact", "Old Room fact about storage authority.", None)],
+        0,
+    )
+    assert len(original) == 1
+    old_id = str(original[0]["candidate_id"])
+
+    early = record(
+        [advisory("supersede-early", "room_fact", "Early replacement Room fact.", "supersede-old")],
+        1,
+    )
+    # The soonest successor still ignores a target whose document is only queued.
+    assert early[0]["supersedes_candidate_id"] is None
+    assert governance.get_candidate(old_id)["superseded_by_candidate_id"] is None
+    _deliver_all(delivery)
+    assert governance.get_candidate(old_id)["publish_state"] == "delivered"
+    assert governance.get_candidate(old_id)["superseded_by_candidate_id"] is None
+
+    wrong_kind = record(
+        [
+            advisory(
+                "supersede-kind",
+                "user_preference",
+                "A preference that must never supersede a fact.",
+                "supersede-old",
+            )
+        ],
+        2,
+    )
+    assert wrong_kind[0]["supersedes_candidate_id"] is None
+
+    successor = record(
+        [
+            advisory(
+                "supersede-new",
+                "room_fact",
+                "Successor Room fact about storage authority.",
+                "supersede-old",
+            )
+        ],
+        3,
+    )
+    assert successor[0]["supersedes_candidate_id"] == old_id
+    assert governance.get_candidate(old_id)["superseded_by_candidate_id"] is None
+    _deliver_all(delivery)
+    assert (
+        governance.get_candidate(old_id)["superseded_by_candidate_id"]
+        == successor[0]["candidate_id"]
+    )
+
+    fork = record(
+        [advisory("supersede-fork", "room_fact", "Forked replacement Room fact.", "supersede-old")],
+        4,
+    )
+    assert fork[0]["supersedes_candidate_id"] is None
+
+    receipts = {
+        item["advisory_id"]: item for item in store.list_external_advisory_receipts(conversation_id)
+    }
+    assert receipts["supersede-old"]["reason_code"] == "room_memory_advisory_accepted"
+    assert receipts["supersede-new"]["reason_code"] == "room_memory_advisory_accepted"
+    assert receipts["supersede-early"]["reason_code"] == "room_memory_advisory_supersede_ignored"
+    assert receipts["supersede-kind"]["reason_code"] == "room_memory_advisory_supersede_ignored"
+    assert receipts["supersede-fork"]["reason_code"] == "room_memory_advisory_supersede_ignored"
+
+    recall_store = RoomMemoryRecallSourceStore(db)
+    old_content = "Old Room fact about storage authority."
+    with pytest.raises(RoomMemoryStoreError) as superseded:
+        recall_store.resolve_recall_source(
+            conversation_id=conversation_id,
+            document_id=f"xmuse-room-memory-candidate-{old_id}",
+            source_activity_ids=original[0]["source_activity_ids"],
+            content_sha256=_sha(old_content),
+            item_text=old_content,
+        )
+    assert superseded.value.code == "room_memory_candidate_superseded"
+    new_content = "Successor Room fact about storage authority."
+    resolved = recall_store.resolve_recall_source(
+        conversation_id=conversation_id,
+        document_id=f"xmuse-room-memory-candidate-{successor[0]['candidate_id']}",
+        source_activity_ids=successor[0]["source_activity_ids"],
+        content_sha256=_sha(new_content),
+        item_text=new_content,
+    )
+    assert resolved["source_type"] == "room_candidate"
+
+
+def test_message_metadata_carries_stable_speaker_labels_across_replay(tmp_path: Path) -> None:
+    db, registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
+    _setup_memory_session(RoomMemoryBindingStore(db), conversation_id)
+    store = RoomMemoryMessageOutboxStore(db)
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+    first = store.claim_next_message_outbox(worker_id="message-worker", now=base)
+    assert first is not None
+    request = first["message_request"]
+    assert first["outbox"]["activity_id"] == root["activity"]["activity_id"]
+    assert request["role"] == "user"
+    assert request["metadata"]["speaker_kind"] == "human"
+    assert request["metadata"]["speaker_label"] == "Human"
+    assert request["metadata"]["actor_kind"] == "human"
+
+    expired = store.claim_next_message_outbox(
+        worker_id="message-worker-2",
+        now=base + timedelta(seconds=60),
+    )
+    assert expired is not None
+    assert expired["outbox"]["message_outbox_id"] == first["outbox"]["message_outbox_id"]
+    assert expired["delivery"]["attempt_number"] == 2
+    assert expired["message_request"] == request
+    assert expired["delivery"]["request_digest"] == first["delivery"]["request_digest"]
+    store.complete_message_delivery(
+        message_outbox_id=expired["outbox"]["message_outbox_id"],
+        delivery_id=expired["delivery"]["delivery_id"],
+        lease_token=expired["delivery"]["lease_token"],
+        status="delivered",
+        request_digest=expired["delivery"]["request_digest"],
+        response_digest=DIGEST,
+        memoryos_message_id=f"memoryos-message-{root['activity']['activity_id']}",
+        memoryos_session_id=f"session-{conversation_id}",
+        now=base + timedelta(seconds=61),
+    )
+
+    response = submit(
+        db,
+        registry,
+        conversation_id,
+        records[0][0],
+        records[0][1],
+        claims[records[0][0].participant_id],
+        "respond-1",
+        outcome_type="respond",
+        outcome_payload={"content": "acknowledged"},
+    )
+    reply = store.claim_next_message_outbox(worker_id="message-worker-3")
+    assert reply is not None
+    assert reply["outbox"]["activity_id"] == response["produced_activity"]["activity_id"]
+    assert reply["message_request"]["role"] == "assistant"
+    metadata = reply["message_request"]["metadata"]
+    assert metadata["speaker_kind"] == "participant"
+    assert metadata["speaker_label"] == "Agent 0"
+    assert metadata["actor_kind"] == "agent"
+    assert metadata["participant_id"] == records[0][0].participant_id

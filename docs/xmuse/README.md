@@ -136,6 +136,11 @@ installer-generated companion manifest, every payload digest, the offline FastEm
 the companion capability contract. A missing companion leaves the Room usable; a malformed
 manifest is reported as degraded without executing its files. `--memory` is the explicit `on`
 alias for source/development executables and `--no-memory` is the explicit `off` shortcut.
+`--memory-profile full-local-curated` (memory mode `on` only) adds the opt-in MemoryOS
+Curator, an external proposer that cites Room activities with verbatim quotes re-proved in
+`chat.db` and passes the same approval rules; its `XMUSE_MEMORYOS_LLM_API_KEY` /
+`XMUSE_MEMORYOS_LLM_MODEL` reach only the sidecar child environment, and a missing key leaves
+Room readiness intact while the Curator reports degraded.
 The bootstrap projection exposes only these safe capabilities and recommended action codes;
 it never returns executable paths, process identity, API keys or MemoryOS internal IDs.
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from xmuse.workroom_contracts import (
     WorkroomDependencies,
@@ -42,13 +42,16 @@ from xmuse.workroom_processes import (
 from xmuse_core.chat.memoryos_supervisor import (
     MEMORYOS_HOST,
     MEMORYOS_PORT,
+    MEMORYOS_PROFILES,
     MEMORYOS_RUNTIME_SCHEMA,
+    MemoryOSProfile,
     MemoryOSRuntimeState,
     MemoryOSSupervisorError,
     clear_memoryos_derived_cache,
     memoryos_child_environment,
     memoryos_command,
     memoryos_incident_guard,
+    memoryos_profile_is_full_local,
     memoryos_rebuildability,
     prepare_memoryos_derived_cache,
     read_memoryos_status,
@@ -65,7 +68,7 @@ class MemoryOSChatAPIBinding:
 
     url: str
     api_key: str = field(repr=False)
-    profile: Literal["archive-only", "full-local"]
+    profile: MemoryOSProfile
 
 
 @dataclass(repr=False)
@@ -91,10 +94,10 @@ class MemoryOSRuntimeCoordinator:
     ) -> MemoryOSRuntimeCoordinator:
         """Build the generation-local control and rebuild ledger safely."""
 
-        if profile not in {"archive-only", "full-local"}:
+        if profile not in MEMORYOS_PROFILES:
             raise WorkroomError(
                 "memory_profile_invalid",
-                "memory profile must be archive-only or full-local",
+                "memory profile must be archive-only, full-local, or full-local-curated",
             )
         try:
             resolved = resolve_memoryos_executable(executable)
@@ -113,7 +116,7 @@ class MemoryOSRuntimeCoordinator:
             executable=resolved,
             api_key=api_key,
             url=f"http://{MEMORYOS_HOST}:{MEMORYOS_PORT}",
-            profile=cast(Literal["archive-only", "full-local"], profile),
+            profile=cast(MemoryOSProfile, profile),
         )
         return cls(
             control=control,
@@ -583,7 +586,7 @@ class MemoryOSRuntimeCoordinator:
                 state="degraded",
                 code="memoryos_health_unavailable",
             )
-        if self.control.profile == "full-local" and not self._full_local_ready():
+        if memoryos_profile_is_full_local(self.control.profile) and not self._full_local_ready():
             self.control.healthy_since_monotonic = None
             return self.record_status(
                 state="degraded",

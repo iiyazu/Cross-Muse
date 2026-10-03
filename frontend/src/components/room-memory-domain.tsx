@@ -169,6 +169,7 @@ export function RoomMemoryDomain({
                   <article key={candidate.candidate_id}>
                     <header>
                       <span>{memoryKindLabel(candidate.kind)}</span>
+                      {candidate.proposer_label ? <span>{candidate.proposer_label}</span> : null}
                       <small>{candidate.target_scope} · revision {candidate.revision}</small>
                     </header>
                     <p>{candidate.content}</p>

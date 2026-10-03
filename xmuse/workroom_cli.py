@@ -105,10 +105,12 @@ def _add_start_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--memory-profile",
-        choices=("archive-only", "full-local"),
+        choices=("archive-only", "full-local", "full-local-curated"),
         default=None,
         help=(
-            "MemoryOS capability profile (default: full-local; archive-only is compatibility mode)"
+            "MemoryOS capability profile (default: full-local; archive-only is "
+            "compatibility mode; full-local-curated additionally enables the opt-in "
+            "MemoryOS Curator with XMUSE_MEMORYOS_LLM_API_KEY)"
         ),
     )
 

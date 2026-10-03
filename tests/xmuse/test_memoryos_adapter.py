@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -36,23 +38,27 @@ def _v3_item(
     *,
     text: str = "prior durable fact",
     correlation_id: str = "correlation-old",
+    item_id: str = "memory-item-1",
+    document_id: str = "xmuse-room-activity-activity-prior",
+    source_id: str = "activity-prior",
+    rank: int = 1,
 ) -> dict[str, Any]:
     del correlation_id
     return {
-        "item_id": "memory-item-1",
+        "item_id": item_id,
         "archive_id": "archive-room-1",
-        "document_id": "xmuse-room-activity-activity-prior",
+        "document_id": document_id,
         "source_refs": [
             {
                 "source_type": "document",
-                "source_id": "activity-prior",
+                "source_id": source_id,
             }
         ],
         "text": text,
         "estimated_tokens": 4,
         "content_sha256": _sha(text),
         "score": 0.75,
-        "rank": 1,
+        "rank": rank,
         "truncated": False,
     }
 
@@ -163,6 +169,7 @@ class FakeStore:
         self.bindings: list[dict[str, Any]] = []
         self.source_correlation = "correlation-old"
         self.reject_source = False
+        self.source_errors: dict[str, str] = {}
         self.requeue_result: list[dict[str, Any]] = []
         self.expected_text = "prior durable fact"
         self.advisories: list[dict[str, Any]] = []
@@ -179,6 +186,8 @@ class FakeStore:
         }
 
     def resolve_recall_source(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs["document_id"] in self.source_errors:
+            raise _StoreError(self.source_errors[kwargs["document_id"]])
         if self.reject_source or kwargs["item_text"] != self.expected_text:
             raise _StoreError("room_memory_recall_source_rejected")
         assert kwargs["content_sha256"] == _sha(self.expected_text)
@@ -281,6 +290,7 @@ class FakeAdapter:
         self.ingest_error: MemoryOSAdapterError | None = None
         self.profile = "archive-only"
         self.message_calls: list[dict[str, Any]] = []
+        self.health_payload: Mapping[str, Any] = {"status": "ok"}
 
     @property
     def recall_timeout_s(self) -> float:
@@ -289,9 +299,9 @@ class FakeAdapter:
     def build_context(self, **_kwargs: Any) -> Mapping[str, Any]:
         return self.payload
 
-    def health(self, **_kwargs: Any) -> dict[str, str]:
+    def health(self, **_kwargs: Any) -> Mapping[str, Any]:
         self.health_calls += 1
-        return {"status": "ok"}
+        return self.health_payload
 
     def attach_archive(self, **kwargs: Any) -> dict[str, Any]:
         self.attach_calls.append(kwargs)
@@ -613,6 +623,38 @@ def test_recall_rejects_forged_text_and_filters_current_correlation() -> None:
     assert filtered.items == ()
 
 
+def test_superseded_candidate_items_drop_while_valid_items_survive() -> None:
+    superseded_document = "xmuse-room-memory-candidate-memory_candidate_old"
+    store = FakeStore()
+    store.source_errors[superseded_document] = "room_memory_candidate_superseded"
+    payload = _compact_payload(
+        _v3_item(),
+        _v3_item(
+            text="superseded curated fact",
+            item_id="memory-item-2",
+            document_id=superseded_document,
+            rank=2,
+        ),
+    )
+
+    evidence = asyncio.run(_recall_runtime(store, FakeAdapter(payload)).recall(_request()))
+
+    assert evidence.status == "ok"
+    assert [item.item_id for item in evidence.items] == ["memory-item-1"]
+
+    # When every item belongs to a superseded candidate the existing all-dropped
+    # rule still applies: the recall degrades as source-rejected.
+    all_superseded = asyncio.run(
+        _recall_runtime(
+            store,
+            FakeAdapter(_v3_payload(_v3_item(document_id=superseded_document))),
+        ).recall(_request())
+    )
+    assert all_superseded.status == "source_rejected"
+    assert all_superseded.reason_code == "room_memory_source_rejected"
+    assert all_superseded.items == ()
+
+
 def test_compact_wire_accepts_extensions_and_full_eight_item_budget() -> None:
     items = []
     for rank in range(1, 9):
@@ -847,6 +889,43 @@ def test_full_local_pump_delivers_message_ledger_before_archive_ledger() -> None
     assert store.completions[-1]["status"] == "delivered"
 
 
+def test_curator_degraded_health_is_bounded_and_clears_without_room_failure() -> None:
+    store = FakeStore()
+    store.claim_next_message_outbox = lambda **_kwargs: None  # type: ignore[attr-defined]
+    store.requeue_retryable_failed_message_outbox = lambda **_kwargs: []  # type: ignore[attr-defined]
+    adapter = FakeAdapter(_compact_payload())
+    adapter.profile = "full-local-curated"
+    pump = _delivery_pump(store, adapter)
+
+    adapter.health_payload = {
+        "status": "ok",
+        "curator": {"state": "degraded", "reason_code": "llm_api_key_missing"},
+    }
+    assert asyncio.run(pump.pump_once()) is False
+    assert pump.health_attention_reason() == "llm_api_key_missing"
+
+    adapter.health_payload = {
+        "status": "ok",
+        "curator": {"state": "degraded", "reason_code": "Curator: bad reason"},
+    }
+    asyncio.run(pump.pump_once())
+    assert pump.health_attention_reason() == "memoryos_curator_degraded"
+
+    adapter.health_payload = {"status": "ok", "curator": {"state": "ready"}}
+    asyncio.run(pump.pump_once())
+    assert pump.health_attention_reason() is None
+
+    # Curator attention exists only for the curated profile; other profiles
+    # keep pumping without inventing signals from unrelated health payloads.
+    adapter.profile = "full-local"
+    adapter.health_payload = {
+        "status": "ok",
+        "curator": {"state": "degraded", "reason_code": "llm_api_key_missing"},
+    }
+    asyncio.run(pump.pump_once())
+    assert pump.health_attention_reason() is None
+
+
 class _HttpResponse:
     status = 200
 
@@ -1004,6 +1083,84 @@ def test_full_local_requires_v2_source_evidence_capability(
         adapter.build_context(session_id="session-1", task="task", retrieval_query=None)
     assert exc_info.value.code == "memoryos_source_evidence_unsupported"
     assert len(opener.requests) == 1
+
+
+def test_curated_profile_reads_frozen_v2_advisories_and_rejects_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from xmuse.memoryos_adapter import MemoryOSArchiveAdapter
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "contracts"
+            / "memoryos_external_advisories_v2.json"
+        ).read_bytes()
+    )
+    opener = _HttpOpener([_HttpResponse(json.dumps(fixture).encode("utf-8"))])
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: opener)
+    adapter = MemoryOSArchiveAdapter(
+        "http://127.0.0.1:8301", "server-key", profile="full-local-curated"
+    )
+
+    items = adapter.list_advisories(session_id="session-room-0001")
+
+    assert [item["advisory_id"] for item in items] == ["memoryos-advisory-0001"]
+    request = opener.requests[0]
+    assert request.full_url.endswith("/sessions/session-room-0001/advisories?version=2")
+    assert "server-key" not in request.full_url
+    assert request.get_header("X-api-key") == "server-key"
+
+    # Non-curated profiles keep the unchanged v1 contract.
+    v1_document = {"schema": "memoryos_external_advisories/v1", "items": []}
+    v1_opener = _HttpOpener([_HttpResponse(json.dumps(v1_document).encode())])
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: v1_opener)
+    archive_adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
+    assert archive_adapter.list_advisories(session_id="session-room-0001") == []
+    assert v1_opener.requests[0].full_url.endswith("/sessions/session-room-0001/advisories")
+
+    def drop_topic_key(payload: dict[str, Any]) -> None:
+        del payload["items"][0]["topic_key"]
+
+    def rename_schema(payload: dict[str, Any]) -> None:
+        payload["schema"] = "memoryos_external_advisories/v1"
+
+    def invent_kind(payload: dict[str, Any]) -> None:
+        payload["items"][0]["kind"] = "invented_kind"
+
+    def short_quote(payload: dict[str, Any]) -> None:
+        payload["items"][0]["source_refs"][0]["quote"] = "short"
+
+    def out_of_band_ref(payload: dict[str, Any]) -> None:
+        payload["items"][0]["source_refs"][0]["source_type"] = "document"
+
+    def bad_fingerprint(payload: dict[str, Any]) -> None:
+        payload["items"][0]["fingerprint"] = "A" * 64
+
+    def empty_supersede(payload: dict[str, Any]) -> None:
+        payload["items"][0]["supersedes_advisory_id"] = ""
+
+    for mutate in (
+        drop_topic_key,
+        rename_schema,
+        invent_kind,
+        short_quote,
+        out_of_band_ref,
+        bad_fingerprint,
+        empty_supersede,
+    ):
+        drifted = copy.deepcopy(fixture)
+        mutate(drifted)
+        drift_opener = _HttpOpener([_HttpResponse(json.dumps(drifted).encode("utf-8"))])
+        monkeypatch.setattr(
+            urllib.request,
+            "build_opener",
+            lambda *_args, _opener=drift_opener: _opener,
+        )
+        with pytest.raises(MemoryOSAdapterError) as exc_info:
+            adapter.list_advisories(session_id="session-room-0001")
+        assert exc_info.value.code == "memoryos_advisory_contract_invalid"
 
 
 def test_archive_ingest_accepts_replay_and_reports_content_conflict(

@@ -286,6 +286,11 @@ uv run xmuse-workroom start --memory-mode on \
 The equivalent `--memory` flag is retained for compatibility. `--memory-mode auto` is the
 default and only trusts the verified companion manifest created by the installer; it never
 searches PATH. Use `--no-memory` or `--memory-mode off` to disable the optional sidecar.
+`--memory-mode on --memory-profile full-local-curated` additionally enables the opt-in
+MemoryOS Curator, an external (never Agent) proposer whose candidates cite Room activities
+with verbatim quotes re-proved in `chat.db` and follow the same approval rules. Only the
+sidecar child reads `XMUSE_MEMORYOS_LLM_API_KEY` (optional `XMUSE_MEMORYOS_LLM_MODEL`);
+without the key it still starts, with the Curator reported degraded.
 
 Workroom fixes the sidecar to loopback, creates a private derived data directory and random
 server-only API key, and keeps external memory governance in `chat.db`. Full-local enables

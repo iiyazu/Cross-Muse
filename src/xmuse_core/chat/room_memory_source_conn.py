@@ -101,6 +101,11 @@ def resolve_recall_source_conn(
            where c.candidate_id = ?""",
         (candidate_id,),
     ).fetchone()
+    if candidate is not None and candidate["superseded_by_candidate_id"] is not None:
+        # A candidate the Room has superseded must never re-enter recall
+        # evidence, even while the derived index still serves its document.
+        # The distinct code is how the drop is attributed, not a silent miss.
+        raise RoomMemoryStoreError("room_memory_candidate_superseded")
     expected_scope = (
         MEMORY_CANDIDATE_SCOPE_BY_KIND.get(str(candidate["kind"]))
         if candidate is not None
@@ -293,8 +298,51 @@ def resolve_external_source_activity_ids_conn(
     return result
 
 
+def resolve_curated_source_refs_conn(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    source_refs: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Resolve v2 curated refs, re-proving each verbatim quote in chat.db.
+
+    Every ref must bridge to exactly one visible Room activity and its ``quote``
+    must be an exact substring of that activity's delivered text — the same
+    field the message adapter sends to MemoryOS.  Any failure returns an empty
+    list so the whole advisory is rejected as one unit.
+    """
+
+    resolved: list[str] = []
+    for ref in source_refs:
+        if not isinstance(ref, Mapping):
+            return []
+        quote = ref.get("quote")
+        if not isinstance(quote, str) or len(quote) < 8 or not quote.strip():
+            return []
+        activity_ids = resolve_external_source_activity_ids_conn(
+            conn,
+            conversation_id=conversation_id,
+            source_refs=[{key: value for key, value in ref.items() if key != "quote"}],
+        )
+        if len(activity_ids) != 1:
+            return []
+        activity_id = activity_ids[0]
+        try:
+            source = activity_source_conn(
+                conn, conversation_id=conversation_id, activity_id=activity_id
+            )
+        except RoomMemoryStoreError:
+            return []
+        if quote not in str(source["content"]):
+            return []
+        if activity_id not in resolved:
+            resolved.append(activity_id)
+    return resolved
+
+
 __all__ = [
     "activity_source_conn",
+    "resolve_curated_source_refs_conn",
     "resolve_external_source_activity_ids_conn",
     "resolve_recall_message_source_conn",
     "resolve_recall_source_conn",

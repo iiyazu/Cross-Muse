@@ -62,6 +62,28 @@ def test_host_runtime_health_prioritizes_skill_blocker_over_retained_cleanup(
     asyncio.run(scenario())
 
 
+def test_host_curator_attention_is_bounded_and_clears(tmp_path: Path) -> None:
+    host = RoomParticipantHost(tmp_path / "chat.db", _UnusedTransport())
+    assert host.runtime_health_snapshot() == {
+        "state": "healthy",
+        "code": "ready",
+        "active_delivery_count": 0,
+        "retained_cleanup_count": 0,
+    }
+
+    host.set_memory_curator_attention("llm_api_key_missing")
+    snapshot = host.runtime_health_snapshot()
+    assert snapshot["state"] == "attention"
+    assert snapshot["code"] == "memoryos_curator_degraded"
+
+    host.set_memory_curator_attention("Not Safe At All!")
+    assert host.runtime_health_snapshot()["code"] == "memoryos_curator_degraded"
+
+    host.set_memory_curator_attention(None)
+    assert host.runtime_health_snapshot()["state"] == "healthy"
+    assert host.runtime_health_snapshot()["code"] == "ready"
+
+
 def test_host_runtime_health_normalizes_unsafe_internal_reason(tmp_path: Path) -> None:
     host = RoomParticipantHost(tmp_path / "chat.db", _UnusedTransport())
     host._skill_runtime_unhealthy_reason = "provider output: secret"

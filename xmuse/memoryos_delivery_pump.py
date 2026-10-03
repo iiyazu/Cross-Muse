@@ -4,21 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Mapping
 from typing import Any, Literal, Protocol
 
 from xmuse.memoryos_evidence import canonical_digest
 from xmuse.memoryos_http_client import MemoryOSAdapterError, required_id
+from xmuse_core.chat.memoryos_supervisor import (
+    MEMORYOS_CURATOR_PROFILE,
+    MemoryOSProfile,
+    memoryos_profile_is_full_local,
+)
 from xmuse_core.chat.room_memory_ports import (
     RoomMemoryBindingSessionAttachmentPort,
     RoomMemoryDocumentOutboxPort,
     RoomMemoryMessageOutboxPort,
 )
 
+CURATOR_ATTENTION_CODE = "memoryos_curator_degraded"
+_CURATOR_REASON_RE = re.compile(r"[a-z_]{1,127}\Z")
+
 
 class MemoryOSDeliveryClient(Protocol):
     @property
-    def profile(self) -> Literal["archive-only", "full-local"]: ...
+    def profile(self) -> MemoryOSProfile: ...
 
     def health(self, *, timeout_s: float = 0.5) -> Mapping[str, Any]: ...
 
@@ -63,13 +72,27 @@ class MemoryOSDeliveryPump:
         self._document_store = document_store
         self._client = client
         self._worker_id = worker_id
+        self._curator_attention_reason: str | None = None
+
+    def health_attention_reason(self) -> str | None:
+        """Return the bounded Curator attention code from the latest health cycle.
+
+        The health payload's ``reason_code`` is passed through verbatim when it
+        matches ``[a-z_]+``; anything else degrades to the fixed attention code.
+        ``None`` means the latest proven health is not Curator-degraded.
+        """
+
+        return self._curator_attention_reason
 
     async def pump_once(self) -> bool:
         if await self._pump_binding_once():
             return True
-        if self._client.profile == "full-local" and await self._pump_message_once():
+        if memoryos_profile_is_full_local(self._client.profile) and (
+            await self._pump_message_once()
+        ):
             return True
-        await asyncio.to_thread(self._client.health, timeout_s=0.5)
+        health = await asyncio.to_thread(self._client.health, timeout_s=0.5)
+        self._capture_curator_health(health)
         if self._document_store.requeue_retryable_failed_outbox(limit=1):
             return True
         claim = self._document_store.claim_next_outbox(worker_id=self._worker_id)
@@ -183,6 +206,21 @@ class MemoryOSDeliveryPump:
             )
             raise
         return True
+
+    def _capture_curator_health(self, payload: Mapping[str, Any]) -> None:
+        if self._client.profile != MEMORYOS_CURATOR_PROFILE:
+            self._curator_attention_reason = None
+            return
+        curator = payload.get("curator")
+        if not isinstance(curator, Mapping) or curator.get("state") != "degraded":
+            self._curator_attention_reason = None
+            return
+        reason = curator.get("reason_code")
+        self._curator_attention_reason = (
+            reason
+            if isinstance(reason, str) and _CURATOR_REASON_RE.fullmatch(reason)
+            else CURATOR_ATTENTION_CODE
+        )
 
     async def _pump_binding_once(self) -> bool:
         for raw in self._binding_store.list_pending_bindings(limit=20):

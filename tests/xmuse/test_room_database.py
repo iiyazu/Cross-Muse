@@ -279,3 +279,67 @@ def test_legacy_full_database_gets_additive_room_setup_table_before_marker(
         assert conn.execute(
             "select version from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,)
         ).fetchone() == (ROOM_SCHEMA_VERSION,)
+
+
+LEGACY_CANDIDATE_TABLE = """
+create table room_memory_candidates (
+    candidate_id text primary key,
+    conversation_id text not null references conversations(id),
+    author_participant_id text not null references participants(participant_id),
+    source_observation_id text not null references room_observations(observation_id),
+    source_batch_id text not null references room_observation_batches(batch_id),
+    source_attempt_id text not null references room_observation_attempts(attempt_id),
+    kind text not null check (
+        kind in ('room_fact','room_decision','user_preference','project_rule')
+    ),
+    content text not null,
+    content_sha256 text not null,
+    source_activity_ids_json text not null,
+    candidate_digest text not null,
+    approval_state text not null check (approval_state in ('pending','approved','rejected')),
+    approval_mode text not null check (approval_mode in ('automatic','operator')),
+    publish_state text not null check (
+        publish_state in ('not_queued','queued','delivered','failed','conflict')
+    ),
+    target_scope text not null check (target_scope in ('room','local_user','project')),
+    revision integer not null check (revision >= 0),
+    reason_code text,
+    resolved_by text,
+    resolution_client_action_id text unique,
+    resolution_request_fingerprint text,
+    created_at text not null,
+    resolved_at text,
+    updated_at text not null
+)
+"""
+
+
+def test_legacy_candidate_table_upgrades_with_defaulted_proposer_columns(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "chat.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute(LEGACY_CANDIDATE_TABLE)
+        conn.execute(
+            """insert into room_memory_candidates
+               (candidate_id, conversation_id, author_participant_id,
+                source_observation_id, source_batch_id, source_attempt_id, kind,
+                content, content_sha256, source_activity_ids_json, candidate_digest,
+                approval_state, approval_mode, publish_state, target_scope, revision,
+                created_at, updated_at)
+               values ('legacy-candidate', 'legacy-room', 'legacy-participant',
+                       'legacy-observation', 'legacy-batch', 'legacy-attempt',
+                       'room_fact', 'legacy fact', 'sha256:', '[]', 'sha256:',
+                       'approved', 'automatic', 'delivered', 'room', 0,
+                       '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"""
+        )
+
+    RoomDatabase(path).initialize()
+
+    with sqlite3.connect(path) as conn:
+        columns = {str(row[1]) for row in conn.execute("pragma table_info(room_memory_candidates)")}
+        assert {"proposer_kind", "supersedes_candidate_id", "superseded_by_candidate_id"} <= columns
+        assert conn.execute(
+            """select proposer_kind, supersedes_candidate_id, superseded_by_candidate_id
+               from room_memory_candidates where candidate_id = 'legacy-candidate'"""
+        ).fetchone() == ("participant", None, None)
