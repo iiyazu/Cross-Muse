@@ -24,6 +24,7 @@ from xmuse_core.chat.room_codex_transport import CodexRoomObservationTransport
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_ports import ExecutionReviewPort
 from xmuse_core.chat.room_host import (
+    LongTurnPolicy,
     RoomHostPolicy,
     RoomObservationTransport,
     RoomParticipantHost,
@@ -33,8 +34,13 @@ from xmuse_core.chat.room_memory_runtime import (
     RoomMemoryDeliveryPumpPort,
     RoomMemoryRecallPort,
 )
+from xmuse_core.chat.room_owner_transport import (
+    OwnerTransportFactory,
+    OwnerWorkspaceWriteSettings,
+    RoomOwnerTransportRouter,
+    build_owner_acp_transport_factory,
+)
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
-from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 from xmuse_core.skills.catalog import SkillCatalog
 
 # Live provider turns can legitimately exceed the configured Room default
@@ -79,6 +85,8 @@ def compose_room_runtime(
     claude_acp_config: AcpTransportConfig | None = None,
     antigravity_config: AntigravityTransportConfig | None = None,
     opencode_acp_config: AcpTransportConfig | None = None,
+    owner_settings: OwnerWorkspaceWriteSettings | None = None,
+    owner_transport_factory: OwnerTransportFactory | None = None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks.
 
@@ -153,9 +161,25 @@ def compose_room_runtime(
         memory_runtime=memory_context_receipts,
         stream_projector=stream_projector,
     )
+    owner_factory = owner_transport_factory
+    if owner_factory is None and owner_settings is not None:
+        owner_factory = build_owner_acp_transport_factory(
+            owner_settings,
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=skill_decisions,
+            execution_store=execution_store,
+            memory_runtime=memory_context_receipts,
+            stream_projector=stream_projector,
+        )
+    transport = RoomOwnerTransportRouter(
+        routes,
+        settings=owner_settings,
+        transport_factory=owner_factory,
+    )
     host = RoomParticipantHost(
         root / "chat.db",
-        RoutingRoomObservationTransport(routes),
+        transport,
         policy=RoomHostPolicy(
             delivery_timeout_s=delivery_timeout_s,
             cleanup_grace_s=cleanup_grace_s,
@@ -171,6 +195,8 @@ def compose_room_runtime(
         runner_generation=runner_generation,
         runner_boot_id=runner_boot_id,
         delivery_gate=native_runtime.accepts_delivery,
+        long_turn_policy=LongTurnPolicy(),
+        long_turn_selector=lambda p: p.workspace_access == "workspace_write",
     )
     return RoomRuntimeComposition(
         host=host,
