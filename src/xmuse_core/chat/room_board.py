@@ -196,6 +196,58 @@ def _parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
+    """Render the visible text of one board event.
+
+    Delivery context and Skill selection read an activity's ``content``; a board
+    event addressed to an owner must say what happened and what to do next.
+    """
+
+    if activity_type == "board.split_proposed":
+        modules = ", ".join(str(item.get("module_id")) for item in payload.get("modules", []))
+        return f"The lead proposed a module split ({modules}); it awaits operator approval."
+    if activity_type == "board.split_rejected":
+        return f"The operator rejected split {payload.get('split_id')}."
+    if activity_type == "board.charter_assigned":
+        charter = payload.get("charter") or {}
+        contracts = ", ".join(
+            f"{item.get('contract_id')}@v{item.get('version')}"
+            for item in payload.get("contracts", [])
+        )
+        return (
+            f"The operator approved the split: you now own module {payload.get('module_id')} "
+            f"(charter v{payload.get('version')}, paths {', '.join(charter.get('paths', []))}; "
+            f"provides {', '.join(charter.get('provides', [])) or 'nothing'}; depends on "
+            f"{', '.join(charter.get('depends', [])) or 'nothing'}"
+            + (f"; initial contracts {contracts}" if contracts else "")
+            + "). Your charter and contracts are in .xmuse/. Read the board, claim the "
+            "module, implement it inside its paths against the contracts, run its acceptance "
+            "checks, commit, report progress, and submit your outcome."
+        )
+    if activity_type == "board.claimed":
+        return f"Module {payload.get('module_id')} was claimed by its owner."
+    if activity_type in {"board.contract_published", "board.contract_revised"}:
+        verb = "revised" if activity_type == "board.contract_revised" else "published"
+        rationale = payload.get("rationale") or ""
+        return (
+            f"Contract {payload.get('contract_id')} was {verb}: it is now version "
+            f"{payload.get('version')} (provided by module {payload.get('provider_module_id')})."
+            + (f" Rationale: {rationale}" if rationale else "")
+            + " Read it (chat_room_board_read with contract_ref "
+            f"'{payload.get('contract_id')}@{payload.get('version')}', or .xmuse/contracts/), "
+            "realign the module you own to it, run its checks, commit, and report progress."
+        )
+    if activity_type == "board.progress":
+        claims = "; ".join(str(item) for item in payload.get("claims", []))
+        return (
+            f"Progress on module {payload.get('module_id')}: {payload.get('status')} - "
+            f"{payload.get('summary')}" + (f" Claims: {claims}" if claims else "")
+        )
+    if activity_type == "board.question":
+        return f"Question for you: {payload.get('question')}"
+    return activity_type
+
+
 def _current_stamp(now: datetime | None) -> tuple[datetime, str]:
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
@@ -382,6 +434,7 @@ class RoomBoardStore:
         )
         activity_id = _id("activity")
         correlation_id = f"board_correlation_{sha256(activity_id.encode()).hexdigest()}"
+        payload = {**payload, "content": board_activity_content(activity_type, payload)}
         conn.execute(
             """insert into room_activities
                (activity_id, conversation_id, seq, activity_type, actor_kind,
@@ -741,6 +794,13 @@ class RoomBoardStore:
                         raise ValueError("room_board_assignee_unknown")
                     if row["status"] != "active" or row["cli_kind"] not in ROOM_AGENT_CLI_KINDS:
                         raise ValueError("room_board_assignee_inactive")
+                # At most one split awaits approval: a newer proposal (for example
+                # from a retried lead attempt) supersedes any older pending one.
+                conn.execute(
+                    "update room_board_splits set status = 'superseded', decided_at = ? "
+                    "where conversation_id = ? and status = 'proposed'",
+                    (stamp, conversation_id),
+                )
                 split_id = _id("split")
                 payload_contracts = [
                     {

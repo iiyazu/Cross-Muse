@@ -166,6 +166,92 @@ def _approved_board(tmp_path: Path):
     }
 
 
+def test_newer_split_proposal_supersedes_the_pending_one(tmp_path):
+    db, conversation_id, members = _board_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    first = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="propose-first"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    second = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="propose-second"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    with RoomDatabase(db).connect() as conn:
+        statuses = dict(
+            conn.execute(
+                "select split_id, status from room_board_splits where conversation_id = ?",
+                (conversation_id,),
+            ).fetchall()
+        )
+    assert statuses == {first["split_id"]: "superseded", second["split_id"]: "proposed"}
+    with pytest.raises(ValueError, match="room_board_split_decided"):
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=first["split_id"],
+            decision="approve",
+            operator_identity="operator:host",
+        )
+    assert (
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=second["split_id"],
+            decision="approve",
+            operator_identity="operator:host",
+        )["status"]
+        == "approved"
+    )
+
+
+def test_board_wake_up_is_deliverable_with_visible_content(tmp_path):
+    """A charter wake-up must pass the host's Skill binding like any other delivery."""
+    from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+    from xmuse_core.skills.catalog import SkillCatalog
+
+    ctx = _approved_board(tmp_path)
+    db, conversation_id, members = ctx["db"], ctx["conversation_id"], ctx["members"]
+    owner_a = members[1]
+    kickoff = ctx["leases"][owner_a.participant_id]
+    RoomKernelStore(db).submit_participant_outcome(
+        conversation_id=conversation_id,
+        participant_id=owner_a.participant_id,
+        caller_identity=f"god:testsess:{owner_a.participant_id}",
+        observation_id=kickoff["observation_id"],
+        lease_token=kickoff["lease_token"],
+        client_request_id="kickoff-noop",
+        outcome_type="noop",
+        now=NOW,
+    )
+    later = NOW + timedelta(seconds=5)
+    claimed = RoomKernelStore(db).claim_next_observation_batch(
+        conversation_id=conversation_id,
+        participant_id=owner_a.participant_id,
+        lease_owner="host-a2",
+        lease_ttl_s=300.0,
+        now=later,
+    )
+    assert claimed is not None
+    activity = claimed["activity"]
+    assert activity["activity_type"] == "board.charter_assigned"
+    assert "you now own module alpha" in activity["payload"]["content"]
+    RoomAttemptSkillDecisionStore(db).bind_for_attempt(
+        attempt_id=claimed["observation"]["current_attempt_id"],
+        catalog=SkillCatalog.load_bundled(),
+        now=later,
+    )
+    with RoomDatabase(db).connect() as conn:
+        rows = conn.execute(
+            "select payload_json from room_activities where activity_type like 'board.%'"
+        ).fetchall()
+    assert all(json.loads(row["payload_json"])["content"] for row in rows)
+
+
 def _board_activity_count(db: Path, conversation_id: str) -> int:
     with RoomDatabase(db).connect() as conn:
         row = conn.execute(
@@ -1011,7 +1097,11 @@ def test_every_board_write_leaves_exactly_one_activity(tmp_path):
         assert audience["conversation_id"] == conversation_id
         payload = json.loads(row["payload_json"])
         assert payload["schema_version"] == "room_board_activity/v1"
-        assert "content" not in payload
+        # The visible text never carries raw contract bodies (those live only in
+        # the contract table).
+        assert isinstance(payload["content"], str) and payload["content"]
+        assert '"alpha": ' not in row["payload_json"]
+        assert '"beta": ' not in row["payload_json"]
         seen_types.add(row["activity_type"])
     assert {
         "board.split_proposed",

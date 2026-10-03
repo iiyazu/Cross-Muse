@@ -21,7 +21,9 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
                conversation_id text not null references conversations(id),
                proposed_by_participant_id text not null
                    references participants(participant_id),
-               status text not null check (status in ('proposed','approved','rejected')),
+               status text not null check (
+                   status in ('proposed','approved','rejected','superseded')
+               ),
                split_json text not null,
                activity_id text references room_activities(activity_id),
                approved_by text,
