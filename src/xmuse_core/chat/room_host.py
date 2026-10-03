@@ -121,6 +121,30 @@ class RoomHostPolicy:
 
 
 _DEFAULT_ROOM_HOST_POLICY = RoomHostPolicy()
+
+
+@dataclass(frozen=True)
+class LongTurnPolicy:
+    """Opt-in bounds for one long provider turn with fenced lease renewal.
+
+    Only deliveries whose participant is selected for long turns use this
+    policy; everyone else keeps the fixed ``RoomHostPolicy`` timeouts.
+    """
+
+    renew_interval_s: float = 60.0
+    lease_chunk_s: float = 300.0
+    stall_timeout_s: float = 900.0
+    max_turn_s: float = 14400.0
+    loop_repeat_limit: int = 8
+
+    def __post_init__(self) -> None:
+        for name in ("renew_interval_s", "lease_chunk_s", "stall_timeout_s", "max_turn_s"):
+            _positive_real(getattr(self, name), name)
+        _positive_int(self.loop_repeat_limit, "loop_repeat_limit")
+        if self.stall_timeout_s < self.renew_interval_s:
+            raise ValueError("stall_timeout_s_too_short")
+
+
 _RUNNER_RECOVERY_FINALIZE_RACES = frozenset(
     {
         "room_attempt_generation_lost",
@@ -129,6 +153,14 @@ _RUNNER_RECOVERY_FINALIZE_RACES = frozenset(
         "room_runner_recovery_not_finalizable",
     }
 )
+
+
+@dataclass(frozen=True)
+class RoomTurnProgress:
+    """One transport-observed provider progress event inside a delivery."""
+
+    kind: Literal["message", "thought", "tool_call", "tool_update", "plan", "other"]
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +185,10 @@ class RoomObservationDelivery:
     memory_evidence: RoomMemoryEvidence = field(default_factory=disabled_memory_evidence)
     # ``room_collaboration`` view; ``None`` keeps the historical broadcast envelope.
     collaboration: dict[str, Any] | None = None
+    # Optional transport→host progress hook. Transports that can observe
+    # provider activity call it per event; the host uses it only to detect
+    # stall/loop anomalies on opt-in long turns. Never Room truth.
+    progress: Callable[[RoomTurnProgress], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +275,27 @@ class _DeliveryPermit:
             self.release()
 
 
+class _LongTurnTracker:
+    """In-memory stall/loop detector fed by transport progress events."""
+
+    def __init__(self, start_m: float) -> None:
+        self.last_progress_m = start_m
+        self.tool_run = 0
+        self._last_fingerprint: str | None = None
+
+    def on_progress(self, progress: RoomTurnProgress) -> None:
+        self.last_progress_m = asyncio.get_running_loop().time()
+        if progress.kind != "tool_call" or not progress.fingerprint:
+            # Only tool calls advance the loop run. A different tool call
+            # resets it; message/thought and other events leave it alone.
+            return
+        if progress.fingerprint == self._last_fingerprint:
+            self.tool_run += 1
+        else:
+            self._last_fingerprint = progress.fingerprint
+            self.tool_run = 1
+
+
 @dataclass(frozen=True)
 class _ActiveDelivery:
     observation_id: str
@@ -297,9 +354,21 @@ class RoomParticipantHost:
         runner_generation: str | None = None,
         runner_boot_id: str | None = None,
         delivery_gate: Callable[[str], bool] | None = None,
+        long_turn_policy: LongTurnPolicy | None = None,
+        long_turn_selector: Callable[[Participant], bool] | None = None,
     ) -> None:
         if (runner_generation is None) != (runner_boot_id is None):
             raise ValueError("room_runner_identity_pair_required")
+        if (long_turn_policy is None) != (long_turn_selector is None):
+            raise ValueError("room_long_turn_policy_pair_required")
+        if long_turn_policy is not None and not callable(long_turn_selector):
+            raise ValueError("room_long_turn_selector_invalid")
+        if (
+            long_turn_policy is not None
+            and long_turn_policy.lease_chunk_s
+            <= long_turn_policy.renew_interval_s + policy.cleanup_grace_s
+        ):
+            raise ValueError("room_long_turn_lease_chunk_too_short")
         if runner_generation is not None and (
             not isinstance(runner_generation, str)
             or not runner_generation.strip()
@@ -329,6 +398,8 @@ class RoomParticipantHost:
         self._runner_generation = runner_generation
         self._runner_boot_id = runner_boot_id
         self._delivery_gate = delivery_gate
+        self._long_turn_policy = long_turn_policy
+        self._long_turn_selector = long_turn_selector
 
     def runtime_health_snapshot(self) -> dict[str, Any]:
         """Return a bounded operational snapshot without Room or provider authority."""
@@ -1383,10 +1454,16 @@ class RoomParticipantHost:
         release_permit_on_exit = True
         try:
             delivery = await self._with_memory_evidence(delivery)
+            long_turn = self._long_turn_for(delivery.participant)
+            tracker: _LongTurnTracker | None = None
             delivery_timeout_s = self._policy.effective_delivery_timeout_s(
                 delivery.participant.cli_kind
             )
             loop = asyncio.get_running_loop()
+            if long_turn is not None:
+                tracker = _LongTurnTracker(loop.time())
+                delivery = replace(delivery, progress=tracker.on_progress)
+                delivery_timeout_s = long_turn.max_turn_s
             task = asyncio.create_task(
                 self._transport.deliver(delivery, timeout_s=delivery_timeout_s),
                 name=delivery.transport_request_id,
@@ -1397,26 +1474,51 @@ class RoomParticipantHost:
             diagnostic: str | None
             timed_out = False
             try:
-                done, _ = await asyncio.wait({task}, timeout=max(0.0, deadline - loop.time()))
-                if done:
-                    transport_status, reason, diagnostic = self._task_result(task)
+                if tracker is None:
+                    done, _ = await asyncio.wait({task}, timeout=max(0.0, deadline - loop.time()))
+                    if done:
+                        transport_status, reason, diagnostic = self._task_result(task)
+                    else:
+                        task.cancel()
+                        timed_out = True
+                        cleanup = await self._cleanup_transport_task(
+                            task,
+                            loop.time() + self._policy.cleanup_grace_s,
+                            permit,
+                        )
+                        if cleanup.status == "retained":
+                            release_permit_on_exit = False
+                        if cleanup.interrupted:
+                            raise asyncio.CancelledError
+                        transport_status, reason, diagnostic = (
+                            None,
+                            (
+                                "delivery_timeout"
+                                if cleanup.status == "settled"
+                                else "cleanup_timeout"
+                            ),
+                            None,
+                        )
                 else:
-                    task.cancel()
-                    timed_out = True
-                    cleanup = await self._cleanup_transport_task(
+                    (
+                        transport_status,
+                        reason,
+                        diagnostic,
+                        timed_out,
+                        retained,
+                        interrupted,
+                    ) = await self._await_long_turn(
                         task,
-                        loop.time() + self._policy.cleanup_grace_s,
-                        permit,
+                        kernel=kernel,
+                        observation=observation,
+                        attempt_id=attempt_id,
+                        tracker=tracker,
+                        permit=permit,
                     )
-                    if cleanup.status == "retained":
+                    if retained:
                         release_permit_on_exit = False
-                    if cleanup.interrupted:
+                    if interrupted:
                         raise asyncio.CancelledError
-                    transport_status, reason, diagnostic = (
-                        None,
-                        ("delivery_timeout" if cleanup.status == "settled" else "cleanup_timeout"),
-                        None,
-                    )
             except asyncio.CancelledError:
                 if timed_out:
                     raise
@@ -1585,6 +1687,87 @@ class RoomParticipantHost:
         finally:
             if release_permit_on_exit:
                 permit.release()
+
+    def _long_turn_for(self, participant: Participant) -> LongTurnPolicy | None:
+        if self._long_turn_policy is None or self._long_turn_selector is None:
+            return None
+        return self._long_turn_policy if self._long_turn_selector(participant) else None
+
+    async def _await_long_turn(
+        self,
+        task: asyncio.Task[RoomTransportResult],
+        *,
+        kernel: RoomKernelStore,
+        observation: dict[str, Any],
+        attempt_id: str,
+        tracker: _LongTurnTracker,
+        permit: _DeliveryPermit,
+    ) -> tuple[str | None, str | None, str | None, bool, bool, bool]:
+        """Wait a long turn in renewal slices.
+
+        Returns ``(transport_status, reason, diagnostic, timed_out, retained,
+        interrupted)``
+        mirroring the fixed-timeout wait: a finished task flows into the shared
+        post-delivery fence, while stall/loop/hard-cap anomalies and a lost
+        lease cancel the task with bounded cleanup first. Immediate reopen
+        still only follows proven ``cleanup_succeeded``, decided downstream.
+        """
+
+        assert self._long_turn_policy is not None
+        policy = self._long_turn_policy
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + policy.max_turn_s
+        while True:
+            remaining = deadline - loop.time()
+            slice_s = max(0.0, min(policy.renew_interval_s, remaining))
+            done, _ = await asyncio.wait({task}, timeout=slice_s)
+            if done:
+                transport_status, reason, diagnostic = self._task_result(task)
+                return transport_status, reason, diagnostic, False, False, False
+            now_m = loop.time()
+            anomaly: str | None = None
+            if now_m - tracker.last_progress_m > policy.stall_timeout_s:
+                anomaly = "room_turn_stalled"
+            elif tracker.tool_run > policy.loop_repeat_limit:
+                anomaly = "room_turn_looping"
+            elif now_m >= deadline:
+                anomaly = "delivery_timeout"
+            if anomaly is None:
+                try:
+                    kernel.renew_observation_lease(
+                        observation_id=observation["observation_id"],
+                        attempt_id=attempt_id,
+                        lease_token=observation["lease_token"],
+                        now=self._clock(),
+                        lease_ttl_s=policy.lease_chunk_s,
+                    )
+                except ValueError as exc:
+                    if "room_observation_lease_lost" not in str(exc):
+                        raise
+                    # Superseded or lapsed: cancel the transport and let the
+                    # shared post-delivery fence report lease_lost (or a
+                    # concurrently committed completion).
+                else:
+                    continue
+            task.cancel()
+            cleanup = await self._cleanup_transport_task(
+                task,
+                loop.time() + self._policy.cleanup_grace_s,
+                permit,
+            )
+            retained = cleanup.status == "retained"
+            if cleanup.interrupted:
+                # Same as the fixed-timeout path: the caller re-raises the
+                # cancellation without running operator-cancel cleanup again.
+                return None, None, None, True, retained, True
+            if cleanup.status != "settled":
+                return None, "cleanup_timeout", None, True, retained, False
+            if anomaly is not None:
+                return None, anomaly, None, True, retained, False
+            # Lease lost: the shared post-delivery fence reports lease_lost or a
+            # completion that committed concurrently.
+            transport_status, reason, diagnostic = self._task_result(task)
+            return transport_status, reason, diagnostic, True, retained, False
 
     def _failed_attempt_cleanup_proven(self, observation_id: str, attempt_id: str) -> bool:
         try:

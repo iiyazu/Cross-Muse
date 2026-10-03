@@ -496,16 +496,63 @@ _PROMPT_COMMON_TAIL = (
 _PROMPT_NEUTRAL_PROVIDERS = frozenset({"claude"})
 _PROMPT_ANTIGRAVITY_PROVIDERS = frozenset({"antigravity"})
 
+# Owners (workspace_write participants) run in their own sandboxed clone, so they
+# get the same outcome contract with a writable-workspace clause instead of the
+# read-only one.  Only transports that actually confine an owner select it.
+_PROMPT_OWNER_CALL_SPELLING = {
+    "claude": (
+        "Call exactly the chat_room_submit_outcome tool that the xmuse-room MCP server mounts. "
+    ),
+    "opencode": (
+        "Submit the outcome by calling the chat_room_submit_outcome tool of the "
+        "xmuse-room MCP server; when your MCP tools are reachable only through your "
+        "code execution tool, run exactly one call of "
+        'tools["xmuse-room"].chat_room_submit_outcome({...}) and nothing else in that '
+        "code. "
+    ),
+}
+_PROMPT_OWNER_CLAUSE = (
+    "Use exactly these JSON fields: conversation_id, participant_id, god_session_id, "
+    "observation_id, observation_batch_id, lease_token, client_request_id, "
+    "outcome_type, and outcome_payload (an object whose content is the visible text). "
+    "Use the exact names outcome_payload and outcome_type; never substitute content, "
+    "message, response_text, or response_content. That call is only the transport "
+    "spelling of the one durable Room outcome. "
+    "You are a module owner: your current directory is your own private git clone and "
+    "it is writable. Do the requested work there with your normal tools: create, edit, "
+    "and delete files, run builds and tests, and commit finished work to your current "
+    "branch with git. Nothing outside your clone is writable, and your clone is only a "
+    "draft area: nothing in it reaches the shared repository until it is proposed as "
+    "an exact patch and passes review and gates. Never read xmuse, provider "
+    "configuration, or credentials. In your durable outcome, state what you changed, "
+    "the commit hash, and each check you ran with its result; never claim a check "
+    "passed unless you ran it in this turn. When you hand off, include an optional "
+    "brief handoff_note object inside outcome_payload (what, why, tradeoffs, "
+    "open_questions, next_action) so the recipient keeps durable context. "
+)
+_PROMPT_OWNER_TAIL = (
+    "Working in your clone does not complete the observation: never end after editing, "
+    "testing, or an assistant draft alone. End only after one successful durable "
+    "outcome call or a structured immutable-authority error that forbids that call."
+)
 
-def build_room_observation_prompt(provider: str = "codex") -> str:
+
+def build_room_observation_prompt(provider: str = "codex", *, owner: bool = False) -> str:
     """The exact provider instruction for one durable Room observation batch.
 
     Codex keeps its historical 5.6/code-mode wording byte-for-byte; Claude gets
     the neutral MCP wording that forbids local writes; Antigravity additionally
     names its builtin ``call_mcp_tool`` bridge (its only MCP entry point) and
-    forbids environment investigation.
+    forbids environment investigation.  ``owner`` selects the writable-clone
+    wording for Claude/OpenCode owners; every other prompt is unchanged.
     """
 
+    if owner:
+        spelling = _PROMPT_OWNER_CALL_SPELLING.get(provider)
+        if spelling is None:
+            raise ValueError("room_observation_prompt_owner_unsupported")
+        head = _PROMPT_COMMON_HEAD.replace("your read-only capability", "your capability")
+        return head + spelling + _PROMPT_OWNER_CLAUSE + _PROMPT_OWNER_TAIL
     if provider == "codex":
         clause = _PROMPT_CODEX_PROVIDER_CLAUSE
     elif provider in _PROMPT_NEUTRAL_PROVIDERS:

@@ -13,10 +13,12 @@ the ACP client: the session is created with the built-in tool set limited to
 ``ROOM_ACP_BUILTIN_TOOLS`` (no Bash/Edit/Write/WebFetch/Task), workspace
 project/local settings are not loaded (``settingSources: ["user"]``, so a Room
 workspace cannot inject allow rules, hooks, or CLAUDE.md; the operator's user
-settings still load because they may carry the provider credential), and
-``session/set_mode`` pins the ``default`` permission mode.  The ACP permission
-callback then grants only the exact room outcome MCP tool; MCP tools are not
-affected by the built-in tool filter.
+settings still load because they may carry the provider credential),
+``strictMcpConfig`` blocks MCP servers from the operator's user config so only
+the ACP-mounted room server loads, and ``session/set_mode`` pins the
+``default`` permission mode.  The ACP permission callback then grants only the
+exact room outcome MCP tool; MCP tools are not affected by the built-in tool
+filter.
 
 Provider output only describes transport progress: an ``end_turn`` stop reason
 means the provider turn ended, never that the Room commit happened.
@@ -25,12 +27,14 @@ means the provider turn ended, never that the Room commit happened.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
 import os
 from collections.abc import Callable, Collection, Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -67,6 +71,7 @@ from xmuse_core.chat.room_host import (
     RoomCancelReconcileResult,
     RoomObservationDelivery,
     RoomTransportResult,
+    RoomTurnProgress,
 )
 from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME
 from xmuse_core.chat.room_memory_runtime import RoomMemoryContextReceiptPort
@@ -84,11 +89,16 @@ from xmuse_core.chat.room_skill_decisions import (
     RoomAttemptSkillDecisionStore,
     RoomSkillDecisionError,
 )
+from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEMENT
 
 logger = logging.getLogger(__name__)
 
 ROOM_ACP_PROVIDER_SESSION_KIND = "acp_session"
-ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp")
+# Pinned: an unpinned ``npx -y`` silently picks up new bridge releases, and
+# claude-agent-acp 0.85.1 failed every Room prompt (room_acp_prompt_failed right
+# after session/new). Bump only after a live Room smoke on the new version;
+# XMUSE_CLAUDE_ACP_COMMAND still overrides the whole command.
+ROOM_ACP_DEFAULT_COMMAND = ("npx", "-y", "@agentclientprotocol/claude-agent-acp@0.85.0")
 ROOM_ACP_DEFAULT_MCP_URL = "http://127.0.0.1:8100/mcp/room"
 ROOM_ACP_MCP_SERVER_NAME = "xmuse-room"
 ROOM_ACP_SUPPORTED_CLI_KINDS = (AgentRuntime.CLAUDE.value, AgentRuntime.OPENCODE.value)
@@ -148,6 +158,12 @@ class AcpProviderProfile:
     # asynchronously on startup) may take several seconds to settle.
     model_settle_timeout_s: float = 15.0
     model_settle_poll_interval_s: float = 0.5
+    # When True, the permission callback also approves built-in (non-MCP) tool
+    # titles; MCP tools other than the exact room outcome tool stay denied.
+    approve_builtin_tools: bool = False
+    # How many times a failed spawn may be retried when the agent process has
+    # already exited during initialization (cold-start crash).
+    early_exit_spawn_retries: int = 0
 
 
 CLAUDE_ACP_PROFILE = AcpProviderProfile(
@@ -159,11 +175,14 @@ CLAUDE_ACP_PROFILE = AcpProviderProfile(
     # settings load (they may carry the provider credential); workspace
     # project/local settings cannot add allow rules, hooks, or CLAUDE.md.  User
     # allow rules cannot re-enable tools removed from the base set.
+    # ``strictMcpConfig`` blocks MCP servers from the operator's user config so
+    # only the ACP-mounted room server loads.
     session_meta={
         "claudeCode": {
             "options": {
                 "tools": list(ROOM_ACP_BUILTIN_TOOLS),
                 "settingSources": list(ROOM_ACP_SETTING_SOURCES),
+                "strictMcpConfig": True,
             }
         }
     },
@@ -181,6 +200,31 @@ OPENCODE_ACP_PROFILE = AcpProviderProfile(
     outcome_reminder=True,
     model_settle_timeout_s=15.0,
     model_settle_poll_interval_s=0.5,
+    early_exit_spawn_retries=1,
+)
+CLAUDE_ACP_WORKSPACE_WRITE_PROFILE = AcpProviderProfile(
+    runtime=AgentRuntime.CLAUDE.value,
+    confinement=ROOM_WORKSPACE_WRITE_CONFINEMENT,
+    approvable_tool_titles=frozenset({_ROOM_OUTCOME_QUALIFIED_TOOL_NAME}),
+    # No ``tools`` key, so Claude Code's full built-in preset stays enabled for
+    # the writable owner workspace; writes are confined by the OS sandbox, not
+    # the in-process tool filter. ``Skill`` stays disallowed because it hides
+    # further tool use from this client.
+    session_meta={
+        "claudeCode": {
+            "options": {
+                "settingSources": list(ROOM_ACP_SETTING_SOURCES),
+                "strictMcpConfig": True,
+                "disallowedTools": ["Skill"],
+            }
+        }
+    },
+    pin_default_mode=True,
+    approve_builtin_tools=True,
+)
+OPENCODE_ACP_WORKSPACE_WRITE_PROFILE = replace(
+    OPENCODE_ACP_PROFILE,
+    confinement=ROOM_WORKSPACE_WRITE_CONFINEMENT,
 )
 ROOM_ACP_OUTCOME_REMINDER = (
     "Your turn ended without a durable Room outcome, so the Room received nothing: "
@@ -195,8 +239,11 @@ ROOM_ACP_OUTCOME_REMINDER = (
 class RoomAcpTransportError(RuntimeError):
     """Stable ACP transport failure carrying a Room reason code."""
 
-    def __init__(self, code: str, detail: str | None = None) -> None:
+    def __init__(self, code: str, detail: str | None = None, *, agent_exited: bool = False) -> None:
         self.code = code
+        # True when the agent process had already exited on its own when the
+        # failure surfaced (a cold-start crash), as opposed to a live agent.
+        self.agent_exited = agent_exited
         super().__init__(detail or code)
 
 
@@ -305,16 +352,27 @@ class _RoomAcpClient:
         self._session = session
         self._turn_id: str | None = None
         self._outcome_tool_seen = False
+        self._progress: Callable[[RoomTurnProgress], None] | None = None
+        # Partial tool-call identity per ACP tool_call_id until the call finishes.
+        self._tool_calls: dict[str, dict[str, Any]] = {}
 
-    def begin_turn(self, turn_id: str) -> None:
+    def begin_turn(
+        self,
+        turn_id: str,
+        *,
+        progress: Callable[[RoomTurnProgress], None] | None = None,
+    ) -> None:
         self._turn_id = turn_id
         self._outcome_tool_seen = False
+        self._progress = progress
+        self._tool_calls = {}
         for listener in tuple(self._session.preview_listeners):
             listener.push({"method": "turn/started", "params": {"turnId": turn_id}})
 
     def end_turn(self) -> None:
         turn_id = self._turn_id
         self._turn_id = None
+        self._progress = None
         if turn_id is None:
             return
         for listener in tuple(self._session.preview_listeners):
@@ -340,20 +398,69 @@ class _RoomAcpClient:
             text = getattr(content, "text", None)
             if isinstance(text, str) and text:
                 self._push_event("item/agentMessage/delta", {"delta": text})
+            self._report_progress(RoomTurnProgress(kind="message"))
+            return
+        if kind == "agent_thought_chunk":
+            self._report_progress(RoomTurnProgress(kind="thought"))
+            return
+        if kind == "plan":
+            self._report_progress(RoomTurnProgress(kind="plan"))
             return
         if kind in {"tool_call", "tool_call_update"}:
             identifiers = _tool_identity_candidates(update, kwargs)
-            if not any(self._transport.is_room_outcome_tool(item) for item in identifiers):
-                return
-            status = getattr(update, "status", None)
-            if kind == "tool_call" or status in {"pending", "in_progress"}:
-                self._outcome_tool_seen = True
-                self._push_event("item/started", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
-            elif self._outcome_tool_seen and status == "completed":
-                self._push_event("item/completed", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+            if any(self._transport.is_room_outcome_tool(item) for item in identifiers):
+                status = getattr(update, "status", None)
+                if kind == "tool_call" or status in {"pending", "in_progress"}:
+                    self._outcome_tool_seen = True
+                    self._push_event("item/started", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+                elif self._outcome_tool_seen and status == "completed":
+                    self._push_event("item/completed", {"item": {"name": ROOM_OUTCOME_TOOL_NAME}})
+            self._report_progress(self._tool_progress(kind, update))
             return
-        # Thought chunks, usage updates, plans, and future kinds are tolerated
-        # without becoming Room speech or preview text.
+        # Usage updates and future kinds are tolerated without becoming Room
+        # speech or preview text, but they still prove the provider is alive.
+        self._report_progress(RoomTurnProgress(kind="other"))
+
+    def _tool_progress(self, kind: str, update: object) -> RoomTurnProgress:
+        """Merge one tool call's updates and fingerprint it only once it finishes.
+
+        Adapters often announce a call with a placeholder title and empty
+        arguments (Claude: ``Terminal`` with ``{}``) and fill both in later
+        updates, so fingerprinting the announcement would make every distinct
+        shell command look identical to the loop probe.
+        """
+
+        call_id = getattr(update, "tool_call_id", None)
+        key = call_id if isinstance(call_id, str) and call_id else None
+        title = getattr(update, "title", None) or getattr(update, "name", None)
+        raw_input = getattr(update, "raw_input", None)
+        merged = self._tool_calls.get(key, {}) if key is not None else {}
+        if title:
+            merged["title"] = title
+        if raw_input is not None:
+            merged["raw_input"] = raw_input
+        status = getattr(update, "status", None)
+        if status in {"completed", "failed"}:
+            if key is not None:
+                self._tool_calls.pop(key, None)
+            return RoomTurnProgress(
+                kind="tool_call",
+                fingerprint=_tool_call_fingerprint(merged.get("title"), merged.get("raw_input")),
+            )
+        if key is not None:
+            self._tool_calls[key] = merged
+        return RoomTurnProgress(kind="tool_update")
+
+    def _report_progress(self, progress: RoomTurnProgress) -> None:
+        """Forward one progress event to the host without failing the turn."""
+
+        callback = self._progress
+        if callback is None:
+            return
+        try:
+            callback(progress)
+        except Exception:
+            logger.warning("room_acp_progress_callback_failed", exc_info=True)
 
     async def request_permission(
         self,
@@ -363,9 +470,14 @@ class _RoomAcpClient:
         **kwargs: Any,
     ) -> RequestPermissionResponse:
         identifiers = _tool_identity_candidates(tool_call, kwargs)
-        allowed = session_id == self._session.acp_session_id and any(
-            self._transport.is_room_outcome_tool(item) for item in identifiers
+        session_matches = session_id == self._session.acp_session_id
+        outcome_match = any(self._transport.is_room_outcome_tool(item) for item in identifiers)
+        builtin_match = (
+            self._transport.profile.approve_builtin_tools
+            and bool(identifiers)
+            and not any(item.startswith("mcp__") for item in identifiers)
         )
+        allowed = session_matches and (outcome_match or builtin_match)
         # The adapter's ``claudeCode.toolName`` metadata is observation-only
         # evidence; authorization stays with the exact tool-call title because
         # metadata is not covered by the same-name guarantee.
@@ -562,7 +674,12 @@ class AcpRoomObservationTransport:
         prompt_text = _format_turn_prompt(
             role=delivery.participant.role,
             msg_type="room_observation",
-            prompt=build_room_observation_prompt(self._config.profile.runtime),
+            prompt=build_room_observation_prompt(
+                self._config.profile.runtime,
+                # Only a transport that really confines an owner tells it the
+                # workspace is writable.
+                owner=self._config.profile.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT,
+            ),
             context=submission.text,
         )
         preview = await self._kit.open_preview(
@@ -581,7 +698,7 @@ class AcpRoomObservationTransport:
                 name=f"room-acp-prompt:{delivery.transport_request_id}",
             )
             session.prompt_task = prompt_task
-            session.client.begin_turn(delivery.transport_request_id)
+            session.client.begin_turn(delivery.transport_request_id, progress=delivery.progress)
             # Let the prompt request reach the agent before the context receipts
             # claim the exact bounded context was handed to this session.
             await asyncio.sleep(0)
@@ -903,6 +1020,44 @@ class AcpRoomObservationTransport:
         *,
         record: GodSessionRecord,
     ) -> _AcpSession:
+        max_retries = max(0, int(self._config.profile.early_exit_spawn_retries))
+        attempt = 0
+        while True:
+            try:
+                return await self._spawn_session_once(delivery, record=record)
+            except RoomAcpTransportError as exc:
+                if attempt >= max_retries or not exc.agent_exited:
+                    raise
+                attempt += 1
+                logger.info(
+                    "room_acp_spawn_retry attempt=%d code=%s",
+                    attempt,
+                    exc.code,
+                )
+                await asyncio.sleep(1.0)
+
+    @staticmethod
+    async def _agent_exited_on_its_own(process: asyncio.subprocess.Process) -> bool:
+        """Report whether the agent already died, before the failed spawn is reaped.
+
+        A broken stdio connection usually surfaces before the child is reaped, so
+        give it a brief moment; a still-running agent is never treated as exited.
+        """
+
+        if process.returncode is not None:
+            return True
+        try:
+            await asyncio.wait_for(asyncio.shield(process.wait()), timeout=1.0)
+        except Exception:
+            return False
+        return True
+
+    async def _spawn_session_once(
+        self,
+        delivery: RoomObservationDelivery,
+        *,
+        record: GodSessionRecord,
+    ) -> _AcpSession:
         generation = self._next_generation
         self._next_generation += 1
         env = sanitized_agent_environment(self._environ)
@@ -988,16 +1143,23 @@ class AcpRoomObservationTransport:
                 if self._config.profile.pin_default_mode:
                     await self._select_default_mode(session, created)
                 await self._select_model(session, delivery)
-        except RoomAcpTransportError:
+        except RoomAcpTransportError as exc:
+            exc.agent_exited = await self._agent_exited_on_its_own(process)
             await self._reap_failed_spawn(session, process)
             raise
         except TimeoutError as exc:
-            await self._reap_failed_spawn(session, process)
-            raise RoomAcpTransportError("room_acp_session_ensure_timeout", str(exc)) from exc
-        except Exception as exc:
+            exited = await self._agent_exited_on_its_own(process)
             await self._reap_failed_spawn(session, process)
             raise RoomAcpTransportError(
-                "room_acp_session_ensure_failed", f"{type(exc).__name__}: {exc}"
+                "room_acp_session_ensure_timeout", str(exc), agent_exited=exited
+            ) from exc
+        except Exception as exc:
+            exited = await self._agent_exited_on_its_own(process)
+            await self._reap_failed_spawn(session, process)
+            raise RoomAcpTransportError(
+                "room_acp_session_ensure_failed",
+                f"{type(exc).__name__}: {exc}",
+                agent_exited=exited,
             ) from exc
         try:
             self._registry.update_provider_binding(
@@ -1208,6 +1370,17 @@ def _permission_option(options: Collection[PermissionOption], kind: str) -> Perm
         if getattr(option, "kind", None) == kind:
             return option
     return None
+
+
+def _tool_call_fingerprint(title: object, raw_input: object) -> str:
+    """Return a stable identity for one ACP tool call: title plus arguments."""
+
+    title = title if isinstance(title, str) else ""
+    try:
+        canonical = json.dumps(raw_input, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = json.dumps(str(raw_input))
+    return hashlib.sha256(f"{title}\0{canonical}".encode()).hexdigest()
 
 
 def _tool_identity_candidates(tool_call: object, extra: Mapping[str, Any]) -> list[str]:
