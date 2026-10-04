@@ -264,6 +264,7 @@ def test_gate_output_tail_never_carries_absolute_paths() -> None:
         b"stage /srv/xmuse/stages/abc/src/x.py and /srv/xmuse/stages/abc\n"
         b"leak /home/alice/.cache/uv/x.py and /mnt/d/Dev/repo/y.py\n"
         b"win C:\\Users\\alice\\repo\\z.py tmp /tmp/pytest-of-alice/t0/a.py\n"
+        b"sys /usr/lib/python3.11/site.py:5 and (/etc/passwd) home ~/.cache/uv/z.py\n"
         b"keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a\n"
     )
 
@@ -277,6 +278,7 @@ def test_gate_output_tail_never_carries_absolute_paths() -> None:
         "stage src/x.py and .",
         "leak <host-path> and <host-path>",
         "win <host-path> tmp <host-path>",
+        "sys <host-path>:5 and (<host-path>) home <host-path>",
         "keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a",
     ]
     assert "alice" not in text
