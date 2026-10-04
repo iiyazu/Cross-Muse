@@ -127,6 +127,28 @@ def test_export_patch_content(tmp_path: Path) -> None:
     assert "new file" in patch.unified_diff
 
 
+def test_board_dir_is_excluded_and_never_exported(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    head = _init_source(source)
+    manager = OwnerCloneManager(tmp_path / "clones")
+    clone = manager.create(source, "alice")
+    assert (clone.path / ".xmuse").is_dir()
+    assert "/.xmuse/" in (clone.path / ".git" / "info" / "exclude").read_text()
+    # A plain `git add -A` leaves the board view out of the owner's commit.
+    (clone.path / ".xmuse" / "charter.md").write_text("charter\n")
+    (clone.path / "b.txt").write_text("work\n")
+    _git("add", "-A", cwd=clone.path)
+    _git("-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-m", "w", cwd=clone.path)
+    patch = manager.export_patch("alice", base_commit=head)
+    assert patch.changed_paths == ("b.txt",)
+    # Force-adding it anyway makes the export fail closed.
+    _git("add", "-f", ".xmuse/charter.md", cwd=clone.path)
+    _git("-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-m", "f", cwd=clone.path)
+    with pytest.raises(OwnerCloneError) as exc_info:
+        manager.export_patch("alice", base_commit=head)
+    assert exc_info.value.code == "owner_patch_reserved_path"
+
+
 def test_export_patch_empty(tmp_path: Path) -> None:
     source = tmp_path / "source"
     head = _init_source(source)

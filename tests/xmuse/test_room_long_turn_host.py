@@ -216,6 +216,43 @@ def test_long_turn_interleaved_tool_calls_do_not_trip_loop(tmp_path: Path) -> No
     assert result.deliveries[0].state == "completed"
 
 
+def test_long_turn_wrap_up_after_own_outcome_is_not_cancelled(tmp_path: Path) -> None:
+    db, registry, cid, _participant, session = _room(tmp_path)
+
+    async def behavior(delivery: RoomObservationDelivery) -> RoomTransportResult:
+        _submit_noop(db, registry, delivery, session.god_session_id)
+        # The provider keeps wrapping up across several renewal slices; the
+        # committed outcome makes renewal fail, which must not cancel the
+        # turn (cancelling rotates the participant's provider session).
+        await asyncio.sleep(0.3)
+        return RoomTransportResult("finished")
+
+    transport = _FakeTransport(behavior)
+    host = _host(db, transport, long_turn=_long_turn(post_outcome_grace_s=2.0))
+    result = asyncio.run(host.pump_once(conversation_id=cid))
+
+    assert len(result.deliveries) == 1
+    assert result.deliveries[0].state == "completed"
+    assert not transport.cancelled
+
+
+def test_long_turn_wrap_up_past_grace_is_cancelled_but_completed(tmp_path: Path) -> None:
+    db, registry, cid, _participant, session = _room(tmp_path)
+
+    async def behavior(delivery: RoomObservationDelivery) -> RoomTransportResult:
+        _submit_noop(db, registry, delivery, session.god_session_id)
+        await asyncio.sleep(5.0)
+        return RoomTransportResult("finished")
+
+    transport = _FakeTransport(behavior)
+    host = _host(db, transport, long_turn=_long_turn(post_outcome_grace_s=0.1))
+    result = asyncio.run(host.pump_once(conversation_id=cid))
+
+    assert len(result.deliveries) == 1
+    assert result.deliveries[0].state == "completed"
+    assert transport.cancelled
+
+
 def test_long_turn_superseded_attempt_ends_lease_lost(tmp_path: Path) -> None:
     db, _registry, cid, _participant, _session = _room(tmp_path)
     controls = RoomObservationControlStore(db)

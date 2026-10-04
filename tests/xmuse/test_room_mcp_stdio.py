@@ -16,7 +16,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from xmuse.room_mcp_server import create_app
-from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME
+from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME, ROOM_TOOL_NAMES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -123,7 +123,7 @@ def _stdio_proxy(url: str) -> Iterator[_StdioMcpProxy]:
         proxy.close()
 
 
-def test_stdio_proxy_initializes_and_lists_exactly_the_outcome_tool(tmp_path: Path) -> None:
+def test_stdio_proxy_initializes_and_lists_exactly_the_room_tools(tmp_path: Path) -> None:
     with _serve_room_mcp(tmp_path) as url, _stdio_proxy(url) as proxy:
         proxy.send(
             {
@@ -140,7 +140,7 @@ def test_stdio_proxy_initializes_and_lists_exactly_the_outcome_tool(tmp_path: Pa
         proxy.send({"jsonrpc": "2.0", "id": "tools", "method": "tools/list"})
         listed = proxy.next_message()
         assert listed["id"] == "tools"
-        assert [tool["name"] for tool in listed["result"]["tools"]] == [ROOM_OUTCOME_TOOL_NAME]
+        assert [tool["name"] for tool in listed["result"]["tools"]] == list(ROOM_TOOL_NAMES)
 
 
 def test_stdio_proxy_forwards_tool_argument_error_faithfully(tmp_path: Path) -> None:
@@ -170,7 +170,7 @@ def test_stdio_proxy_notifications_produce_no_stdout_output(tmp_path: Path) -> N
         proxy.send({"jsonrpc": "2.0", "id": "after-notification", "method": "tools/list"})
         listed = proxy.next_message()
         assert listed["id"] == "after-notification"
-        assert [tool["name"] for tool in listed["result"]["tools"]] == [ROOM_OUTCOME_TOOL_NAME]
+        assert [tool["name"] for tool in listed["result"]["tools"]] == list(ROOM_TOOL_NAMES)
 
 
 def test_stdio_proxy_maps_transport_errors_to_json_rpc_error_with_request_id() -> None:

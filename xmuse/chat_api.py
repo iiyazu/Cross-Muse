@@ -12,6 +12,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from xmuse.chat_api_agent_streams import register_room_agent_stream_routes
+from xmuse.chat_api_board import register_room_board_routes
 from xmuse.chat_api_bootstrap import register_bootstrap_route
 from xmuse.chat_api_codex import register_room_codex_routes
 from xmuse.chat_api_execution_runtime import RoomExecutionRuntime
@@ -150,6 +151,11 @@ def create_app(
         runtime_status_provider=(
             memory_runtime_status_provider or (lambda: browser_memoryos_status(context.root))
         ),
+    )
+    register_room_board_routes(
+        app,
+        root=context.root,
+        operator_token=operator_token,
     )
     register_room_message_routes(
         app,

@@ -16,7 +16,9 @@ capability. A Room selects a collaboration mode:
 Infrastructure owns delivery, identity, causality, attempts, safety, and privileged
 execution; it must not impersonate an Agent. Provider transports differ (Codex app-server,
 ACP, Antigravity agentapi), but every Agent writes Room truth only through the same
-identity-, attempt-, and lease-bound outcome tool.
+identity-, attempt-, and lease-bound Room MCP tools: one outcome tool that ends a turn, plus
+board tools for coordinating mid-turn (module charters, versioned interface contracts,
+progress, peer questions).
 
 Treat implementation and fresh tests as evidence. Documentation is descriptive.
 
@@ -84,36 +86,63 @@ do not load `.env`.
   enter only through exact-patch candidates. Claude ACP sessions run with built-in tools
   limited to Read/Glob/Grep (no Bash), no workspace project/local settings, no MCP servers
   from the operator's user config (`strictMcpConfig`), the `default` permission mode pinned
-  via `session/set_mode`, and only the exact room outcome MCP tool approved by the ACP
-  permission callback. OpenCode ACP sessions run its own tools without
+  via `session/set_mode`, and only the exact Room MCP tools (outcome and board) approved by
+  the ACP permission callback. OpenCode ACP sessions run its own tools without
   asking the client, so the agent process runs under bubblewrap instead: filesystem and
   workspace read-only, private `/tmp`, other tools' credential stores and the xmuse root
   masked, only OpenCode's own state directories writable (`os_read_only_sandbox`). Its model
   comes from `XMUSE_OPENCODE_MODEL` and an unknown model fails the attempt rather than
   falling back. A turn that ends without a durable outcome gets at most one in-lease reminder
   prompt for profiles that opt in (OpenCode); provider text is still never Room truth.
-- A roster may declare a Claude or OpenCode participant `workspace_write` (an owner). An
+- Antigravity participants run the standalone `agy` CLI under bubblewrap with an
+  allowlisted home (only agy's own state directory stays writable and only its
+  config plus the generated Room MCP file stay readable), and
+  `--dangerously-skip-permissions` is passed only inside that sandbox.
+  Non-owners are confined read-only (`os_read_only_sandbox`); `workspace_write`
+  owners work in their own clone with the board view mounted read-only at
+  `.xmuse` (`os_workspace_write_sandbox`). The legacy agentapi transport remains
+  opt-in via `XMUSE_ANTIGRAVITY_TRANSPORT=agentapi`.
+- On WSL every provider bubblewrap sandbox (`os_read_only_sandbox` and
+  `os_workspace_write_sandbox`, for OpenCode, agy and owners alike) also masks the Windows
+  drives as empty tmpfs: every drvfs mount (`/mnt/c`, `/mnt/d`, ...) with its Windows-side
+  `.ssh`, `.aws`, `.claude` and browser profiles. The masks go before any re-bind, so a
+  workspace or owner clone that lives on a drive stays reachable; nothing else on that drive
+  is. Off WSL there are no such mounts and nothing changes.
+- A roster may declare a Claude, OpenCode, or Antigravity participant `workspace_write` (an owner). An
   owner works in its own local clone (`git clone --no-hardlinks`, no origin remote, under
   `<root>/runtime/owner-clones`) with its provider's full native tools; its agent process
   runs under bubblewrap where only that clone and that provider's own state are writable,
   every other provider's state, other credential stores and the xmuse root (including other
   owners' clones) are masked, and the network stays shared (`os_workspace_write_sandbox`).
-  For Claude the permission callback approves built-in tools and still only the exact room
-  outcome MCP tool; user MCP servers stay off (`strictMcpConfig`) and `Skill` is disallowed.
-  The clone is a draft area only: workspace changes still enter only through exact-patch
-  candidates, and the host never runs git inside an owner clone after creating it (patches
-  are exported through a host-owned bare mirror). Participants without the attribute are
-  unchanged in rows, identities, fingerprints, projections, transports and timeouts.
+  Owners keep their own MCP servers and Skills: for Claude the permission callback approves
+  every tool and neither `strictMcpConfig` nor a Skill ban is set. Known, operator-accepted
+  residual: an MCP server reached over the network, or one that delegates to another agent,
+  runs outside the sandbox. The owner's board view (charter and contracts) is a host-owned
+  directory mounted read-only at `<clone>/.xmuse`, excluded from commits and rejected by
+  patch export. The clone is a draft area only: workspace changes still enter only through
+  exact-patch candidates, and the host never runs git inside an owner clone after creating
+  it (patches are exported through a host-owned bare mirror). Participants without the
+  attribute are unchanged in rows, identities, fingerprints, projections, transports and
+  timeouts.
 - Owner turns may run for hours: the host renews the lease in fenced slices while the
   provider reports progress, and ends the turn only on a stall (`room_turn_stalled`), a run
   of identical finished tool calls (`room_turn_looping`), the hard cap, or transport failure.
-  A lapsed or superseded lease is never renewed.
+  A lapsed or superseded lease is never renewed. Once the attempt's own outcome has committed,
+  the provider gets a bounded grace to end its turn, so the next delivery reuses its session.
 - A failed attempt reopens immediately only when its transport proved the provider
   generation gone (`cleanup_succeeded`); otherwise it waits out its lease. The attempt limit
   applies either way.
-- Managed MCP exposes only `/health`, `/mcp/room`, and
-  `chat_room_submit_outcome`. New batch deliveries bind that outcome to the exact batch and
-  may name a reply target from the delivered members. Provider final text is not Room truth.
+- Managed MCP exposes only `/health`, `/mcp/room`, `chat_room_submit_outcome`, and the
+  `chat_room_board_*` tools (read, propose_split, claim, publish_contract, report_progress,
+  ask). New batch deliveries bind that outcome to the exact batch and may name a reply
+  target from the delivered members. Provider final text is not Room truth.
+- Board tools require the caller's live lease exactly like the outcome tool, are idempotent
+  by `client_request_id`, and append a `board.*` Room activity in the same transaction as the
+  board state change. Only the Room lead proposes a module split; it takes effect only after
+  a guarded operator approval. Charter-derived rules (who may revise a contract, report on
+  or claim a module) are enforced server-side, not by prompts. A contract revision wakes
+  every owner whose charter depends on it; a charter change never rewrites persona snapshots
+  or provider session identity.
 - `room_context_envelope/v2` preserves the Human root, primary source and ancestry while
   bounding recent context to 64 KiB. Bundled roster personas are immutable Room snapshots and
   participate in provider session identity.
@@ -160,7 +189,7 @@ do not load `.env`.
 - Preserve authority, identity, causality, idempotency, recovery, and data-safety invariants.
 - Avoid inventory and exact-document-wording tests; test behavior and package direction.
 - Do not reintroduce a central speaker queue or LLM router that decides for Agents, platform
-  runner, broad MCP, Dashboard, A2A
+  runner, a general-purpose MCP surface beyond the Room outcome and board tools, Dashboard, A2A
   experiment, an always-on or authoritative MemoryOS runtime, Ray, repository-local OpenCode
   orchestration (OpenCode as a sandboxed Room participant is a provider, not orchestration),
   or LangGraph execution into the default product.

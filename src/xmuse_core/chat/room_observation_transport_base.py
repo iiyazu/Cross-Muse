@@ -500,6 +500,11 @@ _PROMPT_ANTIGRAVITY_PROVIDERS = frozenset({"antigravity"})
 # get the same outcome contract with a writable-workspace clause instead of the
 # read-only one.  Only transports that actually confine an owner select it.
 _PROMPT_OWNER_CALL_SPELLING = {
+    "antigravity": (
+        "Submit the outcome by calling the chat_room_submit_outcome tool of the "
+        "xmuse-room MCP server through call_mcp_tool (server xmuse-room), "
+        "passing the arguments exactly. "
+    ),
     "claude": (
         "Call exactly the chat_room_submit_outcome tool that the xmuse-room MCP server mounts. "
     ),
@@ -529,6 +534,19 @@ _PROMPT_OWNER_CLAUSE = (
     "passed unless you ran it in this turn. When you hand off, include an optional "
     "brief handoff_note object inside outcome_payload (what, why, tradeoffs, "
     "open_questions, next_action) so the recipient keeps durable context. "
+    "You own one module of a shared board. Your charter and the contracts you provide "
+    "or depend on are mirrored in .xmuse/ (charter.md, INDEX.json, contracts/), which you "
+    "cannot modify and must not commit; only the board tools change them. The xmuse-room "
+    "server also mounts board tools that "
+    "take the same conversation_id, participant_id, god_session_id, observation_id, "
+    "lease_token and a fresh client_request_id per call, and may be called any number of "
+    "times during your turn: chat_room_board_read (start with it, and call it again at "
+    "every milestone: its inbox shows contract revisions and questions for you), "
+    "chat_room_board_claim, chat_room_board_publish_contract (change an interface you "
+    "provide here before changing code that implements it; pass base_version), "
+    "chat_room_board_report_progress (with only claims you verified this turn), and "
+    "chat_room_board_ask. Stay inside your charter's paths; when a dependency's contract "
+    "changes, realign your module to the new version. "
 )
 _PROMPT_OWNER_TAIL = (
     "Working in your clone does not complete the observation: never end after editing, "
@@ -726,6 +744,17 @@ def failed_result(reason: str, exc: Exception) -> RoomTransportResult:
         reason,
         diagnostic_text(f"{type(exc).__name__}: {exc}"),
     )
+
+
+def tool_call_fingerprint(title: object, raw_input: object) -> str:
+    """Return a stable identity for one tool call: title plus arguments."""
+
+    title = title if isinstance(title, str) else ""
+    try:
+        canonical = json.dumps(raw_input, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = json.dumps(str(raw_input))
+    return hashlib.sha256(f"{title}\0{canonical}".encode()).hexdigest()
 
 
 def canonical_digest(value: Any) -> str:

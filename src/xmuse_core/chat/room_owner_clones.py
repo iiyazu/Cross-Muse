@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 OWNER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# Read-only board view (charter + contracts) mounted inside every owner clone.
+OWNER_BOARD_DIR_NAME = ".xmuse"
 _OWNER_BRANCH_PREFIX = "owner/"
 _MIRROR_DIR_NAME = ".mirror.git"
 _META_DIR_NAME = ".meta"
@@ -108,6 +110,13 @@ class OwnerCloneManager:
             alternates = target / ".git" / "objects" / "info" / "alternates"
             if alternates.exists():
                 raise OwnerCloneError("owner_clone_shares_objects")
+            # The board view is mounted read-only at ``.xmuse``; keep it out of
+            # the owner's commits (export also rejects the path outright).
+            exclude = target / ".git" / "info" / "exclude"
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with exclude.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n/{OWNER_BOARD_DIR_NAME}/\n")
+            (target / OWNER_BOARD_DIR_NAME).mkdir(exist_ok=True)
         except OwnerCloneError as exc:
             shutil.rmtree(target, ignore_errors=True)
             if exc.code in {"owner_clone_shares_objects", "owner_base_ref_invalid"}:
@@ -208,6 +217,11 @@ class OwnerCloneManager:
         changed_paths = tuple(line for line in name_only.splitlines() if line.strip())
         if not changed_paths or not unified_diff.strip():
             raise OwnerCloneError("owner_patch_empty")
+        if any(
+            path == OWNER_BOARD_DIR_NAME or path.startswith(f"{OWNER_BOARD_DIR_NAME}/")
+            for path in changed_paths
+        ):
+            raise OwnerCloneError("owner_patch_reserved_path")
         if len(changed_paths) > max_files:
             raise OwnerCloneError("owner_patch_too_many_files")
         if len(unified_diff.encode("utf-8")) > max_bytes:

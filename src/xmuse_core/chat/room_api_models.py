@@ -199,6 +199,18 @@ class RoomMemoryCandidateResolveRequest(BaseModel):
         return strip_required_string(value)
 
 
+class RoomBoardSplitDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(min_length=1, max_length=200)
+    decision: Literal["approve", "reject"]
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def _strip_board_decision_text(cls, value: object) -> object:
+        return strip_required_string(value)
+
+
 class RoomCodexActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

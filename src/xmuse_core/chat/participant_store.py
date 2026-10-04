@@ -37,7 +37,7 @@ def _new_id(prefix: str) -> str:
 CurrentChatCliKind = Literal["codex", "claude", "antigravity", "opencode"]
 StoredChatCliKind = Literal["codex", "claude", "antigravity", "opencode", "a2a"]
 WorkspaceAccess = Literal["read_only", "workspace_write"]
-WORKSPACE_WRITE_CLI_KINDS: tuple[str, str] = ("claude", "opencode")
+WORKSPACE_WRITE_CLI_KINDS: tuple[str, str, str] = ("claude", "opencode", "antigravity")
 StoredProviderIdValue = ProviderId | Literal["claude", "antigravity", "a2a", "opencode"]
 INIT_GOD_ROLE = "init"
 INIT_GOD_DISPLAY_NAME = "init-god"

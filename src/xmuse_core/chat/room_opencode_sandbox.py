@@ -8,6 +8,10 @@ writable.  Credential stores of other tools and the xmuse data root are masked s
 a shell inside the sandbox cannot read them.  The network is shared because the
 model API and the loopback Room MCP need it.
 
+On WSL the Windows drives (drvfs mounts such as ``/mnt/c``) are masked too: they
+hold the Windows-side credential stores and browser profiles.  A workspace on such
+a drive is re-bound over its mask.
+
 OpenCode's own data directory necessarily stays readable to its shell; that is
 the known residual exposure of this confinement level.
 """
@@ -15,6 +19,7 @@ the known residual exposure of this confinement level.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
@@ -49,6 +54,59 @@ OPENCODE_WRITABLE_HOME_PATHS: tuple[str, ...] = (
     ".local/state/opencode",
     ".cache/opencode",
 )
+
+_PROC_MOUNTS = Path("/proc/mounts")
+_KERNEL_OSRELEASE = Path("/proc/sys/kernel/osrelease")
+_WSL_AUTOMOUNT_RE = re.compile(r"/mnt/[A-Za-z]\Z")
+_MOUNTS_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
+
+
+def windows_drive_mounts(
+    mounts: Path = _PROC_MOUNTS,
+    osrelease: Path = _KERNEL_OSRELEASE,
+) -> tuple[Path, ...]:
+    """Return the WSL mount points that expose Windows drives; empty elsewhere.
+
+    A drvfs mount (WSL1 ``drvfs``, WSL2 ``9p`` with ``aname=drvfs``) counts
+    wherever it is mounted; on a WSL kernel any mount at ``/mnt/<letter>``
+    counts too, covering transports whose options do not name drvfs.
+    """
+
+    try:
+        table = mounts.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    try:
+        wsl_kernel = "microsoft" in osrelease.read_text(encoding="ascii").lower()
+    except (OSError, UnicodeDecodeError):
+        wsl_kernel = False
+    found: list[Path] = []
+    for line in table.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        mount_point = _MOUNTS_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), fields[1])
+        fs_type, options = fields[2], fields[3].split(",")
+        drvfs = fs_type == "drvfs" or any(
+            part == "aname=drvfs" or part.startswith("aname=drvfs;") for part in options
+        )
+        automount = wsl_kernel and _WSL_AUTOMOUNT_RE.match(mount_point) is not None
+        path = Path(mount_point)
+        if (drvfs or automount) and path not in found:
+            found.append(path)
+    return tuple(found)
+
+
+def drive_masks(drive_mounts: Iterable[Path] | None) -> list[Path]:
+    """Resolve existing Windows drive mounts (detected when ``None``) to mask."""
+
+    candidates = windows_drive_mounts() if drive_mounts is None else drive_mounts
+    masks: list[Path] = []
+    for item in candidates:
+        path = Path(item)
+        if path.is_dir() and path.resolve() not in masks:
+            masks.append(path.resolve())
+    return masks
 
 
 def resolve_opencode_executable(
@@ -90,12 +148,14 @@ def build_opencode_sandbox_command(
     workspace: Path,
     masked_paths: Iterable[Path] = (),
     agent_args: Sequence[str] = ("acp",),
+    drive_mounts: Iterable[Path] | None = None,
 ) -> tuple[str, ...]:
     """Return the bubblewrap argv that runs ``opencode <agent_args>`` read-only.
 
     Writable OpenCode state directories are created on the host first so the
     bind mounts exist.  Masked directories become empty tmpfs mounts and masked
     files are replaced by ``/dev/null``; missing masked paths are skipped.
+    ``drive_mounts`` overrides Windows drive detection (``None`` detects).
     """
 
     home = home.expanduser()
@@ -111,6 +171,11 @@ def build_opencode_sandbox_command(
         "--tmpfs",
         "/tmp",
     ]
+    # Windows drives are masked before anything is re-bound, so a workspace or
+    # state directory living on one stays reachable.
+    drives = drive_masks(drive_mounts)
+    for path in drives:
+        argv.extend(_mask(path))
     for relative in OPENCODE_WRITABLE_HOME_PATHS:
         path = home / relative
         path.mkdir(parents=True, exist_ok=True)
@@ -120,7 +185,7 @@ def build_opencode_sandbox_command(
     masked.extend(Path(item).expanduser() for item in masked_paths)
     unique: list[Path] = []
     for path in masked:
-        if path.exists() and path.resolve() not in unique:
+        if path.exists() and path.resolve() not in unique and path.resolve() not in drives:
             unique.append(path.resolve())
     # Mount order matters: a mask that contains the workspace goes first so the
     # workspace can be re-exposed over it; a mask inside the workspace (such as a

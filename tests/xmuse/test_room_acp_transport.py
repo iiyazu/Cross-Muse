@@ -55,12 +55,14 @@ from xmuse_core.chat.room_host import (
     RoomTransportResult,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.chat.room_mcp_contract import ROOM_BOARD_TOOL_NAMES
 from xmuse_core.chat.room_observation_transport_base import sanitized_agent_environment
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
 
 FAKE_AGENT = Path(__file__).resolve().parent / "fixtures" / "fake_acp_agent.py"
 OUTCOME_TOOL_TITLE = "mcp__xmuse-room__chat_room_submit_outcome"
+BOARD_READ_TOOL_TITLE = "mcp__xmuse-room__chat_room_board_read"
 INJECTED_SECRETS = (
     "XMUSE_OPERATOR_TOKEN",
     "XMUSE_MEMORYOS_API_KEY",
@@ -959,12 +961,30 @@ async def _workspace_write_permission_scenario(tmp_path: Path, profile: AcpProvi
     assert await _is_allowed(client, "sess-1", "Write foo.txt") is True
     assert await _is_allowed(client, "sess-1", "git commit -m x") is True
     assert await _is_allowed(client, "sess-1", OUTCOME_TOOL_TITLE) is True
-    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is False
-    assert await _is_allowed(client, "sess-1", "mcp__xmuse-room__other") is False
+    assert await _is_allowed(client, "sess-1", BOARD_READ_TOOL_TITLE) is True
+    # Owners keep their own MCP servers and Skills; the OS sandbox confines writes.
+    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is True
+    assert await _is_allowed(client, "sess-1", "Skill") is True
     # Wrong session never authorizes, even for the exact outcome tool.
     assert await _is_allowed(client, "other-session", OUTCOME_TOOL_TITLE) is False
-    # A name smuggled into model-controlled input never authorizes: the mcp__
-    # title stays denied even when raw input names the outcome tool.
+    assert await _is_allowed(client, "other-session", "Write foo.txt") is False
+
+
+def test_read_only_claude_profile_still_rejects_builtins(tmp_path: Path) -> None:
+    asyncio.run(_read_only_permission_scenario(tmp_path))
+
+
+async def _read_only_permission_scenario(tmp_path: Path) -> None:
+    _transport, client = _permission_transport(tmp_path, CLAUDE_ACP_PROFILE)
+    assert await _is_allowed(client, "sess-1", "Write foo.txt") is False
+    assert await _is_allowed(client, "sess-1", "Bash") is False
+    assert await _is_allowed(client, "sess-1", "Skill") is False
+    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is False
+    assert await _is_allowed(client, "sess-1", "mcp__xmuse-room__other") is False
+    assert await _is_allowed(client, "sess-1", OUTCOME_TOOL_TITLE) is True
+    for name in ROOM_BOARD_TOOL_NAMES:
+        assert await _is_allowed(client, "sess-1", f"mcp__xmuse-room__{name}") is True
+    # A name smuggled into model-controlled input never authorizes.
     assert (
         await _is_allowed(
             client,
@@ -976,19 +996,7 @@ async def _workspace_write_permission_scenario(tmp_path: Path, profile: AcpProvi
     )
 
 
-def test_read_only_claude_profile_still_rejects_builtins(tmp_path: Path) -> None:
-    asyncio.run(_read_only_permission_scenario(tmp_path))
-
-
-async def _read_only_permission_scenario(tmp_path: Path) -> None:
-    _transport, client = _permission_transport(tmp_path, CLAUDE_ACP_PROFILE)
-    assert await _is_allowed(client, "sess-1", "Write foo.txt") is False
-    assert await _is_allowed(client, "sess-1", "Bash") is False
-    assert await _is_allowed(client, "sess-1", "mcp__other__tool") is False
-    assert await _is_allowed(client, "sess-1", OUTCOME_TOOL_TITLE) is True
-
-
-def test_both_claude_profiles_send_strict_mcp_config() -> None:
+def test_claude_profiles_mcp_config_by_role() -> None:
     from xmuse_core.chat.room_acp_transport import (
         CLAUDE_ACP_WORKSPACE_WRITE_PROFILE,
         OPENCODE_ACP_PROFILE,
@@ -998,15 +1006,17 @@ def test_both_claude_profiles_send_strict_mcp_config() -> None:
     from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEMENT as _CONF
 
     assert _CONF == ROOM_WORKSPACE_WRITE_CONFINEMENT
-    for profile in (CLAUDE_ACP_PROFILE, CLAUDE_ACP_WORKSPACE_WRITE_PROFILE):
-        options = profile.session_meta["claudeCode"]["options"]
-        assert options["strictMcpConfig"] is True
-        assert options["settingSources"] == ["user"]
-    assert "tools" not in CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.session_meta["claudeCode"]["options"]
-    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.session_meta["claudeCode"]["options"][
-        "disallowedTools"
-    ] == ["Skill"]
-    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.approve_builtin_tools is True
+    read_only = CLAUDE_ACP_PROFILE.session_meta["claudeCode"]["options"]
+    assert read_only["strictMcpConfig"] is True
+    assert read_only["settingSources"] == ["user"]
+    assert CLAUDE_ACP_PROFILE.approve_all_tools is False
+    owner = CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.session_meta["claudeCode"]["options"]
+    assert owner["settingSources"] == ["user"]
+    # Owners keep built-ins, their own MCP servers and Skills.
+    assert "tools" not in owner
+    assert "strictMcpConfig" not in owner
+    assert "disallowedTools" not in owner
+    assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.approve_all_tools is True
     assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.pin_default_mode is True
     assert CLAUDE_ACP_WORKSPACE_WRITE_PROFILE.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT
     assert OPENCODE_ACP_WORKSPACE_WRITE_PROFILE.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT
