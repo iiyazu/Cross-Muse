@@ -351,6 +351,7 @@ async def run_room_runner(
                         model=agy_default_model,
                         bridge_script=agy_bridge_script,
                         python3=agy_python3,
+                        executable_resolver=executable_resolver,
                     )
                     logger.info(
                         "Antigravity participant transport enabled cli=agy model=%s",
@@ -1006,11 +1007,12 @@ def _agy_config(
     bridge_script: Path,
     python3: Path,
     environ: Mapping[str, str] | None = None,
+    executable_resolver: Callable[[str], str | None] | None = None,
 ) -> AgyTransportConfig:
     """Build the sandboxed read-only agy attachment; never run agy unconfined."""
 
     source = os.environ if environ is None else environ
-    bwrap = resolve_bwrap_executable(source)
+    bwrap = resolve_bwrap_executable(source, executable_resolver or shutil.which)
     if bwrap is None:
         raise RoomRunnerError("room_runner_agy_sandbox_unavailable")
     mcp_config_path = write_agy_mcp_config(

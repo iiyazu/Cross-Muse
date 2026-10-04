@@ -121,6 +121,8 @@ def test_resolve_agy_paths_fails_closed(tmp_path: Path) -> None:
 def test_agy_config_builds_a_read_only_resumable_route(tmp_path: Path) -> None:
     agy = tmp_path / "agy"
     agy.write_text("#!/bin/sh\n")
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_text("#!/bin/sh\n")
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     config = room_runner._agy_config(
@@ -131,8 +133,10 @@ def test_agy_config_builds_a_read_only_resumable_route(tmp_path: Path) -> None:
         model="gemini-3.8-flash-high",
         bridge_script=Path(room_runner.__file__).resolve().parent / "room_mcp_stdio.py",
         python3=Path("/usr/bin/python3"),
-        environ={"HOME": str(tmp_path), "XMUSE_OPENCODE_BWRAP": "/usr/sbin/bwrap"},
+        environ={"HOME": str(tmp_path)},
+        executable_resolver=_which({"bwrap": str(bwrap)}),
     )
+    assert config.command_builder(None)[0] == str(bwrap)
     assert config.confinement == "os_read_only_sandbox"
     assert config.owner is False
     fresh = config.command_builder(None)
@@ -175,6 +179,8 @@ def _composition_common(tmp_path: Path, name: str) -> dict[str, Any]:
 def test_composition_routes_agy_cli_for_antigravity(tmp_path: Path) -> None:
     agy = tmp_path / "agy"
     agy.write_text("#!/bin/sh\n")
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_text("#!/bin/sh\n")
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     common = _composition_common(tmp_path, "agy-route")
@@ -186,7 +192,7 @@ def test_composition_routes_agy_cli_for_antigravity(tmp_path: Path) -> None:
         model="gemini-3.8-flash-high",
         bridge_script=Path(room_runner.__file__).resolve().parent / "room_mcp_stdio.py",
         python3=Path(sys.executable).resolve(),
-        environ={"HOME": "/root", "XMUSE_OPENCODE_BWRAP": "/usr/sbin/bwrap"},
+        environ={"HOME": "/root", "XMUSE_OPENCODE_BWRAP": str(bwrap)},
     )
     composition = room_runner_composition.compose_room_runtime(**common, agy_config=agy_config)
     assert len(composition.agy_transports) == 1
