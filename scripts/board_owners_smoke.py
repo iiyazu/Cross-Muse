@@ -133,7 +133,7 @@ CONTRACT_V2_CONTENT = (
     'api.greeting.greet and returns "<message> [en]".'
 )
 
-ALLOWED_SCENARIOS = ("revision", "verify", "false-done")
+ALLOWED_SCENARIOS = ("revision", "verify", "false-done", "review")
 DEFAULT_SCENARIO = "revision"
 # Smallest fixed profile whose gates run pytest on changed Python paths: the
 # seed below satisfies its markers and local toolchain capability offline.
@@ -528,12 +528,115 @@ def compute_verification_loop(evidence: Mapping[str, Any]) -> dict[str, Any]:
 def compute_verify_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
     """Checks for the ``verify`` scenario: every module ends host-verified and
     every verification wake-up stayed in the owner's session."""
-
     loop = compute_verification_loop(evidence)
     return {
         "all_modules_verified": bool(loop["all_verified"]),
         "wakes_reused_session": bool(loop["wakes_reused_session"]),
     }
+
+
+def compute_review_loop(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """Measure the verify -> review -> fix loop of one run.
+
+    Per module: reviews created, endorsed, objected, whether the module ends
+    endorsed, and whether every objection was followed by a newer done report
+    (a fix cycle).  Totals sum the modules.
+    """
+
+    raw_modules = evidence.get("module_reviews")
+    modules = raw_modules if isinstance(raw_modules, Mapping) else {}
+    raw_verifications = evidence.get("module_verifications")
+    verifications = raw_verifications if isinstance(raw_verifications, Mapping) else {}
+    per_module: dict[str, dict[str, Any]] = {}
+    for module_id, info in sorted(modules.items()):
+        details = info.get("reviews") if isinstance(info, Mapping) else None
+        rows = [item for item in details or [] if isinstance(item, Mapping)]
+        terminal = [item for item in rows if item.get("status") in ("endorsed", "objected")]
+        vinfo = verifications.get(module_id) if isinstance(verifications, Mapping) else None
+        vdetails = vinfo.get("verifications") if isinstance(vinfo, Mapping) else None
+        vrows = [item for item in vdetails or [] if isinstance(item, Mapping)]
+        done_reports = int(info.get("done_reports") or 0) if isinstance(info, Mapping) else 0
+        objections = [item for item in rows if item.get("status") == "objected"]
+        objections_fixed = True
+        for item in objections:
+            verdict_at = item.get("verdict_at")
+            followed = any(
+                isinstance(vrow.get("done_at"), str)
+                and isinstance(verdict_at, str)
+                and str(vrow.get("done_at")) > str(verdict_at)
+                for vrow in vrows
+            )
+            if not followed:
+                # The latest objection may still be awaiting its fix; only an
+                # objection that is not the latest review needs a successor.
+                is_latest = rows and rows[-1].get("review_id") == item.get("review_id")
+                if not is_latest:
+                    objections_fixed = False
+                    break
+                # A latest objection with no newer done is not yet fixed.
+                objections_fixed = False
+                break
+        if not objections:
+            objections_fixed = True
+        per_module[str(module_id)] = {
+            "reviews": len(rows),
+            "endorsed": sum(1 for item in rows if item.get("status") == "endorsed"),
+            "objected": len(objections),
+            "pending": sum(1 for item in rows if item.get("status") == "pending"),
+            "endorsed_final": bool(terminal) and terminal[-1].get("status") == "endorsed",
+            "objections_fixed": objections_fixed,
+            "done_reports": done_reports,
+        }
+    return {
+        "modules": per_module,
+        "reviews": sum(item["reviews"] for item in per_module.values()),
+        "endorsed": sum(item["endorsed"] for item in per_module.values()),
+        "objected": sum(item["objected"] for item in per_module.values()),
+        "objections_fixed": all(item["objections_fixed"] for item in per_module.values()),
+        "all_endorsed": bool(per_module)
+        and all(item["endorsed_final"] for item in per_module.values()),
+    }
+
+
+def compute_review_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
+    """Checks for the ``review`` scenario."""
+
+    loop = compute_review_loop(evidence)
+    verify = compute_verification_loop(evidence)
+    raw_modules = evidence.get("module_reviews")
+    modules = raw_modules if isinstance(raw_modules, Mapping) else {}
+    cross_family = True
+    for _module_id, info in modules.items():
+        details = info.get("reviews") if isinstance(info, Mapping) else None
+        for item in details or []:
+            if not isinstance(item, Mapping):
+                continue
+            if item.get("status") == "superseded":
+                continue
+            author_family = item.get("author_family")
+            reviewer_family = item.get("reviewer_family")
+            reviewer_kind = item.get("reviewer_kind")
+            if reviewer_kind == "operator":
+                continue
+            if (
+                not isinstance(author_family, str)
+                or not isinstance(reviewer_family, str)
+                or not author_family
+                or author_family == reviewer_family
+            ):
+                cross_family = False
+    return {
+        "all_modules_verified": bool(verify["all_verified"]),
+        "all_modules_endorsed": bool(loop["all_endorsed"]),
+        "reviewers_cross_family": bool(cross_family and loop["reviews"] > 0),
+        "objections_fixed": bool(loop["objections_fixed"]),
+    }
+
+
+def review_ok(evidence: Mapping[str, Any]) -> bool:
+    """Return the final ``ok`` verdict for review evidence."""
+
+    return all(compute_review_checks(evidence).values())
 
 
 @contextmanager
@@ -839,6 +942,22 @@ def _has_active_verifications(root: Path, conversation_id: str) -> bool:
         conn.close()
 
 
+def _has_pending_reviews(root: Path, conversation_id: str) -> bool:
+    conn = _connect_db(root)
+    try:
+        try:
+            row = conn.execute(
+                "select count(*) as total from room_board_reviews "
+                "where conversation_id = ? and status = 'pending'",
+                (conversation_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(row["total"]) > 0
+    finally:
+        conn.close()
+
+
 def _verification_ids(root: Path, conversation_id: str) -> set[str]:
     conn = _connect_db(root)
     try:
@@ -859,6 +978,7 @@ async def _pump_until_idle(
     timeout_s: float,
     label: str,
     root: Path,
+    wait_for_reviews: bool = False,
 ) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -874,12 +994,16 @@ async def _pump_until_idle(
                 outcome_type=item.outcome_type,
                 diagnostic=item.diagnostic_text,
             )
-        if _is_idle(kernel, conversation_id) and not _has_active_verifications(
-            root, conversation_id
+        if (
+            _is_idle(kernel, conversation_id)
+            and not _has_active_verifications(root, conversation_id)
+            and not (wait_for_reviews and _has_pending_reviews(root, conversation_id))
         ):
             await asyncio.sleep(IDLE_SETTLE_S)
-            if _is_idle(kernel, conversation_id) and not _has_active_verifications(
-                root, conversation_id
+            if (
+                _is_idle(kernel, conversation_id)
+                and not _has_active_verifications(root, conversation_id)
+                and not (wait_for_reviews and _has_pending_reviews(root, conversation_id))
             ):
                 _mark(f"{label}_idle")
                 return True
@@ -1068,6 +1192,62 @@ def build_module_verification_summary(
         "verifications": details,
     }
     return summary
+
+
+def build_review_detail(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Build one per-review evidence entry from a joined review row."""
+
+    return {
+        "review_id": str(row.get("review_id")),
+        "module_id": str(row.get("module_id")),
+        "verification_id": str(row.get("verification_id")),
+        "status": str(row.get("status")),
+        "author_participant_id": str(row.get("author_participant_id")),
+        "author_family": row.get("author_family"),
+        "reviewer_kind": str(row.get("reviewer_kind")),
+        "reviewer_participant_id": row.get("reviewer_participant_id"),
+        "reviewer_family": row.get("reviewer_family"),
+        "created_at": str(row.get("created_at")),
+        "verdict_at": row.get("updated_at"),
+    }
+
+
+def _collect_module_reviews(
+    root: Path, conversation_id: str, done_reports: Mapping[str, int]
+) -> dict[str, dict[str, Any]]:
+    """Collect per-module review histories ordered oldest first."""
+
+    conn = _connect_db(root)
+    try:
+        try:
+            rows = conn.execute(
+                "select review_id, module_id, verification_id, status, "
+                "author_participant_id, author_family, reviewer_kind, "
+                "reviewer_participant_id, reviewer_family, created_at, updated_at "
+                "from room_board_reviews where conversation_id = ? "
+                "order by created_at, review_id",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "backend": [],
+            "frontend": [],
+        }
+        for row in rows:
+            detail = build_review_detail(dict(row))
+            if detail["module_id"] in grouped:
+                grouped[detail["module_id"]].append(detail)
+        return {
+            module_id: {
+                "module_id": module_id,
+                "done_reports": int(done_reports.get(module_id, 0)),
+                "reviews": details,
+            }
+            for module_id, details in grouped.items()
+        }
+    finally:
+        conn.close()
 
 
 def _collect_evidence(
@@ -1272,6 +1452,7 @@ def _collect_evidence(
         )
         for module_id in ("backend", "frontend")
     }
+    module_reviews = _collect_module_reviews(root, conversation_id, done_reports)
     evidence: dict[str, Any] = {
         "splits": splits,
         "charters": charters,
@@ -1290,6 +1471,7 @@ def _collect_evidence(
         "frontend_charter_session_ids": charter_sessions,
         "frontend_revision_session_ids": revision_sessions,
         "module_verifications": module_verifications,
+        "module_reviews": module_reviews,
     }
     evidence["frontend_session_reused"] = frontend_session_reused(
         charter_sessions, revision_sessions
@@ -1414,6 +1596,14 @@ async def _run_smoke(
     execution_profile_id: str,
 ) -> int:
     source_repo = root / "source-repo"
+    if scenario == "review" and frontend_cli == "opencode":
+        print(
+            "board smoke review unavailable: the two owners must be of different "
+            "families (backend is opencode; rerun with --frontend-cli claude or "
+            "antigravity)",
+            flush=True,
+        )
+        return 2
     try:
         _create_source_repo(source_repo)
     except RuntimeError as exc:
@@ -1644,7 +1834,29 @@ async def _run_smoke(
 
         # Phase 3 (revision): backend revises the contract; the frontend
         # must realign.
-        if scenario == "false-done":
+        if scenario == "review":
+            if phases_ok:
+                review_idle = await _pump_until_idle(
+                    host=host,
+                    kernel=kernel,
+                    conversation_id=conversation_id,
+                    timeout_s=phase_timeout_s,
+                    label="review",
+                    root=root,
+                    wait_for_reviews=True,
+                )
+                pending = _has_pending_reviews(root, conversation_id)
+                review_ok_phase = review_idle and not pending
+                _mark(
+                    "review_phase",
+                    idle=review_idle,
+                    pending_reviews=pending,
+                    ok=review_ok_phase,
+                )
+                phases_ok = phases_ok and review_ok_phase
+            else:
+                _mark("review_skipped", reason="earlier phase failed")
+        elif scenario == "false-done":
             drill = await _run_drill_phase(
                 host=host,
                 kernel=kernel,
@@ -1735,6 +1947,19 @@ async def _run_smoke(
             "checks": checks,
             "phases_ok": phases_ok,
             "verification_loop": compute_verification_loop(evidence),
+            "conversation_id": conversation_id,
+            "evidence": evidence,
+        }
+    elif scenario == "review":
+        checks = compute_review_checks(evidence)
+        review_loop = compute_review_loop(evidence)
+        summary = {
+            "ok": phases_ok and all(checks.values()),
+            "scenario": scenario,
+            "checks": checks,
+            "phases_ok": phases_ok,
+            "verification_loop": compute_verification_loop(evidence),
+            "review_loop": review_loop,
             "conversation_id": conversation_id,
             "evidence": evidence,
         }

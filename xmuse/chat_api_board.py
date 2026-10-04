@@ -9,7 +9,10 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from xmuse.operator_auth import require_operator_token
-from xmuse_core.chat.room_api_models import RoomBoardSplitDecisionRequest
+from xmuse_core.chat.room_api_models import (
+    RoomBoardReviewDecisionRequest,
+    RoomBoardSplitDecisionRequest,
+)
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_board_view import refresh_board_views
@@ -117,4 +120,33 @@ def register_room_board_routes(
             refresh_board_views(root, payload.conversation_id)
         except Exception as exc:
             logger.warning("room board refresh after decision failed: %s", exc)
+        return dict(result)
+
+    @app.post("/api/chat/operator/board-reviews/{review_id}/decision")
+    def decide_room_board_review(
+        review_id: str,
+        request: Request,
+        payload: RoomBoardReviewDecisionRequest,
+    ) -> dict[str, Any]:
+        require_operator_token(request, configured_token=operator_token)
+        try:
+            result = RoomApplicationService(
+                root / "chat.db", root / "god_sessions.json"
+            ).board_decide_review(
+                conversation_id=payload.conversation_id,
+                review_id=review_id,
+                verdict=payload.verdict,
+                summary=payload.summary,
+                findings=[dict(item) for item in payload.findings],
+                operator_identity="operator:local",
+                decided_via="web",
+            )
+        except RoomApplicationError as exc:
+            raise _store_error(exc) from exc
+        except (KeyError, ValueError, RuntimeError) as exc:
+            raise _store_error(exc) from exc
+        try:
+            refresh_board_views(root, payload.conversation_id)
+        except Exception as exc:
+            logger.warning("room board refresh after review decision failed: %s", exc)
         return dict(result)

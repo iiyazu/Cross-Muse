@@ -101,6 +101,7 @@ print(
         "/api/chat/conversations/{conversation_id}/board",
         "/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}",
         "/api/chat/operator/board-splits/{split_id}/decision",
+        "/api/chat/operator/board-reviews/{review_id}/decision",
     }
 
 

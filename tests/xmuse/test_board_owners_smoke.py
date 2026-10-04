@@ -144,7 +144,7 @@ def test_frontend_cli_accepts_antigravity() -> None:
 
 def test_scenario_defaults_to_revision() -> None:
     assert smoke.DEFAULT_SCENARIO == "revision"
-    assert set(smoke.ALLOWED_SCENARIOS) == {"revision", "verify", "false-done"}
+    assert set(smoke.ALLOWED_SCENARIOS) == {"revision", "verify", "false-done", "review"}
 
 
 def test_default_execution_profile_runs_pytest() -> None:
@@ -470,3 +470,155 @@ def test_seed_pins_the_v1_contract_protocol() -> None:
         'greet("Ada") == {"message": "Hello, Ada!"}'
         in (by_path["src/api/test_greeting_contract.py"])
     )
+
+
+def _review_evidence(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "module_verifications": {
+            "backend": {
+                "done_reports": 2,
+                "verifications": [
+                    {
+                        "verification_id": "v1",
+                        "status": "passed",
+                        "done_at": "2026-01-01T00:00:00.000000Z",
+                    },
+                    {
+                        "verification_id": "v2",
+                        "status": "passed",
+                        "done_at": "2026-01-01T00:05:00.000000Z",
+                    },
+                ],
+            },
+            "frontend": {
+                "done_reports": 1,
+                "verifications": [
+                    {
+                        "verification_id": "v3",
+                        "status": "passed",
+                        "done_at": "2026-01-01T00:00:00.000000Z",
+                    }
+                ],
+            },
+        },
+        "module_reviews": {
+            "backend": {
+                "done_reports": 2,
+                "reviews": [
+                    {
+                        "review_id": "r1",
+                        "module_id": "backend",
+                        "verification_id": "v1",
+                        "status": "objected",
+                        "author_family": "opencode",
+                        "reviewer_kind": "participant",
+                        "reviewer_family": "claude",
+                        "created_at": "2026-01-01T00:01:00.000000Z",
+                        "verdict_at": "2026-01-01T00:02:00.000000Z",
+                    },
+                    {
+                        "review_id": "r2",
+                        "module_id": "backend",
+                        "verification_id": "v2",
+                        "status": "endorsed",
+                        "author_family": "opencode",
+                        "reviewer_kind": "participant",
+                        "reviewer_family": "claude",
+                        "created_at": "2026-01-01T00:06:00.000000Z",
+                        "verdict_at": "2026-01-01T00:07:00.000000Z",
+                    },
+                ],
+            },
+            "frontend": {
+                "done_reports": 1,
+                "reviews": [
+                    {
+                        "review_id": "r3",
+                        "module_id": "frontend",
+                        "verification_id": "v3",
+                        "status": "endorsed",
+                        "author_family": "claude",
+                        "reviewer_kind": "participant",
+                        "reviewer_family": "opencode",
+                        "created_at": "2026-01-01T00:01:00.000000Z",
+                        "verdict_at": "2026-01-01T00:02:00.000000Z",
+                    }
+                ],
+            },
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def test_review_scenario_is_registered() -> None:
+    assert "review" in smoke.ALLOWED_SCENARIOS
+
+
+def test_review_loop_counts_endorsements_and_fixes() -> None:
+    loop = smoke.compute_review_loop(_review_evidence())
+
+    assert loop["reviews"] == 3
+    assert loop["endorsed"] == 2
+    assert loop["objected"] == 1
+    assert loop["all_endorsed"] is True
+    assert loop["objections_fixed"] is True
+    assert loop["modules"]["backend"]["endorsed_final"] is True
+
+
+def test_review_checks_require_cross_family_endorsement() -> None:
+    assert smoke.compute_review_checks(_review_evidence()) == {
+        "all_modules_verified": True,
+        "all_modules_endorsed": True,
+        "reviewers_cross_family": True,
+        "objections_fixed": True,
+    }
+    assert smoke.review_ok(_review_evidence()) is True
+
+
+def test_review_checks_reject_same_family_reviewer() -> None:
+    evidence = _review_evidence()
+    modules = evidence["module_reviews"]
+    assert isinstance(modules, dict)
+    backend = modules["backend"]
+    assert isinstance(backend, dict)
+    reviews = backend["reviews"]
+    assert isinstance(reviews, list)
+    reviews[1] = {**reviews[1], "reviewer_family": "opencode"}
+
+    assert smoke.compute_review_checks(evidence)["reviewers_cross_family"] is False
+    assert smoke.review_ok(evidence) is False
+
+
+def test_review_checks_reject_pending_objection_fix() -> None:
+    evidence = _review_evidence()
+    modules = evidence["module_reviews"]
+    assert isinstance(modules, dict)
+    backend = modules["backend"]
+    assert isinstance(backend, dict)
+    backend["reviews"] = [backend["reviews"][0]]
+
+    loop = smoke.compute_review_loop(evidence)
+    assert loop["all_endorsed"] is False
+    assert smoke.review_ok(evidence) is False
+
+
+def test_build_review_detail_carries_families() -> None:
+    detail = smoke.build_review_detail(
+        {
+            "review_id": "r1",
+            "module_id": "backend",
+            "verification_id": "v1",
+            "status": "pending",
+            "author_participant_id": "a",
+            "author_family": "opencode",
+            "reviewer_kind": "participant",
+            "reviewer_participant_id": "c",
+            "reviewer_family": "claude",
+            "created_at": "2026-01-01T00:00:00.000000Z",
+            "updated_at": "2026-01-01T00:01:00.000000Z",
+        }
+    )
+
+    assert detail["reviewer_family"] == "claude"
+    assert detail["author_family"] == "opencode"
