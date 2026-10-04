@@ -544,7 +544,10 @@ _PROMPT_OWNER_CLAUSE = (
     "every milestone: its inbox shows contract revisions and questions for you), "
     "chat_room_board_claim, chat_room_board_publish_contract (change an interface you "
     "provide here before changing code that implements it; pass base_version), "
-    "chat_room_board_report_progress (with only claims you verified this turn), and "
+    "chat_room_board_report_progress (with only claims you verified this turn; "
+    'reporting "done" asks the host to verify your committed branch against the '
+    "server gates, so commit before reporting done, and a failed verification "
+    "will come back to you with evidence), and "
     "chat_room_board_ask. Stay inside your charter's paths; when a dependency's contract "
     "changes, realign your module to the new version. "
 )

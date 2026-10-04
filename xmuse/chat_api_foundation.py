@@ -91,6 +91,7 @@ async def _reconcile_execution_runtime(
     reconcile: Callable[[], Any],
     interval_s: float,
     stop: asyncio.Event,
+    label: str = "Room execution runtime",
 ) -> None:
     while not stop.is_set():
         try:
@@ -101,7 +102,7 @@ async def _reconcile_execution_runtime(
         try:
             await asyncio.to_thread(reconcile)
         except Exception:
-            logger.exception("Room execution runtime reconcile failed")
+            logger.exception("%s reconcile failed", label)
 
 
 def create_chat_api_foundation(
@@ -120,6 +121,7 @@ def create_chat_api_foundation(
     execution_reconciler: Callable[[], Any] | None = None,
     execution_stopper: Callable[[], Any] | None = None,
     execution_reconcile_interval_s: float = DEFAULT_EXECUTION_RECONCILE_INTERVAL_S,
+    board_verification_reconciler: Callable[[], Any] | None = None,
 ) -> tuple[FastAPI, ChatApiContext]:
     root = Path(base_dir)
     assert_data_operation_complete(root)
@@ -157,6 +159,7 @@ def create_chat_api_foundation(
         runtime_reconcile_task: asyncio.Task[None] | None = None
         execution_stop = asyncio.Event()
         execution_task: asyncio.Task[None] | None = None
+        verification_task: asyncio.Task[None] | None = None
         try:
             if managed:
                 app.state.workroom_runtime_reclaimed = await asyncio.to_thread(
@@ -193,11 +196,26 @@ def create_chat_api_foundation(
                     ),
                     name="xmuse-room-execution-reconcile",
                 )
+            if board_verification_reconciler is not None:
+                # A verification runs gates for minutes, so it gets its own loop:
+                # no synchronous pass before serving, and execution reconcile
+                # failures never starve it (nor it them).
+                verification_task = asyncio.create_task(
+                    _reconcile_execution_runtime(
+                        reconcile=board_verification_reconciler,
+                        interval_s=float(execution_reconcile_interval_s),
+                        stop=execution_stop,
+                        label="Board verification",
+                    ),
+                    name="xmuse-board-verification-reconcile",
+                )
             yield
         finally:
             execution_stop.set()
             if execution_task is not None:
                 await asyncio.gather(execution_task, return_exceptions=True)
+            if verification_task is not None:
+                await asyncio.gather(verification_task, return_exceptions=True)
             if execution_stopper is not None:
                 try:
                     app.state.execution_runtime_stop = await asyncio.to_thread(execution_stopper)
