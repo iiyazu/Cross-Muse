@@ -65,6 +65,7 @@ import { RoomTurnStatus, type RoomCancelTarget } from "./room-turn-status";
 import { AgentConsole } from "./agent-console";
 import { WorkspaceCommandPalette } from "./room-workspace-command-palette";
 import { RoomEvidenceDomain } from "./room-evidence-domain";
+import { RoomBoardDomain } from "./room-board-domain";
 import { RoomExecutionDomain } from "./room-execution-domain";
 import { RoomMemoryDomain } from "./room-memory-domain";
 import {
@@ -940,6 +941,7 @@ function RoomInspectorTab({ onRequestCancel, onRequestMemoryRebuild }: Pick<Work
   const cache = useRoomStore((state) => roomId ? state.roomsById[roomId] ?? null : null);
   const execution = useRoomStore((state) => roomId ? state.executionsByRoom[roomId] ?? null : null);
   const memory = useRoomStore((state) => roomId ? state.memoryByRoom[roomId] ?? null : null);
+  const board = useRoomStore((state) => roomId ? state.boardByRoom[roomId] ?? null : null);
   const executionPending = useRoomStore((state) => state.executionActionPending);
   const executionError = useRoomStore((state) => state.executionActionError);
   const memoryPending = useRoomStore((state) => state.memoryActionPending);
@@ -953,8 +955,19 @@ function RoomInspectorTab({ onRequestCancel, onRequestMemoryRebuild }: Pick<Work
   const decideCandidate = useRoomStore((state) => state.decideExecutionCandidate);
   const cancelRun = useRoomStore((state) => state.cancelExecutionRun);
   const resolveCandidate = useRoomStore((state) => state.resolveMemoryCandidate);
+  const loadBoardContract = useRoomStore((state) => state.loadBoardContract);
+  const boardActionPending = useRoomStore((state) => state.boardActionPending);
+  const boardActionError = useRoomStore((state) => state.boardActionError);
+  const decideBoardSplit = useRoomStore((state) => state.decideBoardSplit);
   const projection = cache?.projection;
   return <>
+    <RoomBoardDomain
+      actionError={boardActionError}
+      actionPending={boardActionPending}
+      cache={board}
+      onDecide={decideBoardSplit}
+      onLoadContract={(contractId) => { void loadBoardContract(contractId); }}
+    />
     <RoomExecutionDomain actionError={executionError} actionPending={Boolean(executionPending)} cache={execution} onCancelRun={cancelRun} onDecideCandidate={decideCandidate} onSelectCandidate={selectCandidate} onUpdatePolicy={updatePolicy} />
     <RoomMemoryDomain actionError={memoryError} actionPending={Boolean(memoryPending)} cache={memory} rebuildDescriptor={rebuildDescriptor} rebuildError={rebuildError} rebuildPending={rebuildPending} onRebuild={onRequestMemoryRebuild} onResolve={resolveCandidate} />
     <RoomEvidenceDomain controlPending={cache?.controlPending ?? null} onCancel={onRequestCancel} onRetry={(id, descriptor) => { void control(id, "retry", descriptor); }} participants={projection?.participants ?? []} turns={projection?.turns ?? EMPTY_ROOM_TURNS} />
@@ -1046,9 +1059,10 @@ function WorkspaceStatus({ notice }: { notice: string | null }) {
   const controlError = useRoomStore((state) => roomId ? state.roomsById[roomId]?.controlError ?? null : null);
   const executionError = useRoomStore((state) => state.executionActionError);
   const memoryError = useRoomStore((state) => state.memoryActionError);
+  const boardError = useRoomStore((state) => state.boardActionError);
   return <WorkspaceStatusRegion message={!browserOnline
     ? "浏览器离线；Room 与 Runtime 状态暂不更新。"
-    : controlError?.status === 409 || executionError?.status === 409 || memoryError?.status === 409
+    : controlError?.status === 409 || executionError?.status === 409 || memoryError?.status === 409 || boardError?.status === 409
       ? "状态已经变化，已刷新耐久投影。"
       : notice}
   />;
@@ -1147,7 +1161,8 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
     clearControlError: state.clearControlError,
     startOperationsSync: state.startOperationsSync,
     startExecutionSync: state.startExecutionSync,
-    startMemorySync: state.startMemorySync
+    startMemorySync: state.startMemorySync,
+    startBoardSync: state.startBoardSync
   })));
   const compactLayout = useCompactLayout();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -1217,12 +1232,14 @@ export function RoomWorkspace({ onNavigateRoom, onCreatedRoom }: RoomWorkspacePr
       else if (current.dockTab === "room") {
         void current.refreshExecutions();
         void current.refreshMemory();
+        void current.refreshBoard();
       } else void current.refreshCodexAgents();
     };
     const visibility = () => {
       store.startOperationsSync();
       store.startExecutionSync();
       store.startMemorySync();
+      store.startBoardSync();
     };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", visibility);

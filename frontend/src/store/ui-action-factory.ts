@@ -64,11 +64,13 @@ export function createUiDomainActions({
         void get().refreshOperations();
         void get().refreshExecutions();
         void get().refreshMemory();
+        void get().refreshBoard();
         void get().refreshCodexAgents();
       }
       get().startOperationsSync();
       get().startExecutionSync();
       get().startMemorySync();
+      get().startBoardSync();
       get().startCodexSync();
     },
 
@@ -79,11 +81,13 @@ export function createUiDomainActions({
       if (tab === "room") {
         void get().refreshExecutions();
         void get().refreshMemory();
+        void get().refreshBoard();
       }
       if (tab === "runtime") void get().refreshOperations();
       get().startOperationsSync();
       get().startExecutionSync();
       get().startMemorySync();
+      get().startBoardSync();
       get().startCodexSync();
     },
 
