@@ -748,7 +748,11 @@ def test_verification_detail_with_output_tails(tmp_path: Path) -> None:
     assert detail["reason_code"] == "board_verification_gate_failed"
     assert len(detail["gates"]) == 1
     assert detail["gates"][0]["gate_id"] == "pytest"
-    assert detail["gates"][0]["output_tail"] == tail_text
+    assert detail["gates"][0]["output_tail"] == {
+        "text": tail_text,
+        "truncated": False,
+        "untrusted": True,
+    }
 
 
 # ---------------------------------------------------------------------------

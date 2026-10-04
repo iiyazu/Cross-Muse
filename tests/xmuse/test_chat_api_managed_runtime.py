@@ -65,7 +65,7 @@ print(
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=60,
         check=True,
     )
     payload = json.loads(result.stdout)
@@ -103,7 +103,10 @@ print(
         "/api/chat/conversations/{conversation_id}/board/events",
         "/api/chat/conversations/{conversation_id}/board/stream",
         "/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}",
+        "/api/chat/conversations/{conversation_id}/board/reviews/{review_id}",
+        "/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}",
         "/api/chat/operator/board-splits/{split_id}/decision",
+        "/api/chat/operator/board-reviews/{review_id}/material",
         "/api/chat/operator/board-reviews/{review_id}/decision",
     }
 

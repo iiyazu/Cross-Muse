@@ -1,0 +1,53 @@
+{
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:00:40.000000Z",
+  "decided_at": null,
+  "findings": [],
+  "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "module_id": "alpha",
+  "review": {
+    "author_family": "opencode",
+    "decided_via": null,
+    "digest": "sha256:5e0c94cf9a68129debe94b77fcdb730cdbf53f6a419a0b6a5916a7d7536f00e2",
+    "escalated_from": {
+      "at": "2026-01-01T00:01:10.000000Z",
+      "family": "codex",
+      "participant_id": "part_00000000000000000000000000000002",
+      "reason_code": "board_review_reviewer_no_verdict"
+    },
+    "findings_count": {
+      "blocker": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "review_id": "boardreview_00000000000000000000000000000025",
+    "reviewer_family": null,
+    "reviewer_kind": "operator",
+    "reviewer_participant_id": null,
+    "rule_id": "cross_family/v1",
+    "status": "pending",
+    "updated_at": "2026-01-01T00:01:10.000000Z",
+    "verification_id": "boardverify_00000000000000000000000000000021"
+  },
+  "rule_inputs": {
+    "author_family": "opencode",
+    "author_participant_id": "part_00000000000000000000000000000003",
+    "eligible": [
+      {
+        "family": "codex",
+        "participant_id": "part_00000000000000000000000000000002",
+        "pending": 0
+      },
+      {
+        "family": "claude",
+        "participant_id": "part_00000000000000000000000000000004",
+        "pending": 0
+      }
+    ],
+    "last_reviewer_participant_id": null,
+    "picked_participant_id": "part_00000000000000000000000000000002",
+    "rule_id": "cross_family/v1"
+  },
+  "schema_version": "room_board_review/v1",
+  "summary": null
+}

@@ -840,8 +840,10 @@ def test_operator_review_endpoint_requires_token_and_records_web(tmp_path: Path)
         )
     )
     path = f"/api/chat/operator/board-reviews/{review_id}/decision"
+    material = store.review_material(conversation.id, review_id)
     body = {
         "conversation_id": conversation.id,
+        "expected_digest": material["digest"],
         "verdict": "object",
         "summary": "human found a blocker",
         "findings": [{"severity": "blocker", "text": "wrong"}],
@@ -854,3 +856,501 @@ def test_operator_review_endpoint_requires_token_and_records_web(tmp_path: Path)
     assert decided.json()["status"] == "objected"
     verdict = json.loads(str(_review_row(db, review_id)["verdict_json"]))
     assert verdict["decided_via"] == "web"
+
+
+def _operator_review_room(tmp_path: Path):
+    db = tmp_path / "chat.db"
+    conversation = RoomTestStore(db).create_conversation("operator review room")
+    participants = ParticipantStore(db)
+    lead = participants.add(
+        conversation_id=conversation.id,
+        role="lead",
+        display_name="Lead",
+        cli_kind="opencode",
+        model="m",
+    )
+    author = participants.add(
+        conversation_id=conversation.id,
+        role="backend",
+        display_name="Backend",
+        cli_kind="opencode",
+        model="m",
+    )
+    with RoomDatabase(db).connect() as conn:
+        write_room_collaboration_policy_conn(
+            conn,
+            conversation_id=conversation.id,
+            mode="broadcast",
+            lead_participant_id=lead.participant_id,
+            updated_at="2026-01-01T00:00:00.000000Z",
+            review_policy="cross_family",
+        )
+        conn.commit()
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation.id,
+        human_id="human",
+        content="kickoff",
+        client_request_id="kickoff",
+    )
+    return db, conversation.id, [lead, author]
+
+
+def test_tamper_stored_patch_bytes_fails_digest_and_changes_nothing(tmp_path: Path) -> None:
+    db, conversation_id, members = _operator_review_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead, author = members
+    lead_obs = _claim(db, conversation_id, lead, owner="h0")
+    author_obs = _claim(db, conversation_id, author, owner="h1")
+    proposed = store.propose_split(
+        **_lease_kwargs(lead, lead_obs, request_id="p1"),
+        modules=[
+            {
+                "module_id": "alpha",
+                "title": "Alpha",
+                "paths": ["src/alpha/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["ok"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"alpha": author.participant_id},
+        contracts=[],
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    reported = store.report_progress(
+        **_lease_kwargs(author, author_obs, request_id="done-1"),
+        module_id="alpha",
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    claimed = store.claim_next_board_verification(worker_id="w1", now=NOW)
+    assert claimed is not None
+    completed = store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="b" * 40,
+        patch_digest=DIGEST_A,
+        changed_paths=[],
+        gates=[],
+        evidence={},
+        patch_text="--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+        now=NOW + timedelta(seconds=30),
+    )
+    review_id = completed["review_id"]
+    material = store.review_material(conversation_id, review_id)
+    expected_digest = material["digest"]
+
+    # Tamper the stored patch bytes directly in SQLite
+    with RoomDatabase(db).connect() as conn:
+        conn.execute(
+            "update room_board_verifications set patch_text = 'tampered' where verification_id = ?",
+            (reported["verification_id"],),
+        )
+        conn.commit()
+
+    # Decision with the previously valid expected_digest must fail
+    with pytest.raises(ValueError, match="room_board_review_digest_mismatch"):
+        store.decide_review(
+            conversation_id=conversation_id,
+            review_id=review_id,
+            verdict="endorse",
+            summary="ok",
+            findings=[],
+            expected_digest=expected_digest,
+            operator_identity="operator:host",
+            now=NOW + timedelta(seconds=60),
+        )
+
+    # Review status must remain pending and change nothing
+    row = _review_row(db, review_id)
+    assert row["status"] == "pending"
+    assert row["verdict_json"] is None
+
+
+def test_finding_path_rejects_unicode_format_characters() -> None:
+    for bad in ("src/\u202etest.py", "src/\u200btest.py", "src/\ufefftest.py"):
+        with pytest.raises(ValueError, match="room_board_review_findings_invalid"):
+            normalize_review_findings([{"severity": "minor", "path": bad, "text": "issue"}])
+
+
+def test_stored_path_violating_rule_emitted_as_null_in_projection_detail_and_owner_view(
+    tmp_path: Path,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from xmuse.chat_api import create_app
+    from xmuse_core.chat.room_board_projection import build_board_projection
+
+    db, conversation_id, members = _mixed_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead, author, _, _ = members
+    lead_obs = _claim(db, conversation_id, lead, owner="h0")
+    author_obs = _claim(db, conversation_id, author, owner="h1")
+    proposed = store.propose_split(
+        **_lease_kwargs(lead, lead_obs, request_id="p1"),
+        modules=[
+            {
+                "module_id": "alpha",
+                "title": "Alpha",
+                "paths": ["src/alpha/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["ok"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"alpha": author.participant_id},
+        contracts=[],
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    reported = store.report_progress(
+        **_lease_kwargs(author, author_obs, request_id="done-1"),
+        module_id="alpha",
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    claimed = store.claim_next_board_verification(worker_id="w1", now=NOW)
+    assert claimed is not None
+    completed = store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="b" * 40,
+        patch_digest=DIGEST_A,
+        changed_paths=[],
+        gates=[],
+        evidence={},
+        patch_text="--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+        now=NOW + timedelta(seconds=30),
+    )
+    review_id = completed["review_id"]
+
+    # Directly insert a verdict with an invalid path (U+202E) into SQLite,
+    # bypassing input validation
+    invalid_path = "src/\u202einvalid.py"
+    verdict_payload = {
+        "verdict": "object",
+        "summary": "found issue",
+        "findings": [{"severity": "blocker", "path": invalid_path, "text": "bad"}],
+        "decided_via": "web",
+    }
+    with RoomDatabase(db).connect() as conn:
+        conn.execute(
+            """update room_board_reviews
+               set status = 'objected', verdict_json = ?, updated_at = ?
+               where review_id = ?""",
+            (json.dumps(verdict_payload), "2026-01-01T00:01:00.000000Z", review_id),
+        )
+        conn.execute(
+            """insert into room_activities
+               (activity_id, conversation_id, seq, activity_type, actor_kind,
+                actor_identity, causation_id, correlation_id, visibility, audience_json,
+                causal_depth, delivery_mode, payload_json, created_at)
+               values (?, ?, 999, 'board.review', 'operator',
+                       'operator:host', 'cause_1', 'corr_1', 'room', '[]',
+                       1, 'active', ?, '2026-01-01T00:01:00.000000Z')""",
+            (
+                "act_review_invalid_path",
+                conversation_id,
+                json.dumps(
+                    {
+                        "schema_version": "room_board_activity/v1",
+                        "review_id": review_id,
+                        "module_id": "alpha",
+                        "verification_id": reported["verification_id"],
+                        "verdict": "object",
+                        "summary": "found issue",
+                        "findings": [{"severity": "blocker", "path": invalid_path, "text": "bad"}],
+                        "decided_via": "web",
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+
+    # 1. Output filter in owner view
+    owner_view = store.owner_view(conversation_id, author.participant_id)
+    assert owner_view["my_modules"][0]["review"]["verdict"]["findings"][0]["path"] is None
+
+    # 2. Output filter in review detail route
+    detail = store.review_detail(conversation_id, review_id)
+    assert detail["findings"][0]["path"] is None
+
+    client = TestClient(create_app(tmp_path, auth_token="operator-secret"))
+    route_res = client.get(f"/api/chat/conversations/{conversation_id}/board/reviews/{review_id}")
+    assert route_res.status_code == 200
+    assert route_res.json()["findings"][0]["path"] is None
+
+    # 3. Output filter in projection event
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        proj = build_board_projection(conn, conversation_id, now=NOW)
+    rev_events = [e for e in proj["events"] if e["kind"] == "review"]
+    assert len(rev_events) == 1
+    assert rev_events[0]["data"]["findings"][0]["path"] is None
+
+
+def test_board_decide_review_without_expected_digest_fails(tmp_path: Path) -> None:
+    from xmuse_core.chat.room_errors import RoomApplicationError
+
+    db, conversation_id, members = _operator_review_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead, author = members
+    lead_obs = _claim(db, conversation_id, lead, owner="h0")
+    author_obs = _claim(db, conversation_id, author, owner="h1")
+    proposed = store.propose_split(
+        **_lease_kwargs(lead, lead_obs, request_id="p1"),
+        modules=[
+            {
+                "module_id": "alpha",
+                "title": "Alpha",
+                "paths": ["src/alpha/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["ok"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"alpha": author.participant_id},
+        contracts=[],
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    reported = store.report_progress(
+        **_lease_kwargs(author, author_obs, request_id="done-1"),
+        module_id="alpha",
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    claimed = store.claim_next_board_verification(worker_id="w1", now=NOW)
+    assert claimed is not None
+    completed = store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="b" * 40,
+        patch_digest=DIGEST_A,
+        changed_paths=[],
+        gates=[],
+        evidence={},
+        patch_text="--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+        now=NOW + timedelta(seconds=30),
+    )
+    review_id = completed["review_id"]
+
+    service = RoomApplicationService(db, tmp_path / "god_sessions.json")
+    with pytest.raises(RoomApplicationError) as exc_info:
+        service.board_decide_review(
+            conversation_id=conversation_id,
+            review_id=review_id,
+            verdict="endorse",
+            summary="ok",
+            findings=[],
+            expected_digest=None,
+            operator_identity="operator:host",
+        )
+    assert exc_info.value.code == "room_board_review_digest_mismatch"
+
+
+def test_room_setup_replay_fingerprint_preserves_without_review_policy() -> None:
+    from xmuse_core.chat.room_setup import (
+        _CollaborationSpec,
+        _ParticipantSpec,
+        _request_fingerprint,
+    )
+
+    specs = [
+        _ParticipantSpec(
+            role="lead",
+            display_name="Lead",
+            cli_kind="opencode",
+            model="m",
+            role_template_id=None,
+            workspace_access="read_only",
+            persona_snapshot=None,
+        )
+    ]
+    collab_off = _CollaborationSpec(mode="broadcast", lead_index=0, review_policy="off")
+    fp_off = _request_fingerprint(
+        title="test-topic", roster_template_id=None, specs=specs, collaboration=collab_off
+    )
+
+    collab_xfam = _CollaborationSpec(mode="broadcast", lead_index=0, review_policy="cross_family")
+    fp_xfam = _request_fingerprint(
+        title="test-topic", roster_template_id=None, specs=specs, collaboration=collab_xfam
+    )
+
+    assert fp_off != fp_xfam
+
+
+def test_cancelled_observation_escalates_as_reviewer_unavailable(tmp_path: Path) -> None:
+    db, conversation_id, members = _mixed_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead, author, reviewer, _ = members
+    lead_obs = _claim(db, conversation_id, lead, owner="h0")
+    author_obs = _claim(db, conversation_id, author, owner="h1")
+    proposed = store.propose_split(
+        **_lease_kwargs(lead, lead_obs, request_id="p1"),
+        modules=[
+            {
+                "module_id": "alpha",
+                "title": "Alpha",
+                "paths": ["src/alpha/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["ok"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"alpha": author.participant_id},
+        contracts=[],
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    reported = store.report_progress(
+        **_lease_kwargs(author, author_obs, request_id="done-1"),
+        module_id="alpha",
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    claimed = store.claim_next_board_verification(worker_id="w1", now=NOW)
+    assert claimed is not None
+    completed = store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="b" * 40,
+        patch_digest=DIGEST_A,
+        changed_paths=[],
+        gates=[],
+        evidence={},
+        patch_text="--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+        now=NOW + timedelta(seconds=30),
+    )
+    review_id = completed["review_id"]
+    rev_row = _review_row(db, review_id)
+    assert rev_row["status"] == "pending"
+    assert rev_row["reviewer_kind"] == "participant"
+    req_act_id = rev_row["request_activity_id"]
+
+    with RoomDatabase(db).connect() as conn:
+        conn.execute(
+            """update room_observations set control_state = 'cancelled'
+               where activity_id = ? and participant_id = ?""",
+            (req_act_id, reviewer.participant_id),
+        )
+        conn.commit()
+
+    escalated = store.escalate_stale_reviews(now=NOW + timedelta(seconds=60), response_seconds=3600)
+    assert len(escalated) == 1
+    assert escalated[0]["review_id"] == review_id
+    assert escalated[0]["reason_code"] == "board_review_reviewer_unavailable"
+
+    updated_row = _review_row(db, review_id)
+    assert updated_row["reviewer_kind"] == "operator"
+    esc_data = json.loads(str(updated_row["escalation_json"]))
+    assert esc_data["reason_code"] == "board_review_reviewer_unavailable"
+
+
+def test_revision_changes_after_escalate_stale_reviews(tmp_path: Path) -> None:
+    from xmuse_core.chat.room_board_projection import build_board_projection
+
+    db, conversation_id, members = _mixed_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead, author, reviewer, _ = members
+    lead_obs = _claim(db, conversation_id, lead, owner="h0")
+    author_obs = _claim(db, conversation_id, author, owner="h1")
+    proposed = store.propose_split(
+        **_lease_kwargs(lead, lead_obs, request_id="p1"),
+        modules=[
+            {
+                "module_id": "alpha",
+                "title": "Alpha",
+                "paths": ["src/alpha/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["ok"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"alpha": author.participant_id},
+        contracts=[],
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    reported = store.report_progress(
+        **_lease_kwargs(author, author_obs, request_id="done-1"),
+        module_id="alpha",
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    claimed = store.claim_next_board_verification(worker_id="w1", now=NOW)
+    assert claimed is not None
+    completed = store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="b" * 40,
+        patch_digest=DIGEST_A,
+        changed_paths=[],
+        gates=[],
+        evidence={},
+        patch_text="--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n",
+        now=NOW + timedelta(seconds=30),
+    )
+    review_id = completed["review_id"]
+    rev_row = _review_row(db, review_id)
+    req_act_id = rev_row["request_activity_id"]
+
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        proj_before = build_board_projection(conn, conversation_id, now=NOW)
+    revision_before = proj_before["revision"]
+
+    with RoomDatabase(db).connect() as conn:
+        conn.execute(
+            """update room_observations set status = 'completed'
+               where activity_id = ? and participant_id = ?""",
+            (req_act_id, reviewer.participant_id),
+        )
+        conn.commit()
+
+    store.escalate_stale_reviews(now=NOW + timedelta(seconds=60), response_seconds=3600)
+
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        proj_after = build_board_projection(conn, conversation_id, now=NOW)
+    revision_after = proj_after["revision"]
+
+    assert revision_before != revision_after

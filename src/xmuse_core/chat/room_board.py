@@ -13,7 +13,6 @@ import fnmatch
 import json
 import re
 import sqlite3
-import unicodedata
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -27,12 +26,15 @@ from xmuse_core.chat.room_board_projection import (
     MAX_CONSECUTIVE_FAILURES,
     ProgressFact,
     VerificationFact,
+    agent_text,
     build_board_projection,
     build_contract_detail,
     compute_counters,
     derive_lifecycle,
     derive_state,
     derive_verification_axis,
+    is_valid_finding_path,
+    review_digest,
     split_digest,
 )
 from xmuse_core.chat.room_collaboration import (
@@ -378,28 +380,15 @@ def normalize_review_path(value: Any) -> str | None:
 
     A present path is a repository-relative POSIX path: at most 512
     characters, no leading ``/``, no drive letter, no backslash, no ``.`` or
-    ``..`` segment, no control characters. A violation rejects the whole
-    verdict, never truncates.
+    ``..`` segment, no control characters and no Unicode format characters (Cf).
+    A violation rejects the whole verdict, never truncates.
     """
 
     if value is None:
         return None
-    if not isinstance(value, str) or not value.strip():
+    if not is_valid_finding_path(value):
         raise ValueError("room_board_review_findings_invalid")
-    path = value.strip()
-    if (
-        len(path) > MAX_REVIEW_FINDING_PATH_CHARS
-        or path.startswith("/")
-        or "\\" in path
-        or _REVIEW_DRIVE_RE.match(path) is not None
-        or any(part in {"", ".", ".."} for part in path.split("/"))
-        or any(
-            ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or unicodedata.category(char) == "Cf"
-            for char in path
-        )
-    ):
-        raise ValueError("room_board_review_findings_invalid")
-    return path
+    return value
 
 
 def normalize_review_findings(value: Any) -> list[dict[str, Any]]:
@@ -449,40 +438,6 @@ def normalize_review_verdict(verdict: Any, findings: Sequence[dict[str, Any]]) -
             "room_board_review_findings_invalid: object requires a blocker_or_major finding"
         )
     return str(verdict)
-
-
-def review_digest(
-    *,
-    review_id: str,
-    verification_id: str,
-    head_commit: str | None,
-    patch_text: str | None,
-) -> str:
-    """Return the ``Review.digest`` decision guard for one review.
-
-    ``"sha256:" + hex(SHA-256(canonical JSON of {review_id, verification_id,
-    head_commit, patch_sha256}))`` where ``patch_sha256`` is the hex SHA-256 of
-    the reviewed module's own stored patch bytes. ``patch_sha256`` takes part
-    in the digest only and never leaves the server. Because the material route
-    returns the same digest, a decision guarded by ``expected_digest`` proves
-    the decider ruled on exactly the bytes they were shown.
-    """
-
-    head = head_commit if isinstance(head_commit, str) else None
-    patch = patch_text if isinstance(patch_text, str) else ""
-    patch_sha256 = sha256(patch.encode("utf-8")).hexdigest()
-    canonical = json.dumps(
-        {
-            "head_commit": head,
-            "patch_sha256": patch_sha256,
-            "review_id": review_id,
-            "verification_id": verification_id,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
 # Bidirectional controls a reviewer must see rather than be steered by.
@@ -2752,6 +2707,20 @@ class RoomBoardStore:
         stats: dict[str, dict[str, Any]] = {}
         for module_id, items in by_module.items():
             latest = items[-1]
+            verdict_data = _decode(str(latest["verdict_json"])) if latest["verdict_json"] else None
+            if isinstance(verdict_data, dict):
+                raw_findings = verdict_data.get("findings")
+                if isinstance(raw_findings, list):
+                    sanitized_findings = []
+                    for item in raw_findings:
+                        if isinstance(item, dict):
+                            item_copy = dict(item)
+                            raw_p = item_copy.get("path")
+                            item_copy["path"] = raw_p if is_valid_finding_path(raw_p) else None
+                            sanitized_findings.append(item_copy)
+                        else:
+                            sanitized_findings.append(item)
+                    verdict_data["findings"] = sanitized_findings
             stats[module_id] = {
                 "status": str(latest["status"]),
                 "review_id": str(latest["review_id"]),
@@ -2759,9 +2728,7 @@ class RoomBoardStore:
                 "reviewer_kind": str(latest["reviewer_kind"]),
                 "reviewer_participant_id": latest["reviewer_participant_id"],
                 "reviewer_family": latest["reviewer_family"],
-                "verdict": (
-                    _decode(str(latest["verdict_json"])) if latest["verdict_json"] else None
-                ),
+                "verdict": verdict_data,
                 "reviews_endorsed": sum(1 for item in items if str(item["status"]) == "endorsed"),
                 "reviews_objected": sum(1 for item in items if str(item["status"]) == "objected"),
             }
@@ -3873,9 +3840,10 @@ class RoomBoardStore:
             )
             text, bytes_total, truncated, hidden_char_count = _material_patch_parts(raw_patch)
             return {
+                "schema_version": "room_board_review_material/v1",
                 "review_id": review_id,
                 "verification_id": str(stored["verification_id"]),
-                "head_commit": head_commit,
+                "head_commit": head_commit or "",
                 "digest": digest,
                 "patch": {
                     "text": text,
@@ -4067,14 +4035,41 @@ class RoomBoardStore:
             )
 
             verdict_data = _decode(str(row["verdict_json"])) if row["verdict_json"] else None
-            summary = verdict_data.get("summary") if verdict_data else None
-            findings = verdict_data.get("findings", []) if verdict_data else []
+            raw_summary = verdict_data.get("summary") if verdict_data else None
+            summary = agent_text(raw_summary, max_chars=4000) if raw_summary is not None else None
+            findings_raw = verdict_data.get("findings", []) if verdict_data else []
 
             findings_count = {
-                "blocker": sum(1 for item in findings if item.get("severity") == "blocker"),
-                "major": sum(1 for item in findings if item.get("severity") == "major"),
-                "minor": sum(1 for item in findings if item.get("severity") == "minor"),
+                "blocker": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "blocker"
+                ),
+                "major": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "major"
+                ),
+                "minor": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "minor"
+                ),
             }
+
+            clean_findings: list[dict[str, Any]] = []
+            if isinstance(findings_raw, list):
+                for item in findings_raw[:32]:
+                    if isinstance(item, dict):
+                        raw_p = item.get("path")
+                        p = raw_p if is_valid_finding_path(raw_p) else None
+                        clean_findings.append(
+                            {
+                                "severity": str(item.get("severity")),
+                                "path": p,
+                                "text": agent_text(item.get("text"), max_chars=1000),
+                            }
+                        )
 
             review_obj = {
                 "status": str(row["status"]),
@@ -4129,12 +4124,13 @@ class RoomBoardStore:
             )
 
             return {
+                "schema_version": "room_board_review/v1",
                 "conversation_id": conversation_id,
                 "module_id": str(row["module_id"]),
                 "review": review_obj,
-                "head_commit": head_commit,
+                "head_commit": head_commit or "",
                 "summary": summary,
-                "findings": findings,
+                "findings": clean_findings,
                 "rule_inputs": rule_inputs,
                 "created_at": str(row["created_at"]),
                 "decided_at": decided_at,
@@ -4160,7 +4156,10 @@ class RoomBoardStore:
                 for item in raw_gates:
                     if isinstance(item, dict):
                         gid = str(item.get("gate_id"))
-                        tail = output_tails.get(gid) if isinstance(output_tails, dict) else None
+                        raw_tail = output_tails.get(gid) if isinstance(output_tails, dict) else None
+                        tail = (
+                            agent_text(raw_tail, max_chars=2000) if raw_tail is not None else None
+                        )
                         clean_gates.append(
                             {
                                 "gate_id": gid,
@@ -4199,6 +4198,7 @@ class RoomBoardStore:
             reason_code = result.get("reason_code") if isinstance(result, dict) else None
 
             return {
+                "schema_version": "room_board_verification/v1",
                 "conversation_id": conversation_id,
                 "module_id": str(row["module_id"]),
                 "verification_id": verification_id,

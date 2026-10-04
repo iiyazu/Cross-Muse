@@ -80,17 +80,35 @@
         "at": "2026-01-01T00:00:40.000000Z",
         "data": {
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
+          "gate_ids": [],
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
+          "status": "passed",
           "verification_id": "boardverify_00000000000000000000000000000021"
         },
         "kind": "verification",
         "module_id": "alpha",
         "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:40.000000Z",
+        "data": {
+          "author_family": "opencode",
+          "escalated_from": null,
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": "codex",
+          "reviewer_kind": "participant",
+          "reviewer_participant_id": "part_00000000000000000000000000000002",
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
+        },
+        "kind": "review_requested",
+        "module_id": "alpha",
+        "seq": 7
       },
       {
         "actor": {
@@ -110,48 +128,21 @@
         },
         "kind": "progress",
         "module_id": "alpha",
-        "seq": 7
-      },
-      {
-        "actor": {
-          "kind": "infrastructure",
-          "participant_id": null
-        },
-        "at": "2026-01-01T00:01:40.000000Z",
-        "data": {
-          "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
-          "stacked": [],
-          "status": "failed",
-          "verification_id": "boardverify_00000000000000000000000000000028"
-        },
-        "kind": "verification",
-        "module_id": "alpha",
         "seq": 8
       }
     ],
     "has_more": false,
     "reset": false,
-    "revision": "8:738f4b25233d",
+    "revision": "8:229cdc2b9c54",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
-    "attention": [
-      {
-        "kind": "owner",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_failed",
-        "split_id": null
-      }
-    ],
+    "attention": [],
     "board_seq": 8,
     "capabilities": {
       "integrations": 0,
       "lessons": 0,
-      "reviews": 0,
+      "reviews": 1,
       "verification": 1
     },
     "contracts": [
@@ -255,17 +246,35 @@
         "at": "2026-01-01T00:00:40.000000Z",
         "data": {
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
+          "gate_ids": [],
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
+          "status": "passed",
           "verification_id": "boardverify_00000000000000000000000000000021"
         },
         "kind": "verification",
         "module_id": "alpha",
         "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:40.000000Z",
+        "data": {
+          "author_family": "opencode",
+          "escalated_from": null,
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": "codex",
+          "reviewer_kind": "participant",
+          "reviewer_participant_id": "part_00000000000000000000000000000002",
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
+        },
+        "kind": "review_requested",
+        "module_id": "alpha",
+        "seq": 7
       },
       {
         "actor": {
@@ -285,26 +294,6 @@
         },
         "kind": "progress",
         "module_id": "alpha",
-        "seq": 7
-      },
-      {
-        "actor": {
-          "kind": "infrastructure",
-          "participant_id": null
-        },
-        "at": "2026-01-01T00:01:40.000000Z",
-        "data": {
-          "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
-          "stacked": [],
-          "status": "failed",
-          "verification_id": "boardverify_00000000000000000000000000000028"
-        },
-        "kind": "verification",
-        "module_id": "alpha",
         "seq": 8
       }
     ],
@@ -313,18 +302,18 @@
       {
         "accepted": false,
         "attention": {
-          "kind": "owner",
-          "reason_code": "board_attention_verification_failed"
+          "kind": "none",
+          "reason_code": null
         },
         "charter_version": 1,
         "counters": {
           "done_reports": 2,
           "errored": 0,
-          "failed": 2,
-          "passed": 0,
+          "failed": 0,
+          "passed": 1,
           "reviews_endorsed": 0,
           "reviews_objected": 0,
-          "rework_rounds": 2,
+          "rework_rounds": 0,
           "superseded": 0
         },
         "depends": [],
@@ -358,24 +347,22 @@
           "updated_at": null,
           "verification_id": null
         },
-        "state": "verification_failed",
+        "state": "verifying",
         "title": {
           "text": "Alpha module",
           "truncated": false,
           "untrusted": true
         },
         "verification": {
-          "changed_path_count": 1,
+          "changed_path_count": 0,
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "reason_code": "board_verification_gate_failed",
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
-          "updated_at": "2026-01-01T00:01:40.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000028"
+          "status": "pending",
+          "updated_at": "2026-01-01T00:01:10.000000Z",
+          "verification_id": "boardverify_0000000000000000000000000000002a"
         }
       },
       {
@@ -459,22 +446,22 @@
       {
         "display_name": "Agent 1",
         "is_lead": false,
-        "model_family": "codex",
+        "model_family": "opencode",
         "participant_id": "part_00000000000000000000000000000003",
-        "provider_kind": "codex",
+        "provider_kind": "opencode",
         "role_preset": null
       },
       {
         "display_name": "Agent 2",
         "is_lead": false,
-        "model_family": "codex",
+        "model_family": "claude",
         "participant_id": "part_00000000000000000000000000000004",
-        "provider_kind": "codex",
+        "provider_kind": "claude",
         "role_preset": null
       }
     ],
-    "review_policy": "off",
-    "revision": "8:738f4b25233d",
+    "review_policy": "cross_family",
+    "revision": "8:229cdc2b9c54",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -554,20 +541,13 @@
   },
   "summary": {
     "accepted_total": 0,
-    "attention": [
-      {
-        "kind": "owner",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_failed",
-        "split_id": null
-      }
-    ],
-    "attention_total": 1,
+    "attention": [],
+    "attention_total": 0,
     "board_seq": 8,
     "capabilities": {
       "integrations": 0,
       "lessons": 0,
-      "reviews": 0,
+      "reviews": 1,
       "verification": 1
     },
     "conversation_id": "conv_00000000000000000000000000000001",
@@ -578,14 +558,14 @@
       "done_claimed": 0,
       "ready_for_review": 0,
       "verification_error": 0,
-      "verification_failed": 1,
+      "verification_failed": 0,
       "verified": 0,
-      "verifying": 0,
+      "verifying": 1,
       "waiting_for_provider": 0,
       "working": 0
     },
     "modules_total": 2,
-    "revision": "8:738f4b25233d",
+    "revision": "8:229cdc2b9c54",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

@@ -1,0 +1,13 @@
+{
+  "digest": "sha256:2df9fdc1871ddcd97c6d419b27d5e4f10c6dd82ade419d6c431f080d81fa0db5",
+  "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "patch": {
+    "bytes_total": 89,
+    "hidden_char_count": 3,
+    "text": "--- a/src/beta/b.py\n+++ b/src/beta/b.py\n@@ -1 +1 @@\n-old\n+beta <U+202E> reversed <U+001B>[31mred<U+001B>[0m\n",
+    "truncated": false
+  },
+  "review_id": "boardreview_0000000000000000000000000000002e",
+  "schema_version": "room_board_review_material/v1",
+  "verification_id": "boardverify_0000000000000000000000000000002a"
+}

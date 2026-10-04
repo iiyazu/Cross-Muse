@@ -80,12 +80,10 @@
         "at": "2026-01-01T00:00:40.000000Z",
         "data": {
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
+          "gate_ids": [],
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
+          "status": "passed",
           "verification_id": "boardverify_00000000000000000000000000000021"
         },
         "kind": "verification",
@@ -94,21 +92,21 @@
       },
       {
         "actor": {
-          "kind": "participant",
-          "participant_id": "part_00000000000000000000000000000003"
+          "kind": "infrastructure",
+          "participant_id": null
         },
-        "at": "2026-01-01T00:01:10.000000Z",
+        "at": "2026-01-01T00:00:40.000000Z",
         "data": {
-          "claims": [],
-          "claims_total": 0,
-          "status": "done",
-          "summary": {
-            "text": "finished",
-            "truncated": false,
-            "untrusted": true
-          }
+          "author_family": "opencode",
+          "escalated_from": null,
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": "codex",
+          "reviewer_kind": "participant",
+          "reviewer_participant_id": "part_00000000000000000000000000000002",
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         },
-        "kind": "progress",
+        "kind": "review_requested",
         "module_id": "alpha",
         "seq": 7
       },
@@ -117,33 +115,38 @@
           "kind": "infrastructure",
           "participant_id": null
         },
-        "at": "2026-01-01T00:01:40.000000Z",
+        "at": "2026-01-01T00:01:10.000000Z",
         "data": {
-          "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
-          "stacked": [],
-          "status": "failed",
-          "verification_id": "boardverify_00000000000000000000000000000028"
+          "author_family": "opencode",
+          "escalated_from": {
+            "at": "2026-01-01T00:01:10.000000Z",
+            "family": "codex",
+            "participant_id": "part_00000000000000000000000000000002",
+            "reason_code": "board_review_reviewer_no_verdict"
+          },
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": null,
+          "reviewer_kind": "operator",
+          "reviewer_participant_id": null,
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         },
-        "kind": "verification",
+        "kind": "review_requested",
         "module_id": "alpha",
         "seq": 8
       }
     ],
     "has_more": false,
     "reset": false,
-    "revision": "8:738f4b25233d",
+    "revision": "8:fd84f3d4d5d8",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
     "attention": [
       {
-        "kind": "owner",
+        "kind": "operator",
         "module_id": "alpha",
-        "reason_code": "board_attention_verification_failed",
+        "reason_code": "board_attention_review_operator_pending",
         "split_id": null
       }
     ],
@@ -151,7 +154,7 @@
     "capabilities": {
       "integrations": 0,
       "lessons": 0,
-      "reviews": 0,
+      "reviews": 1,
       "verification": 1
     },
     "contracts": [
@@ -255,12 +258,10 @@
         "at": "2026-01-01T00:00:40.000000Z",
         "data": {
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
+          "gate_ids": [],
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
+          "status": "passed",
           "verification_id": "boardverify_00000000000000000000000000000021"
         },
         "kind": "verification",
@@ -269,21 +270,21 @@
       },
       {
         "actor": {
-          "kind": "participant",
-          "participant_id": "part_00000000000000000000000000000003"
+          "kind": "infrastructure",
+          "participant_id": null
         },
-        "at": "2026-01-01T00:01:10.000000Z",
+        "at": "2026-01-01T00:00:40.000000Z",
         "data": {
-          "claims": [],
-          "claims_total": 0,
-          "status": "done",
-          "summary": {
-            "text": "finished",
-            "truncated": false,
-            "untrusted": true
-          }
+          "author_family": "opencode",
+          "escalated_from": null,
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": "codex",
+          "reviewer_kind": "participant",
+          "reviewer_participant_id": "part_00000000000000000000000000000002",
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         },
-        "kind": "progress",
+        "kind": "review_requested",
         "module_id": "alpha",
         "seq": 7
       },
@@ -292,18 +293,23 @@
           "kind": "infrastructure",
           "participant_id": null
         },
-        "at": "2026-01-01T00:01:40.000000Z",
+        "at": "2026-01-01T00:01:10.000000Z",
         "data": {
-          "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
-          "reason_code": "board_verification_gate_failed",
-          "stacked": [],
-          "status": "failed",
-          "verification_id": "boardverify_00000000000000000000000000000028"
+          "author_family": "opencode",
+          "escalated_from": {
+            "at": "2026-01-01T00:01:10.000000Z",
+            "family": "codex",
+            "participant_id": "part_00000000000000000000000000000002",
+            "reason_code": "board_review_reviewer_no_verdict"
+          },
+          "review_id": "boardreview_00000000000000000000000000000025",
+          "reviewer_family": null,
+          "reviewer_kind": "operator",
+          "reviewer_participant_id": null,
+          "rule_id": "cross_family/v1",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         },
-        "kind": "verification",
+        "kind": "review_requested",
         "module_id": "alpha",
         "seq": 8
       }
@@ -313,18 +319,18 @@
       {
         "accepted": false,
         "attention": {
-          "kind": "owner",
-          "reason_code": "board_attention_verification_failed"
+          "kind": "operator",
+          "reason_code": "board_attention_review_operator_pending"
         },
         "charter_version": 1,
         "counters": {
-          "done_reports": 2,
+          "done_reports": 1,
           "errored": 0,
-          "failed": 2,
-          "passed": 0,
+          "failed": 0,
+          "passed": 1,
           "reviews_endorsed": 0,
           "reviews_objected": 0,
-          "rework_rounds": 2,
+          "rework_rounds": 0,
           "superseded": 0
         },
         "depends": [],
@@ -339,26 +345,45 @@
         ],
         "report_to": "part_00000000000000000000000000000002",
         "review": {
-          "actions": {},
-          "author_family": null,
+          "actions": {
+            "decide": {
+              "allowed_verdicts": [
+                "endorse",
+                "object"
+              ],
+              "available": true,
+              "expected_digest": "sha256:5e0c94cf9a68129debe94b77fcdb730cdbf53f6a419a0b6a5916a7d7536f00e2",
+              "href": "/api/chat/operator/board-reviews/boardreview_00000000000000000000000000000025/decision",
+              "method": "POST"
+            },
+            "material": {
+              "available": true
+            }
+          },
+          "author_family": "opencode",
           "decided_via": null,
-          "digest": null,
-          "escalated_from": null,
+          "digest": "sha256:5e0c94cf9a68129debe94b77fcdb730cdbf53f6a419a0b6a5916a7d7536f00e2",
+          "escalated_from": {
+            "at": "2026-01-01T00:01:10.000000Z",
+            "family": "codex",
+            "participant_id": "part_00000000000000000000000000000002",
+            "reason_code": "board_review_reviewer_no_verdict"
+          },
           "findings_count": {
             "blocker": 0,
             "major": 0,
             "minor": 0
           },
-          "review_id": null,
+          "review_id": "boardreview_00000000000000000000000000000025",
           "reviewer_family": null,
-          "reviewer_kind": null,
+          "reviewer_kind": "operator",
           "reviewer_participant_id": null,
-          "rule_id": null,
-          "status": "none",
-          "updated_at": null,
-          "verification_id": null
+          "rule_id": "cross_family/v1",
+          "status": "pending",
+          "updated_at": "2026-01-01T00:01:10.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         },
-        "state": "verification_failed",
+        "state": "verified",
         "title": {
           "text": "Alpha module",
           "truncated": false,
@@ -367,15 +392,13 @@
         "verification": {
           "changed_path_count": 1,
           "escalated": false,
-          "gate_ids": [
-            "patch_diff_check"
-          ],
+          "gate_ids": [],
           "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "reason_code": "board_verification_gate_failed",
+          "reason_code": null,
           "stacked": [],
-          "status": "failed",
-          "updated_at": "2026-01-01T00:01:40.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000028"
+          "status": "passed",
+          "updated_at": "2026-01-01T00:00:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000021"
         }
       },
       {
@@ -459,22 +482,22 @@
       {
         "display_name": "Agent 1",
         "is_lead": false,
-        "model_family": "codex",
+        "model_family": "opencode",
         "participant_id": "part_00000000000000000000000000000003",
-        "provider_kind": "codex",
+        "provider_kind": "opencode",
         "role_preset": null
       },
       {
         "display_name": "Agent 2",
         "is_lead": false,
-        "model_family": "codex",
+        "model_family": "claude",
         "participant_id": "part_00000000000000000000000000000004",
-        "provider_kind": "codex",
+        "provider_kind": "claude",
         "role_preset": null
       }
     ],
-    "review_policy": "off",
-    "revision": "8:738f4b25233d",
+    "review_policy": "cross_family",
+    "revision": "8:fd84f3d4d5d8",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -556,9 +579,9 @@
     "accepted_total": 0,
     "attention": [
       {
-        "kind": "owner",
+        "kind": "operator",
         "module_id": "alpha",
-        "reason_code": "board_attention_verification_failed",
+        "reason_code": "board_attention_review_operator_pending",
         "split_id": null
       }
     ],
@@ -567,7 +590,7 @@
     "capabilities": {
       "integrations": 0,
       "lessons": 0,
-      "reviews": 0,
+      "reviews": 1,
       "verification": 1
     },
     "conversation_id": "conv_00000000000000000000000000000001",
@@ -578,14 +601,14 @@
       "done_claimed": 0,
       "ready_for_review": 0,
       "verification_error": 0,
-      "verification_failed": 1,
-      "verified": 0,
+      "verification_failed": 0,
+      "verified": 1,
       "verifying": 0,
       "waiting_for_provider": 0,
       "working": 0
     },
     "modules_total": 2,
-    "revision": "8:738f4b25233d",
+    "revision": "8:fd84f3d4d5d8",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }
