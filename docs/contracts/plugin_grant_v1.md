@@ -80,7 +80,21 @@ plugin_grant_unknown` for an unknown id **or an id of another conversation** (T2
 
 ## 4. Plugin routes (no operator token)
 
-All plugin routes sit behind the existing loopback `Host` guard (T9).
+All plugin routes sit behind the existing loopback `Host` guard (T9). The `Host` guard only stops
+DNS rebinding; any web page can still send a cross-origin request straight to `127.0.0.1`, where
+`Host` is already a loopback name. So every `/api/chat/plugin/*` route also:
+
+- refuses a request that carries an `Origin` header with `403 plugin_origin_forbidden`. Host
+  plugins and the CLI send none (the Claude mod's `$.http.fetch` was observed to send none,
+  `User-Agent: Bun/…`), whereas a browser always adds `Origin` to a cross-origin POST (T9, T15);
+- requires `Content-Type: application/json` (else `415 plugin_content_type_invalid`), so a page
+  cannot use a "simple" `text/plain` request that skips the CORS preflight;
+- answers `401 plugin_grant_invalid` unless it carries a well-formed `Authorization: Bearer`
+  header (exchange excepted, §4.1). The operator header `X-XMuse-Operator-Token` is not read on
+  these routes, so a request can never be authenticated two ways and `decided_via` always comes
+  from the grant (T1, T12).
+
+Error `message` strings never echo any part of the request body or headers (T7, T14).
 
 ### 4.1 Exchange — `POST /api/chat/plugin/grants/exchange`
 
@@ -94,9 +108,11 @@ Body `{pairing_code, host}`. On success `200`:
 
 The code is consumed by a successful exchange. `host` must equal the grant's `host`.
 Failure is always `401 plugin_pairing_invalid` — wrong, expired, already used and wrong-host are
-indistinguishable (T8, T15). Limits (T15): at most 5 failed attempts per pairing code (the 5th
-invalidates it); at most 10 failed exchanges per rolling minute across the server, after which
-`429 plugin_pairing_locked` (with `Retry-After`) for 60 s.
+indistinguishable (T8, T15). Limits (T15): at most 10 failed exchanges per rolling minute across
+the server, after which `429 plugin_pairing_locked` (with `Retry-After`) for 60 s. The server
+cannot tell which code a failed request was guessing, so there is no per-code counter; 40 bits,
+120 s and 10 guesses a minute keep a brute-force success near 2^-36. One more rule: a **correct
+code with the wrong `host`** consumes the code at once (someone else already has it).
 
 ### 4.2 Decide a split — `POST /api/chat/plugin/board-splits/{split_id}/decision`
 
@@ -106,19 +122,27 @@ room_board_split_digest_mismatch`), a body that names `decided_via` or any other
 (`422 plugin_grant_request_invalid`): provenance comes from the grant (T3, T12).
 
 Checks, in order:
-1. Bearer present and well-formed, the grant exists, is `active`, and `conversation_id` equals
-   the grant's: else `401 plugin_grant_invalid` — one code for unknown, expired, revoked and
-   malformed, so the response never reveals which (T8). Each failed bearer for a known
-   `grant_id` increments `failed_attempts`; the 5th revokes the grant (T8).
+1. Bearer present and well-formed, the grant exists, is `active`, the server clock is sane, the
+   grant was issued under the current operator token, and `conversation_id` equals the grant's:
+   else `401 plugin_grant_invalid` — one code for unknown, expired, revoked, clock-rolled-back,
+   token-rotated and malformed, so the response never reveals which (T8). Each failed bearer for a
+   known `grant_id` increments `failed_attempts`; the 5th revokes the grant (T8). A grant is
+   treated as invalid when `now < activated_at - 5 s` (pending: `created_at`) or
+   `now < last_used_at`: a clock moved backwards never extends a grant (T4). The grant stores a
+   keyed fingerprint of the operator token it was issued under (`HMAC-SHA256(operator_token,
+   "plugin-grant/v1")`, never exposed); rotating `XMUSE_OPERATOR_TOKEN` invalidates every grant
+   (T5).
 2. Body shape (`422 plugin_grant_request_invalid`).
 3. The split exists **in the grant's conversation** (`404 room_board_split_unknown`, also for a
    split of another conversation — T2).
 4. Same decision rules as the operator route (`proposed` status, digest). An already decided
-   split answers `409` (T3).
+   split answers `409 room_board_split_decided` (T3).
 
 On success the decision is recorded exactly as the operator route records it, with
-`decided_via: "plugin:<host>"` taken from the grant and `grant_id` added to the decision events
-(§6); `last_used_at` and `use_count` are updated. The response is the operator decision response.
+`decided_via: "plugin:<host>"` taken from the grant, `operator_identity: "plugin-grant:<grant_id>"`
+in the split's audit row (the Web route records `operator:local`), and `grant_id` added to the
+decision events (§6); `last_used_at` and `use_count` are updated. The response is the operator
+decision response.
 
 ### 4.3 Self-revoke — `POST /api/chat/plugin/grants/revoke`
 
@@ -154,17 +178,29 @@ review work (#431) to merge and is made by the backend session.
   as tools or commands (T6). Confirmation shows structured fields only; agent-authored text is
   labelled untrusted and kept away from the confirm control (T11).
 - A plugin never calls §3, the review routes or any other operator route.
+- A plugin that loses the connection before it sees the success response may retry and receive
+  `409 room_board_split_decided`. It treats that as "already decided": it refetches the board
+  and shows the real outcome, never an error.
+- Residual risk, accepted: `grant_id` is public (it appears in decision events, which any local
+  process can read over loopback), so a local process can send five bad bearers and revoke a
+  grant. That fails closed (no privilege is gained); recovery is to issue a new grant.
+- Archiving or deleting a room does not exist yet; when it is introduced it revokes every grant
+  of that room in the same transaction.
 
 ## 8. Reason-code registry (additions)
 
 `plugin_grant_request_invalid`, `plugin_grant_scope_invalid`, `plugin_grant_host_invalid`,
 `plugin_grant_unknown`, `plugin_grant_invalid`, `plugin_pairing_invalid`,
-`plugin_pairing_locked`; reused: `room_conversation_unknown`, `room_board_split_unknown`,
+`plugin_pairing_locked`, `plugin_origin_forbidden` (403), `plugin_content_type_invalid` (415);
+reused: `room_conversation_unknown`, `room_board_split_unknown`, `room_board_split_decided` (409),
 `room_board_split_digest_mismatch`, `room_host_invalid`.
 
 ## 9. Test obligations
 
-One test per threat row T1–T15 in the threat model (names in the test ids), plus: secret and
+One test per threat row T1–T15 in the threat model (names in the test ids); T1 in both directions
+(a grant never authenticates an operator route, an operator header never authenticates a plugin
+route); T4 includes a clock moved backwards and a rotated operator token; T9/T15 include a request
+with an `Origin` header and a `text/plain` body, both refused before anything else runs. Plus: secret and
 pairing code absent from logs; a grant never authenticates an operator route; exchange of a used,
 expired, wrong-host and brute-forced code; five bad bearers revoke; issuing a second grant revokes
 the first; a plugin-recorded decision shows `decided_via: "plugin:claude-code"` and the
@@ -172,4 +208,6 @@ the first; a plugin-recorded decision shows `decided_via: "plugin:claude-code"` 
 
 ## 10. Changelog
 
-- 2026-10-05 — v1 draft.
+- 2026-10-05 — v1 draft; backend review applied: `Origin` refusal and JSON-only on plugin routes,
+  no per-code counter, wrong-host consumes the code, clock and operator-token checks, Bearer-only
+  plugin routes, `plugin-grant:<grant_id>` audit identity, retry rule, residual risks.
