@@ -41,14 +41,17 @@ Exactly two values leave the server in a narrower form, each through one route o
 
 1. **Gate output tails** (from `evidence.output_tails`) leave as `AgentText` through the
    verification detail route (§5.2), never through the projection, summary, events or stream.
-   The host scrubs them at the source before storing: sandbox mounts become repository-relative
-   paths or placeholders (`<python>`, `<site-packages>`, `<tools>`, `<git>`), the stage root is
-   removed, and any remaining home, drive or temp path becomes `<host-path>`.
+   The host scrubs them at the source before storing: the stage root is removed, the repository
+   mount becomes repository-relative paths, toolchain mounts become placeholders (`<python>`,
+   `<site-packages>`, `<tools>`, `<git>`), and **every other absolute path** (Unix, including
+   sandbox system paths such as `/usr/lib/…` or `/etc/…`, and Windows drive paths) becomes
+   `<host-path>`. URLs are left alone.
 2. **The patch under operator review** leaves through the review material route (§8.2) and
    nowhere else: only for a review with `reviewer_kind == "operator"`, only with the operator
-   token, only through the Web server proxy. It is the stored patch text of the verification
-   being reviewed (content-addressed by `head_commit`), not a re-read of the owner branch.
-   Plugins, the CLI and the Claude Code mod never call it, and no plugin grant covers it.
+   token, only through the Web server proxy. It is the reviewed module's own stored patch text
+   from that verification (bound by `Review.digest`, §3.10), not a re-read of the owner branch
+   and not the patches of stacked modules. Plugins, the CLI and the Claude Code mod never call
+   it, and no plugin grant covers it.
 
 The path scan whitelists the material route's `patch.text` field and nothing else.
 
@@ -275,9 +278,10 @@ projections with equal `revision` are equal. `GET .../board` and `GET .../board/
 
 ### 3.10 `Review`, `review_policy` and escalation
 
-`review_policy` is set when the room is created and is `off` unless the setup asks for
-`cross_family`. With `off`, no review is ever opened and `Module.review.status` is always
-`none`. With `cross_family`, the same transaction that records a `passed` verification opens a
+`review_policy` is set when the room is created, is `off` unless the setup asks for
+`cross_family`, and never changes afterwards. With `off`, no review is ever opened and
+`Module.review.status` is always `none`. Clients decide behaviour from
+`capabilities.reviews` only; `review_policy` is for display. With `cross_family`, the same transaction that records a `passed` verification opens a
 review whose reviewer is assigned by rule `cross_family/v1`: an active agent of a different
 `model_family` than the module's owner (the author), preferring the module's previous
 reviewer, then the fewest pending reviews, then the lowest `participant_id`. With no such
@@ -289,7 +293,7 @@ its reviewer. The rule's inputs are stored with the review (§5.1 `rule_inputs`)
   "status": "none",               // none | pending | endorsed | objected
   "review_id": null,
   "verification_id": null,        // the passed verification under review
-  "digest": null,                 // canonical digest of {review_id, verification_id, head_commit}; the decision guard
+  "digest": null,                 // "sha256:<64 hex>", see below; the decision guard
   "rule_id": null,                // "cross_family/v1"
   "author_family": null,
   "reviewer_kind": null,          // participant | operator
@@ -304,17 +308,34 @@ its reviewer. The rule's inputs are stored with the review (§5.1 `rule_inputs`)
 ```
 
 `Module.review` is the review of the module's **current** verification (`verification.
-verification_id`): when that verification has no review (not passed, reviews off, or opened
-before reviews were on), every field is the `none` value above. Older reviews, including
-`superseded` ones, are reachable only through events and §5.1.
+verification_id`): when that verification has no review (not passed, or reviews off), every
+field is the `none` value above. Older reviews, including `superseded` ones, are reachable
+only through events and §5.1.
+
+**What a review covers.** A verification may stack upstream modules' verified patches
+(`Verification.stacked`) so the whole-repository gates can run; each module's own patch is
+stored separately. A review covers **only the reviewed module's own patch**: that is what the
+reviewer reads (the participant through `chat_room_board_read`, the operator through §8.2) and
+what an endorsement vouches for. A stacked module's code is vouched for by that module's own
+review; it is never accepted through a dependent's review.
+
+**`digest`** = `"sha256:" + hex(SHA-256(canonical JSON of {review_id, verification_id,
+head_commit, patch_sha256}))`, where `patch_sha256` is the SHA-256 of the reviewed module's
+own stored patch bytes. `patch_sha256` takes part in the digest only and never leaves the
+server. Because the material route returns the same `digest`, an operator decision guarded by
+`expected_digest` proves the human decided on exactly the bytes they were shown.
 
 `Escalation` = `{ "participant_id": "…", "family": "…", "reason_code": "board_review_reviewer_*",
-"at": "…" }`. The host moves a pending participant review to the operator when the reviewer is
-no longer active or its delivery of the request exhausted its attempts
+"at": "…" }`. A host background loop moves a pending participant review to the operator when
+the reviewer is no longer active or its delivery of the request exhausted its attempts
 (`board_review_reviewer_unavailable`), when the reviewer's turn ended without a verdict
 (`board_review_reviewer_no_verdict`), or when no verdict arrived within the response window
-(`board_review_reviewer_unresponsive`). The `review_id` and `digest` stay; a new
-`review_requested` event carries `escalated_from`; the former reviewer can no longer decide.
+(`board_review_reviewer_unresponsive`; default 3600 seconds from the request, set by the
+server environment variable `XMUSE_BOARD_REVIEW_RESPONSE_SECONDS`). The `review_id` and
+`digest` stay; the former reviewer can no longer decide. Escalation always writes a
+`board.review_requested` activity (event `review_requested` with `escalated_from`, actor
+`infrastructure`, audience the room lead or `report_to`, waking nobody), so `board_seq` and
+`revision` change even though a timer triggered it.
 
 `actions` (operator reviews only, Web only — §8.1, §8.2):
 
@@ -333,6 +354,14 @@ neither descriptor.
 `Finding` = `{ "severity": "blocker|major|minor", "path": "src/x.py" /* repository-relative or
 null */, "text": AgentText }`. An `object` verdict carries at least one `blocker` or `major`
 finding. A reviewer's `object` wakes the owner; `endorse` wakes nobody.
+
+**Verdict limits** (enforced identically for the Room MCP tool and the operator route, §8.1):
+`summary` is required for both verdicts, 1–4000 characters after trimming; at most 32
+findings; each finding `text` 1–1000 characters; `path` is `null` or a repository-relative
+path of at most 512 characters with `/` separators — no leading `/`, no drive letter, no
+backslash, no `.` or `..` segment, no control characters. A violation is rejected whole
+(`room_board_review_summary_invalid` or `room_board_review_findings_invalid`); nothing is
+truncated on input. On output `path` is guaranteed to satisfy the same rule.
 
 ## 4. State model
 
@@ -421,7 +450,8 @@ non-`http(s)` links first. `content` never appears in a status line, toast or no
 ### 5.1 Review detail
 
 `GET /api/chat/conversations/{conversation_id}/board/reviews/{review_id}`
-(404 `room_board_review_unknown`)
+(404 `room_board_review_unknown`, also when the review exists but belongs to another
+conversation: detail routes never reveal whether an id exists elsewhere)
 
 ```jsonc
 {
@@ -448,7 +478,7 @@ non-`http(s)` links first. `content` never appears in a status line, toast or no
 ### 5.2 Verification detail
 
 `GET /api/chat/conversations/{conversation_id}/board/verifications/{verification_id}`
-(404 `room_board_verification_unknown`)
+(404 `room_board_verification_unknown`, also for a verification of another conversation)
 
 ```jsonc
 {
@@ -564,21 +594,31 @@ belong to Room agents and to the human in the Web.
 
 An operator review is decided **only in the Web**:
 `POST /api/chat/operator/board-reviews/{review_id}/decision` with exactly
-`{conversation_id, verdict: "endorse"|"object", expected_digest, summary, findings, decided_via?}`.
-`expected_digest` is required and must equal `Review.digest` (else `409
-room_board_review_digest_mismatch`, nothing decided); `decided_via` may only be `web` (else
-`422 room_board_decided_via_invalid`) — this route's set differs from the split route's on
-purpose. The review must be pending with `reviewer_kind == "operator"` (else `409
-room_board_review_not_pending`). `endorse` is refused with `409
-room_board_review_material_incomplete` when the material (§8.2) is truncated: a human does not
-endorse what they could not read; `object` stays allowed. `object` needs a `blocker` or `major` finding (`422
-room_board_review_findings_invalid`). The P3 plugin grant never covers this route.
+`{conversation_id, verdict: "endorse"|"object", expected_digest, summary, findings, decided_via?}`
+and no other key (`422 room_board_review_request_invalid`). Checks, in order:
+
+1. Body at most 64 KiB (`413 room_board_review_request_too_large`); shape and the verdict
+   limits of §3.10 (`422 room_board_review_request_invalid`,
+   `room_board_review_summary_invalid`, `room_board_review_findings_invalid`); `object` needs a
+   `blocker` or `major` finding (`422 room_board_review_findings_invalid`).
+2. `decided_via` may only be `web` (`422 room_board_decided_via_invalid`) — this route's set
+   differs from the split route's on purpose.
+3. The review exists **in `conversation_id`** (`404 room_board_review_unknown` otherwise,
+   including a review of another conversation).
+4. It is pending with `reviewer_kind == "operator"` (`409 room_board_review_not_pending`).
+5. `expected_digest` is required and equals `Review.digest` (`409
+   room_board_review_digest_mismatch`).
+6. `endorse` is refused with `409 room_board_review_material_incomplete` when the material
+   (§8.2) is truncated: a human does not endorse what they could not read; `object` stays
+   allowed.
+
+Nothing is decided when any check fails. The P3 plugin grant never covers this route.
 
 ### 8.2 Review material — the one patch route
 
-`GET /api/chat/operator/board-reviews/{review_id}/material` (operator token; 404
-`room_board_review_unknown`; 409 `room_board_review_not_operator` unless `reviewer_kind ==
-"operator"`)
+`GET /api/chat/operator/board-reviews/{review_id}/material?conversation_id=…` (operator
+token; 404 `room_board_review_unknown`, also for a review of another conversation; 409
+`room_board_review_not_operator` unless `reviewer_kind == "operator"`)
 
 ```jsonc
 {
@@ -589,9 +629,12 @@ room_board_review_findings_invalid`). The P3 plugin grant never covers this rout
 }
 ```
 
-- `patch.text` is the stored patch text of that verification (the bytes the gates ran on),
-  not the owner branch as it is now. Exported patches are at most 200 KiB; `text` is cut at
-  256 KiB after marking, and `truncated` says so.
+- `patch.text` is the reviewed module's own stored patch from that verification (the bytes
+  its digest covers, §3.10), not the owner branch as it is now and not stacked modules'
+  patches. `bytes_total` is the size of those stored bytes **before** marking. Exported
+  patches are at most 200 KiB, but markers can grow the text: `text` is cut so its UTF-8 size
+  is at most 256 KiB, only at a line or marker boundary (never inside a marker or a code
+  point), and `truncated` says so.
 - Hidden characters are **made visible, not removed**: every C0/C1 control except `\n` and
   `\t`, every ANSI escape introducer and every bidirectional control is replaced by a marker
   `<U+XXXX>`, and `hidden_char_count` counts the replacements. This differs from `AgentText`
@@ -631,7 +674,12 @@ Route errors: `room_host_invalid`, `room_conversation_unknown`, `room_board_cont
 `room_board_decided_via_invalid`, `room_board_review_unknown`,
 `room_board_verification_unknown`, `room_board_review_digest_mismatch`,
 `room_board_review_not_pending`, `room_board_review_not_operator`,
-`room_board_review_material_incomplete`, `room_board_review_findings_invalid`.
+`room_board_review_material_incomplete`, `room_board_review_findings_invalid`,
+`room_board_review_summary_invalid`, `room_board_review_request_invalid`,
+`room_board_review_request_too_large`.
+
+Routes that take an id under a `conversation_id` answer 404 for an id of another
+conversation, and each such route has a test for it.
 
 A reason code unknown to a client is shown as a generic "unknown reason" plus the code string,
 never hidden.
@@ -656,7 +704,12 @@ in findings), `review_superseded` (a newer `done` replaces a pending review),
 scenarios run with `review_policy: off` and differ from their earlier form only by the
 always-present `review_policy`, `Module.review`, `Module.accepted` and `accepted_total`.
 Routes §5.1, §5.2 and §8.2 have their own golden responses next to the scenarios
-(`<scenario>.review.json`, `<scenario>.verification.json`, `<scenario>.material.json`). `done_claimed` and every attention
+(`<scenario>.review.json`, `<scenario>.verification.json`, `<scenario>.material.json`).
+Required coverage: `review_operator_pending` reviews a dependent module whose verification
+stacked a provider (its material holds only the dependent's own patch) and whose patch
+contains a bidirectional control and an ANSI escape (shown as markers, `hidden_char_count >
+0`); `verification_failed_rework.verification.json` has a tail whose raw gate output held a
+stage path, `/usr/lib/…`, `/home/…` and a Windows drive path (all scrubbed). `done_claimed` and every attention
 row are additionally covered by a table-driven test over the pure derivation functions with
 synthetic facts, because the store cannot produce `done_claimed` without a verification row.
 

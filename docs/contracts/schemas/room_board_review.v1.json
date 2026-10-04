@@ -13,7 +13,7 @@
         "status": { "enum": ["pending", "endorsed", "objected", "superseded"] },
         "review_id": { "type": "string" },
         "verification_id": { "type": "string" },
-        "digest": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "rule_id": { "type": "string" },
         "author_family": { "type": "string" },
         "reviewer_kind": { "enum": ["participant", "operator"] },
@@ -124,7 +124,7 @@
       "type": "object",
       "properties": {
         "severity": { "enum": ["blocker", "major", "minor"] },
-        "path": { "type": ["string", "null"] },
+        "path": {"anyOf": [{"type": "string", "pattern": "^(?![/])(?![A-Za-z]:)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\\\\\u0000-\\u001f\\u007f]{1,512}$"}, {"type": "null"}]},
         "text": { "$ref": "#/$defs/agentText" }
       },
       "required": ["severity", "path", "text"],

@@ -8,7 +8,7 @@
     "review_id": { "type": "string" },
     "verification_id": { "type": "string" },
     "head_commit": { "type": "string" },
-    "digest": { "type": "string" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "patch": {
       "type": "object",
       "properties": {

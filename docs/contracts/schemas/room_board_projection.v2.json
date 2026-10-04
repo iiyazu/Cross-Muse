@@ -188,7 +188,7 @@
       "type": "object",
       "properties": {
         "severity": { "enum": ["blocker", "major", "minor"] },
-        "path": { "type": ["string", "null"] },
+        "path": {"anyOf": [{"type": "string", "pattern": "^(?![/])(?![A-Za-z]:)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\\\\\u0000-\\u001f\\u007f]{1,512}$"}, {"type": "null"}]},
         "text": { "$ref": "#/$defs/agentText" }
       },
       "required": ["severity", "path", "text"],
@@ -220,7 +220,9 @@
         "status": { "enum": ["none", "pending", "endorsed", "objected"] },
         "review_id": { "type": ["string", "null"] },
         "verification_id": { "type": ["string", "null"] },
-        "digest": { "type": ["string", "null"] },
+        "digest": {
+          "anyOf": [{ "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, { "type": "null" }]
+        },
         "rule_id": { "type": ["string", "null"] },
         "author_family": { "type": ["string", "null"] },
         "reviewer_kind": { "enum": ["participant", "operator", null] },
@@ -239,7 +241,7 @@
                 "available": { "type": "boolean" },
                 "method": { "const": "POST" },
                 "href": { "type": "string" },
-                "expected_digest": { "type": "string" },
+                "expected_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
                 "allowed_verdicts": {
                   "type": "array",
                   "items": { "enum": ["endorse", "object"] },
