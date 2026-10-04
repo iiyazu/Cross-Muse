@@ -370,8 +370,10 @@ comment every 15 seconds. Same template as `/agent-streams`.
 
 ## 8. Writes, authorization, provenance
 
-- **Reads**: loopback and the existing CORS rule only. Whether a `Host`-header check against
-  DNS rebinding exists is **not yet verified** (tracked in the P0 checklist below).
+- **Reads**: loopback, the existing CORS rule, and a `Host`-header guard on the whole chat API:
+  a request whose `Host` is not `127.0.0.1`, `localhost` or `[::1]` (any port) is refused with
+  `400 room_host_invalid` before routing, which closes DNS-rebinding reads. Plugins and the CLI
+  must therefore address the API by a loopback name, never by a LAN address or a custom hostname.
 - **Writes**: operator actions need the server-only operator token. The browser reaches them
   only through the Next.js server proxies that inject the token. Host plugins never hold the
   token in P2; in P3 they use a separately designed, scoped, short-lived, memory-only,
@@ -412,7 +414,7 @@ Attention (§3.8): `board_attention_split_pending`, `board_attention_verificatio
 `board_attention_verification_escalated`, `board_attention_verification_failed`,
 `board_attention_module_blocked`, `board_attention_contract_stale`.
 
-Route errors: `room_conversation_unknown`, `room_board_contract_unknown`,
+Route errors: `room_host_invalid`, `room_conversation_unknown`, `room_board_contract_unknown`,
 `room_board_version_invalid`, `room_board_split_digest_mismatch`, `room_board_query_invalid`,
 `room_board_decided_via_invalid`.
 
@@ -437,9 +439,10 @@ synthetic facts, because the store cannot produce `done_claimed` without a verif
 
 ## 11. P0 checklist (non-contract items to verify while implementing)
 
-- `Host`-header validation on read routes: verify, and record the result here.
-- `GET /board` uses a read-only connection if it measurably avoids contention with
-  `begin immediate` writers; otherwise record that it does not.
+- `Host`-header validation on read routes: **verified absent** before this change (a request
+  with `Host: evil.example` was served); now enforced for the whole chat API (§8).
+- `GET /board` uses a read-only connection (done); no contention measurement was taken, the
+  read-only connection is simply the safer default.
 - `summary` on a database with 10,000 activities answers in under 50 ms (asserted in tests).
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 

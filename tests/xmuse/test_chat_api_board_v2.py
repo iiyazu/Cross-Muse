@@ -583,17 +583,6 @@ def test_board_route_privacy(tmp_path: Path, name: str, disconnect_after_first_e
         assert set(content) == {"text", "untrusted", "truncated"}
 
 
-def test_board_read_route_ignores_host_header(tmp_path: Path) -> None:
-    """Documents current behavior: no Host/DNS-rebinding check on reads."""
-
-    client, conversation_id, _ctx = _scenario("verified", tmp_path)
-
-    response = client.get(_board_url(conversation_id), headers={"Host": "evil.example"})
-
-    assert response.status_code == 200
-    assert response.json()["conversation_id"] == conversation_id
-
-
 # ---------------------------------------------------------------------------
 # split decision guard + provenance through HTTP
 # ---------------------------------------------------------------------------
