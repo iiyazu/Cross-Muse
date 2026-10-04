@@ -538,6 +538,20 @@ def test_board_contract_detail_unknown(tmp_path: Path) -> None:
     assert bad_version.json()["detail"]["code"] == "room_board_contract_unknown"
 
 
+def test_board_contract_detail_cross_conversation_404(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("contract_revised_stale_dependent", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+
+    other_conv = client.get(_board_url("conv_other_123") + "/contracts/api.backend")
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_contract_unknown"
+
+
 # ---------------------------------------------------------------------------
 # unknown conversation, privacy, host header
 # ---------------------------------------------------------------------------
@@ -699,6 +713,36 @@ def test_board_decide_split_fixture_provenance(tmp_path: Path) -> None:
     rejected = next(split for split in by_id.values() if split["status"] == "rejected")
     assert approved["decided_via"] == "plugin:claude-code"
     assert rejected["decided_via"] == "cli"
+
+
+def test_board_decide_split_cross_conversation_404(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("split_pending", tmp_path)
+    split_id = client.get(_board_url(conversation_id)).json()["splits"][0]["split_id"]
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+
+    other_conv = client.post(
+        f"/api/chat/operator/board-splits/{split_id}/decision",
+        json={"conversation_id": "conv_other_123", "decision": "approve"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_split_unknown"
+
+    unknown = client.post(
+        "/api/chat/operator/board-splits/split_unknown/decision",
+        json={"conversation_id": conversation_id, "decision": "approve"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "room_board_split_unknown"
+
+    # Nothing was decided by the failed attempts.
+    assert client.get(_board_url(conversation_id)).json()["splits"][0]["status"] == "proposed"
 
 
 # ---------------------------------------------------------------------------
