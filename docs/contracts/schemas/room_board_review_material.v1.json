@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_review_material.v1.json",
+  "title": "room_board_review_material/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_review_material/v1" },
+    "review_id": { "type": "string" },
+    "verification_id": { "type": "string" },
+    "head_commit": { "type": "string" },
+    "digest": { "type": "string" },
+    "patch": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "bytes_total": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "hidden_char_count": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["text", "bytes_total", "truncated", "hidden_char_count"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "review_id", "verification_id", "head_commit", "digest", "patch"],
+  "additionalProperties": false
+}

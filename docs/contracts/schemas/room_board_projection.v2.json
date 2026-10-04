@@ -21,6 +21,7 @@
       "required": ["verification", "reviews", "integrations", "lessons"],
       "additionalProperties": false
     },
+    "review_policy": { "enum": ["off", "cross_family"] },
     "participants": {
       "type": "array",
       "items": { "$ref": "#/$defs/participant" }
@@ -58,6 +59,7 @@
     "board_seq",
     "revision",
     "capabilities",
+    "review_policy",
     "participants",
     "modules",
     "contracts",
@@ -156,9 +158,133 @@
         "failed": { "type": "integer", "minimum": 0 },
         "superseded": { "type": "integer", "minimum": 0 },
         "errored": { "type": "integer", "minimum": 0 },
-        "rework_rounds": { "type": "integer", "minimum": 0 }
+        "rework_rounds": { "type": "integer", "minimum": 0 },
+        "reviews_endorsed": { "type": "integer", "minimum": 0 },
+        "reviews_objected": { "type": "integer", "minimum": 0 }
       },
-      "required": ["done_reports", "passed", "failed", "superseded", "errored", "rework_rounds"],
+      "required": [
+        "done_reports",
+        "passed",
+        "failed",
+        "superseded",
+        "errored",
+        "rework_rounds",
+        "reviews_endorsed",
+        "reviews_objected"
+      ],
+      "additionalProperties": false
+    },
+    "findingsCount": {
+      "type": "object",
+      "properties": {
+        "blocker": { "type": "integer", "minimum": 0 },
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["blocker", "major", "minor"],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "severity": { "enum": ["blocker", "major", "minor"] },
+        "path": { "type": ["string", "null"] },
+        "text": { "$ref": "#/$defs/agentText" }
+      },
+      "required": ["severity", "path", "text"],
+      "additionalProperties": false
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "participant_id": { "type": "string" },
+        "family": { "type": "string" },
+        "reason_code": {
+          "enum": [
+            "board_review_reviewer_unavailable",
+            "board_review_reviewer_no_verdict",
+            "board_review_reviewer_unresponsive"
+          ]
+        },
+        "at": { "type": "string" }
+      },
+      "required": ["participant_id", "family", "reason_code", "at"],
+      "additionalProperties": false
+    },
+    "nullableEscalation": {
+      "anyOf": [{ "$ref": "#/$defs/escalation" }, { "type": "null" }]
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "status": { "enum": ["none", "pending", "endorsed", "objected"] },
+        "review_id": { "type": ["string", "null"] },
+        "verification_id": { "type": ["string", "null"] },
+        "digest": { "type": ["string", "null"] },
+        "rule_id": { "type": ["string", "null"] },
+        "author_family": { "type": ["string", "null"] },
+        "reviewer_kind": { "enum": ["participant", "operator", null] },
+        "reviewer_participant_id": { "type": ["string", "null"] },
+        "reviewer_family": { "type": ["string", "null"] },
+        "escalated_from": { "$ref": "#/$defs/nullableEscalation" },
+        "findings_count": { "$ref": "#/$defs/findingsCount" },
+        "decided_via": { "enum": ["board_tool", "web", null] },
+        "updated_at": { "type": ["string", "null"] },
+        "actions": {
+          "type": "object",
+          "properties": {
+            "decide": {
+              "type": "object",
+              "properties": {
+                "available": { "type": "boolean" },
+                "method": { "const": "POST" },
+                "href": { "type": "string" },
+                "material_href": { "type": "string" },
+                "expected_digest": { "type": "string" },
+                "allowed_verdicts": {
+                  "type": "array",
+                  "items": { "enum": ["endorse", "object"] },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "surfaces": {
+                  "type": "array",
+                  "items": { "const": "web" },
+                  "minItems": 1,
+                  "maxItems": 1
+                }
+              },
+              "required": [
+                "available",
+                "method",
+                "href",
+                "material_href",
+                "expected_digest",
+                "allowed_verdicts",
+                "surfaces"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "status",
+        "review_id",
+        "verification_id",
+        "digest",
+        "rule_id",
+        "author_family",
+        "reviewer_kind",
+        "reviewer_participant_id",
+        "reviewer_family",
+        "escalated_from",
+        "findings_count",
+        "decided_via",
+        "updated_at",
+        "actions"
+      ],
       "additionalProperties": false
     },
     "moduleAttention": {
@@ -201,6 +327,8 @@
             "verification_error"
           ]
         },
+        "review": { "$ref": "#/$defs/review" },
+        "accepted": { "type": "boolean" },
         "attention": { "$ref": "#/$defs/moduleAttention" }
       },
       "required": [
@@ -216,6 +344,8 @@
         "verification",
         "counters",
         "state",
+        "review",
+        "accepted",
         "attention"
       ],
       "additionalProperties": false
@@ -379,7 +509,9 @@
             "contract_revised",
             "progress",
             "question",
-            "verification"
+            "verification",
+            "review_requested",
+            "review"
           ]
         },
         "at": { "type": "string" },
@@ -493,6 +625,56 @@
                 "gate_ids",
                 "escalated",
                 "stacked"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "review_id": { "type": "string" },
+                "verification_id": { "type": "string" },
+                "rule_id": { "type": "string" },
+                "author_family": { "type": "string" },
+                "reviewer_kind": { "enum": ["participant", "operator"] },
+                "reviewer_participant_id": { "type": ["string", "null"] },
+                "reviewer_family": { "type": ["string", "null"] },
+                "escalated_from": { "$ref": "#/$defs/nullableEscalation" }
+              },
+              "required": [
+                "review_id",
+                "verification_id",
+                "rule_id",
+                "author_family",
+                "reviewer_kind",
+                "reviewer_participant_id",
+                "reviewer_family",
+                "escalated_from"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "review_id": { "type": "string" },
+                "verdict": { "enum": ["endorse", "object"] },
+                "findings_count": { "$ref": "#/$defs/findingsCount" },
+                "findings": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/finding" },
+                  "maxItems": 8
+                },
+                "findings_total": { "type": "integer", "minimum": 0 },
+                "summary": { "$ref": "#/$defs/agentText" },
+                "decided_via": { "enum": ["board_tool", "web"] }
+              },
+              "required": [
+                "review_id",
+                "verdict",
+                "findings_count",
+                "findings",
+                "findings_total",
+                "summary",
+                "decided_via"
               ],
               "additionalProperties": false
             }

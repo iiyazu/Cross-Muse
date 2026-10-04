@@ -30,11 +30,27 @@ keeps board state of its own and no consumer infers completion from agent text.
 Host absolute paths; `patch_digest`; `patch_text`; `base_commit`; lease tokens; the text the
 host writes *to agents* (`board_activity_content`, delivery context, `payload.content`); raw
 `payload` objects of activities; `evidence` objects of verification results; the full list of
-changed paths (only `changed_path_count`). Charter `paths` are repository-relative globs and
-may be shown. `head_commit` may be shown.
+changed paths (only `changed_path_count`); review `rule_inputs_json` and `verdict_json` as
+stored. Charter `paths` are repository-relative globs and may be shown. `head_commit` may be
+shown.
 
 Tests assert this by scanning every fixture and every route response for these keys and for
 absolute-path-looking strings.
+
+Exactly two values leave the server in a narrower form, each through one route only:
+
+1. **Gate output tails** (from `evidence.output_tails`) leave as `AgentText` through the
+   verification detail route (§5.2), never through the projection, summary, events or stream.
+   The host scrubs them at the source before storing: sandbox mounts become repository-relative
+   paths or placeholders (`<python>`, `<site-packages>`, `<tools>`, `<git>`), the stage root is
+   removed, and any remaining home, drive or temp path becomes `<host-path>`.
+2. **The patch under operator review** leaves through the review material route (§8.2) and
+   nowhere else: only for a review with `reviewer_kind == "operator"`, only with the operator
+   token, only through the Web server proxy. It is the stored patch text of the verification
+   being reviewed (content-addressed by `head_commit`), not a re-read of the owner branch.
+   Plugins, the CLI and the Claude Code mod never call it, and no plugin grant covers it.
+
+The path scan whitelists the material route's `patch.text` field and nothing else.
 
 ## 3. `room_board_projection/v2`
 
@@ -49,6 +65,7 @@ absolute-path-looking strings.
   "board_seq": 41,              // §3.9
   "revision": "41:9f2c0a7d41be",// §3.9, doubles as the ETag value
   "capabilities": { "verification": 1, "reviews": 0, "integrations": 0, "lessons": 0 },
+  "review_policy": "off",       // off | cross_family (§3.10)
   "participants": [ Participant ],
   "modules": [ Module ],
   "contracts": [ ContractSummary ],
@@ -59,9 +76,10 @@ absolute-path-looking strings.
 }
 ```
 
-`capabilities`: `verification: 1` means the host verifies `done` reports (M1). `reviews`,
-`integrations`, `lessons` are `0` until M2/M3 define and ship their shapes; the keys exist so
-clients can already feature-detect. No placeholder arrays exist for them.
+`capabilities`: `verification: 1` means the host verifies `done` reports (M1). `reviews: 1`
+means the room's `review_policy` is `cross_family`: every passed verification opens a review
+(§3.10). `integrations` and `lessons` are `0` until M2b/M3 define and ship their shapes; the
+keys exist so clients can already feature-detect. No placeholder arrays exist for them.
 
 ### 3.1 `AgentText`
 
@@ -110,6 +128,8 @@ One row per module whose **latest charter is `active`**.
   "verification": Verification, // §4.2, established by the host
   "counters": Counters,         // §6
   "state": "verifying",         // §4.3, derived single value for compact UI
+  "review": Review,             // §3.10, always present
+  "accepted": false,            // §4.4, always present
   "attention": { "kind": "none", "reason_code": null } // §3.8
 }
 ```
@@ -196,6 +216,14 @@ that module's owner files a progress report whose activity `seq` is greater than
 | `progress` | reporting module | `{status, summary: AgentText, claims: [AgentText], claims_total}` |
 | `question` | — | `{target_participant_id, question: AgentText}` |
 | `verification` | verified module | `{verification_id, status: passed\|failed\|error, reason_code, gate_ids[], escalated, stacked[]}` |
+| `review_requested` | reviewed module | `{review_id, verification_id, rule_id, author_family, reviewer_kind, reviewer_participant_id, reviewer_family, escalated_from: Escalation\|null}` |
+| `review` | reviewed module | `{review_id, verdict: endorse\|object, findings_count, findings: [Finding], findings_total, summary: AgentText, decided_via: board_tool\|web}` |
+
+`review_requested` is always `infrastructure`; a request re-issued to the operator after the
+assigned reviewer did not answer carries `escalated_from` (§3.10). `review` is `participant`
+(the assigned reviewer, through the Room MCP tool) or `operator` (through the Web). In events
+`summary` ≤ 400 and each `Finding.text` ≤ 200, at most 8 findings, `findings_total` the real
+count; the review detail route (§5.1) carries the full bounds.
 
 An unknown `kind` must be tolerated by clients (rule 1).
 
@@ -220,6 +248,8 @@ Per-module precedence (the first matching row wins):
 | `verification.status == error` | `operator` | `board_attention_verification_error` |
 | `verification.status == failed` and `escalated` | `lead` | `board_attention_verification_escalated` |
 | `verification.status == failed` and `lifecycle == done_claimed` | `owner` | `board_attention_verification_failed` |
+| `review.status == pending` and `review.reviewer_kind == operator` | `operator` | `board_attention_review_operator_pending` |
+| `review.status == objected` and `lifecycle == done_claimed` | `owner` | `board_attention_review_objected` |
 | `lifecycle == blocked` | `lead` | `board_attention_module_blocked` |
 | module is a stale dependent | `owner` | `board_attention_contract_stale` |
 | otherwise | `none` | `null` |
@@ -228,7 +258,10 @@ Room-level: every split with `status == proposed` yields `operator` /
 `board_attention_split_pending` with its `split_id`.
 
 A `failed` verification stops being attention once the owner files any newer progress report
-(`lifecycle` leaves `done_claimed`); the verification axis still shows the failure.
+(`lifecycle` leaves `done_claimed`); the verification axis still shows the failure. The same
+holds for an `objected` review. A participant review that is merely `pending` is not
+attention: either the reviewer answers or the host escalates it to the operator (§3.10), and
+the escalated review then matches the operator row above.
 
 ### 3.9 `board_seq` and `revision`
 
@@ -239,6 +272,64 @@ carries `revision = "<board_seq>:<12 hex>"`, where the hex part is the SHA-256 p
 canonical JSON of the projection **without** `server_time`, `events` and `revision`. Two
 projections with equal `revision` are equal. `GET .../board` and `GET .../board/summary` send
 `ETag: "<revision>"` and answer `If-None-Match` with `304`. `Cache-Control: no-store`.
+
+### 3.10 `Review`, `review_policy` and escalation
+
+`review_policy` is set when the room is created and is `off` unless the setup asks for
+`cross_family`. With `off`, no review is ever opened and `Module.review.status` is always
+`none`. With `cross_family`, the same transaction that records a `passed` verification opens a
+review whose reviewer is assigned by rule `cross_family/v1`: an active agent of a different
+`model_family` than the module's owner (the author), preferring the module's previous
+reviewer, then the fewest pending reviews, then the lowest `participant_id`. With no such
+agent the operator reviews; a same-family agent never does. The author never reviews or picks
+its reviewer. The rule's inputs are stored with the review (§5.1 `rule_inputs`).
+
+```jsonc
+{
+  "status": "none",               // none | pending | endorsed | objected
+  "review_id": null,
+  "verification_id": null,        // the passed verification under review
+  "digest": null,                 // canonical digest of {review_id, verification_id, head_commit}; the decision guard
+  "rule_id": null,                // "cross_family/v1"
+  "author_family": null,
+  "reviewer_kind": null,          // participant | operator
+  "reviewer_participant_id": null,// null when reviewer_kind == operator
+  "reviewer_family": null,        // null when reviewer_kind == operator
+  "escalated_from": null,         // Escalation, when the host moved the review to the operator
+  "findings_count": { "blocker": 0, "major": 0, "minor": 0 },
+  "decided_via": null,            // board_tool | web
+  "updated_at": null,
+  "actions": {}                   // { "decide": … } only while pending with reviewer_kind == operator
+}
+```
+
+`Module.review` is the review of the module's **current** verification (`verification.
+verification_id`): when that verification has no review (not passed, reviews off, or opened
+before reviews were on), every field is the `none` value above. Older reviews, including
+`superseded` ones, are reachable only through events and §5.1.
+
+`Escalation` = `{ "participant_id": "…", "family": "…", "reason_code": "board_review_reviewer_*",
+"at": "…" }`. The host moves a pending participant review to the operator when the reviewer is
+no longer active or its delivery of the request exhausted its attempts
+(`board_review_reviewer_unavailable`), when the reviewer's turn ended without a verdict
+(`board_review_reviewer_no_verdict`), or when no verdict arrived within the response window
+(`board_review_reviewer_unresponsive`). The `review_id` and `digest` stay; a new
+`review_requested` event carries `escalated_from`; the former reviewer can no longer decide.
+
+`actions.decide` (operator reviews only, Web only — §8.2):
+
+```jsonc
+{ "available": true, "method": "POST",
+  "href": "/api/chat/operator/board-reviews/<review_id>/decision",
+  "material_href": "/api/chat/operator/board-reviews/<review_id>/material",
+  "expected_digest": "sha256:…",          // equals `digest`
+  "allowed_verdicts": ["endorse", "object"],
+  "surfaces": ["web"] }
+```
+
+`Finding` = `{ "severity": "blocker|major|minor", "path": "src/x.py" /* repository-relative or
+null */, "text": AgentText }`. An `object` verdict carries at least one `blocker` or `major`
+finding. A reviewer's `object` wakes the owner; `endorse` wakes nobody.
 
 ## 4. State model
 
@@ -288,6 +379,20 @@ before a verification row exists, and during that instant it still is not comple
 Acceptance text in a charter is never a source for any of these values; only server gate
 results are.
 
+`state` does not change with reviews; a review is its own axis (§3.10).
+
+### 4.4 `accepted` — the one completion value
+
+```
+accepted = state == "verified" AND (capabilities.reviews == 0 OR review.status == "endorsed")
+```
+
+This definition is frozen for `room_board_projection/v2`. Later milestones never add
+conditions to it (integration status is its own field); a combined "landed" value would be a
+new field. Consumers show a completion mark only for `accepted`; `verified && !accepted`
+shows "verified" plus the review status (pending / objected), distinguished by glyph and
+text, never by colour alone.
+
 ## 5. Contract detail
 
 `GET /api/chat/conversations/{conversation_id}/board/contracts/{contract_id}?version=N`
@@ -310,6 +415,57 @@ results are.
 (a code block); if a consumer renders it as Markdown it must disable raw HTML and
 non-`http(s)` links first. `content` never appears in a status line, toast or notification.
 
+### 5.1 Review detail
+
+`GET /api/chat/conversations/{conversation_id}/board/reviews/{review_id}`
+(404 `room_board_review_unknown`)
+
+```jsonc
+{
+  "schema_version": "room_board_review/v1",
+  "conversation_id": "…", "module_id": "backend",
+  "review": Review,               // §3.10 fields, without `actions`; status may also be "superseded"
+  "head_commit": "…",             // the verified commit, full id
+  "summary": AgentText /* ≤ 4000, or null while pending */,
+  "findings": [ Finding ],        // ≤ 32, text ≤ 1000
+  "rule_inputs": {
+    "rule_id": "cross_family/v1",
+    "author_participant_id": "…", "author_family": "opencode",
+    "eligible": [ { "participant_id": "…", "family": "antigravity", "pending": 0 } ],
+    "last_reviewer_participant_id": null,
+    "picked_participant_id": "…"  // null → operator
+  },
+  "created_at": "…", "decided_at": null
+}
+```
+
+`rule_inputs` answers "why this reviewer": a client can re-apply §3.10 to it and must get
+`picked_participant_id`. `Cache-Control: no-store`.
+
+### 5.2 Verification detail
+
+`GET /api/chat/conversations/{conversation_id}/board/verifications/{verification_id}`
+(404 `room_board_verification_unknown`)
+
+```jsonc
+{
+  "schema_version": "room_board_verification/v1",
+  "conversation_id": "…", "module_id": "backend", "verification_id": "…",
+  "status": "failed", "reason_code": "board_verification_gate_failed",
+  "head_commit": "…", "changed_path_count": 3,
+  "stacked": [ { "module_id": "…", "verification_id": "…" } ],
+  "gates": [ { "gate_id": "python_uv_pytest", "status": "failed", "exit_code": 1,
+               "reason_code": "execution_gate_failed",
+               "output_tail": AgentText /* ≤ 2000, or null */ } ],
+  "created_at": "…", "updated_at": "…"
+}
+```
+
+`output_tail` is present (non-null) for at most 3 non-passed gates. It is scrubbed (§2) and
+sanitized like `AgentText`, rendered as plain text, and never shown in a status line, toast,
+summary or event. The Claude Code mod and other host plugins never fetch this route (their
+output reaches model context). `Cache-Control: no-store`; not part of `revision`.
+
 ## 6. Metrics — `board_metrics/v1`
 
 Per module, over all history of the module id:
@@ -319,8 +475,10 @@ Per module, over all history of the module id:
 | `done_reports` | progress reports with `status == done` |
 | `passed`, `failed`, `superseded`, `errored` | verification jobs in that terminal status; deferred `pending` jobs are not counted |
 | `rework_rounds` | `failed` jobs **before the first `passed`**; all `failed` jobs if it never passed |
+| `reviews_endorsed`, `reviews_objected` | reviews of the module that ended in that verdict (superseded and pending ones are not counted) |
 
-Changing any definition bumps `metrics_version`. The M4 evaluation and every UI read the same
+Adding a counter does not change the others, so `metrics_version` stays `board_metrics/v1`;
+changing any definition bumps it. The M4 evaluation and every UI read the same
 derivation function; there is exactly one (`xmuse_core.chat.room_board_projection`), used by
 the HTTP projection, the Room MCP `chat_room_board_read` module states and the owner's
 `.xmuse` view.
@@ -339,11 +497,13 @@ boundary.
   "counts": { "assigned": 0, "claimed": 0, "working": 1, "blocked": 0, "ready_for_review": 0,
               "done_claimed": 0, "verifying": 1, "waiting_for_provider": 0, "verified": 1,
               "verification_failed": 0, "verification_error": 0 },
+  "accepted_total": 1,
   "attention_total": 2, "attention": [ AttentionItem ] /* first 5 */ }
 ```
 
 Structured fields only: no `AgentText`, no titles. Intended for status lines, toasts,
-`xmuse-ctl status`. All eleven `counts` keys are always present.
+`xmuse-ctl status`. All eleven `counts` keys are always present; `counts` holds only `state`
+values, so the number of `accepted` modules (§4.4) is the separate `accepted_total`.
 
 ### 7.2 Events, long-poll — `GET …/board/events?after_seq=N&limit=100&wait=25&revision=R`
 
@@ -392,6 +552,51 @@ comment every 15 seconds. Same template as `/agent-streams`.
   `Split.actions.decide` rather than building them. The Next.js proxy fixes
   `decided_via: "web"` itself; a browser can never claim another provenance.
 
+### 8.1 Review verdicts
+
+An assigned participant reviewer decides through the Room MCP tool `chat_room_board_review`
+(lease-bound, idempotent, assignee only); its events carry `decided_via: "board_tool"`. Host
+plugins never register that tool, or any review write, for a host's own model: review verdicts
+belong to Room agents and to the human in the Web.
+
+An operator review is decided **only in the Web**:
+`POST /api/chat/operator/board-reviews/{review_id}/decision` with exactly
+`{conversation_id, verdict: "endorse"|"object", expected_digest, summary, findings, decided_via?}`.
+`expected_digest` is required and must equal `Review.digest` (else `409
+room_board_review_digest_mismatch`, nothing decided); `decided_via` may only be `web` (else
+`422 room_board_decided_via_invalid`) — this route's set differs from the split route's on
+purpose. The review must be pending with `reviewer_kind == "operator"` (else `409
+room_board_review_not_pending`). `endorse` is refused with `409
+room_board_review_material_incomplete` when the material (§8.2) is truncated: a human does not
+endorse what they could not read. `object` needs a `blocker` or `major` finding (`422
+room_board_review_findings_invalid`). The P3 plugin grant never covers this route.
+
+### 8.2 Review material — the one patch route
+
+`GET /api/chat/operator/board-reviews/{review_id}/material` (operator token; 404
+`room_board_review_unknown`; 409 `room_board_review_not_operator` unless `reviewer_kind ==
+"operator"`)
+
+```jsonc
+{
+  "schema_version": "room_board_review_material/v1",
+  "review_id": "…", "verification_id": "…", "head_commit": "…",
+  "digest": "sha256:…",           // equals Review.digest
+  "patch": { "text": "…", "bytes_total": 18234, "truncated": false, "hidden_char_count": 0 }
+}
+```
+
+- `patch.text` is the stored patch text of that verification (the bytes the gates ran on),
+  not the owner branch as it is now. Exported patches are at most 200 KiB; `text` is cut at
+  256 KiB after marking, and `truncated` says so.
+- Hidden characters are **made visible, not removed**: every C0/C1 control except `\n` and
+  `\t`, every ANSI escape introducer and every bidirectional control is replaced by a marker
+  `<U+XXXX>`, and `hidden_char_count` counts the replacements. This differs from `AgentText`
+  sanitizing on purpose: a reviewer must see the code as it is (Trojan Source).
+- The Web reaches it only through a Next.js server proxy that checks a loopback `Host` and
+  `Sec-Fetch-Site: same-origin` and answers `Cache-Control: no-store`. It renders `patch.text`
+  as plain text only. Plugins, the CLI and the mod never call it.
+
 ## 9. Reason-code registry
 
 Verification (`Verification.reason_code`, event `reason_code`):
@@ -410,13 +615,20 @@ Staging and gates (from `room_execution`): `execution_*` (for example
 
 Split: `room_board_split_dependency_cycle` and the other `room_board_*` validation codes.
 
+Review escalation (`Escalation.reason_code`, §3.10): `board_review_reviewer_unavailable`,
+`board_review_reviewer_no_verdict`, `board_review_reviewer_unresponsive`.
+
 Attention (§3.8): `board_attention_split_pending`, `board_attention_verification_error`,
 `board_attention_verification_escalated`, `board_attention_verification_failed`,
+`board_attention_review_operator_pending`, `board_attention_review_objected`,
 `board_attention_module_blocked`, `board_attention_contract_stale`.
 
 Route errors: `room_host_invalid`, `room_conversation_unknown`, `room_board_contract_unknown`,
 `room_board_version_invalid`, `room_board_split_digest_mismatch`, `room_board_query_invalid`,
-`room_board_decided_via_invalid`.
+`room_board_decided_via_invalid`, `room_board_review_unknown`,
+`room_board_verification_unknown`, `room_board_review_digest_mismatch`,
+`room_board_review_not_pending`, `room_board_review_not_operator`,
+`room_board_review_material_incomplete`, `room_board_review_findings_invalid`.
 
 A reason code unknown to a client is shown as a generic "unknown reason" plus the code string,
 never hidden.
@@ -433,7 +645,15 @@ Scenarios: `empty`, `split_pending`, `lifecycle_mix` (assigned, claimed, working
 ready_for_review), `verifying_and_waiting`, `verified`, `verification_failed_rework`,
 `verification_escalated`, `verification_error`, `superseded_done`,
 `contract_revised_stale_dependent`, `injection_text` (agent text with prompt-injection
-strings, ANSI escapes, RTL controls, over-long values). `done_claimed` and every attention
+strings, ANSI escapes, RTL controls, over-long values); with `review_policy: cross_family`:
+`review_participant_pending`, `review_operator_pending` (single-family room),
+`review_endorsed` (an `accepted` module), `review_objected` (owner attention, injection text
+in findings), `review_superseded` (a newer `done` replaces a pending review),
+`review_escalated` (reviewer turn ended without a verdict → operator). The pre-review
+scenarios run with `review_policy: off` and differ from their earlier form only by the
+always-present `review_policy`, `Module.review`, `Module.accepted` and `accepted_total`.
+Routes §5.1, §5.2 and §8.2 have their own golden responses next to the scenarios
+(`<scenario>.review.json`, `<scenario>.verification.json`, `<scenario>.material.json`). `done_claimed` and every attention
 row are additionally covered by a table-driven test over the pure derivation functions with
 synthetic facts, because the store cannot produce `done_claimed` without a verification row.
 
@@ -447,6 +667,12 @@ synthetic facts, because the store cannot produce `done_claimed` without a verif
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 
 ## 12. Changelog
+
+- 2026-10-04 — reviews (M2a), compatible additions: `review_policy`, `capabilities.reviews`,
+  `Module.review` with escalation and the Web-only operator decision, frozen `Module.accepted`,
+  `accepted_total`, review counters, `review_requested`/`review` events, two attention rows,
+  review and verification detail routes, and the two §2 exceptions (scrubbed gate output
+  tails; the operator review material route).
 
 - 2026-10-04 — `Split.actions.decide` descriptor and decision provenance (`decided_via`,
   `expected_digest`); the cross-domain operator inbox (`room_operator_inbox/v1`) is deferred to

@@ -39,6 +39,46 @@
     "nullableAgentText": {
       "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
     },
+    "findingsCount": {
+      "type": "object",
+      "properties": {
+        "blocker": { "type": "integer", "minimum": 0 },
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["blocker", "major", "minor"],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "severity": { "enum": ["blocker", "major", "minor"] },
+        "path": { "type": ["string", "null"] },
+        "text": { "$ref": "#/$defs/agentText" }
+      },
+      "required": ["severity", "path", "text"],
+      "additionalProperties": false
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "participant_id": { "type": "string" },
+        "family": { "type": "string" },
+        "reason_code": {
+          "enum": [
+            "board_review_reviewer_unavailable",
+            "board_review_reviewer_no_verdict",
+            "board_review_reviewer_unresponsive"
+          ]
+        },
+        "at": { "type": "string" }
+      },
+      "required": ["participant_id", "family", "reason_code", "at"],
+      "additionalProperties": false
+    },
+    "nullableEscalation": {
+      "anyOf": [{ "$ref": "#/$defs/escalation" }, { "type": "null" }]
+    },
     "event": {
       "type": "object",
       "properties": {
@@ -53,7 +93,9 @@
             "contract_revised",
             "progress",
             "question",
-            "verification"
+            "verification",
+            "review_requested",
+            "review"
           ]
         },
         "at": { "type": "string" },
@@ -167,6 +209,56 @@
                 "gate_ids",
                 "escalated",
                 "stacked"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "review_id": { "type": "string" },
+                "verification_id": { "type": "string" },
+                "rule_id": { "type": "string" },
+                "author_family": { "type": "string" },
+                "reviewer_kind": { "enum": ["participant", "operator"] },
+                "reviewer_participant_id": { "type": ["string", "null"] },
+                "reviewer_family": { "type": ["string", "null"] },
+                "escalated_from": { "$ref": "#/$defs/nullableEscalation" }
+              },
+              "required": [
+                "review_id",
+                "verification_id",
+                "rule_id",
+                "author_family",
+                "reviewer_kind",
+                "reviewer_participant_id",
+                "reviewer_family",
+                "escalated_from"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "review_id": { "type": "string" },
+                "verdict": { "enum": ["endorse", "object"] },
+                "findings_count": { "$ref": "#/$defs/findingsCount" },
+                "findings": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/finding" },
+                  "maxItems": 8
+                },
+                "findings_total": { "type": "integer", "minimum": 0 },
+                "summary": { "$ref": "#/$defs/agentText" },
+                "decided_via": { "enum": ["board_tool", "web"] }
+              },
+              "required": [
+                "review_id",
+                "verdict",
+                "findings_count",
+                "findings",
+                "findings_total",
+                "summary",
+                "decided_via"
               ],
               "additionalProperties": false
             }
