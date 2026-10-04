@@ -1,0 +1,30 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "xmuse",
+  "version": "0.1.0",
+  "description": "Read-only xmuse room board status: status line, toasts, pane and a status tool. Never writes, never handles tokens.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "baseUrl": {
+      "type": "string",
+      "description": "xmuse chat API base URL (loopback only)",
+      "default": "http://127.0.0.1:8201",
+      "title": "API base URL"
+    },
+    "webUrl": {
+      "type": "string",
+      "description": "Workroom web UI base URL for approval links",
+      "default": "http://127.0.0.1:3000",
+      "title": "Web UI base URL"
+    },
+    "pollSeconds": {
+      "type": "number",
+      "description": "Board summary poll interval in seconds",
+      "default": 5,
+      "title": "Poll interval (seconds)"
+    }
+  },
+  "author": {
+    "name": "iiyazu"
+  }
+}
