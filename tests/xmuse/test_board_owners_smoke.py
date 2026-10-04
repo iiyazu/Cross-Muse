@@ -144,7 +144,7 @@ def test_frontend_cli_accepts_antigravity() -> None:
 
 def test_scenario_defaults_to_revision() -> None:
     assert smoke.DEFAULT_SCENARIO == "revision"
-    assert set(smoke.ALLOWED_SCENARIOS) == {"revision", "false-done"}
+    assert set(smoke.ALLOWED_SCENARIOS) == {"revision", "verify", "false-done"}
 
 
 def test_default_execution_profile_runs_pytest() -> None:
@@ -156,15 +156,11 @@ def test_default_execution_profile_runs_pytest() -> None:
 def test_drill_human_message_is_explicit_fault_injection() -> None:
     message = smoke.build_drill_human_message()
 
-    assert "Fault-injection" in message
+    # The drill names the backend file and the done report the verifier must
+    # catch; exact wording is free.
     assert "src/api/greeting.py" in message
-    assert "already implemented" in message
-    assert "replace" in message.lower()
-    assert "breaks the contract" in message
-    assert "no other files" in message
-    assert "WITHOUT running the tests" in message
     assert "status done" in message
-    assert "submit your outcome" in message
+    assert "backend" in message
 
 
 def test_sessions_shared_requires_a_shared_session() -> None:
@@ -355,6 +351,72 @@ def test_false_done_ok_requires_every_check() -> None:
     assert smoke.false_done_ok(_false_done_evidence(backend_drill_verifications=[])) is False
 
 
+def _loop_evidence(*, frontend_wake_session: str = "s-front") -> dict[str, object]:
+    failed = {
+        "status": "failed",
+        "reason_code": "board_verification_gate_failed",
+        "failed_gate_ids": ["python_uv_mypy"],
+    }
+    passed = {"status": "passed", "reason_code": None, "failed_gate_ids": []}
+    waiting = {"status": "pending", "reason_code": "board_verification_waiting_for_provider"}
+    return {
+        "module_verifications": {
+            "backend": {"done_reports": 1, "verifications": [passed]},
+            "frontend": {"done_reports": 2, "verifications": [waiting, failed, passed]},
+        },
+        "participants": {
+            "backend": {
+                "observations": [
+                    {
+                        "source_activity_type": "board.charter_assigned",
+                        "provider_session_ids": ["s-back"],
+                    }
+                ]
+            },
+            "frontend": {
+                "observations": [
+                    {
+                        "source_activity_type": "board.charter_assigned",
+                        "provider_session_ids": ["s-front"],
+                    },
+                    {
+                        "source_activity_type": "board.verification",
+                        "provider_session_ids": [frontend_wake_session],
+                    },
+                ]
+            },
+        },
+    }
+
+
+def test_verification_loop_counts_organic_false_claims() -> None:
+    loop = smoke.compute_verification_loop(_loop_evidence())
+
+    assert loop["claims"] == 3
+    assert loop["first_try_passes"] == 1
+    assert loop["false_claims"] == 1
+    assert loop["all_verified"] is True
+    assert loop["wakes_reused_session"] is True
+    assert loop["modules"]["frontend"]["wakes"] == 1
+    assert smoke.compute_verify_checks(_loop_evidence()) == {
+        "all_modules_verified": True,
+        "wakes_reused_session": True,
+    }
+
+
+def test_verify_checks_fail_on_unverified_module_or_new_session() -> None:
+    evidence = _loop_evidence(frontend_wake_session="s-new")
+    assert smoke.compute_verify_checks(evidence)["wakes_reused_session"] is False
+
+    unverified = _loop_evidence()
+    modules = unverified["module_verifications"]
+    assert isinstance(modules, dict)
+    modules["frontend"]["verifications"] = [
+        {"status": "failed", "reason_code": "board_verification_gate_failed"}
+    ]
+    assert smoke.compute_verify_checks(unverified)["all_modules_verified"] is False
+
+
 def test_compute_false_done_checks_reports_each_condition() -> None:
     checks = smoke.compute_false_done_checks(
         _false_done_evidence(backend_woken_by_verification=False)
@@ -394,12 +456,12 @@ def test_seed_pins_the_v1_contract_protocol() -> None:
 
     by_path = dict(smoke.SEED_FILES)
     # The charter phase must have real work: implementations are not
-    # pre-written; only package markers and contract tests are seeded.
+    # pre-written. Only the provider's contract test is seeded, because a
+    # dependent's test would fail the provider's whole-repository gates.
     assert set(by_path) == {
         "src/api/__init__.py",
         "src/api/test_greeting_contract.py",
         "src/client/__init__.py",
-        "src/client/test_render_contract.py",
     }
     # The backend contract test pins the v1 protocol from CONTRACT_V1_CONTENT.
     assert "Hello, <name>!" in smoke.CONTRACT_V1_CONTENT

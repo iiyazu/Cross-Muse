@@ -32,6 +32,7 @@ from xmuse_core.chat import room_board_verification as verification
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_board import (
     RoomBoardStore,
+    board_activity_content,
     charter_outside_paths,
     charter_path_allowed,
     split_dependency_cycle,
@@ -39,7 +40,7 @@ from xmuse_core.chat.room_board import (
 from xmuse_core.chat.room_board_view import materialize_owner_board_view
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_execution_sandbox import GateResult
+from xmuse_core.chat.room_execution_sandbox import GateResult, sanitize_gate_output_tail
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_observation_transport_base import build_room_observation_prompt
 from xmuse_core.chat.room_owner_clones import OwnerCloneError, OwnerCloneManager
@@ -224,6 +225,81 @@ def test_attempt_cap_moves_job_to_error(tmp_path: Path) -> None:
     )
     row = _verification_row(ctx["db"], reported["verification_id"])
     assert row["status"] == "error"
+    # The exhausted claim is visible on the board, addressed to report_to/lead,
+    # and wakes nobody: the host failed to verify, not the owner.
+    assert row["activity_id"]
+    payload = _activity_payload(ctx["db"], str(row["activity_id"]))["payload"]
+    assert payload["status"] == "error"
+    assert payload["reason_code"] == "board_verification_attempts_exhausted"
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        woken = conn.execute(
+            "select count(*) from room_observations where activity_id = ?",
+            (str(row["activity_id"]),),
+        ).fetchone()[0]
+    assert woken == 0
+
+
+def test_gate_output_tail_is_sanitized_and_bounded() -> None:
+    raw = (
+        b"line one\n"
+        b"\x1b[31mred\x1b[0m text\r\n"
+        b"\x1b]0;title\x07osc gone\n"
+        b"bell\x07 nul\x00 bidi\xe2\x80\xae end\n"
+    )
+
+    assert sanitize_gate_output_tail(raw, 4096) == (
+        "line one\nred text\nosc gone\nbell nul bidi end"
+    )
+    clipped = sanitize_gate_output_tail(b"aaaa\nbbbb\ncccc\n", 8)
+    assert clipped == "cccc"
+    assert sanitize_gate_output_tail(raw, 0) == ""
+
+
+def test_gate_output_tail_never_carries_absolute_paths() -> None:
+    raw = (
+        b'File "/workspace/src/api/greeting.py", line 3, in greet\n'
+        b'File "/opt/python/lib/python3.11/typing.py", line 9\n'
+        b"/deps/site-packages/pydantic/main.py:12: error\n"
+        b"cwd /workspace\n"
+        b"stage /srv/xmuse/stages/abc/src/x.py and /srv/xmuse/stages/abc\n"
+        b"leak /home/alice/.cache/uv/x.py and /mnt/d/Dev/repo/y.py\n"
+        b"win C:\\Users\\alice\\repo\\z.py tmp /tmp/pytest-of-alice/t0/a.py\n"
+        b"sys /usr/lib/python3.11/site.py:5 and (/etc/passwd) home ~/.cache/uv/z.py\n"
+        b"keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a\n"
+    )
+
+    text = sanitize_gate_output_tail(raw, 4096, ("/srv/xmuse/stages/abc",))
+
+    assert text.splitlines() == [
+        'File "src/api/greeting.py", line 3, in greet',
+        'File "<python>/lib/python3.11/typing.py", line 9',
+        "<site-packages>/pydantic/main.py:12: error",
+        "cwd .",
+        "stage src/x.py and .",
+        "leak <host-path> and <host-path>",
+        "win <host-path> tmp <host-path>",
+        "sys <host-path>:5 and (<host-path>) home <host-path>",
+        "keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a",
+    ]
+    assert "alice" not in text
+
+
+def test_failed_verification_fence_survives_backticks_in_tail() -> None:
+    tail = "E   assert '```' == '````'\nend"
+    content = board_activity_content(
+        "board.verification",
+        {
+            "module_id": "api",
+            "status": "failed",
+            "reason_code": "board_verification_gate_failed",
+            "gates": [{"gate_id": "python_uv_pytest", "status": "failed"}],
+            "evidence": {"output_tails": {"python_uv_pytest": tail}},
+        },
+    )
+
+    opening = content.index("`````\n")
+    assert content.endswith("\n`````")
+    assert content[opening + 6 :].removesuffix("\n`````") == tail
 
 
 def test_complete_rejects_wrong_lease_and_unknown_job(tmp_path: Path) -> None:
@@ -557,7 +633,9 @@ def test_worker_pass_verifies_committed_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     head = _commit_in_clone(ctx["clone"].path, "docs/guide.md", "new\n", "owner work")
     owner = ctx["members"][1]
     ctx["store"].report_progress(
@@ -597,7 +675,9 @@ def test_worker_verifies_while_human_checkout_moved_and_dirty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     _commit_in_clone(ctx["clone"].path, "docs/guide.md", "new\n", "owner work")
     source = ctx["source"]
     (source / "docs" / "other.md").write_text("human\n", encoding="utf-8")
@@ -626,8 +706,20 @@ def test_worker_gate_failure_wakes_owner_with_evidence(
 ) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
 
-    def failing_gate(_layout: Any, gate_id: str) -> GateResult:
-        return GateResult(gate_id, "failed", "execution_gate_failed", DIGEST_A, DIGEST_A, 1, 1)
+    requested: list[int] = []
+
+    def failing_gate(_layout: Any, gate_id: str, **kw: Any) -> GateResult:
+        requested.append(int(kw.get("output_tail_bytes", 0)))
+        return GateResult(
+            gate_id,
+            "failed",
+            "execution_gate_failed",
+            DIGEST_A,
+            DIGEST_A,
+            1,
+            1,
+            output_tail="E   AssertionError: expected Hello, Ada!",
+        )
 
     monkeypatch.setattr(verification, "run_gate", failing_gate)
     _commit_in_clone(ctx["clone"].path, "docs/guide.md", "new\n", "owner work")
@@ -643,6 +735,7 @@ def test_worker_gate_failure_wakes_owner_with_evidence(
     result = ctx["worker"].reconcile_once()
 
     assert result["board_verifications_failed"] == 1
+    assert requested and all(value > 0 for value in requested)
     with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
         row = dict(conn.execute("select * from room_board_verifications").fetchone())
         activity = conn.execute(
@@ -652,6 +745,11 @@ def test_worker_gate_failure_wakes_owner_with_evidence(
     payload = json.loads(str(activity["payload_json"]))
     assert payload["reason_code"] == "board_verification_gate_failed"
     assert payload["evidence"]["failed_gates"] == ["patch_diff_check"]
+    assert payload["evidence"]["output_tails"] == {
+        "patch_diff_check": "E   AssertionError: expected Hello, Ada!"
+    }
+    # The owner's delivery text carries the failing output.
+    assert "AssertionError: expected Hello, Ada!" in str(payload["content"])
     assert _observations_for(ctx["db"], owner.participant_id, activity["activity_id"])
 
 
@@ -659,7 +757,9 @@ def test_worker_empty_patch_fails_without_waking_lead(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     owner, lead = ctx["members"][1], ctx["members"][0]
     ctx["store"].report_progress(
         **_lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id="done-1"),
@@ -685,7 +785,9 @@ def test_worker_empty_patch_fails_without_waking_lead(
 
 def test_worker_path_outside_charter_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     _commit_in_clone(ctx["clone"].path, "src/evil.py", "EVIL = 1\n", "out of bounds")
     owner = ctx["members"][1]
     ctx["store"].report_progress(
@@ -711,7 +813,7 @@ def test_worker_third_failure_escalates_to_lead(
 ) -> None:
     ctx = _owner_fixture(tmp_path, monkeypatch)
 
-    def failing_gate(_layout: Any, gate_id: str) -> GateResult:
+    def failing_gate(_layout: Any, gate_id: str, **_kw: Any) -> GateResult:
         return GateResult(gate_id, "failed", "execution_gate_failed", DIGEST_A, DIGEST_A, 1, 1)
 
     monkeypatch.setattr(verification, "run_gate", failing_gate)
@@ -1001,7 +1103,9 @@ def test_cyclic_split_is_rejected(tmp_path: Path) -> None:
 
 def test_frontend_stacks_backend_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _stack_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     backend_head = _commit_in_clone(
         ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1"
     )
@@ -1010,7 +1114,7 @@ def test_frontend_stacks_backend_pass(tmp_path: Path, monkeypatch: pytest.Monkey
 
     captured: dict[str, Any] = {}
 
-    def _capturing_gate(layout: Any, gate_id: str) -> GateResult:
+    def _capturing_gate(layout: Any, gate_id: str, **_kw: Any) -> GateResult:
         stage = Path(str(layout.stage))
         captured["greeting"] = (stage / "src/api/greeting.py").read_text(encoding="utf-8")
         captured["render"] = (stage / "src/client/render.py").read_text(encoding="utf-8")
@@ -1060,7 +1164,9 @@ def test_frontend_defers_until_backend_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _stack_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     t0 = NOW
     t1 = t0 + timedelta(seconds=5)
     t2 = t0 + timedelta(seconds=60)
@@ -1111,7 +1217,9 @@ def test_newer_backend_pending_defers_frontend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _stack_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     t0 = NOW
     t1 = NOW + timedelta(seconds=60)
     t2 = NOW + timedelta(seconds=120)
@@ -1139,7 +1247,9 @@ def test_deferred_job_does_not_block_next_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ctx = _stack_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     t0 = NOW
     t1 = t0 + timedelta(seconds=5)
     _commit_in_clone(
@@ -1164,7 +1274,9 @@ def test_overlapping_provider_paths_fail(tmp_path: Path, monkeypatch: pytest.Mon
         home_name="home-overlap",
         source_name="source-overlap",
     )
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     _commit_in_clone(
         ctx["backend_clone"].path, "src/shared/common.py", "BACKEND = 1\n", "backend shared"
     )
@@ -1196,7 +1308,9 @@ def test_stacked_list_in_result_and_payload(
         home_name="home-stacked",
         source_name="source-stacked",
     )
-    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
     backend_head = _commit_in_clone(
         ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1"
     )

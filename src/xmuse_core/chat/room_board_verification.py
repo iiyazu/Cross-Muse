@@ -8,10 +8,9 @@ session with evidence; passes are reported to the charter's ``report_to``.
 
 The worker never executes the charter's ``acceptance`` strings: they stay
 descriptive text for the agent.  Only the fixed server-owned gate entrypoints
-run, exactly as exact-patch runs do.  Gate output is digest-only inside the
-sandbox (see ``room_execution_sandbox.run_gate``): a verification records
-``gate_id``/``exit_code``/``reason_code`` per gate because output tails are
-not retrievable without changing the sandbox boundary.
+run, exactly as exact-patch runs do.  A failed gate's evidence carries a
+sanitized, bounded tail of its output (``run_gate(output_tail_bytes=...)``) so
+the owner can see what failed; digests are computed exactly as before.
 """
 
 from __future__ import annotations
@@ -57,6 +56,10 @@ BOARD_VERIFICATION_RISK_POLICY = "room_board_verification/v1"
 BOARD_VERIFICATION_WORKER_ID = "board-verification"
 BOARD_VERIFICATION_GATE_FAILED = "board_verification_gate_failed"
 BOARD_VERIFICATION_OUTSIDE_CHARTER = "board_verification_outside_charter"
+# Display-only evidence for the owner: at most this many failing gates, each
+# with at most this many bytes of sanitized output tail.
+GATE_OUTPUT_TAIL_BYTES = 2048
+MAX_EVIDENCE_TAIL_GATES = 3
 
 # Staging failures that describe transient host-side state (a contended repo
 # lock) rather than the owner's patch.  The job is released back to pending so a
@@ -482,7 +485,10 @@ class RoomBoardVerificationWorker:
                     expected_toolchain_capability_digest=toolchain_capability_digest,
                 )
                 try:
-                    results = [run_gate(layout, gate_id) for gate_id in plan.gate_ids]
+                    results = [
+                        run_gate(layout, gate_id, output_tail_bytes=GATE_OUTPUT_TAIL_BYTES)
+                        for gate_id in plan.gate_ids
+                    ]
                 finally:
                     layout.close()
                 verify_stage_unchanged(staged)
@@ -511,19 +517,20 @@ class RoomBoardVerificationWorker:
         )
         failed_gates = [item["gate_id"] for item in gates if item["status"] != "passed"]
         if failed_gates:
+            # Tails of the first failing gates only, so the evidence stays bounded.
+            output_tails = {
+                item.gate_id: item.output_tail
+                for item in results
+                if item.status != "passed" and item.output_tail
+            }
+            output_tails = dict(list(output_tails.items())[:MAX_EVIDENCE_TAIL_GATES])
             return _failed(
                 BOARD_VERIFICATION_GATE_FAILED,
                 head_commit=patch.head_commit,
                 patch_digest=own_digest,
                 changed_paths=combined_changed,
                 gates=gates,
-                evidence={
-                    "failed_gates": failed_gates,
-                    "note": (
-                        "Gate output is digest-only inside the execution sandbox: "
-                        "only gate_id/exit_code/reason_code are recorded."
-                    ),
-                },
+                evidence={"failed_gates": failed_gates, "output_tails": output_tails},
                 stacked=stacked_tuple,
                 patch_text=patch.unified_diff,
                 base_commit=base_commit,
