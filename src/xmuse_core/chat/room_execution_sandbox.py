@@ -95,12 +95,15 @@ _SANDBOX_PATH_PLACEHOLDERS = (
     ("/repo-git/", "<git>/"),
     ("/tools/", "<tools>/"),
 )
-# Fallback for host paths that still reach the output (for example a Python
-# frame from a host-side file): Unix home, WSL drive, temp and Windows drive roots.
+# Every other absolute path (sandbox system paths such as /usr/lib, host paths
+# that reach the output, home-relative and Windows drive paths) is replaced.
+# A slash after a word, dot, colon, slash or placeholder is not a path start, so
+# relative paths, ratios, URLs and placeholder suffixes survive.
+_PATH_SEGMENT = r"[^\s'\"`:,()\[\]<>/\\]+"
 _HOST_PATH_RE = re.compile(
-    r"(?:(?<![\w./-])(?:/home/|/root/|/Users/|/mnt/[a-z]/|/tmp/|/var/tmp/)"
-    r"|(?<![\w])[A-Za-z]:[\\/])"
-    r"[^\s'\"`:,)\]]*"
+    rf"(?<![\w.:/~<>\\-])/(?:{_PATH_SEGMENT}/)*{_PATH_SEGMENT}/?"
+    rf"|(?<![\w/])~/(?:{_PATH_SEGMENT}/?)*"
+    r"|(?<![\w])[A-Za-z]:[\\/][^\s'\"`:,()\[\]<>]*"
 )
 
 
