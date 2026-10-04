@@ -23,7 +23,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "2:c980be371457",
+    "revision": "2:4e1bece55dc8",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -91,11 +91,23 @@
         "role_preset": null
       }
     ],
-    "revision": "2:c980be371457",
+    "revision": "2:4e1bece55dc8",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
       {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": true,
+            "expected_digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "method": "POST"
+          }
+        },
         "contracts": [
           {
             "contract_id": "api.alpha",
@@ -189,7 +201,7 @@
       "working": 0
     },
     "modules_total": 0,
-    "revision": "2:c980be371457",
+    "revision": "2:4e1bece55dc8",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

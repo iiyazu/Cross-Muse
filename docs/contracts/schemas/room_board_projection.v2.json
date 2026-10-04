@@ -254,6 +254,36 @@
         "decided_at": { "type": ["string", "null"] },
         "digest": { "type": "string" },
         "decided_via": { "type": ["string", "null"] },
+        "actions": {
+          "type": "object",
+          "properties": {
+            "decide": {
+              "type": "object",
+              "properties": {
+                "available": { "type": "boolean" },
+                "method": { "const": "POST" },
+                "href": { "type": "string" },
+                "expected_digest": { "type": "string" },
+                "allowed_decisions": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "required": [
+                "available",
+                "method",
+                "href",
+                "expected_digest",
+                "allowed_decisions"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": ["decide"],
+          "additionalProperties": false
+        },
         "modules": {
           "type": "array",
           "items": {
@@ -300,6 +330,7 @@
         "decided_at",
         "digest",
         "decided_via",
+        "actions",
         "modules",
         "contracts"
       ],

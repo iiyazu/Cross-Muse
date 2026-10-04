@@ -34,6 +34,7 @@ DIGEST_B = "sha256:" + "b" * 64
 SCENARIOS = (
     "empty",
     "split_pending",
+    "split_approved_via_plugin",
     "lifecycle_mix",
     "verifying_and_waiting",
     "verified",
@@ -716,9 +717,46 @@ def _scenario_injection_text(tmp_path: Path) -> dict[str, Any]:
     return ctx
 
 
+def _scenario_split_approved_via_plugin(tmp_path: Path) -> dict[str, Any]:
+    ctx = _base_room(tmp_path, "split_approved_via_plugin.db")
+    members, store, leases = ctx["members"], ctx["store"], ctx["leases"]
+    modules, assignments, contracts = _split_payload(members)
+    proposed = store.propose_split(
+        **_lease_kwargs(members[0], leases[members[0].participant_id], request_id="propose-1"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    store.decide_split(
+        conversation_id=ctx["conversation_id"],
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+        decided_via="plugin:claude-code",
+        now=NOW,
+    )
+    # A fresh split on the same conversation rejects cleanly with another provenance.
+    proposed2 = store.propose_split(
+        **_lease_kwargs(members[0], leases[members[0].participant_id], request_id="propose-2"),
+        modules=[modules[0]],
+        assignments={"alpha": assignments["alpha"]},
+        contracts=[contracts[0]],
+    )
+    store.decide_split(
+        conversation_id=ctx["conversation_id"],
+        split_id=proposed2["split_id"],
+        decision="reject",
+        operator_identity="operator:host",
+        decided_via="cli",
+        now=NOW,
+    )
+    return ctx
+
+
 _BUILDERS = {
     "empty": _scenario_empty,
     "split_pending": _scenario_split_pending,
+    "split_approved_via_plugin": _scenario_split_approved_via_plugin,
     "lifecycle_mix": _scenario_lifecycle_mix,
     "verifying_and_waiting": _scenario_verifying_and_waiting,
     "verified": _scenario_verified,

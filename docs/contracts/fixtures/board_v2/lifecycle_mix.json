@@ -31,7 +31,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -47,7 +47,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -63,7 +63,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -79,7 +79,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -95,7 +95,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -177,7 +177,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "11:149a32cfc944",
+    "revision": "11:0189a6adfa1f",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -278,7 +278,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -294,7 +294,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -310,7 +310,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -326,7 +326,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -342,7 +342,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -666,11 +666,23 @@
         "role_preset": null
       }
     ],
-    "revision": "11:149a32cfc944",
+    "revision": "11:0189a6adfa1f",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
       {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:b1c058769dd63c216838089c4712ea283ebc3cbb83505b383b61cf4e3defaecd",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "method": "POST"
+          }
+        },
         "contracts": [
           {
             "contract_id": "api.m-assigned",
@@ -705,7 +717,7 @@
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
-        "decided_via": null,
+        "decided_via": "web",
         "digest": "sha256:b1c058769dd63c216838089c4712ea283ebc3cbb83505b383b61cf4e3defaecd",
         "modules": [
           {
@@ -828,7 +840,7 @@
       "working": 1
     },
     "modules_total": 5,
-    "revision": "11:149a32cfc944",
+    "revision": "11:0189a6adfa1f",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

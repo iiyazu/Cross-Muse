@@ -804,7 +804,12 @@ def _walk_privacy(value: Any, path: str) -> None:
         for index, item in enumerate(value):
             _walk_privacy(item, f"{path}[{index}]")
     elif isinstance(value, str):
-        assert not value.startswith("/"), f"absolute path at {path}: {value[:60]}"
+        if path.endswith(".href"):
+            # Split.actions.decide.href is a server-owned API route, not a
+            # host absolute path; contract §3.5 requires the /api/... shape.
+            assert value.startswith("/api/"), f"unexpected href at {path}: {value[:60]}"
+        else:
+            assert not value.startswith("/"), f"absolute path at {path}: {value[:60]}"
         assert not DRIVE_RE.match(value), f"drive path at {path}: {value[:60]}"
 
 

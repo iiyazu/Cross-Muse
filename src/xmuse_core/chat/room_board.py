@@ -32,6 +32,7 @@ from xmuse_core.chat.room_board_projection import (
     derive_lifecycle,
     derive_state,
     derive_verification_axis,
+    split_digest,
 )
 from xmuse_core.chat.room_collaboration import collaboration_policy_row
 from xmuse_core.chat.room_database import RoomDatabase
@@ -57,6 +58,7 @@ MAX_VERIFICATION_PATCH_BYTES = 200_000
 
 MODULE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+DECIDED_VIA_RE = re.compile(r"^(web|cli|plugin:[a-z0-9][a-z0-9_-]{0,31})$")
 CHARTER_KEYS = frozenset(
     {"module_id", "title", "paths", "provides", "depends", "acceptance", "report_to"}
 )
@@ -1029,12 +1031,16 @@ class RoomBoardStore:
         split_id: str,
         decision: str,
         operator_identity: str,
+        decided_via: str = "web",
+        expected_digest: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if decision not in ("approve", "reject"):
             raise ValueError("room_board_decision_invalid")
         if not isinstance(operator_identity, str) or not operator_identity.strip():
             raise ValueError("room_operator_identity_required")
+        if not isinstance(decided_via, str) or not DECIDED_VIA_RE.match(decided_via):
+            raise ValueError("room_board_decided_via_invalid")
         _, stamp = _current_stamp(now)
         with self._connect() as conn:
             conn.execute("begin immediate")
@@ -1049,6 +1055,8 @@ class RoomBoardStore:
                     raise ValueError("room_board_split_decided")
                 proposal = self._activity_from_conn(conn, str(split["activity_id"]))
                 bundle = _decode(str(split["split_json"]))
+                if expected_digest is not None and expected_digest != split_digest(bundle):
+                    raise ValueError("room_board_split_digest_mismatch")
                 normalized_modules = list(bundle["modules"])
                 assignments = dict(bundle["assignments"])
                 normalized_contracts = list(bundle["contracts"])
@@ -1067,6 +1075,7 @@ class RoomBoardStore:
                             "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
                             "split_id": split_id,
                             "decision": "rejected",
+                            "decided_via": decided_via,
                         },
                         stamp=stamp,
                     )
@@ -1151,6 +1160,7 @@ class RoomBoardStore:
                             "module_id": module_id,
                             "version": 1,
                             "owner_participant_id": owner,
+                            "decided_via": decided_via,
                             "charter": charter,
                             "contracts": [
                                 {

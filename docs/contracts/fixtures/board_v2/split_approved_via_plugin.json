@@ -28,7 +28,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": "web",
+          "decided_via": "plugin:claude-code",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -44,7 +44,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": "web",
+          "decided_via": "plugin:claude-code",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -55,56 +55,41 @@
       {
         "actor": {
           "kind": "participant",
-          "participant_id": "part_00000000000000000000000000000003"
+          "participant_id": "part_00000000000000000000000000000002"
         },
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
-          "claims": [],
-          "claims_total": 0,
-          "status": "done",
-          "summary": {
-            "text": "finished",
-            "truncated": false,
-            "untrusted": true
-          }
+          "module_ids": [
+            "alpha"
+          ],
+          "split_id": "split_0000000000000000000000000000001f"
         },
-        "kind": "progress",
-        "module_id": "alpha",
+        "kind": "split_proposed",
+        "module_id": null,
         "seq": 5
       },
       {
         "actor": {
-          "kind": "infrastructure",
+          "kind": "operator",
           "participant_id": null
         },
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
-          "escalated": false,
-          "gate_ids": [],
-          "reason_code": "board_verification_attempts_exhausted",
-          "stacked": [],
-          "status": "error",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "decided_via": "cli",
+          "split_id": "split_0000000000000000000000000000001f"
         },
-        "kind": "verification",
-        "module_id": "alpha",
+        "kind": "split_rejected",
+        "module_id": null,
         "seq": 6
       }
     ],
     "has_more": false,
     "reset": false,
-    "revision": "6:405b4de25527",
+    "revision": "6:f12d41366f09",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
-    "attention": [
-      {
-        "kind": "operator",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_error",
-        "split_id": null
-      }
-    ],
+    "attention": [],
     "board_seq": 6,
     "capabilities": {
       "integrations": 0,
@@ -161,7 +146,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": "web",
+          "decided_via": "plugin:claude-code",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -177,7 +162,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": "web",
+          "decided_via": "plugin:claude-code",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -188,39 +173,31 @@
       {
         "actor": {
           "kind": "participant",
-          "participant_id": "part_00000000000000000000000000000003"
+          "participant_id": "part_00000000000000000000000000000002"
         },
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
-          "claims": [],
-          "claims_total": 0,
-          "status": "done",
-          "summary": {
-            "text": "finished",
-            "truncated": false,
-            "untrusted": true
-          }
+          "module_ids": [
+            "alpha"
+          ],
+          "split_id": "split_0000000000000000000000000000001f"
         },
-        "kind": "progress",
-        "module_id": "alpha",
+        "kind": "split_proposed",
+        "module_id": null,
         "seq": 5
       },
       {
         "actor": {
-          "kind": "infrastructure",
+          "kind": "operator",
           "participant_id": null
         },
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
-          "escalated": false,
-          "gate_ids": [],
-          "reason_code": "board_verification_attempts_exhausted",
-          "stacked": [],
-          "status": "error",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "decided_via": "cli",
+          "split_id": "split_0000000000000000000000000000001f"
         },
-        "kind": "verification",
-        "module_id": "alpha",
+        "kind": "split_rejected",
+        "module_id": null,
         "seq": 6
       }
     ],
@@ -228,20 +205,20 @@
     "modules": [
       {
         "attention": {
-          "kind": "operator",
-          "reason_code": "board_attention_verification_error"
+          "kind": "none",
+          "reason_code": null
         },
         "charter_version": 1,
         "counters": {
-          "done_reports": 1,
-          "errored": 1,
+          "done_reports": 0,
+          "errored": 0,
           "failed": 0,
           "passed": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
         "depends": [],
-        "lifecycle": "done_claimed",
+        "lifecycle": "assigned",
         "module_id": "alpha",
         "owner_participant_id": "part_00000000000000000000000000000003",
         "paths": [
@@ -251,7 +228,7 @@
           "api.alpha"
         ],
         "report_to": "part_00000000000000000000000000000002",
-        "state": "verification_error",
+        "state": "assigned",
         "title": {
           "text": "Alpha module",
           "truncated": false,
@@ -262,11 +239,11 @@
           "escalated": false,
           "gate_ids": [],
           "head_commit": null,
-          "reason_code": "board_verification_attempts_exhausted",
+          "reason_code": null,
           "stacked": [],
-          "status": "error",
-          "updated_at": "2026-01-01T00:00:10.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
         }
       },
       {
@@ -341,7 +318,7 @@
         "role_preset": null
       }
     ],
-    "revision": "6:405b4de25527",
+    "revision": "6:f12d41366f09",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -374,7 +351,7 @@
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
-        "decided_via": "web",
+        "decided_via": "plugin:claude-code",
         "digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
         "modules": [
           {
@@ -415,20 +392,60 @@
         "proposed_by_participant_id": "part_00000000000000000000000000000002",
         "split_id": "split_00000000000000000000000000000018",
         "status": "approved"
+      },
+      {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:a25a0bd3b6368f744acf1b65c7fd34c8adf9c9a63a815973b439c88b945debf2",
+            "href": "/api/chat/operator/board-splits/split_0000000000000000000000000000001f/decision",
+            "method": "POST"
+          }
+        },
+        "contracts": [
+          {
+            "contract_id": "api.alpha",
+            "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
+            "kind": "api_schema",
+            "provider_module_id": "alpha"
+          }
+        ],
+        "created_at": "2026-01-01T00:00:10.000000Z",
+        "decided_at": "2026-01-01T00:00:10.000000Z",
+        "decided_via": "cli",
+        "digest": "sha256:a25a0bd3b6368f744acf1b65c7fd34c8adf9c9a63a815973b439c88b945debf2",
+        "modules": [
+          {
+            "depends": [],
+            "module_id": "alpha",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "src/alpha/**"
+            ],
+            "provides": [
+              "api.alpha"
+            ],
+            "title": {
+              "text": "Alpha module",
+              "truncated": false,
+              "untrusted": true
+            }
+          }
+        ],
+        "proposed_by_participant_id": "part_00000000000000000000000000000002",
+        "split_id": "split_0000000000000000000000000000001f",
+        "status": "rejected"
       }
     ],
     "stale_dependents": []
   },
   "summary": {
-    "attention": [
-      {
-        "kind": "operator",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_error",
-        "split_id": null
-      }
-    ],
-    "attention_total": 1,
+    "attention": [],
+    "attention_total": 0,
     "board_seq": 6,
     "capabilities": {
       "integrations": 0,
@@ -438,12 +455,12 @@
     },
     "conversation_id": "conv_00000000000000000000000000000001",
     "counts": {
-      "assigned": 1,
+      "assigned": 2,
       "blocked": 0,
       "claimed": 0,
       "done_claimed": 0,
       "ready_for_review": 0,
-      "verification_error": 1,
+      "verification_error": 0,
       "verification_failed": 0,
       "verified": 0,
       "verifying": 0,
@@ -451,7 +468,7 @@
       "working": 0
     },
     "modules_total": 2,
-    "revision": "6:405b4de25527",
+    "revision": "6:f12d41366f09",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

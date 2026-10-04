@@ -29,7 +29,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -45,7 +45,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -61,7 +61,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -133,7 +133,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "8:87cb2ba43b3f",
+    "revision": "8:0858d801e234",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -202,7 +202,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -218,7 +218,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -234,7 +234,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "charter_version": 1,
-          "decided_via": null,
+          "decided_via": "web",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -464,11 +464,23 @@
         "role_preset": null
       }
     ],
-    "revision": "8:87cb2ba43b3f",
+    "revision": "8:0858d801e234",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
       {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:3e48f6caef7ec4f6cf9cc4f88ab1ee5c686507b0d2da9eacba175ebbf56ac18f",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "method": "POST"
+          }
+        },
         "contracts": [
           {
             "contract_id": "api.backend",
@@ -485,7 +497,7 @@
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
-        "decided_via": null,
+        "decided_via": "web",
         "digest": "sha256:3e48f6caef7ec4f6cf9cc4f88ab1ee5c686507b0d2da9eacba175ebbf56ac18f",
         "modules": [
           {
@@ -586,7 +598,7 @@
       "working": 2
     },
     "modules_total": 3,
-    "revision": "8:87cb2ba43b3f",
+    "revision": "8:0858d801e234",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

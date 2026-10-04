@@ -375,6 +375,16 @@ def _contract_digest(content: str) -> str:
     return f"sha256:{sha256(content.encode('utf-8')).hexdigest()}"
 
 
+def split_digest(bundle: Mapping[str, Any]) -> str:
+    """Return the canonical ``sha256:<hex>`` digest of a stored split bundle.
+
+    The same helper backs the ``Split.digest`` projection field and the
+    operator approval guard (``expected_digest``), so the two can never drift.
+    """
+
+    return f"sha256:{sha256(_canonical(bundle).encode('utf-8')).hexdigest()}"
+
+
 def _stamp(value: datetime) -> str:
     current = value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return current.isoformat(timespec="microseconds").replace("+00:00", "Z")
@@ -650,17 +660,28 @@ def _load_split_view(conn: sqlite3.Connection, conversation_id: str) -> list[dic
                 }
             )
         split_contracts.sort(key=lambda item: item["contract_id"])
+        split_id = str(row["split_id"])
+        digest = split_digest(bundle)
         splits.append(
             {
-                "split_id": str(row["split_id"]),
+                "split_id": split_id,
                 "status": status,
                 "proposed_by_participant_id": str(row["proposed_by_participant_id"]),
                 "created_at": str(row["created_at"]),
                 "decided_at": None if decided_at is None else str(decided_at),
-                "digest": f"sha256:{sha256(_canonical(bundle).encode('utf-8')).hexdigest()}",
+                "digest": digest,
                 "decided_via": _decided_via_for_split(
-                    conn, conversation_id, str(row["split_id"]), approved=status == "approved"
+                    conn, conversation_id, split_id, approved=status == "approved"
                 ),
+                "actions": {
+                    "decide": {
+                        "available": status == "proposed",
+                        "method": "POST",
+                        "href": f"/api/chat/operator/board-splits/{split_id}/decision",
+                        "expected_digest": digest,
+                        "allowed_decisions": ["approve", "reject"],
+                    }
+                },
                 "modules": split_modules,
                 "contracts": split_contracts,
             }
