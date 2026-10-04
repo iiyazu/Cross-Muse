@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from xmuse_core.chat.room_batches import create_room_batch_schema
+from xmuse_core.chat.room_board_schema import create_room_board_schema
 from xmuse_core.chat.room_collaboration import create_room_collaboration_schema
 from xmuse_core.chat.room_control_schema import create_room_control_schema
 
@@ -130,3 +131,4 @@ def create_room_kernel_schema(conn: sqlite3.Connection) -> None:
     create_room_batch_schema(conn)
     create_room_control_schema(conn)
     create_room_collaboration_schema(conn)
+    create_room_board_schema(conn)

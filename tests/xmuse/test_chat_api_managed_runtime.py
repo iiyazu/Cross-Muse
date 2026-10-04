@@ -98,6 +98,9 @@ print(
         "/api/chat/operator/memory-runtime/rebuild",
         "/api/chat/conversations/{conversation_id}/codex-agents",
         "/api/chat/operator/room-participants/{participant_id}/codex-actions",
+        "/api/chat/conversations/{conversation_id}/board",
+        "/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}",
+        "/api/chat/operator/board-splits/{split_id}/decision",
     }
 
 

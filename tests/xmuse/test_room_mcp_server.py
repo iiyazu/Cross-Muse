@@ -8,10 +8,14 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from xmuse.room_mcp_server import create_app
-from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME, room_tool_schemas
+from xmuse_core.chat.room_mcp_contract import (
+    ROOM_OUTCOME_TOOL_NAME,
+    ROOM_TOOL_NAMES,
+    room_tool_schemas,
+)
 
 
-def test_default_room_mcp_has_one_bounded_surface(tmp_path: Path) -> None:
+def test_default_room_mcp_has_bounded_room_surface(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
 
     health = client.get("/health")
@@ -32,7 +36,7 @@ def test_default_room_mcp_has_one_bounded_surface(tmp_path: Path) -> None:
     )
     assert listed.status_code == 200
     assert listed.json()["result"]["tools"] == room_tool_schemas()
-    assert [item["name"] for item in listed.json()["result"]["tools"]] == [ROOM_OUTCOME_TOOL_NAME]
+    assert [item["name"] for item in listed.json()["result"]["tools"]] == list(ROOM_TOOL_NAMES)
     rpc = {"jsonrpc": "2.0", "id": "tools", "method": "tools/list"}
     for path in ("/mcp", "/mcp/chat", "/sse", "/messages"):
         assert client.post(path, json=rpc).status_code == 404

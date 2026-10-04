@@ -62,8 +62,19 @@ def test_app_server_room_mcp_command_uses_only_room_capability(
         'mcp_servers.xmuse-room.type="streamable_http"',
         "-c",
         'mcp_servers.xmuse-room.url="http://localhost:8123/mcp/room"',
-        "-c",
-        'mcp_servers.xmuse-room.tools.chat_room_submit_outcome.approval_mode="approve"',
+        *[
+            item
+            for name in (
+                "chat_room_submit_outcome",
+                "chat_room_board_read",
+                "chat_room_board_propose_split",
+                "chat_room_board_claim",
+                "chat_room_board_publish_contract",
+                "chat_room_board_report_progress",
+                "chat_room_board_ask",
+            )
+            for item in ("-c", f'mcp_servers.xmuse-room.tools.{name}.approval_mode="approve"')
+        ],
         "-c",
         'shell_environment_policy.inherit="core"',
         "-c",

@@ -4,8 +4,9 @@ Each owner agent works in its own local clone with full native tools, confined b
 an OS sandbox (bubblewrap): the whole filesystem is bound read-only, ``/tmp`` is a
 private tmpfs, only the owner clone (the workspace) and the agent provider's own
 state directories stay writable, and every other provider's state plus known
-credential stores are masked.  The network stays shared because dependency
-installs need it.
+credential stores are masked.  On WSL the Windows drives (``/mnt/c`` and the
+other drvfs mounts) are masked as well and an owner clone on one is re-bound over
+its mask.  The network stays shared because dependency installs need it.
 
 Known residual exposure: a provider's own credential necessarily stays readable
 to its own shell inside the sandbox (for example ``~/.claude`` for Claude or
@@ -20,6 +21,7 @@ from pathlib import Path
 from xmuse_core.chat.room_opencode_sandbox import (
     MASKED_HOME_PATHS,
     OPENCODE_WRITABLE_HOME_PATHS,
+    drive_masks,
 )
 
 ROOM_WORKSPACE_WRITE_CONFINEMENT = "os_workspace_write_sandbox"
@@ -38,11 +40,16 @@ def build_workspace_write_sandbox_command(
     workspace: Path,
     agent_argv: Sequence[str],
     masked_paths: Iterable[Path] = (),
+    readonly_binds: Sequence[tuple[Path, Path]] = (),
+    drive_mounts: Iterable[Path] | None = None,
 ) -> tuple[str, ...]:
     """Return the bubblewrap argv that runs ``agent_argv`` with a writable workspace.
 
     Only the workspace and this provider's own state stay writable; every other
     provider's state and every :data:`MASKED_HOME_PATHS` entry is masked.
+    ``readonly_binds`` mounts host directories read-only at destinations strictly
+    inside the workspace (the board's charter/contract view at ``.xmuse``).
+    ``drive_mounts`` overrides Windows drive detection (``None`` detects).
     """
 
     if provider not in PROVIDER_STATE_HOME_PATHS:
@@ -59,6 +66,23 @@ def build_workspace_write_sandbox_command(
         raise ValueError("room_workspace_sandbox_workspace_unsafe")
     if home_resolved.is_relative_to(workspace_resolved):
         raise ValueError("room_workspace_sandbox_workspace_unsafe")
+    binds: list[tuple[Path, Path]] = []
+    for source, destination in readonly_binds:
+        source_resolved = Path(source).expanduser().resolve()
+        destination_path = Path(destination)
+        # The destination must be a real (non-symlink) path strictly inside the
+        # workspace; the owner controls the workspace, so a symlinked component
+        # could otherwise redirect the mount elsewhere.
+        if (
+            not source_resolved.is_dir()
+            or not destination_path.is_absolute()
+            or ".." in destination_path.parts
+            or destination_path.resolve() != destination_path
+            or destination_path == workspace_resolved
+            or not destination_path.is_relative_to(workspace_resolved)
+        ):
+            raise ValueError("room_workspace_sandbox_bind_unsafe")
+        binds.append((source_resolved, destination_path))
 
     own_rels = PROVIDER_STATE_HOME_PATHS[provider]
     own_resolved = {(home_expanded / rel).resolve() for rel in own_rels}
@@ -70,8 +94,9 @@ def build_workspace_write_sandbox_command(
         candidates.extend(home_expanded / rel for rel in rels)
     candidates.extend(Path(item).expanduser() for item in masked_paths)
 
+    drives = drive_masks(drive_mounts)
     unique: list[Path] = []
-    seen: set[Path] = set()
+    seen: set[Path] = set(drives)
     for candidate in candidates:
         if not candidate.exists():
             continue
@@ -96,7 +121,8 @@ def build_workspace_write_sandbox_command(
         "--tmpfs",
         "/tmp",
     ]
-    for path in enclosing:
+    # Windows drives and masks enclosing the workspace go before every re-bind.
+    for path in [*drives, *enclosing]:
         argv.extend(_mask(path))
     for rel in own_rels:
         path = home_expanded / rel
@@ -106,6 +132,8 @@ def build_workspace_write_sandbox_command(
             path.mkdir(parents=True, exist_ok=True)
             argv.extend(["--bind", str(path), str(path)])
     argv.extend(["--bind", str(workspace_resolved), str(workspace_resolved)])
+    for source_resolved, destination_path in binds:
+        argv.extend(["--ro-bind", str(source_resolved), str(destination_path)])
     for path in others:
         argv.extend(_mask(path))
     argv.extend(["--chdir", str(workspace_resolved), "--die-with-parent", "--new-session"])

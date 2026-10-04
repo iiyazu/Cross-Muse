@@ -847,7 +847,9 @@ def test_runner_refuses_antigravity_without_the_pinned_room_mcp_port(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # The 8100 pin only applies to the legacy opt-in agentapi transport.
     monkeypatch.setenv("XMUSE_ANTIGRAVITY_AGENTAPI", str(tmp_path / "agentapi"))
+    monkeypatch.setenv("XMUSE_ANTIGRAVITY_TRANSPORT", "agentapi")
     monkeypatch.delenv("XMUSE_CLAUDE_ACP_COMMAND", raising=False)
     root = tmp_path / "runtime"
     worktree = tmp_path / "worktree"

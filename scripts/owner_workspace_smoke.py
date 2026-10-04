@@ -184,6 +184,7 @@ def _resolve_owner_settings(
         extra_masked_paths=resolve_owner_masked_paths(),
         prepare_command=prepare_command,
         prepare_timeout_s=prepare_timeout_s,
+        board_root=root / "runtime" / "board",
     )
 
 

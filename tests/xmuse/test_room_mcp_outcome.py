@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
-from xmuse_core.chat.room_mcp_contract import room_tool_schemas
+from xmuse_core.chat.room_mcp_contract import ROOM_TOOL_NAMES, room_tool_schemas
 
 TOOL = "chat_room_submit_outcome"
 REQUIRED = {
@@ -159,7 +160,7 @@ def test_room_outcome_schema_is_exact_and_bounded():
     assert not FORBIDDEN & set(input_schema["properties"])
 
 
-def test_room_endpoint_exposes_only_outcome_and_denies_other_writes(tmp_path: Path):
+def test_room_endpoint_exposes_only_room_tools_and_denies_other_writes(tmp_path: Path):
     db, _, conversation_id, participant, session, claim = _room(tmp_path)
     from xmuse.room_mcp_server import create_app
 
@@ -168,8 +169,8 @@ def test_room_endpoint_exposes_only_outcome_and_denies_other_writes(tmp_path: Pa
         "/mcp/room",
         json={"jsonrpc": "2.0", "id": "list", "method": "tools/list"},
     ).json()
-    assert [item["name"] for item in listed["result"]["tools"]] == [TOOL]
-    assert [item["name"] for item in room_tool_schemas()] == [TOOL]
+    assert [item["name"] for item in listed["result"]["tools"]] == list(ROOM_TOOL_NAMES)
+    assert [item["name"] for item in room_tool_schemas()] == list(ROOM_TOOL_NAMES)
 
     before = _counts(db)
     denied = client.post(
@@ -212,6 +213,57 @@ def test_room_endpoint_exposes_only_outcome_and_denies_other_writes(tmp_path: Pa
         },
     ).json()
     assert accepted["result"]["isError"] is False
+
+
+def test_board_tools_go_through_the_same_lease_bound_endpoint(tmp_path: Path):
+    db, _, conversation_id, participant, session, claim = _room(tmp_path)
+    from xmuse.room_mcp_server import create_app
+
+    client = TestClient(create_app(tmp_path))
+    lease_args = {
+        "conversation_id": conversation_id,
+        "participant_id": participant.participant_id,
+        "god_session_id": session.god_session_id,
+        "observation_id": claim["observation"]["observation_id"],
+        "lease_token": claim["observation"]["lease_token"],
+        "client_request_id": "board-read-1",
+    }
+
+    def call(name: str, arguments: dict) -> dict:
+        return client.post(
+            "/mcp/room",
+            json={
+                "jsonrpc": "2.0",
+                "id": name,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            },
+        ).json()["result"]
+
+    read = call("chat_room_board_read", lease_args)
+    assert read["isError"] is False
+    assert json.loads(read["content"][0]["text"])["charters"] == []
+    # Internal parameters are not reachable through the schema whitelist.
+    smuggled = call("chat_room_board_read", {**lease_args, "now": "2000-01-01T00:00:00Z"})
+    assert "unknown arguments: now" in str(smuggled)
+    stale = call("chat_room_board_read", {**lease_args, "lease_token": "not-the-lease"})
+    assert stale["isError"] is True
+    assert "room_observation_lease_lost" in stale["content"][0]["text"]
+    # Not the lead: proposing a split fails closed without writing anything.
+    before = _counts(db)
+    split = call(
+        "chat_room_board_propose_split",
+        {
+            **lease_args,
+            "client_request_id": "board-split-1",
+            "modules": [{"module_id": "api", "title": "API", "paths": ["api/**"]}],
+            "assignments": {"api": participant.participant_id},
+            "contracts": [],
+        },
+    )
+    assert split["isError"] is True
+    assert "room_board_lead_required" in split["content"][0]["text"]
+    assert _counts(db) == before
 
 
 def test_direct_service_submit_is_durable_replayable_and_room_only(tmp_path: Path):

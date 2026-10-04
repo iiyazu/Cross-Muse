@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal MCP-over-HTTP server for durable Room outcomes."""
+"""Minimal MCP-over-HTTP server for durable Room outcomes and board coordination."""
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -16,11 +17,29 @@ from xmuse_core import mcp_responses
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_mcp_contract import (
+    ROOM_BOARD_ASK_TOOL_NAME,
+    ROOM_BOARD_CLAIM_TOOL_NAME,
+    ROOM_BOARD_PROPOSE_SPLIT_TOOL_NAME,
+    ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME,
+    ROOM_BOARD_READ_TOOL_NAME,
+    ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME,
     ROOM_OUTCOME_TOOL_NAME,
+    room_tool_schema,
     room_tool_schemas,
 )
 from xmuse_core.runtime.data_guard import assert_data_operation_complete
 from xmuse_core.runtime.paths import default_xmuse_root
+
+# Board tool -> RoomApplicationService method.  Arguments are restricted to the
+# tool's schema properties, so internal parameters (``now``) are unreachable.
+_BOARD_METHODS = {
+    ROOM_BOARD_READ_TOOL_NAME: "board_read",
+    ROOM_BOARD_PROPOSE_SPLIT_TOOL_NAME: "board_propose_split",
+    ROOM_BOARD_CLAIM_TOOL_NAME: "board_claim",
+    ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME: "board_publish_contract",
+    ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME: "board_report_progress",
+    ROOM_BOARD_ASK_TOOL_NAME: "board_ask",
+}
 
 DEFAULT_XMUSE_ROOT = default_xmuse_root(Path(__file__).resolve().parent)
 SERVER_NAME = "xmuse-room-mcp"
@@ -29,6 +48,8 @@ DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {"2024-11-05", DEFAULT_PROTOCOL_VERSION}
 MCP_ROLE_HEADER = "x-xmuse-mcp-role"
 MCP_ROLE_ENV = "XMUSE_MCP_ROLE"
+
+logger = logging.getLogger(__name__)
 
 
 def _initialize_result(params: object) -> dict[str, object]:
@@ -47,49 +68,58 @@ def _initialize_result(params: object) -> dict[str, object]:
     }
 
 
-def _authorize(request: Request) -> None:
+def _authorize(request: Request, tool: str) -> None:
     role = request.headers.get(MCP_ROLE_HEADER, os.environ.get(MCP_ROLE_ENV, "god"))
     normalized = role.strip().lower()
     if normalized in {"admin", "operator", "god"}:
         return
     if normalized == "viewer":
         raise PermissionError(
-            f"MCP authorization denied for {ROOM_OUTCOME_TOOL_NAME}: "
-            f"role viewer cannot mutate write tool {ROOM_OUTCOME_TOOL_NAME}"
+            f"MCP authorization denied for {tool}: role viewer cannot mutate write tool {tool}"
         )
-    raise PermissionError(
-        f"MCP authorization denied for {ROOM_OUTCOME_TOOL_NAME}: unknown MCP role: {normalized}"
-    )
+    raise PermissionError(f"MCP authorization denied for {tool}: unknown MCP role: {normalized}")
 
 
-def _validate_tool_call(params: object) -> dict[str, Any]:
+def _validate_tool_call(params: object) -> tuple[str, dict[str, Any]]:
     if not isinstance(params, dict):
         raise ValueError("params must be an object")
     name = params.get("name")
-    if name != ROOM_OUTCOME_TOOL_NAME:
+    schema = room_tool_schema(name) if isinstance(name, str) else None
+    if not isinstance(name, str) or schema is None:
         raise ValueError(f"tool is not exposed on this MCP endpoint: {name}")
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
         raise ValueError("arguments must be an object")
-    required = room_tool_schemas()[0]["inputSchema"]["required"]
-    missing = [item for item in required if item not in arguments]
+    input_schema = schema["inputSchema"]
+    missing = [item for item in input_schema["required"] if item not in arguments]
     if missing:
-        raise ValueError(
-            f"{ROOM_OUTCOME_TOOL_NAME} missing required arguments: " + ", ".join(sorted(missing))
-        )
-    return arguments
+        raise ValueError(f"{name} missing required arguments: " + ", ".join(sorted(missing)))
+    unknown = sorted(set(arguments) - set(input_schema["properties"]))
+    if unknown:
+        raise ValueError(f"{name} got unknown arguments: " + ", ".join(unknown))
+    return name, arguments
 
 
-def _submit_outcome(root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+def _call_tool(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    service = RoomApplicationService(root / "chat.db", root / "god_sessions.json")
     try:
-        return RoomApplicationService(
-            root / "chat.db",
-            root / "god_sessions.json",
-        ).submit_participant_outcome(**arguments)
+        if name == ROOM_OUTCOME_TOOL_NAME:
+            return service.submit_participant_outcome(**arguments)
+        result = dict(getattr(service, _BOARD_METHODS[name])(**arguments))
     except RoomApplicationError as exc:
         return {"error": {"code": exc.code, "message": exc.message}}
     except (TypeError, ValueError) as exc:
         return {"error": {"code": "invalid_arguments", "message": str(exc)}}
+    if name == ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME and "error" not in result:
+        try:
+            from xmuse_core.chat.room_board_view import refresh_board_views
+
+            conversation_id = arguments.get("conversation_id")
+            if isinstance(conversation_id, str) and conversation_id:
+                refresh_board_views(root, conversation_id)
+        except Exception as exc:
+            logger.warning("room board refresh after publish failed: %s", exc)
+    return result
 
 
 async def _handle_rpc(request: Request, root: Path) -> Response:
@@ -110,13 +140,14 @@ async def _handle_rpc(request: Request, root: Path) -> Response:
         elif method == "tools/list":
             result = {"tools": room_tool_schemas()}
         elif method == "tools/call":
-            _authorize(request)
+            requested = params.get("name") if isinstance(params, dict) else None
+            _authorize(request, requested if isinstance(requested, str) else "unknown")
             try:
-                arguments = _validate_tool_call(params)
+                name, arguments = _validate_tool_call(params)
             except (TypeError, ValueError) as exc:
                 result = mcp_responses.structured_error("invalid_arguments", str(exc))
             else:
-                outcome = _submit_outcome(root, arguments)
+                outcome = _call_tool(root, name, arguments)
                 result = mcp_responses.content_json(outcome, is_error="error" in outcome)
         else:
             return JSONResponse(

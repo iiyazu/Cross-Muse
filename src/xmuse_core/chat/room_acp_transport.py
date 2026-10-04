@@ -4,7 +4,8 @@ The adapter owns one long-lived ACP agent process per ``(conversation_id,
 participant_id)``, created lazily under a per-participant singleflight lock.  The
 Room MCP server (``xmuse-room``) is mounted as an HTTP MCP server on each ACP
 session; the agent produces Room truth only through
-``chat_room_submit_outcome`` and every other tool request is rejected.  The
+``chat_room_submit_outcome`` and coordinates through the lease-bound board
+tools; for non-owners every other tool request is rejected.  The
 ``RoomParticipantHost`` still decides completion from durable state.
 
 Claude (via ``claude-agent-acp``) is confined in-process on three axes, because
@@ -17,8 +18,9 @@ settings still load because they may carry the provider credential),
 ``strictMcpConfig`` blocks MCP servers from the operator's user config so only
 the ACP-mounted room server loads, and ``session/set_mode`` pins the
 ``default`` permission mode.  The ACP permission callback then grants only the
-exact room outcome MCP tool; MCP tools are not affected by the built-in tool
-filter.
+exact Room MCP tools; MCP tools are not affected by the built-in tool filter.
+Workspace-write owners are the exception: they keep their full native tools,
+own MCP servers and Skills, and are confined by the OS sandbox instead.
 
 Provider output only describes transport progress: an ``end_turn`` stop reason
 means the provider turn ended, never that the Room commit happened.
@@ -73,7 +75,7 @@ from xmuse_core.chat.room_host import (
     RoomTransportResult,
     RoomTurnProgress,
 )
-from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME
+from xmuse_core.chat.room_mcp_contract import ROOM_OUTCOME_TOOL_NAME, ROOM_TOOL_NAMES
 from xmuse_core.chat.room_memory_runtime import RoomMemoryContextReceiptPort
 from xmuse_core.chat.room_observation_transport_base import (
     ROOM_CONTEXT_BYTE_LIMIT,
@@ -125,6 +127,11 @@ ROOM_ACP_SETTING_SOURCES: tuple[str, ...] = ("user",)
 # Claude Code names a mounted MCP tool ``mcp__<server>__<tool>`` in the ACP
 # tool-call title (verified against claude-agent-acp 0.84).
 _ROOM_OUTCOME_QUALIFIED_TOOL_NAME = f"mcp__{ROOM_ACP_MCP_SERVER_NAME}__{ROOM_OUTCOME_TOOL_NAME}"
+# Every Room tool (outcome plus board tools) by its exact qualified title; the
+# board tools are bound to the caller's live lease server-side like the outcome.
+_ROOM_QUALIFIED_TOOL_NAMES = frozenset(
+    f"mcp__{ROOM_ACP_MCP_SERVER_NAME}__{name}" for name in ROOM_TOOL_NAMES
+)
 _READ_TEXT_FILE_BYTE_LIMIT = 8 * 1024 * 1024
 
 # OpenCode never asks the ACP client before running its own tools (shell, write,
@@ -158,9 +165,10 @@ class AcpProviderProfile:
     # asynchronously on startup) may take several seconds to settle.
     model_settle_timeout_s: float = 15.0
     model_settle_poll_interval_s: float = 0.5
-    # When True, the permission callback also approves built-in (non-MCP) tool
-    # titles; MCP tools other than the exact room outcome tool stay denied.
-    approve_builtin_tools: bool = False
+    # When True (owners only), the permission callback approves every tool the
+    # agent asks for: built-ins, the agent's own MCP servers and Skills.  The OS
+    # sandbox, not this callback, confines an owner's writes.
+    approve_all_tools: bool = False
     # How many times a failed spawn may be retried when the agent process has
     # already exited during initialization (cold-start crash).
     early_exit_spawn_retries: int = 0
@@ -169,7 +177,7 @@ class AcpProviderProfile:
 CLAUDE_ACP_PROFILE = AcpProviderProfile(
     runtime=AgentRuntime.CLAUDE.value,
     confinement=ROOM_ACP_CONFINEMENT,
-    approvable_tool_titles=frozenset({_ROOM_OUTCOME_QUALIFIED_TOOL_NAME}),
+    approvable_tool_titles=_ROOM_QUALIFIED_TOOL_NAMES,
     # claude-agent-acp forwards ``claudeCode.options`` to the Claude Agent SDK:
     # only the Read/Glob/Grep built-ins remain, and only the operator's user
     # settings load (they may carry the provider credential); workspace
@@ -205,22 +213,22 @@ OPENCODE_ACP_PROFILE = AcpProviderProfile(
 CLAUDE_ACP_WORKSPACE_WRITE_PROFILE = AcpProviderProfile(
     runtime=AgentRuntime.CLAUDE.value,
     confinement=ROOM_WORKSPACE_WRITE_CONFINEMENT,
-    approvable_tool_titles=frozenset({_ROOM_OUTCOME_QUALIFIED_TOOL_NAME}),
+    approvable_tool_titles=_ROOM_QUALIFIED_TOOL_NAMES,
     # No ``tools`` key, so Claude Code's full built-in preset stays enabled for
-    # the writable owner workspace; writes are confined by the OS sandbox, not
-    # the in-process tool filter. ``Skill`` stays disallowed because it hides
-    # further tool use from this client.
+    # the writable owner workspace, and without ``strictMcpConfig`` or a Skill
+    # ban the owner keeps its own MCP servers and Skills.  Writes are confined
+    # by the OS sandbox, not the in-process tool filter.  Known residual: an
+    # MCP server reached over the network (or one that delegates to another
+    # agent) runs outside the sandbox; the operator accepted that exposure.
     session_meta={
         "claudeCode": {
             "options": {
                 "settingSources": list(ROOM_ACP_SETTING_SOURCES),
-                "strictMcpConfig": True,
-                "disallowedTools": ["Skill"],
             }
         }
     },
     pin_default_mode=True,
-    approve_builtin_tools=True,
+    approve_all_tools=True,
 )
 OPENCODE_ACP_WORKSPACE_WRITE_PROFILE = replace(
     OPENCODE_ACP_PROFILE,
@@ -471,13 +479,9 @@ class _RoomAcpClient:
     ) -> RequestPermissionResponse:
         identifiers = _tool_identity_candidates(tool_call, kwargs)
         session_matches = session_id == self._session.acp_session_id
-        outcome_match = any(self._transport.is_room_outcome_tool(item) for item in identifiers)
-        builtin_match = (
-            self._transport.profile.approve_builtin_tools
-            and bool(identifiers)
-            and not any(item.startswith("mcp__") for item in identifiers)
-        )
-        allowed = session_matches and (outcome_match or builtin_match)
+        room_tool_match = any(self._transport.is_room_tool(item) for item in identifiers)
+        owner_match = self._transport.profile.approve_all_tools and bool(identifiers)
+        allowed = session_matches and (room_tool_match or owner_match)
         # The adapter's ``claudeCode.toolName`` metadata is observation-only
         # evidence; authorization stays with the exact tool-call title because
         # metadata is not covered by the same-name guarantee.
@@ -574,7 +578,12 @@ class AcpRoomObservationTransport:
         return self._config.profile
 
     def is_room_outcome_tool(self, value: str) -> bool:
-        """Accept only this provider's exact qualified room outcome tool title."""
+        """Match only this provider's exact qualified room outcome tool title."""
+
+        return value == _ROOM_OUTCOME_QUALIFIED_TOOL_NAME and self.is_room_tool(value)
+
+    def is_room_tool(self, value: str) -> bool:
+        """Accept only this provider's exact qualified Room tool titles."""
 
         return value in self._config.profile.approvable_tool_titles
 
