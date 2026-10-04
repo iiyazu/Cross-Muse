@@ -36,6 +36,8 @@ BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
 MAX_CONTRACT_CONTENT_BYTES = 65536
 MAX_VERIFICATION_ATTEMPTS = 3
+# Room for a few bounded gate output tails plus JSON escaping.
+MAX_VERIFICATION_EVIDENCE_BYTES = 16384
 VERIFICATION_LEASE_TTL_S = 1800
 VERIFICATION_STATUSES = ("pending", "running", "passed", "failed", "superseded", "error")
 BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
@@ -352,10 +354,18 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
                 if isinstance(item, dict) and item.get("status") != "passed"
             ]
             detail = f" Failing gates: {', '.join(failing)}." if failing else ""
+            evidence = payload.get("evidence")
+            tails = evidence.get("output_tails") if isinstance(evidence, dict) else None
+            tail_text = ""
+            if isinstance(tails, dict):
+                for gate_id, tail in tails.items():
+                    if isinstance(tail, str) and tail:
+                        tail_text = f"\nOutput tail of {gate_id}:\n```\n{tail}\n```"
+                        break
             return (
                 f"Module {module_id} verification failed ({reason}).{detail} "
                 "Fix the failure inside your charter paths, commit, and report "
-                "done again."
+                f"done again.{tail_text}"
             )
         return f"Module {module_id} verification {status} ({reason})."
     return activity_type
@@ -1979,6 +1989,72 @@ class RoomBoardStore:
             ).fetchone()
             return row is not None
 
+    def _mark_verification_error_conn(
+        self, conn: sqlite3.Connection, *, job: sqlite3.Row, stamp: str
+    ) -> None:
+        """Terminate an attempts-exhausted job as ``error`` and say so on the board.
+
+        The host could not verify the claim (an infrastructure fault, not the
+        owner's patch), so the activity goes to report_to/lead and wakes nobody.
+        """
+
+        reason_code = "board_verification_attempts_exhausted"
+        conversation_id = str(job["conversation_id"])
+        module_id = str(job["module_id"])
+        progress = conn.execute(
+            "select activity_id from room_board_progress where progress_id = ?",
+            (str(job["progress_id"]),),
+        ).fetchone()
+        activity_id: str | None = None
+        if progress is not None and progress["activity_id"]:
+            source = self._activity_from_conn(conn, str(progress["activity_id"]))
+            charter = self._current_charter_conn(
+                conn, conversation_id=conversation_id, module_id=module_id
+            )
+            body = _decode(str(charter["charter_json"])) if charter is not None else None
+            report_to = body.get("report_to") if isinstance(body, dict) else None
+            target = (
+                report_to
+                if isinstance(report_to, str) and report_to
+                else self._lead_participant_id(conn, conversation_id)
+            )
+            activity = self._insert_board_activity_conn(
+                conn,
+                conversation_id=conversation_id,
+                activity_type="board.verification",
+                actor_kind="infrastructure",
+                actor_identity="infrastructure:board-verification",
+                actor_participant_id=None,
+                causation_id=str(progress["activity_id"]),
+                causal_depth=int(source["causal_depth"]) + 1,
+                audience_participant_ids=[target] if target else [],
+                payload={
+                    "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                    "verification_id": str(job["verification_id"]),
+                    "progress_id": str(job["progress_id"]),
+                    "module_id": module_id,
+                    "status": "error",
+                    "reason_code": reason_code,
+                    "head_commit": None,
+                    "changed_paths": [],
+                    "gates": [],
+                    "evidence": {},
+                },
+                stamp=stamp,
+            )
+            activity_id = str(activity["activity_id"])
+        conn.execute(
+            "update room_board_verifications set status = 'error', "
+            "lease_owner = null, lease_token = null, lease_expires_at = null, "
+            "result_json = ?, activity_id = ?, updated_at = ? where verification_id = ?",
+            (
+                _json({"status": "error", "reason_code": reason_code}),
+                activity_id,
+                stamp,
+                str(job["verification_id"]),
+            ),
+        )
+
     def claim_next_board_verification(
         self,
         *,
@@ -2019,22 +2095,14 @@ class RoomBoardStore:
                     "and lease_expires_at <= ?",
                     (stamp, stamp),
                 )
-                conn.execute(
-                    "update room_board_verifications set status = 'error', "
-                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
-                    "result_json = ?, updated_at = ? "
-                    "where status = 'pending' and attempt_count >= ?",
-                    (
-                        _json(
-                            {
-                                "status": "error",
-                                "reason_code": "board_verification_attempts_exhausted",
-                            }
-                        ),
-                        stamp,
-                        max_attempts,
-                    ),
-                )
+                exhausted = conn.execute(
+                    "select * from room_board_verifications "
+                    "where status = 'pending' and attempt_count >= ? "
+                    "order by created_at, verification_id",
+                    (max_attempts,),
+                ).fetchall()
+                for job in exhausted:
+                    self._mark_verification_error_conn(conn, job=job, stamp=stamp)
                 row = conn.execute(
                     "select * from room_board_verifications where status = 'pending' "
                     "and (not_before is null or not_before <= ?) "
@@ -2133,7 +2201,7 @@ class RoomBoardStore:
                 }
             )
         clean_evidence = dict(evidence) if evidence is not None else {}
-        if len(_json(clean_evidence).encode("utf-8")) > 8192:
+        if len(_json(clean_evidence).encode("utf-8")) > MAX_VERIFICATION_EVIDENCE_BYTES:
             raise ValueError("room_board_verification_evidence_too_large")
         if patch_text is not None:
             if not isinstance(patch_text, str) or not patch_text.strip():
