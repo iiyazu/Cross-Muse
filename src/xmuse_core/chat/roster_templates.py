@@ -422,7 +422,7 @@ def _builtin_provider_profiles(
             provider_id="antigravity",
             profile_id="default",
             display_name="Antigravity Default",
-            description="Antigravity CLI participant over its agentapi.",
+            description="Antigravity CLI participant over the sandboxed agy CLI.",
             model_id="flash",
             implemented=True,
             cli_kind="antigravity",
