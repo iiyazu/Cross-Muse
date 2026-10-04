@@ -359,7 +359,9 @@ finding. A reviewer's `object` wakes the owner; `endorse` wakes nobody.
 `summary` is required for both verdicts, 1–4000 characters after trimming; at most 32
 findings; each finding `text` 1–1000 characters; `path` is `null` or a repository-relative
 path of at most 512 characters with `/` separators — no leading `/`, no drive letter, no
-backslash, no `.` or `..` segment, no control characters. A violation is rejected whole
+backslash, no `.` or `..` segment, no control characters and no Unicode format characters
+(category Cf, which includes the bidirectional controls: a path must not be able to display
+as a different file name). A violation is rejected whole
 (`room_board_review_summary_invalid` or `room_board_review_findings_invalid`); nothing is
 truncated on input. On output `path` is guaranteed to satisfy the same rule.
 

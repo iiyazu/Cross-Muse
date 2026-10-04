@@ -188,7 +188,7 @@
       "type": "object",
       "properties": {
         "severity": { "enum": ["blocker", "major", "minor"] },
-        "path": {"anyOf": [{"type": "string", "pattern": "^(?![/])(?![A-Za-z]:)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\\\\\u0000-\\u001f\\u007f]{1,512}$"}, {"type": "null"}]},
+        "path": {"anyOf": [{"type": "string", "pattern": "^(?![/])(?![A-Za-z]:)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\\\\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ufeff\\ufff9-\\ufffb]{1,512}$"}, {"type": "null"}]},
         "text": { "$ref": "#/$defs/agentText" }
       },
       "required": ["severity", "path", "text"],
