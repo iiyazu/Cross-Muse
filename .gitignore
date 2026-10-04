@@ -39,3 +39,4 @@ xmuse/**/*.lock
 xmuse/*.json
 xmuse/logs/
 xmuse/runtime/
+integrations/claude-code/.claude/
