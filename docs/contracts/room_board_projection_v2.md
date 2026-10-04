@@ -1,0 +1,453 @@
+# Room board read model — contract v2
+
+Status: **draft for P0** (2026-10-04). Normative for every consumer: the Workroom browser UI,
+host plugins (Claude Code mod, OpenCode TUI plugin), `xmuse-ctl`, and the M4 evaluation.
+Backend, frontend, plugin tests and the evaluation share the golden fixtures in
+`docs/contracts/fixtures/board_v2/`; the JSON Schemas in `docs/contracts/schemas/` are the
+machine-readable form of this document. Change this document first, then the schemas and
+fixtures, then code.
+
+Authority: `chat.db` is the only authority. Everything below is a *projection*; no consumer
+keeps board state of its own and no consumer infers completion from agent text.
+
+## 1. Compatibility rules
+
+1. Clients ignore unknown fields. Adding a field is compatible. Removing a field, changing a
+   field's meaning, or widening an enum a client must exhaustively handle bumps the major
+   version in `schema_version` (`room_board_projection/v3`, ...).
+2. Clients feature-detect through `capabilities`, never through the presence of arrays.
+   Capability keys not listed in §3 do not exist yet.
+3. The server emits **codes and structured values, never prose for humans**. Every adapter
+   localizes (the browser UI is Chinese). Reason codes live in the registry in §9.
+4. Errors on every route in this document are `{"detail": {"code": string, "message": string}}`.
+   `message` is short English for developers and logs; adapters must not show it to people.
+5. Timestamps are UTC ISO-8601 with `Z`. Identifiers are opaque strings.
+6. Ordering: `participants` by `participant_id`; `modules` by `module_id`; `contracts` by
+   `contract_id`; `splits` by `created_at`; `events` ascending by `seq`; `attention` as in §3.8.
+
+## 2. What never leaves the server in any payload
+
+Host absolute paths; `patch_digest`; `patch_text`; `base_commit`; lease tokens; the text the
+host writes *to agents* (`board_activity_content`, delivery context, `payload.content`); raw
+`payload` objects of activities; `evidence` objects of verification results; the full list of
+changed paths (only `changed_path_count`). Charter `paths` are repository-relative globs and
+may be shown. `head_commit` may be shown.
+
+Tests assert this by scanning every fixture and every route response for these keys and for
+absolute-path-looking strings.
+
+## 3. `room_board_projection/v2`
+
+`GET /api/chat/conversations/{conversation_id}/board`
+
+```jsonc
+{
+  "schema_version": "room_board_projection/v2",
+  "metrics_version": "board_metrics/v1",
+  "conversation_id": "…",
+  "server_time": "2026-10-04T10:00:00Z",
+  "board_seq": 41,              // §3.9
+  "revision": "41:9f2c0a7d41be",// §3.9, doubles as the ETag value
+  "capabilities": { "verification": 1, "reviews": 0, "integrations": 0, "lessons": 0 },
+  "participants": [ Participant ],
+  "modules": [ Module ],
+  "contracts": [ ContractSummary ],
+  "splits": [ Split ],
+  "stale_dependents": [ StaleDependent ],
+  "attention": [ AttentionItem ],
+  "events": [ Event ]           // newest 50, ascending
+}
+```
+
+`capabilities`: `verification: 1` means the host verifies `done` reports (M1). `reviews`,
+`integrations`, `lessons` are `0` until M2/M3 define and ship their shapes; the keys exist so
+clients can already feature-detect. No placeholder arrays exist for them.
+
+### 3.1 `AgentText`
+
+Every string authored by an agent is wrapped, so a consumer cannot render it by accident:
+
+```jsonc
+{ "text": "…", "untrusted": true, "truncated": false }
+```
+
+- The server strips C0/C1 control characters (except `\n` and `\t`), ANSI escape sequences,
+  and Unicode bidirectional controls (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069)
+  before wrapping, and truncates to the field's bound on a code-point boundary (`truncated`).
+- `untrusted` is always `true`. Status lines, toasts, CLI one-liners, notification titles and
+  anything written into a model's context must not contain `AgentText.text`.
+- Bounds: `title` ≤ 120, `summary` ≤ 400, `question` ≤ 400, `rationale` ≤ 400, each claim ≤ 200
+  (at most 8 claims in an event; `claims_total` carries the real count).
+
+### 3.2 `Participant`
+
+```jsonc
+{ "participant_id": "…", "display_name": "…", "provider_kind": "opencode",
+  "model_family": "opencode", "role_preset": "frontend-owner" /* or null */, "is_lead": false }
+```
+
+All participants of the room. `provider_kind` is the participant's `cli_kind`. `model_family`
+is an opaque label the server derives for cross-family rules; today it equals the family the
+exact-patch `cross_family_review` already uses (`cli_kind`), so the board and the execution
+gate never disagree. M2 may refine it. Members are agent + role preset and can change at any
+time; no consumer hard-codes a vendor or role.
+
+### 3.3 `Module`
+
+One row per module whose **latest charter is `active`**.
+
+```jsonc
+{
+  "module_id": "frontend",
+  "title": AgentText,
+  "owner_participant_id": "…",
+  "report_to": "…",             // participant id or null
+  "charter_version": 1,
+  "paths": ["src/ui/**"],       // charter globs, repository-relative
+  "provides": ["ui.api"],       // contract ids
+  "depends": ["backend.api"],
+  "lifecycle": "working",       // §4.1, reported by the owner
+  "verification": Verification, // §4.2, established by the host
+  "counters": Counters,         // §6
+  "state": "verifying",         // §4.3, derived single value for compact UI
+  "attention": { "kind": "none", "reason_code": null } // §3.8
+}
+```
+
+`Verification`:
+
+```jsonc
+{
+  "status": "none",             // none|waiting_for_provider|pending|running|passed|failed|error
+  "verification_id": null,
+  "reason_code": null,          // §9; present for failed/error/waiting_for_provider/pending-after-abandon
+  "escalated": false,           // three consecutive failures reached the lead / report_to
+  "gate_ids": [],               // gates of the latest failed result whose status is not "passed"
+  "stacked": [ { "module_id": "backend", "verification_id": "…" } ],
+  "head_commit": null,          // commit of the owner branch that was verified
+  "changed_path_count": 0,
+  "updated_at": null
+}
+```
+
+### 3.4 `ContractSummary`
+
+```jsonc
+{ "contract_id": "backend.api", "latest_version": 2, "versions_count": 2, "digest": "sha256:…",
+  "provider_module_id": "backend", "kind": "api_schema",
+  "author_participant_id": "…", "updated_at": "…" }
+```
+
+Version history and content come from §5.
+
+### 3.5 `Split`
+
+```jsonc
+{
+  "split_id": "…", "status": "proposed",     // proposed|approved|rejected|superseded
+  "proposed_by_participant_id": "…", "created_at": "…", "decided_at": null,
+  "digest": "sha256:…",                      // canonical digest of the stored split; the approval guard
+  "decided_via": null,                       // web | plugin:<host> | cli | null (§8)
+  "actions": { "decide": {                   // same descriptor convention as the other operator actions
+    "available": true,                       // true only while status == "proposed"
+    "method": "POST",
+    "href": "/api/chat/operator/board-splits/<split_id>/decision",
+    "expected_digest": "sha256:…",           // equals `digest`
+    "allowed_decisions": ["approve", "reject"] } },
+  "modules": [ { "module_id": "…", "title": AgentText, "owner_participant_id": "…",
+                 "paths": [], "provides": [], "depends": [] } ],
+  "contracts": [ { "contract_id": "…", "provider_module_id": "…", "kind": "text", "digest": "sha256:…" } ]
+}
+```
+
+Contract content and charter `acceptance` are not part of a split summary. `acceptance` is
+descriptive text, is never executed and never shown as a result.
+
+### 3.6 `StaleDependent`
+
+```jsonc
+{ "contract_id": "backend.api", "revised_version": 2, "revised_seq": 17,
+  "module_id": "frontend", "owner_participant_id": "…" }
+```
+
+A contract with `versions_count ≥ 2` is *revised*. For its **latest** revision, every active
+module whose charter `depends` on the contract (the provider module excluded) is stale until
+that module's owner files a progress report whose activity `seq` is greater than
+`revised_seq`. This is the measurable form of contract drift.
+
+### 3.7 `Event`
+
+```jsonc
+{ "seq": 17, "kind": "contract_revised", "at": "…", "module_id": "backend" /* or null */,
+  "actor": { "kind": "participant", "participant_id": "…" /* null unless kind=participant */ },
+  "data": { … } }
+```
+
+`actor.kind` ∈ `participant | operator | infrastructure`. `data` is a per-kind whitelist
+(never the raw activity payload):
+
+| `kind` | `module_id` | `data` |
+| --- | --- | --- |
+| `split_proposed` | — | `{split_id, module_ids[]}` |
+| `split_rejected` | — | `{split_id, decided_via}` |
+| `charter_assigned` | assigned module | `{split_id, owner_participant_id, charter_version, decided_via}` |
+| `claimed` | claimed module | `{}` |
+| `contract_published`, `contract_revised` | provider module | `{contract_id, version, kind, digest, rationale: AgentText\|null}` |
+| `progress` | reporting module | `{status, summary: AgentText, claims: [AgentText], claims_total}` |
+| `question` | — | `{target_participant_id, question: AgentText}` |
+| `verification` | verified module | `{verification_id, status: passed\|failed\|error, reason_code, gate_ids[], escalated, stacked[]}` |
+
+An unknown `kind` must be tolerated by clients (rule 1).
+
+### 3.8 `AttentionItem` and `Module.attention`
+
+```jsonc
+{ "kind": "operator", "reason_code": "board_attention_split_pending",
+  "module_id": null, "split_id": "…" }
+```
+
+`kind` says who has to act: `operator` (the human), `lead` (the room lead or the charter's
+`report_to`), `owner` (the module owner). Status lines and toasts look only at this field.
+`Module.attention` is the same pair for one module (`kind: "none"` and `reason_code: null`
+when nothing is needed); the top-level `attention` list is room-level items plus every
+module's non-`none` attention, sorted `operator`, `lead`, `owner`, then by `module_id`, then
+by `split_id`.
+
+Per-module precedence (the first matching row wins):
+
+| Condition | `kind` | `reason_code` |
+| --- | --- | --- |
+| `verification.status == error` | `operator` | `board_attention_verification_error` |
+| `verification.status == failed` and `escalated` | `lead` | `board_attention_verification_escalated` |
+| `verification.status == failed` and `lifecycle == done_claimed` | `owner` | `board_attention_verification_failed` |
+| `lifecycle == blocked` | `lead` | `board_attention_module_blocked` |
+| module is a stale dependent | `owner` | `board_attention_contract_stale` |
+| otherwise | `none` | `null` |
+
+Room-level: every split with `status == proposed` yields `operator` /
+`board_attention_split_pending` with its `split_id`.
+
+A `failed` verification stops being attention once the owner files any newer progress report
+(`lifecycle` leaves `done_claimed`); the verification axis still shows the failure.
+
+### 3.9 `board_seq` and `revision`
+
+`board_seq` is the largest `room_activities.seq` of `board.*` activities in the conversation
+(`0` when none). It is the cursor of the event feed. Not every visible change writes an
+activity (a job moving to `running` or being deferred does not), so the projection also
+carries `revision = "<board_seq>:<12 hex>"`, where the hex part is the SHA-256 prefix of the
+canonical JSON of the projection **without** `server_time`, `events` and `revision`. Two
+projections with equal `revision` are equal. `GET .../board` and `GET .../board/summary` send
+`ETag: "<revision>"` and answer `If-None-Match` with `304`. `Cache-Control: no-store`.
+
+## 4. State model
+
+Two independent axes plus derived values. Never merge them.
+
+### 4.1 `lifecycle` — what the owner says
+
+Evaluated over the module's progress reports filed by the current owner at or after the
+current charter's `created_at`, latest report wins.
+
+| Value | Meaning |
+| --- | --- |
+| `assigned` | charter exists, not claimed, no report |
+| `claimed` | claimed, no report yet |
+| `working`, `blocked`, `ready_for_review` | status of the latest report |
+| `done_claimed` | latest report is `done` — **a claim, not completion** |
+
+### 4.2 `verification` — what the host proved
+
+Taken from the latest non-`superseded` row of the module's verification jobs at or after the
+current charter's `created_at`. `waiting_for_provider` is `pending` plus
+`reason_code == board_verification_waiting_for_provider`. No row → `none`.
+`escalated` is true when the latest status is `failed` and the trailing run of terminal
+results (`passed`/`failed`, newest first) is at least `MAX_CONSECUTIVE_FAILURES` (3) failures.
+
+### 4.3 `state` — one value for compact UIs
+
+If `lifecycle == done_claimed`:
+
+| `verification.status` | `state` |
+| --- | --- |
+| `passed` | `verified` |
+| `failed` | `verification_failed` |
+| `error` | `verification_error` |
+| `pending`, `running` | `verifying` |
+| `waiting_for_provider` | `waiting_for_provider` |
+| `none` | `done_claimed` |
+
+Otherwise `state == lifecycle`. All states: `assigned, claimed, working, blocked,
+ready_for_review, done_claimed, verifying, waiting_for_provider, verified,
+verification_failed, verification_error`.
+
+**`done_claimed` and `verified` must be visually unmistakable in every consumer.** A verified
+module is the only evidence of completion. `done_claimed` is only observable for the instant
+before a verification row exists, and during that instant it still is not completion.
+
+Acceptance text in a charter is never a source for any of these values; only server gate
+results are.
+
+## 5. Contract detail
+
+`GET /api/chat/conversations/{conversation_id}/board/contracts/{contract_id}?version=N`
+(404 `room_board_contract_unknown`; 422 `room_board_version_invalid`)
+
+```jsonc
+{
+  "schema_version": "room_board_contract/v2",
+  "conversation_id": "…", "contract_id": "backend.api",
+  "provider_module_id": "backend", "kind": "api_schema",
+  "versions": [ { "version": 1, "digest": "sha256:…", "author_participant_id": "…",
+                  "created_at": "…", "rationale": AgentText /* or null */ } ],
+  "version": 2,                       // the version `content` belongs to (default: latest)
+  "content": { "text": "…", "untrusted": true, "truncated": false }
+}
+```
+
+`content` is at most 64 KiB (the store's write limit) and sanitized like `AgentText`.
+`digest` covers the stored original bytes. Consumers render `content` as **plain text**
+(a code block); if a consumer renders it as Markdown it must disable raw HTML and
+non-`http(s)` links first. `content` never appears in a status line, toast or notification.
+
+## 6. Metrics — `board_metrics/v1`
+
+Per module, over all history of the module id:
+
+| Counter | Definition |
+| --- | --- |
+| `done_reports` | progress reports with `status == done` |
+| `passed`, `failed`, `superseded`, `errored` | verification jobs in that terminal status; deferred `pending` jobs are not counted |
+| `rework_rounds` | `failed` jobs **before the first `passed`**; all `failed` jobs if it never passed |
+
+Changing any definition bumps `metrics_version`. The M4 evaluation and every UI read the same
+derivation function; there is exactly one (`xmuse_core.chat.room_board_projection`), used by
+the HTTP projection, the Room MCP `chat_room_board_read` module states and the owner's
+`.xmuse` view.
+
+## 7. Change feeds
+
+All are read-only, `Cache-Control: no-store`, and need no authentication beyond the loopback
+boundary.
+
+### 7.1 Summary — `GET …/board/summary`
+
+```jsonc
+{ "schema_version": "room_board_summary/v1", "conversation_id": "…", "server_time": "…",
+  "board_seq": 41, "revision": "41:9f2c0a7d41be", "capabilities": { … },
+  "modules_total": 3,
+  "counts": { "assigned": 0, "claimed": 0, "working": 1, "blocked": 0, "ready_for_review": 0,
+              "done_claimed": 0, "verifying": 1, "waiting_for_provider": 0, "verified": 1,
+              "verification_failed": 0, "verification_error": 0 },
+  "attention_total": 2, "attention": [ AttentionItem ] /* first 5 */ }
+```
+
+Structured fields only: no `AgentText`, no titles. Intended for status lines, toasts,
+`xmuse-ctl status`. All eleven `counts` keys are always present.
+
+### 7.2 Events, long-poll — `GET …/board/events?after_seq=N&limit=100&wait=25&revision=R`
+
+```jsonc
+{ "schema_version": "room_board_events/v1", "conversation_id": "…",
+  "board_seq": 41, "revision": "41:9f2c0a7d41be",
+  "events": [ Event ], "has_more": false, "reset": false }
+```
+
+Returns events with `seq > after_seq` (ascending, at most `limit`, default 100, max 200).
+With `wait > 0` (max 30 seconds) and nothing new it holds the request until `board_seq`
+changes **or** the server `revision` differs from the `revision` the client passed, then
+returns; on timeout it returns an empty list. `reset: true` means `after_seq` is ahead of the
+server (restored database): the client discards its cache and reloads §3. Clients use the
+returned `revision` to decide whether to refetch §3 or §7.1.
+
+### 7.3 Stream, SSE — `GET …/board/stream`
+
+`Content-Type: text/event-stream`. Event `board` carries one `room_board_events/v1` object as
+`data`, with `id: <board_seq>`; a revision-only change is a `board` event with an empty
+`events` list. The first event after connecting holds the events after `Last-Event-ID`
+(or none, when absent). `reset` when `Last-Event-ID` is ahead of the server. `: heartbeat`
+comment every 15 seconds. Same template as `/agent-streams`.
+
+## 8. Writes, authorization, provenance
+
+- **Reads**: loopback and the existing CORS rule only. Whether a `Host`-header check against
+  DNS rebinding exists is **not yet verified** (tracked in the P0 checklist below).
+- **Writes**: operator actions need the server-only operator token. The browser reaches them
+  only through the Next.js server proxies that inject the token. Host plugins never hold the
+  token in P2; in P3 they use a separately designed, scoped, short-lived, memory-only,
+  revocable plugin grant that must pass a threat-model review (cross-room, replay, expiry,
+  revocation, model-initiated paths) before any write route accepts it.
+- Writes originate from a human action (button or command). Plugins must not register them as
+  model-callable tools.
+- Every operator decision records `decided_via` ∈ `web`, `plugin:<host>`, `cli` in the event
+  `data` (`split_rejected`, and every `charter_assigned` of the approved split).
+  `POST /api/chat/operator/board-splits/{split_id}/decision` accepts
+  `{conversation_id, decision, expected_digest?, decided_via?}`: `decided_via` defaults to
+  `web` and must match `^(web|cli|plugin:[a-z0-9][a-z0-9_-]{0,31})$` (else `422
+  room_board_decided_via_invalid`); `expected_digest`, when present, must equal
+  `Split.digest` of the stored split (else `409 room_board_split_digest_mismatch`, nothing
+  decided). Clients take `href`, `expected_digest` and the allowed decisions from
+  `Split.actions.decide` rather than building them. The Next.js proxy fixes
+  `decided_via: "web"` itself; a browser can never claim another provenance.
+
+## 9. Reason-code registry
+
+Verification (`Verification.reason_code`, event `reason_code`):
+`board_verification_gate_failed`, `board_verification_outside_charter`,
+`board_verification_waiting_for_provider`, `board_verification_dependency_overlap`,
+`board_verification_base_mismatch`, `board_verification_provider_patch_missing`,
+`board_verification_charter_unknown`, `board_verification_evidence_unavailable`,
+`board_verification_attempts_exhausted`.
+
+Patch export: `owner_patch_empty`, `owner_patch_binary`, `owner_patch_reserved_path`,
+`owner_patch_too_large`, `owner_patch_too_many_files`, `owner_patch_fetch_failed`,
+`owner_clone_missing`, `owner_clone_metadata_invalid`.
+
+Staging and gates (from `room_execution`): `execution_*` (for example
+`execution_patch_*_rejected`, `execution_repo_busy`, `execution_frontend_dependencies_unavailable`).
+
+Split: `room_board_split_dependency_cycle` and the other `room_board_*` validation codes.
+
+Attention (§3.8): `board_attention_split_pending`, `board_attention_verification_error`,
+`board_attention_verification_escalated`, `board_attention_verification_failed`,
+`board_attention_module_blocked`, `board_attention_contract_stale`.
+
+Route errors: `room_conversation_unknown`, `room_board_contract_unknown`,
+`room_board_version_invalid`, `room_board_split_digest_mismatch`, `room_board_query_invalid`,
+`room_board_decided_via_invalid`.
+
+A reason code unknown to a client is shown as a generic "unknown reason" plus the code string,
+never hidden.
+
+## 10. Fixtures
+
+`docs/contracts/fixtures/board_v2/<scenario>.json` — each file is the exact output of the
+production derivation for a deterministic scenario (`{"projection": …, "summary": …,
+"events_page": …}`). The pytest suite regenerates every fixture and fails on any difference;
+`UPDATE_BOARD_FIXTURES=1` rewrites them. The frontend vitest suite and plugin tests load the
+same files and never hand-edit them.
+
+Scenarios: `empty`, `split_pending`, `lifecycle_mix` (assigned, claimed, working, blocked,
+ready_for_review), `verifying_and_waiting`, `verified`, `verification_failed_rework`,
+`verification_escalated`, `verification_error`, `superseded_done`,
+`contract_revised_stale_dependent`, `injection_text` (agent text with prompt-injection
+strings, ANSI escapes, RTL controls, over-long values). `done_claimed` and every attention
+row are additionally covered by a table-driven test over the pure derivation functions with
+synthetic facts, because the store cannot produce `done_claimed` without a verification row.
+
+## 11. P0 checklist (non-contract items to verify while implementing)
+
+- `Host`-header validation on read routes: verify, and record the result here.
+- `GET /board` uses a read-only connection if it measurably avoids contention with
+  `begin immediate` writers; otherwise record that it does not.
+- `summary` on a database with 10,000 activities answers in under 50 ms (asserted in tests).
+- The `/board` 422 string `detail` is replaced by the §1 error shape.
+
+## 12. Changelog
+
+- 2026-10-04 — `Split.actions.decide` descriptor and decision provenance (`decided_via`,
+  `expected_digest`); the cross-domain operator inbox (`room_operator_inbox/v1`) is deferred to
+  the phase that needs it (plugin approvals) and is not part of this contract version yet.
+- 2026-10-04 — draft v2: removes v1 aliases (`id`, `author`, `audience`) and raw `payload`;
+  moves verification to a per-module axis; adds participants, lifecycle/state/attention,
+  stale dependents, typed events, `AgentText`, summary/events/stream, `revision`.

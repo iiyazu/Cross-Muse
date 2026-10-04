@@ -591,21 +591,31 @@ def test_board_projection_shape_and_contract_fetch(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     payload = response.json()
-    assert payload["schema_version"] == "room_board_projection/v1"
-    assert {c["module_id"] for c in payload["charters"]} == {"alpha", "beta"}
+    assert payload["schema_version"] == "room_board_projection/v2"
+    assert {m["module_id"] for m in payload["modules"]} == {"alpha", "beta"}
+    alpha = next(m for m in payload["modules"] if m["module_id"] == "alpha")
+    assert alpha["state"] == "assigned"
+    assert alpha["lifecycle"] == "assigned"
+    assert alpha["title"]["untrusted"] is True
     assert {c["contract_id"] for c in payload["contracts"]} == {"api.alpha", "api.beta"}
     latest = next(c for c in payload["contracts"] if c["contract_id"] == "api.alpha")
-    assert latest["version"] == 1
+    assert latest["latest_version"] == 1
+    assert latest["versions_count"] == 1
     assert latest["digest"] == contract_digest('{"alpha": 1}')
     assert latest["provider_module_id"] == "alpha"
     assert latest["kind"] == "api_schema"
-    assert len(payload["activities"]) >= 3
-    assert all(a["activity_type"].startswith("board.") for a in payload["activities"])
+    assert len(payload["events"]) >= 3
+    assert all("board." not in e for e in payload["events"])
+    assert {e["kind"] for e in payload["events"]} >= {"split_proposed", "charter_assigned"}
     assert client.get("/api/chat/conversations/missing/board").status_code == 404
 
     fetched = client.get(f"/api/chat/conversations/{conversation_id}/board/contracts/api.alpha")
     assert fetched.status_code == 200
-    assert fetched.json()["content"] == '{"alpha": 1}'
+    assert fetched.json()["content"] == {
+        "text": '{"alpha": 1}',
+        "untrusted": True,
+        "truncated": False,
+    }
     assert fetched.json()["version"] == 1
     assert (
         client.get(

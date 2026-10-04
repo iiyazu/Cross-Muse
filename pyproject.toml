@@ -42,6 +42,7 @@ packages = ["xmuse", "src/xmuse_core"]
 [dependency-groups]
 dev = [
     "httpx2>=2.5,<3",
+    "jsonschema>=4.26.0",
     "mypy>=1.18.2",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",

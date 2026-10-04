@@ -30,9 +30,15 @@ Treat implementation and fresh tests as evidence. Documentation is descriptive.
 | `src/xmuse_core/` | Reusable Room, Agent, runtime, provider, and Skill logic. |
 | `tests/xmuse/` | Backend behavior and boundary tests. |
 | `frontend/` | Browser Workroom. |
+| `integrations/` | Host plugins and CLI adapters (Claude Code mod, OpenCode, `xmuse-ctl`). |
+| `docs/contracts/` | Public read-model contracts with JSON Schemas and golden fixtures. |
 
 `xmuse/` may import `xmuse_core.*`; core must not import the application layer or
 `memoryos_lite`. The optional adapter speaks only the public loopback HTTP contract.
+`integrations/` speaks only the public loopback HTTP contract documented in
+`docs/contracts/`: it never imports `xmuse` or `xmuse_core`, never holds the operator token,
+never registers writes as model-callable tools, and never copies agent-authored text into
+model context.
 
 ## Commands
 
@@ -72,8 +78,12 @@ do not load `.env`.
   priority, not eligibility or the bounded response budget; in `addressed` mode they select
   eligibility. Addressed deliveries carry `room_context.collaboration` (mode, lead, whether the
   recipient is the lead, and handoff guidance) because peers never see unaddressed work.
-- The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`, and
-  `room_operations_projection/v2`.
+- The browser consumes `room_list_projection/v1`, `room_chat_projection/v3`,
+  `room_operations_projection/v2`, and `room_board_projection/v2`. The board projection,
+  its summary, change feeds and contract detail are specified in
+  `docs/contracts/room_board_projection_v2.md`; one derivation module computes module
+  lifecycle, host verification, state, attention and metrics for every consumer, and
+  agent-authored text only leaves wrapped as untrusted `AgentText`.
 - Room Agent response previews use a separate private disposable cache and
   `room_agent_stream_projection/v1` SSE. They are sanitized provider evidence only, never
   Room speech, memory, execution evidence, or completion authority.
