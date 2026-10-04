@@ -5,6 +5,12 @@ export type {
   RoomCodexCache
 } from "./codex";
 export type {
+  BoardDomain,
+  BoardDomainActions,
+  BoardDomainState,
+  RoomBoardCache
+} from "./board";
+export type {
   ExecutionDomain,
   ExecutionDomainActions,
   ExecutionDomainState,
@@ -28,6 +34,7 @@ export type {
 export type { SyncDomainActions } from "./sync";
 export type { UiDomain, UiDomainActions, UiDomainState } from "./ui";
 
+import type { BoardDomain } from "./board";
 import type { CodexDomain } from "./codex";
 import type { ExecutionDomain } from "./execution";
 import type { MemoryDomain } from "./memory";
@@ -41,6 +48,7 @@ export type RoomStoreRoot = RoomDomain &
   OperationsDomain &
   ExecutionDomain &
   MemoryDomain &
+  BoardDomain &
   CodexDomain &
   UiDomain &
   SyncDomainActions;

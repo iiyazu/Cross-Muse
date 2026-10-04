@@ -27,6 +27,7 @@ describe("room sync coordinator", () => {
       "operations",
       "execution",
       "memory",
+      "board",
       "codex"
     ]);
     await vi.advanceTimersByTimeAsync(10);

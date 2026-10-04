@@ -125,7 +125,7 @@ export async function parseApiError(response: Response): Promise<XmuseApiErrorSh
   };
 }
 
-async function fetchJson<T>(url: string, init: RequestInit, options: ApiClientOptions): Promise<T> {
+export async function fetchJson<T>(url: string, init: RequestInit, options: ApiClientOptions): Promise<T> {
   const controller = new AbortController();
   const callerSignal = init.signal ?? options.signal;
   let deadlineExpired = false;
