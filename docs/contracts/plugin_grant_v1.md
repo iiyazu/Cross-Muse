@@ -128,15 +128,19 @@ Checks, in order:
    token-rotated and malformed, so the response never reveals which (T8). Each failed bearer for a
    known `grant_id` increments `failed_attempts`; the 5th revokes the grant (T8). A grant is
    treated as invalid when `now < activated_at - 5 s` (pending: `created_at`) or
-   `now < last_used_at`: a clock moved backwards never extends a grant (T4). The grant stores a
+   `now < last_used_at - 5 s` (the same tolerance, so a small NTP step does not kill a grant that
+   was just used): a clock moved backwards never extends a grant (T4). The grant stores a
    keyed fingerprint of the operator token it was issued under (`HMAC-SHA256(operator_token,
    "plugin-grant/v1")`, never exposed); rotating `XMUSE_OPERATOR_TOKEN` invalidates every grant
-   (T5).
+   (T5). When the server has no operator token configured, no grant is valid (the fingerprint
+   cannot be compared, so the answer is `401 plugin_grant_invalid`, never an allow); issuing
+   already answers `503` in that state.
 2. Body shape (`422 plugin_grant_request_invalid`).
 3. The split exists **in the grant's conversation** (`404 room_board_split_unknown`, also for a
    split of another conversation — T2).
 4. Same decision rules as the operator route (`proposed` status, digest). An already decided
-   split answers `409 room_board_split_decided` (T3).
+   split answers `409 room_board_split_decided`, a superseded one `409
+   room_board_split_not_proposed` (T3).
 
 On success the decision is recorded exactly as the operator route records it, with
 `decided_via: "plugin:<host>"` taken from the grant, `operator_identity: "plugin-grant:<grant_id>"`
@@ -179,8 +183,9 @@ review work (#431) to merge and is made by the backend session.
   labelled untrusted and kept away from the confirm control (T11).
 - A plugin never calls §3, the review routes or any other operator route.
 - A plugin that loses the connection before it sees the success response may retry and receive
-  `409 room_board_split_decided`. It treats that as "already decided": it refetches the board
-  and shows the real outcome, never an error.
+  `409 room_board_split_decided`, or `409 room_board_split_not_proposed` when another split has
+  superseded this one. It treats both as "can no longer be decided": it refetches the board and
+  shows the real outcome, never an error.
 - Residual risk, accepted: `grant_id` is public (it appears in decision events, which any local
   process can read over loopback), so a local process can send five bad bearers and revoke a
   grant. That fails closed (no privilege is gained); recovery is to issue a new grant.
@@ -193,6 +198,7 @@ review work (#431) to merge and is made by the backend session.
 `plugin_grant_unknown`, `plugin_grant_invalid`, `plugin_pairing_invalid`,
 `plugin_pairing_locked`, `plugin_origin_forbidden` (403), `plugin_content_type_invalid` (415);
 reused: `room_conversation_unknown`, `room_board_split_unknown`, `room_board_split_decided` (409),
+`room_board_split_not_proposed` (409),
 `room_board_split_digest_mismatch`, `room_host_invalid`.
 
 ## 9. Test obligations
