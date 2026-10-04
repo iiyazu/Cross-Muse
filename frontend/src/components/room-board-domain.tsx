@@ -24,6 +24,8 @@ import type {
 import type { RoomBoardCache } from "@/store/domain/board";
 import { Check, Hourglass, TriangleAlert } from "lucide-react";
 
+import { RoomGrantsDomain } from "./room-grants-domain";
+
 export function AgentTextView({
   value,
   monospace = false
@@ -696,6 +698,10 @@ export function RoomBoardDomain({
                   ) : null}
                 </div>
               ) : null}
+              <RoomGrantsDomain
+                conversationId={projection.conversation_id}
+                key={projection.conversation_id}
+              />
               {projection.contracts.length ? (
                 <div aria-label="契约列表" className="room-board-contracts">
                   {projection.contracts.map((contract) => {

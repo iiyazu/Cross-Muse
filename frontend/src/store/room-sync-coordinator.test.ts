@@ -28,7 +28,8 @@ describe("room sync coordinator", () => {
       "execution",
       "memory",
       "board",
-      "codex"
+      "codex",
+      "grants"
     ]);
     await vi.advanceTimersByTimeAsync(10);
     expect(runs).toHaveBeenLastCalledWith("room");
