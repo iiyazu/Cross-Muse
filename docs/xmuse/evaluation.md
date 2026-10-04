@@ -1,7 +1,7 @@
 # Heterogeneous Room evaluation
 
 This page reports what the evaluation harness measured on the heterogeneous Workroom
-(Claude Code over ACP, Antigravity over agentapi, OpenCode over ACP in a read-only
+(Claude Code over ACP, Antigravity over the agy CLI, OpenCode over ACP in a read-only
 bubblewrap sandbox), what the measurement exposed, and what it does not show. The design,
 tasks, rubrics, controls, and validity threats were frozen before the first run in
 [`eval-design.md`](eval-design.md). Raw transcripts and judgments are kept outside the

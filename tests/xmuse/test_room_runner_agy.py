@@ -1,4 +1,4 @@
-"""Antigravity transport selection (agy CLI default, agentapi opt-in)."""
+"""Antigravity transport selection (sandboxed agy CLI)."""
 
 from __future__ import annotations
 
@@ -10,34 +10,11 @@ import pytest
 
 from xmuse import room_runner, room_runner_composition, room_runner_memory
 from xmuse_core.chat.room_agy_transport import AgyRoomObservationTransport
-from xmuse_core.chat.room_antigravity_transport import AntigravityTransportConfig
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.skills.catalog import SkillCatalog
-
-
-def test_antigravity_transport_defaults_to_cli() -> None:
-    assert room_runner._resolve_antigravity_transport_name({}) == "cli"
-    assert (
-        room_runner._resolve_antigravity_transport_name({"XMUSE_ANTIGRAVITY_TRANSPORT": ""})
-        == "cli"
-    )
-    assert (
-        room_runner._resolve_antigravity_transport_name({"XMUSE_ANTIGRAVITY_TRANSPORT": "cli"})
-        == "cli"
-    )
-    assert (
-        room_runner._resolve_antigravity_transport_name({"XMUSE_ANTIGRAVITY_TRANSPORT": "agentapi"})
-        == "agentapi"
-    )
-
-
-def test_antigravity_transport_rejects_unknown_names() -> None:
-    with pytest.raises(room_runner.RoomRunnerError) as exc_info:
-        room_runner._resolve_antigravity_transport_name({"XMUSE_ANTIGRAVITY_TRANSPORT": "grpc"})
-    assert exc_info.value.code == "room_runner_antigravity_transport_invalid"
 
 
 def _agy_files(tmp_path: Path) -> tuple[Path, Path]:
@@ -196,24 +173,8 @@ def test_composition_routes_agy_cli_for_antigravity(tmp_path: Path) -> None:
     )
     composition = room_runner_composition.compose_room_runtime(**common, agy_config=agy_config)
     assert len(composition.agy_transports) == 1
-    assert composition.antigravity_transports == ()
     route = composition.host._transport._routes["antigravity"]
     assert isinstance(route, AgyRoomObservationTransport)
     assert route is composition.agy_transports[0]
     policy = composition.host._policy
     assert policy.provider_min_delivery_timeout_s == {"antigravity": 420.0}
-
-
-def test_composition_keeps_agentapi_when_configured(tmp_path: Path) -> None:
-    common = _composition_common(tmp_path, "agentapi-route")
-    composition = room_runner_composition.compose_room_runtime(
-        **common,
-        antigravity_config=AntigravityTransportConfig(
-            workspace=tmp_path,
-            agentapi_command=(sys.executable, "-c", "pass"),
-            brain_dir=tmp_path / "brain",
-        ),
-    )
-    assert len(composition.antigravity_transports) == 1
-    assert composition.agy_transports == ()
-    assert "antigravity" in composition.host._transport._routes

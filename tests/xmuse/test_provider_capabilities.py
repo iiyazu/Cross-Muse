@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from xmuse.provider_capabilities import (
@@ -19,7 +20,7 @@ def _which(paths: dict[str, str]):
 def _base_environ(tmp_path: Path, **overrides: str) -> dict[str, str]:
     return {
         "CODEX_HOME": str(tmp_path / "codex-home"),
-        "XMUSE_ANTIGRAVITY_AGENTAPI": "/missing/agentapi",
+        "XMUSE_AGY_COMMAND": "/missing/agy",
         **overrides,
     }
 
@@ -34,9 +35,6 @@ def test_projection_records_only_safe_fields_per_provider(tmp_path: Path) -> Non
                 "npx": "/secret/bin/npx",
             }
         ),
-        discover_language_server=lambda _environ: (_ for _ in ()).throw(
-            AssertionError("discovery must not run without an agentapi binary")
-        ),
     )
 
     assert set(capabilities) == {"codex", "claude", "antigravity", "opencode"}
@@ -45,7 +43,7 @@ def test_projection_records_only_safe_fields_per_provider(tmp_path: Path) -> Non
         assert isinstance(record["available"], bool)
         assert isinstance(record["enabled"], bool)
     assert capabilities["claude"]["confinement"] == "client_permission_gated"
-    assert capabilities["antigravity"]["confinement"] == "instructed_read_only"
+    assert capabilities["antigravity"]["confinement"] == "os_read_only_sandbox"
     assert capabilities["codex"]["confinement"] == "read_only_sandbox"
     assert capabilities["opencode"]["confinement"] == "os_read_only_sandbox"
     serialized = json.dumps(capabilities)
@@ -108,42 +106,49 @@ def test_codex_availability_requires_an_authentication_carrier(tmp_path: Path) -
     )
 
 
-def test_antigravity_requires_agentapi_binary_and_live_language_server(tmp_path: Path) -> None:
-    environ = _base_environ(tmp_path, XMUSE_ANTIGRAVITY_AGENTAPI="/opt/agentapi")
-    discoveries: list[dict[str, str]] = []
-
-    def discovery(source):
-        discoveries.append(dict(source))
-        return {"ANTIGRAVITY_LS_ADDRESS": "127.0.0.1:65000", "ANTIGRAVITY_CSRF_TOKEN": "t"}
-
-    without_binary = detect_provider_capabilities(
-        environ=environ,
-        which=_which({}),
-        discover_language_server=discovery,
+def test_antigravity_requires_agy_bwrap_and_python3(tmp_path: Path) -> None:
+    agy = tmp_path / "agy"
+    agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_text("#!/bin/sh\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    environ = {
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+        "HOME": str(home),
+        "XMUSE_AGY_COMMAND": str(agy),
+    }
+    full_which = _which(
+        {"bwrap": str(bwrap), "python3": sys.executable},
     )
-    assert without_binary["antigravity"]["available"] is False
-    assert discoveries == []
-
-    with_binary = detect_provider_capabilities(
-        environ=environ,
-        which=_which({"/opt/agentapi": "/opt/agentapi"}),
-        discover_language_server=discovery,
-    )
-    assert with_binary["antigravity"]["available"] is True
-    assert with_binary["antigravity"]["enabled"] is True
-    assert discoveries == [environ]
-
-    def failing_discovery(_environ):
-        raise RuntimeError("language server not reachable")
 
     assert (
-        detect_provider_capabilities(
-            environ=environ,
-            which=_which({"/opt/agentapi": "/opt/agentapi"}),
-            discover_language_server=failing_discovery,
-        )["antigravity"]["available"]
+        detect_provider_capabilities(environ=environ, which=_which({}))["antigravity"]["available"]
         is False
     )
+
+    without_bwrap = detect_provider_capabilities(
+        environ=environ,
+        which=_which({"python3": sys.executable}),
+    )
+    assert without_bwrap["antigravity"]["available"] is False
+
+    without_python = detect_provider_capabilities(
+        environ=environ,
+        which=_which({"bwrap": str(bwrap)}),
+    )
+    assert without_python["antigravity"]["available"] is False
+
+    sandboxed = detect_provider_capabilities(environ=environ, which=full_which)
+    assert sandboxed["antigravity"]["available"] is True
+    assert sandboxed["antigravity"]["enabled"] is True
+
+    refused = detect_provider_capabilities(
+        environ={**environ, ANTIGRAVITY_FLAG_ENV: "0"},
+        which=full_which,
+    )
+    assert refused["antigravity"]["available"] is True
+    assert refused["antigravity"]["enabled"] is False
 
 
 def test_explicit_flags_override_auto_enablement(tmp_path: Path) -> None:

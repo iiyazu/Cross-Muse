@@ -106,9 +106,6 @@ class WorkroomDependencies:
     http_ready: Callable[[str], bool] = http_ready
     http_json: Callable[[str], Mapping[str, Any] | None] = http_json
     which: Callable[[str], str | None] = shutil.which
-    discover_antigravity_language_server: (
-        Callable[[Mapping[str, str]], Mapping[str, str]] | None
-    ) = None
     signal_pid: Callable[[int, int], None] = os.kill
     signal_group: Callable[[int, int], None] = os.killpg
     stop_runtime: Callable[[Path, str], Mapping[str, Any]] = _stop_runtime_generation

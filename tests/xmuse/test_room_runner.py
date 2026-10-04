@@ -14,7 +14,6 @@ import pytest
 
 from xmuse import room_runner, room_runner_composition, room_runner_memory
 from xmuse_core.chat.room_acp_transport import AcpTransportConfig
-from xmuse_core.chat.room_antigravity_transport import AntigravityTransportConfig
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
@@ -460,58 +459,6 @@ def test_runtime_composition_routes_claude_acp_only_when_configured(tmp_path: Pa
     )
 
 
-def test_runtime_composition_routes_antigravity_only_when_configured(tmp_path: Path) -> None:
-    db_path = tmp_path / "chat.db"
-    RoomDatabase(db_path).initialize()
-    memory = room_runner_memory.compose_room_runner_memory(
-        db_path,
-        worker_id="memory-antigravity-composition-test",
-        environ={},
-    )
-    common: dict[str, Any] = {
-        "root": tmp_path,
-        "worktree": tmp_path,
-        "launchers": {},
-        "controls": RoomObservationControlStore(db_path),
-        "skill_decisions": RoomAttemptSkillDecisionStore(db_path),
-        "skill_catalog": SkillCatalog.load_bundled(),
-        "execution_store": RoomExecutionReviewStore(db_path),
-        "max_concurrent_rooms": 1,
-        "delivery_timeout_s": 10,
-        "cleanup_grace_s": 1,
-        "runner_generation": "generation-antigravity-route",
-        "runner_boot_id": "boot-antigravity-route",
-        "memory_recall": memory.recall,
-        "memory_context_receipts": memory.context_receipts,
-        "memory_delivery_pump": memory.delivery_pump,
-    }
-
-    codex_only = room_runner_composition.compose_room_runtime(**common)
-    assert codex_only.antigravity_transports == ()
-    assert "antigravity" not in codex_only.host._transport._routes
-
-    configured = room_runner_composition.compose_room_runtime(
-        **common,
-        antigravity_config=AntigravityTransportConfig(
-            workspace=tmp_path,
-            agentapi_command=(sys.executable, "-c", "pass"),
-            brain_dir=tmp_path / "brain",
-        ),
-    )
-    assert len(configured.antigravity_transports) == 1
-    antigravity_route = configured.host._transport._routes["antigravity"]
-    assert antigravity_route is configured.antigravity_transports[0]
-    assert antigravity_route._kit._stream_projector is configured.stream_projector
-    policy = configured.host._policy
-    assert policy.provider_min_delivery_timeout_s == {"antigravity": 420.0}
-    assert policy.effective_delivery_timeout_s("antigravity") == 420.0
-    assert policy.effective_delivery_timeout_s("codex") == 10.0
-    assert (
-        policy.lease_ttl_s
-        > policy.effective_delivery_timeout_s("antigravity") + policy.cleanup_grace_s
-    )
-
-
 def test_memory_runtime_composition_is_opt_in_and_api_key_repr_is_redacted(
     tmp_path: Path,
 ) -> None:
@@ -841,39 +788,6 @@ def test_runner_reaches_ready_with_claude_only_and_no_codex_executable(
         assert stopped["error"] is None
 
     asyncio.run(scenario())
-
-
-def test_runner_refuses_antigravity_without_the_pinned_room_mcp_port(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    # The 8100 pin only applies to the legacy opt-in agentapi transport.
-    monkeypatch.setenv("XMUSE_ANTIGRAVITY_AGENTAPI", str(tmp_path / "agentapi"))
-    monkeypatch.setenv("XMUSE_ANTIGRAVITY_TRANSPORT", "agentapi")
-    monkeypatch.delenv("XMUSE_CLAUDE_ACP_COMMAND", raising=False)
-    root = tmp_path / "runtime"
-    worktree = tmp_path / "worktree"
-    worktree.mkdir()
-
-    with pytest.raises(room_runner.RoomRunnerError) as exc_info:
-        asyncio.run(
-            room_runner.run_room_runner(
-                xmuse_root=root,
-                generation="generation-antigravity-port",
-                mcp_port=18100,
-                worktree=worktree,
-                mcp_probe=lambda _host, _port: (True, True),
-                executable_resolver=lambda command: None if command == "codex" else "/opt/agentapi",
-                claude_acp=False,
-                antigravity=True,
-            )
-        )
-
-    assert exc_info.value.code == "room_runner_antigravity_mcp_port_required"
-    status = read_room_runner_status(root)
-    assert status is not None
-    assert status["state"] == "failed"
-    assert status["error"] == {"code": "room_runner_antigravity_mcp_port_required"}
 
 
 def test_startup_failure_publishes_failed_not_ready_receipt(tmp_path: Path) -> None:
