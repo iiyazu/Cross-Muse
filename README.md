@@ -289,8 +289,11 @@ searches PATH. Use `--no-memory` or `--memory-mode off` to disable the optional 
 `--memory-mode on --memory-profile full-local-curated` additionally enables the opt-in
 MemoryOS Curator, an external (never Agent) proposer whose candidates cite Room activities
 with verbatim quotes re-proved in `chat.db` and follow the same approval rules. Only the
-sidecar child reads `XMUSE_MEMORYOS_LLM_API_KEY` (optional `XMUSE_MEMORYOS_LLM_MODEL`);
-without the key it still starts, with the Curator reported degraded.
+sidecar child reads `XMUSE_MEMORYOS_LLM_PROVIDER` (`opencode`, the default, pinned to
+`muse-spark-1.3-contributor`; or `deepseek`), `XMUSE_MEMORYOS_LLM_API_KEY` and the optional
+`XMUSE_MEMORYOS_LLM_MODEL`; without the key it still starts, with the Curator reported
+degraded. The Curator is the only memory proposer: MemoryOS' heuristic agent kernel and
+paging stay off in every profile, because their proposals have no identity of their own.
 
 Workroom fixes the sidecar to loopback, creates a private derived data directory and random
 server-only API key, and keeps external memory governance in `chat.db`. Full-local enables

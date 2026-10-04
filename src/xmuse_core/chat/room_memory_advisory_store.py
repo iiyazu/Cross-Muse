@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_memory_common import (
@@ -17,7 +17,6 @@ from xmuse_core.chat.room_memory_common import (
     timestamp,
 )
 from xmuse_core.chat.room_memory_contracts import (
-    MAX_MEMORY_CANDIDATES_PER_OUTCOME,
     MAX_MEMORY_CURATOR_CANDIDATES_PER_ATTEMPT,
     MEMORY_CANDIDATE_KINDS,
     MemoryCandidateInput,
@@ -26,7 +25,6 @@ from xmuse_core.chat.room_memory_contracts import (
 )
 from xmuse_core.chat.room_memory_source_conn import (
     resolve_curated_source_refs_conn,
-    resolve_external_source_activity_ids_conn,
 )
 
 
@@ -44,17 +42,17 @@ class RoomMemoryAdvisoryStore:
         advisories: Sequence[Mapping[str, Any]],
         now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """Re-prove MemoryOS kernel suggestions and enter Room governance.
+        """Re-prove MemoryOS Curator advisories and enter Room governance.
 
-        MemoryOS is only a proposer.  Source IDs are translated through the
-        Room message-delivery ledger or visible activity table.  Historical
-        recalled sources are allowed through the explicitly external path;
-        ordinary Agent candidates still use the causal batch authority.  Every
+        MemoryOS is only a proposer, recorded as ``memoryos_curator``.  Every
         advisory receives a durable accepted/duplicate/rejected receipt.
 
         v2 ``curated_memory`` advisories re-prove each verbatim quote against
         the delivered Room text and may supersede one earlier curated
-        candidate once that candidate is delivered.
+        candidate once that candidate is delivered.  Any other advisory has
+        no proposer identity of its own and is rejected
+        (``room_memory_advisory_unattributed``) rather than attributed to the
+        recalling participant.
         """
 
         if not advisories or len(advisories) > 32:
@@ -96,7 +94,6 @@ class RoomMemoryAdvisoryStore:
                             ).fetchone()[0]
                         )
                     )
-                participant_group: list[tuple[str, str, bool, MemoryCandidateInput]] = []
                 curator_group: list[tuple[str, str, bool, MemoryCandidateInput]] = []
                 for advisory in advisories:
                     advisory_id = advisory.get("advisory_id")
@@ -146,85 +143,22 @@ class RoomMemoryAdvisoryStore:
                         if curated is not None:
                             curator_group.append(curated)
                         continue
-                    proposal_type = advisory.get("proposal_type")
-                    kind: Literal["room_fact", "project_rule"] | None
-                    if proposal_type == "archive_write":
-                        kind = "room_fact"
-                    elif proposal_type == "core_promotion_request":
-                        kind = "project_rule"
-                    else:
-                        kind = None
-                    content = advisory.get("content")
-                    refs = advisory.get("source_refs")
-                    if (
-                        kind is None
-                        or not isinstance(content, str)
-                        or not content.strip()
-                        or not isinstance(refs, list)
-                        or not refs
-                        or len(refs) > 8
-                    ):
-                        self._write_advisory_receipt_conn(
-                            conn,
-                            conversation_id=conversation_id,
-                            attempt_id=attempt_id,
-                            advisory_id=advisory_id,
-                            fingerprint=fingerprint,
-                            status="rejected",
-                            reason_code="memoryos_advisory_contract_invalid",
-                            source_activity_ids=(),
-                            candidate_digest=None,
-                            stamp=stamp,
-                        )
-                        continue
-                    source_activity_ids = resolve_external_source_activity_ids_conn(
+                    # Any other MemoryOS proposal (e.g. the heuristic kernel's)
+                    # has no proposer identity of its own; recording it would
+                    # put it under the recalling participant's name.
+                    self._write_advisory_receipt_conn(
                         conn,
                         conversation_id=conversation_id,
-                        source_refs=refs,
-                    )
-                    if not source_activity_ids:
-                        self._write_advisory_receipt_conn(
-                            conn,
-                            conversation_id=conversation_id,
-                            attempt_id=attempt_id,
-                            advisory_id=advisory_id,
-                            fingerprint=fingerprint,
-                            status="rejected",
-                            reason_code="room_memory_advisory_source_rejected",
-                            source_activity_ids=(),
-                            candidate_digest=None,
-                            stamp=stamp,
-                        )
-                        continue
-                    participant_group.append(
-                        (
-                            advisory_id,
-                            fingerprint,
-                            False,
-                            MemoryCandidateInput(
-                                kind=kind,
-                                content=content.strip(),
-                                source_activity_ids=tuple(source_activity_ids),
-                            ),
-                        )
+                        attempt_id=attempt_id,
+                        advisory_id=advisory_id,
+                        fingerprint=fingerprint,
+                        status="rejected",
+                        reason_code="room_memory_advisory_unattributed",
+                        source_activity_ids=(),
+                        candidate_digest=None,
+                        stamp=stamp,
                     )
                 result: list[dict[str, Any]] = []
-                if participant_group:
-                    result.extend(
-                        self._record_candidate_group_conn(
-                            conn,
-                            conversation_id=conversation_id,
-                            attempt_id=attempt_id,
-                            author_participant_id=str(authority["participant_id"]),
-                            source_observation_id=primary_observation_id,
-                            source_batch_id=batch_id,
-                            batch_activity_ids=batch_activity_ids,
-                            group=participant_group,
-                            proposer_kind="participant",
-                            cap=MAX_MEMORY_CANDIDATES_PER_OUTCOME,
-                            stamp=stamp,
-                        )
-                    )
                 if curator_group:
                     result.extend(
                         self._record_candidate_group_conn(
@@ -400,6 +334,7 @@ class RoomMemoryAdvisoryStore:
         )
 
         unique: list[MemoryCandidateInput] = []
+        unique_digests: list[str] = []
         candidate_meta: dict[str, tuple[str, str, bool, tuple[str, ...]]] = {}
         seen: set[str] = set()
         for advisory_id, fingerprint, supersede_ignored, item in group:
@@ -412,6 +347,20 @@ class RoomMemoryAdvisoryStore:
                 proposer_kind=proposer_kind,
             )
             if digest in seen:
+                # Same candidate twice in one listing: the second still gets a
+                # receipt, like every other advisory.
+                self._write_advisory_receipt_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    attempt_id=attempt_id,
+                    advisory_id=advisory_id,
+                    fingerprint=fingerprint,
+                    status="duplicate",
+                    reason_code="room_memory_advisory_duplicate",
+                    source_activity_ids=item.source_activity_ids,
+                    candidate_digest=digest,
+                    stamp=stamp,
+                )
                 continue
             seen.add(digest)
             existing = conn.execute(
@@ -434,6 +383,7 @@ class RoomMemoryAdvisoryStore:
                 )
                 continue
             unique.append(item)
+            unique_digests.append(digest)
             candidate_meta[digest] = (
                 advisory_id,
                 fingerprint,
@@ -442,6 +392,20 @@ class RoomMemoryAdvisoryStore:
             )
         if not unique:
             return []
+        for digest in unique_digests[cap:]:
+            advisory_id, fingerprint, _ignored, source_ids = candidate_meta[digest]
+            self._write_advisory_receipt_conn(
+                conn,
+                conversation_id=conversation_id,
+                attempt_id=attempt_id,
+                advisory_id=advisory_id,
+                fingerprint=fingerprint,
+                status="rejected",
+                reason_code="room_memory_advisory_over_cap",
+                source_activity_ids=source_ids,
+                candidate_digest=None,
+                stamp=stamp,
+            )
         result = record_memory_candidates_conn(
             conn,
             conversation_id=conversation_id,

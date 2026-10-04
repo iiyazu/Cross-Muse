@@ -30,6 +30,13 @@ MEMORYOS_RESTART_BACKOFF_S = (1, 2, 4, 8, 16, 30)
 MEMORYOS_PROFILES = ("archive-only", "full-local", "full-local-curated")
 MEMORYOS_FULL_LOCAL_PROFILES = frozenset({"full-local", "full-local-curated"})
 MEMORYOS_CURATOR_PROFILE = "full-local-curated"
+MEMORYOS_CURATOR_LLM_PROVIDER_ENV = "XMUSE_MEMORYOS_LLM_PROVIDER"
+MEMORYOS_CURATOR_DEFAULT_LLM_PROVIDER = "opencode"
+# provider -> (sidecar key variable, sidecar model variable, pinned default model)
+MEMORYOS_CURATOR_LLM_PROVIDERS: dict[str, tuple[str, str, str | None]] = {
+    "opencode": ("OPENCODE_API_KEY", "OPENCODE_MODEL", "muse-spark-1.3-contributor"),
+    "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", None),
+}
 
 MemoryOSProfile = Literal["archive-only", "full-local", "full-local-curated"]
 
@@ -137,10 +144,15 @@ def memoryos_child_environment(
 ) -> dict[str, str]:
     """Return a strict allow-list environment for the sidecar child.
 
-    The curated profile reads ``XMUSE_MEMORYOS_LLM_API_KEY`` (and optionally
-    ``XMUSE_MEMORYOS_LLM_MODEL``) from the raw ambient mapping and exports them
-    only to this child as ``DEEPSEEK_API_KEY``/``DEEPSEEK_MODEL``; a raw
-    ``DEEPSEEK_API_KEY`` in the ambient never passes through.
+    The curated profile reads ``XMUSE_MEMORYOS_LLM_PROVIDER`` (``opencode`` by
+    default, or ``deepseek``), ``XMUSE_MEMORYOS_LLM_API_KEY`` and optionally
+    ``XMUSE_MEMORYOS_LLM_MODEL`` from the raw ambient mapping and exports them
+    only to this child under that provider's names; a raw provider key in the
+    ambient never passes through.
+
+    MemoryOS' heuristic agent kernel and paging stay off for every profile:
+    their maintenance proposals would enter the Room under the recalling
+    participant's name, which the platform must never do.
     """
 
     if not api_key or not generation:
@@ -160,7 +172,7 @@ def memoryos_child_environment(
             # managed model cache to the Workroom runtime so offline startup
             # can prove the preloaded model without using a global temp path.
             "FASTEMBED_CACHE_PATH": str(xmuse_root / "runtime" / "fastembed-cache"),
-            "MEMORYOS_AGENT_KERNEL": "external" if full_local else "off",
+            "MEMORYOS_AGENT_KERNEL": "off",
             "MEMORYOS_API_KEY": api_key,
             # full-local uses MemoryOS' bounded process-local FastEmbed index.
             # archive-only deliberately remains lexical and dependency-light.
@@ -168,7 +180,7 @@ def memoryos_child_environment(
             "MEMORYOS_CORS_ORIGINS": "[]",
             "MEMORYOS_ITEM_EXTRACTION": "true" if full_local else "false",
             "MEMORYOS_MEMORY_ARCH": "v3",
-            "MEMORYOS_PAGING_MODE": "heuristic" if full_local else "off",
+            "MEMORYOS_PAGING_MODE": "off",
             "MEMORYOS_RECALL_CACHE_ENABLED": "false",
             "MEMORYOS_RECALL_PIPELINE": "v2",
             "MEMORYOS_EMBEDDING_PROVIDER": "fastembed" if full_local else "auto",
@@ -187,14 +199,22 @@ def memoryos_child_environment(
         }
     )
     if profile == MEMORYOS_CURATOR_PROFILE:
+        provider = str(ambient.get(MEMORYOS_CURATOR_LLM_PROVIDER_ENV) or "").strip().lower()
+        provider = provider or MEMORYOS_CURATOR_DEFAULT_LLM_PROVIDER
+        if provider not in MEMORYOS_CURATOR_LLM_PROVIDERS:
+            raise MemoryOSSupervisorError("memoryos_llm_provider_invalid")
+        key_name, model_name, default_model = MEMORYOS_CURATOR_LLM_PROVIDERS[provider]
         environment["MEMORYOS_CURATOR_ENABLED"] = "true"
-        environment["MEMORYOS_LLM_PROVIDER"] = "deepseek"
+        environment["MEMORYOS_LLM_PROVIDER"] = provider
         llm_api_key = ambient.get("XMUSE_MEMORYOS_LLM_API_KEY")
         if isinstance(llm_api_key, str) and llm_api_key:
-            environment["DEEPSEEK_API_KEY"] = llm_api_key
+            environment[key_name] = llm_api_key
         llm_model = ambient.get("XMUSE_MEMORYOS_LLM_MODEL")
-        if isinstance(llm_model, str) and llm_model:
-            environment["DEEPSEEK_MODEL"] = llm_model
+        if isinstance(llm_model, str) and llm_model.strip():
+            environment[model_name] = llm_model.strip()
+        elif default_model is not None:
+            # Pin the model explicitly instead of trusting the sidecar default.
+            environment[model_name] = default_model
     return environment
 
 
