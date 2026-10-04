@@ -94,7 +94,15 @@ do not load `.env`.
   comes from `XMUSE_OPENCODE_MODEL` and an unknown model fails the attempt rather than
   falling back. A turn that ends without a durable outcome gets at most one in-lease reminder
   prompt for profiles that opt in (OpenCode); provider text is still never Room truth.
-- A roster may declare a Claude or OpenCode participant `workspace_write` (an owner). An
+- Antigravity participants run the standalone `agy` CLI under bubblewrap with an
+  allowlisted home (only agy's own state directory stays writable and only its
+  config plus the generated Room MCP file stay readable), and
+  `--dangerously-skip-permissions` is passed only inside that sandbox.
+  Non-owners are confined read-only (`os_read_only_sandbox`); `workspace_write`
+  owners work in their own clone with the board view mounted read-only at
+  `.xmuse` (`os_workspace_write_sandbox`). The legacy agentapi transport remains
+  opt-in via `XMUSE_ANTIGRAVITY_TRANSPORT=agentapi`.
+- A roster may declare a Claude, OpenCode, or Antigravity participant `workspace_write` (an owner). An
   owner works in its own local clone (`git clone --no-hardlinks`, no origin remote, under
   `<root>/runtime/owner-clones`) with its provider's full native tools; its agent process
   runs under bubblewrap where only that clone and that provider's own state are writable,
@@ -113,7 +121,8 @@ do not load `.env`.
 - Owner turns may run for hours: the host renews the lease in fenced slices while the
   provider reports progress, and ends the turn only on a stall (`room_turn_stalled`), a run
   of identical finished tool calls (`room_turn_looping`), the hard cap, or transport failure.
-  A lapsed or superseded lease is never renewed.
+  A lapsed or superseded lease is never renewed. Once the attempt's own outcome has committed,
+  the provider gets a bounded grace to end its turn, so the next delivery reuses its session.
 - A failed attempt reopens immediately only when its transport proved the provider
   generation gone (`cleanup_succeeded`); otherwise it waits out its lease. The attempt limit
   applies either way.

@@ -36,6 +36,14 @@ from xmuse_core.chat.room_acp_transport import (
     AcpTransportConfig,
 )
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamProjector
+from xmuse_core.chat.room_agy_sandbox import (
+    build_agy_sandbox_command,
+    write_agy_mcp_config,
+)
+from xmuse_core.chat.room_agy_transport import (
+    AgyRoomObservationTransport,
+    AgyTransportConfig,
+)
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_execution_ports import ExecutionReviewReceiptWriter
 from xmuse_core.chat.room_host import (
@@ -55,10 +63,14 @@ from xmuse_core.chat.room_owner_clones import (
 from xmuse_core.chat.room_owner_ids import owner_id_for_participant
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
 from xmuse_core.chat.room_transport_router import RoutingRoomObservationTransport
-from xmuse_core.chat.room_workspace_sandbox import build_workspace_write_sandbox_command
+from xmuse_core.chat.room_workspace_sandbox import (
+    ROOM_WORKSPACE_WRITE_CONFINEMENT,
+    build_workspace_write_sandbox_command,
+)
 
 WORKSPACE_WRITE_UNAVAILABLE = "room_workspace_write_unavailable"
 OWNER_PREPARE_FAILED = "room_owner_clone_prepare_failed"
+OWNER_AGY_TURN_IDLE_TIMEOUT_S = 900.0
 
 OWNER_PREPARE_COMMAND_ENV = "XMUSE_OWNER_PREPARE_COMMAND"
 OWNER_PREPARE_TIMEOUT_ENV = "XMUSE_OWNER_PREPARE_TIMEOUT_S"
@@ -71,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_workspace_write_participant(participant: Participant) -> bool:
-    """True only for writers the runner can confine (claude/opencode)."""
+    """True only for writers the runner can confine (claude/opencode/antigravity)."""
 
     return (
         participant.workspace_access == "workspace_write"
@@ -92,6 +104,10 @@ class OwnerWorkspaceWriteSettings:
     claude_agent_argv: tuple[str, ...] | None = None
     opencode_argv: tuple[str, ...] | None = None
     opencode_default_model: str | None = None
+    agy_executable: Path | None = None
+    agy_default_model: str | None = None
+    agy_bridge_script: Path | None = None
+    agy_python3: Path | None = None
     extra_masked_paths: tuple[Path, ...] = ()
     prepare_command: tuple[str, ...] | None = None
     prepare_timeout_s: float = OWNER_PREPARE_TIMEOUT_DEFAULT_S
@@ -251,6 +267,77 @@ def build_owner_acp_config(
     )
 
 
+def build_owner_agy_config(
+    settings: OwnerWorkspaceWriteSettings,
+    *,
+    participant: Participant,
+    clone: OwnerClone,
+) -> AgyTransportConfig | None:
+    """Build the sandboxed agy writer config, or None when agy is off."""
+
+    if participant.cli_kind != "antigravity":
+        return None
+    agy_executable = settings.agy_executable
+    bridge_script = settings.agy_bridge_script
+    python3 = settings.agy_python3
+    model = (participant.model or "").strip() or (settings.agy_default_model or "").strip()
+    if agy_executable is None or bridge_script is None or python3 is None or not model:
+        return None
+    readonly_binds: tuple[tuple[Path, Path], ...] = ()
+    board_dir = owner_board_dir(settings, clone.owner_id)
+    if board_dir is not None:
+        mount_point = clone.path.resolve() / OWNER_BOARD_DIR_NAME
+        # Clones created before the board existed lack the mount point.
+        mount_point.mkdir(exist_ok=True)
+        readonly_binds = ((board_dir, mount_point),)
+    mcp_config_path = write_agy_mcp_config(
+        Path(settings.xmuse_root) / "runtime" / "agy" / clone.owner_id / "mcp_config.json",
+        python3=Path(python3),
+        room_mcp_url=settings.room_mcp_url,
+    )
+
+    def _command_builder(resume_conversation_id: str | None) -> tuple[str, ...]:
+        agy_args: list[str] = [
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--model",
+            model,
+            "--dangerously-skip-permissions",
+        ]
+        if resume_conversation_id:
+            agy_args.extend(["--conversation", resume_conversation_id])
+        # ``-p=`` must be the last agy argument.
+        agy_args.append("-p=")
+        return build_agy_sandbox_command(
+            bwrap=Path(settings.bwrap),
+            agy=Path(agy_executable),
+            home=Path(settings.home),
+            workspace=clone.path,
+            workspace_writable=True,
+            mcp_config=mcp_config_path,
+            bridge_script=Path(bridge_script),
+            python3=Path(python3),
+            agy_args=agy_args,
+            # The xmuse root encloses the clones root, so the existing
+            # enclosing mask order keeps other owners' clones hidden.
+            masked_paths=(settings.xmuse_root, *settings.extra_masked_paths),
+            readonly_binds=readonly_binds,
+        )
+
+    return AgyTransportConfig(
+        workspace=clone.path,
+        command_builder=_command_builder,
+        default_model=model,
+        confinement=ROOM_WORKSPACE_WRITE_CONFINEMENT,
+        owner=True,
+        # Owners run builds and test suites that may print nothing for minutes;
+        # the host's long-turn stall detection is the real liveness bound.
+        turn_idle_timeout_s=OWNER_AGY_TURN_IDLE_TIMEOUT_S,
+    )
+
+
 def build_owner_acp_transport_factory(
     settings: OwnerWorkspaceWriteSettings,
     *,
@@ -263,7 +350,20 @@ def build_owner_acp_transport_factory(
 ) -> OwnerTransportFactory:
     """Build dedicated writer transports over the shared disposable preview cache."""
 
-    def _factory(participant: Participant, clone: OwnerClone) -> AcpRoomObservationTransport | None:
+    def _factory(participant: Participant, clone: OwnerClone) -> RoomObservationTransport | None:
+        if participant.cli_kind == "antigravity":
+            agy_config = build_owner_agy_config(settings, participant=participant, clone=clone)
+            if agy_config is None:
+                return None
+            return AgyRoomObservationTransport(
+                config=agy_config,
+                registry_path=registry_path,
+                control_store=control_store,
+                skill_decision_store=skill_decision_store,
+                execution_store=execution_store,
+                memory_runtime=memory_runtime,
+                stream_projector=stream_projector,
+            )
         config = build_owner_acp_config(settings, participant=participant, clone=clone)
         if config is None:
             return None
@@ -459,6 +559,7 @@ __all__ = [
     "RoomOwnerTransportRouter",
     "build_owner_acp_config",
     "build_owner_acp_transport_factory",
+    "build_owner_agy_config",
     "build_owner_prepare",
     "is_workspace_write_participant",
     "owner_board_dir",

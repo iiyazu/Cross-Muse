@@ -500,6 +500,11 @@ _PROMPT_ANTIGRAVITY_PROVIDERS = frozenset({"antigravity"})
 # get the same outcome contract with a writable-workspace clause instead of the
 # read-only one.  Only transports that actually confine an owner select it.
 _PROMPT_OWNER_CALL_SPELLING = {
+    "antigravity": (
+        "Submit the outcome by calling the chat_room_submit_outcome tool of the "
+        "xmuse-room MCP server through call_mcp_tool (server xmuse-room), "
+        "passing the arguments exactly. "
+    ),
     "claude": (
         "Call exactly the chat_room_submit_outcome tool that the xmuse-room MCP server mounts. "
     ),
@@ -739,6 +744,17 @@ def failed_result(reason: str, exc: Exception) -> RoomTransportResult:
         reason,
         diagnostic_text(f"{type(exc).__name__}: {exc}"),
     )
+
+
+def tool_call_fingerprint(title: object, raw_input: object) -> str:
+    """Return a stable identity for one tool call: title plus arguments."""
+
+    title = title if isinstance(title, str) else ""
+    try:
+        canonical = json.dumps(raw_input, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        canonical = json.dumps(str(raw_input))
+    return hashlib.sha256(f"{title}\0{canonical}".encode()).hexdigest()
 
 
 def canonical_digest(value: Any) -> str:

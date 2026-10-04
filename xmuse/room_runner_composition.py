@@ -14,6 +14,10 @@ from xmuse_core.chat.room_acp_transport import (
     AcpTransportConfig,
 )
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
+from xmuse_core.chat.room_agy_transport import (
+    AgyRoomObservationTransport,
+    AgyTransportConfig,
+)
 from xmuse_core.chat.room_antigravity_transport import (
     AntigravityRoomObservationTransport,
     AntigravityTransportConfig,
@@ -63,6 +67,7 @@ class RoomRuntimeComposition:
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None
     acp_transports: tuple[AcpRoomObservationTransport, ...] = ()
     antigravity_transports: tuple[AntigravityRoomObservationTransport, ...] = ()
+    agy_transports: tuple[AgyRoomObservationTransport, ...] = ()
 
 
 def compose_room_runtime(
@@ -84,17 +89,20 @@ def compose_room_runtime(
     memory_delivery_pump: RoomMemoryDeliveryPumpPort | None,
     claude_acp_config: AcpTransportConfig | None = None,
     antigravity_config: AntigravityTransportConfig | None = None,
+    agy_config: AgyTransportConfig | None = None,
     opencode_acp_config: AcpTransportConfig | None = None,
     owner_settings: OwnerWorkspaceWriteSettings | None = None,
     owner_transport_factory: OwnerTransportFactory | None = None,
 ) -> RoomRuntimeComposition:
     """Wire one Room-only runtime without starting process lifecycle tasks.
 
-    ``claude_acp_config``, ``antigravity_config`` and ``opencode_acp_config``
-    enable the ``claude``, ``antigravity`` and ``opencode`` routes by building
-    each transport over the composition's shared disposable Agent preview
-    projector.  The always-present ``codex`` route is the Codex app-server
-    transport.
+    ``claude_acp_config``, ``antigravity_config``/``agy_config`` and
+    ``opencode_acp_config`` enable the ``claude``, ``antigravity`` and
+    ``opencode`` routes by building each transport over the composition's
+    shared disposable Agent preview projector.  The always-present ``codex``
+    route is the Codex app-server transport.  ``agy_config`` selects the new
+    standalone CLI transport for ``antigravity``; ``antigravity_config`` keeps
+    the legacy agentapi transport.
     """
 
     session_layer = GodSessionLayer(
@@ -105,7 +113,7 @@ def compose_room_runtime(
         cli_kind: PROVIDER_MIN_DELIVERY_TIMEOUT_S[cli_kind]
         for cli_kind, enabled in (
             ("claude", claude_acp_config is not None),
-            ("antigravity", antigravity_config is not None),
+            ("antigravity", antigravity_config is not None or agy_config is not None),
             ("opencode", opencode_acp_config is not None),
         )
         if enabled
@@ -126,6 +134,7 @@ def compose_room_runtime(
     routes: dict[str, RoomObservationTransport] = {}
     acp_transports: list[AcpRoomObservationTransport] = []
     antigravity_transports: list[AntigravityRoomObservationTransport] = []
+    agy_transports: list[AgyRoomObservationTransport] = []
     for acp_config in (claude_acp_config, opencode_acp_config):
         if acp_config is None:
             continue
@@ -140,7 +149,19 @@ def compose_room_runtime(
         )
         acp_transports.append(acp_transport)
         routes[acp_config.profile.runtime] = acp_transport
-    if antigravity_config is not None:
+    if agy_config is not None:
+        agy_transport = AgyRoomObservationTransport(
+            config=agy_config,
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=skill_decisions,
+            execution_store=execution_store,
+            memory_runtime=memory_context_receipts,
+            stream_projector=stream_projector,
+        )
+        agy_transports.append(agy_transport)
+        routes["antigravity"] = agy_transport
+    elif antigravity_config is not None:
         antigravity_transport = AntigravityRoomObservationTransport(
             config=antigravity_config,
             registry_path=root / "god_sessions.json",
@@ -206,4 +227,5 @@ def compose_room_runtime(
         memory_delivery_pump=memory_delivery_pump,
         acp_transports=tuple(acp_transports),
         antigravity_transports=tuple(antigravity_transports),
+        agy_transports=tuple(agy_transports),
     )

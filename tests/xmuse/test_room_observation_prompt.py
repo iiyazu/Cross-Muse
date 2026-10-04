@@ -78,7 +78,7 @@ def test_unknown_provider_is_rejected() -> None:
         build_room_observation_prompt("gemini")
 
 
-@pytest.mark.parametrize("provider", ["claude", "opencode"])
+@pytest.mark.parametrize("provider", ["claude", "opencode", "antigravity"])
 def test_owner_prompt_grants_the_writable_clone_and_keeps_the_outcome_contract(
     provider: str,
 ) -> None:
@@ -101,7 +101,7 @@ def test_owner_prompt_grants_the_writable_clone_and_keeps_the_outcome_contract(
     assert build_room_observation_prompt(provider, owner=False) == reader
 
 
-@pytest.mark.parametrize("provider", ["codex", "antigravity"])
+@pytest.mark.parametrize("provider", ["codex"])
 def test_owner_prompt_is_only_for_confinable_providers(provider: str) -> None:
     with pytest.raises(ValueError, match="room_observation_prompt_owner_unsupported"):
         build_room_observation_prompt(provider, owner=True)

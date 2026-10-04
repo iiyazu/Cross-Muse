@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -37,6 +38,7 @@ from xmuse_core.chat.room_owner_transport import (
     OwnerWorkspaceWriteSettings,
     RoomOwnerTransportRouter,
     build_owner_acp_transport_factory,
+    build_owner_agy_config,
     is_workspace_write_participant,
     owner_id_for_participant,
 )
@@ -275,6 +277,30 @@ def _settings(
         opencode_argv=opencode_argv,
         opencode_default_model="test-model" if opencode_argv else None,
         prepare_command=prepare_command,
+    )
+
+
+def _agy_settings(tmp_path: Path, source: Path) -> OwnerWorkspaceWriteSettings:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    agy = tmp_path / "agy"
+    agy.write_text("#!/bin/sh\n")
+    bridge = tmp_path / "room_mcp_stdio.py"
+    bridge.write_text("# bridge\n")
+    python3 = tmp_path / "python3"
+    python3.write_text("#!/bin/sh\n")
+    return OwnerWorkspaceWriteSettings(
+        clones_root=tmp_path / "owner-clones",
+        source_repo=source,
+        xmuse_root=tmp_path,
+        home=home,
+        room_mcp_url="http://127.0.0.1:8100/mcp/room",
+        bwrap=tmp_path / "bwrap",
+        agy_executable=agy,
+        agy_default_model="gemini-3.8-flash-high",
+        agy_bridge_script=bridge,
+        agy_python3=python3,
+        board_root=tmp_path / "board",
     )
 
 
@@ -636,3 +662,86 @@ class TestOwnerRunnerSettings:
                 environ={**base, "XMUSE_OWNER_PREPARE_TIMEOUT_S": "nope"},
             )
         assert exc_info.value.code == "room_runner_owner_prepare_timeout_invalid"
+
+
+# ---------------------------------------------------------------------------
+# Antigravity owner (agy CLI)
+# ---------------------------------------------------------------------------
+
+
+class TestOwnerAgyConfig:
+    def test_antigravity_writer_gets_agy_transport_with_board_bind(self, tmp_path: Path) -> None:
+        from xmuse_core.chat.room_agy_transport import AgyRoomObservationTransport
+        from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEMENT
+
+        source = tmp_path / "source"
+        _init_source(source)
+        settings = _agy_settings(tmp_path, source)
+        factory = build_owner_acp_transport_factory(
+            settings, registry_path=tmp_path / "god_sessions.json"
+        )
+        manager = OwnerCloneManager(settings.clones_root)
+        writer = _participant(
+            tmp_path,
+            "agy-writer",
+            cli_kind="antigravity",
+            workspace_access="workspace_write",
+        )
+        assert is_workspace_write_participant(writer) is True
+        clone = manager.ensure(
+            source, owner_id_for_participant(writer.conversation_id, writer.participant_id)
+        )
+        transport = factory(writer, clone)
+        assert isinstance(transport, AgyRoomObservationTransport)
+        assert transport._config.workspace == clone.path
+        assert transport._config.owner is True
+        assert transport._config.confinement == ROOM_WORKSPACE_WRITE_CONFINEMENT
+        # The dedicated transport pins the participant's own model.
+        assert transport._config.default_model == "test-model"
+
+        fresh = transport._config.command_builder(None)
+        assert fresh[-1] == "-p="
+        assert "--conversation" not in fresh
+        assert fresh[0] == str(settings.bwrap)
+        assert str(clone.path.resolve()) in fresh
+        # The owner clone is writable and the board view is mounted into it.
+        assert "--bind" in fresh
+        assert str(clone.path.resolve() / ".xmuse") in fresh
+        mcp_config = tmp_path / "runtime" / "agy" / clone.owner_id / "mcp_config.json"
+        assert mcp_config.is_file()
+        assert str(mcp_config.resolve()) in fresh
+
+        resumed = transport._config.command_builder("conv-resume-1")
+        assert resumed[-1] == "-p="
+        assert resumed[resumed.index("--conversation") + 1] == "conv-resume-1"
+        assert resumed.index("--conversation") < len(resumed) - 1
+
+    def test_antigravity_writer_fails_closed_without_agy_settings(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        _init_source(source)
+        # No agy fields: the shared factory cannot build an agy writer config.
+        settings = _settings(tmp_path, source)
+        factory = build_owner_acp_transport_factory(
+            settings, registry_path=tmp_path / "god_sessions.json"
+        )
+        wrapped = RoutingRoomObservationTransport({"antigravity": _RecordingTransport()})
+        router = _router(wrapped, settings=settings, factory=factory)  # type: ignore[arg-type]
+        writer = _participant(
+            tmp_path, "agy-writer-off", cli_kind="antigravity", workspace_access="workspace_write"
+        )
+        result = asyncio.run(router.deliver(_delivery(writer), timeout_s=5.0))
+        assert result == RoomTransportResult("failed", WORKSPACE_WRITE_UNAVAILABLE)
+
+    def test_build_owner_agy_config_rejects_other_kinds(self, tmp_path: Path) -> None:
+        source = tmp_path / "source"
+        _init_source(source)
+        settings = _agy_settings(tmp_path, source)
+        manager = OwnerCloneManager(settings.clones_root)
+        claude_writer = _participant(
+            tmp_path, "claude-writer", cli_kind="claude", workspace_access="workspace_write"
+        )
+        clone = manager.ensure(
+            source,
+            owner_id_for_participant(claude_writer.conversation_id, claude_writer.participant_id),
+        )
+        assert build_owner_agy_config(settings, participant=claude_writer, clone=clone) is None

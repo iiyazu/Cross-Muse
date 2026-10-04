@@ -171,7 +171,7 @@ class TestWorkspaceAccessSetup:
         RoomDatabase(tmp_path / "chat.db").initialize()
         return RoomSetupService(tmp_path)
 
-    def test_accepted_for_claude_and_opencode(self, tmp_path: Path) -> None:
+    def test_accepted_for_claude_opencode_and_antigravity(self, tmp_path: Path) -> None:
         service = self._service(tmp_path)
         result = service.create_conversation(
             RoomConversationCreate(
@@ -190,16 +190,22 @@ class TestWorkspaceAccessSetup:
                         model="m",
                         workspace_access="workspace_write",
                     ),
+                    ParticipantInit(
+                        role="execute",
+                        cli_kind="antigravity",
+                        model="gemini-3.8-flash-high",
+                        workspace_access="workspace_write",
+                    ),
                 ],
             )
         )
         participants = result["participants"]
-        assert isinstance(participants, list) and len(participants) == 2
+        assert isinstance(participants, list) and len(participants) == 3
         assert ParticipantStore(tmp_path / "chat.db").list_by_conversation(str(result["id"]))[
             0
         ].workspace_access == ("workspace_write")
 
-    @pytest.mark.parametrize("cli_kind", ["codex", "antigravity"])
+    @pytest.mark.parametrize("cli_kind", ["codex"])
     def test_rejected_for_other_kinds(self, tmp_path: Path, cli_kind: str) -> None:
         service = self._service(tmp_path)
         with pytest.raises(RoomSetupError) as exc_info:

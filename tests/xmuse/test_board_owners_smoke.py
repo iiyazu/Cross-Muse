@@ -124,3 +124,17 @@ def test_compute_board_smoke_checks_reports_each_condition() -> None:
         "frontend_completed_revision": True,
         "frontend_render_mentions_lang": False,
     }
+
+
+def test_validate_agy_model_accepts_only_gemini_names() -> None:
+    assert smoke.validate_agy_model("gemini-3.8-flash-high") == "gemini-3.8-flash-high"
+    assert smoke.validate_agy_model("  gemini-2.0-pro  ") == "gemini-2.0-pro"
+    with pytest.raises(ValueError):
+        smoke.validate_agy_model("opencode-go/muse-spark-1.3-contributor")
+    with pytest.raises(ValueError):
+        smoke.validate_agy_model("")
+
+
+def test_frontend_cli_accepts_antigravity() -> None:
+    assert "antigravity" in smoke.ALLOWED_FRONTEND_CLIS
+    assert set(smoke.ALLOWED_FRONTEND_CLIS) == {"opencode", "claude", "antigravity"}

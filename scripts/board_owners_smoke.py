@@ -47,6 +47,11 @@ from xmuse_core.chat.room_acp_transport import (
     AcpTransportConfig,
 )
 from xmuse_core.chat.room_agent_stream import RoomAgentStreamCache, RoomAgentStreamProjector
+from xmuse_core.chat.room_agy_sandbox import (
+    AGY_DEFAULT_MODEL,
+    resolve_agy_executable,
+    resolve_agy_python3,
+)
 from xmuse_core.chat.room_api_models import (
     ParticipantInit,
     RoomCollaborationInit,
@@ -88,7 +93,7 @@ ALLOWED_MODELS = (
 )
 DEFAULT_LEAD_MODEL = "opencode-go/muse-spark-1.2-contributor"
 DEFAULT_OWNER_MODEL = "opencode-go/muse-spark-1.3-contributor"
-ALLOWED_FRONTEND_CLIS = ("opencode", "claude")
+ALLOWED_FRONTEND_CLIS = ("opencode", "claude", "antigravity")
 
 CONTRACT_V1_CONTENT = (
     "api/greeting.py defines greet(name: str) -> dict returning "
@@ -126,6 +131,17 @@ def validate_model(value: str) -> str:
     model = value.strip()
     if model not in ALLOWED_MODELS:
         raise ValueError(f"unsupported model {value!r}; expected one of {sorted(ALLOWED_MODELS)}")
+    return model
+
+
+def validate_agy_model(value: str) -> str:
+    """Return the stripped agy model or raise when it is not a gemini model."""
+
+    model = value.strip()
+    if not model.startswith("gemini-"):
+        raise ValueError(
+            f"unsupported agy model {value!r}; expected a name starting with 'gemini-'"
+        )
     return model
 
 
@@ -328,6 +344,7 @@ def _resolve_owner_settings(
     mcp_url: str,
     owner_model: str,
     frontend_cli: str,
+    agy_model: str = AGY_DEFAULT_MODEL,
 ) -> OwnerWorkspaceWriteSettings:
     bwrap = resolve_bwrap_executable()
     if bwrap is None:
@@ -343,6 +360,19 @@ def _resolve_owner_settings(
         prepare_timeout_s = resolve_owner_prepare_timeout_s()
     except ValueError as exc:
         raise RuntimeError(f"invalid {exc}") from exc
+    agy_executable: Path | None = None
+    agy_bridge_script: Path | None = None
+    agy_python3: Path | None = None
+    if frontend_cli == "antigravity":
+        agy_executable = resolve_agy_executable()
+        if agy_executable is None:
+            raise RuntimeError("agy executable not found for the board smoke")
+        agy_python3 = resolve_agy_python3()
+        if agy_python3 is None:
+            raise RuntimeError("system python3 outside HOME not found for the board smoke")
+        agy_bridge_script = Path(__file__).resolve().parent.parent / "xmuse" / "room_mcp_stdio.py"
+        if not agy_bridge_script.is_file():
+            raise RuntimeError("room mcp stdio bridge not found for the board smoke")
     return OwnerWorkspaceWriteSettings(
         clones_root=root / "runtime" / "owner-clones",
         source_repo=source_repo,
@@ -353,6 +383,10 @@ def _resolve_owner_settings(
         claude_agent_argv=resolve_smoke_claude_argv(frontend_cli),
         opencode_argv=(str(opencode_exe), "acp"),
         opencode_default_model=owner_model,
+        agy_executable=agy_executable,
+        agy_default_model=agy_model if frontend_cli == "antigravity" else None,
+        agy_bridge_script=agy_bridge_script,
+        agy_python3=agy_python3,
         extra_masked_paths=resolve_owner_masked_paths(),
         prepare_command=prepare_command,
         prepare_timeout_s=prepare_timeout_s,
@@ -736,6 +770,7 @@ async def _run_smoke(
     lead_model: str,
     owner_model: str,
     frontend_cli: str,
+    agy_model: str,
     phase_timeout_s: float,
 ) -> int:
     source_repo = root / "source-repo"
@@ -772,7 +807,11 @@ async def _run_smoke(
                     role="frontend",
                     display_name="Frontend Owner",
                     cli_kind=frontend_cli,  # type: ignore[arg-type]
-                    model=owner_model if frontend_cli == "opencode" else None,
+                    model=(
+                        owner_model
+                        if frontend_cli == "opencode"
+                        else (agy_model if frontend_cli == "antigravity" else None)
+                    ),
                     workspace_access="workspace_write",
                 ),
             ],
@@ -807,6 +846,7 @@ async def _run_smoke(
             mcp_url=mcp_url,
             owner_model=owner_model,
             frontend_cli=frontend_cli,
+            agy_model=agy_model,
         )
         readonly_config = _build_readonly_opencode_config(
             root=root, workspace=source_repo, mcp_url=mcp_url, model=lead_model
@@ -1037,6 +1077,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lead-model", default=DEFAULT_LEAD_MODEL)
     parser.add_argument("--owner-model", default=DEFAULT_OWNER_MODEL)
+    parser.add_argument("--agy-model", default=AGY_DEFAULT_MODEL)
     parser.add_argument("--frontend-cli", choices=list(ALLOWED_FRONTEND_CLIS), default="opencode")
     parser.add_argument("--phase-timeout-s", type=float, default=DEFAULT_PHASE_TIMEOUT_S)
     parser.add_argument(
@@ -1048,6 +1089,7 @@ def main() -> int:
     try:
         lead_model = validate_model(args.lead_model)
         owner_model = validate_model(args.owner_model)
+        agy_model = validate_agy_model(args.agy_model)
     except ValueError as exc:
         print(f"board smoke unavailable: {exc}", flush=True)
         return 2
@@ -1066,6 +1108,7 @@ def main() -> int:
                     lead_model=lead_model,
                     owner_model=owner_model,
                     frontend_cli=args.frontend_cli,
+                    agy_model=agy_model,
                     phase_timeout_s=args.phase_timeout_s,
                 )
             )
