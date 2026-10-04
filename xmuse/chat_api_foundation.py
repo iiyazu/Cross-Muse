@@ -31,7 +31,11 @@ from xmuse.chat_api_runtime import (
 from xmuse.operator_auth import operator_token_matches
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.runtime.data_guard import assert_data_operation_complete
-from xmuse_core.runtime.frontend_api import frontend_cors_kwargs
+from xmuse_core.runtime.frontend_api import (
+    frontend_cors_kwargs,
+    is_loopback_host_header,
+    operator_error,
+)
 
 DEFAULT_RUNTIME_RECONCILE_INTERVAL_S = 5.0
 DEFAULT_EXECUTION_RECONCILE_INTERVAL_S = 1.0
@@ -266,6 +270,24 @@ def create_chat_api_foundation(
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": detail},
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def require_loopback_host(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        # Outermost guard against DNS rebinding: a page on another origin that
+        # re-points its own hostname at 127.0.0.1 still sends that hostname here.
+        if not is_loopback_host_header(request.headers.get("host")):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={
+                    "detail": operator_error(
+                        "room_host_invalid", "Host header must name the loopback interface"
+                    )
+                },
             )
         return await call_next(request)
 

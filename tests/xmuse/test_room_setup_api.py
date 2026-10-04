@@ -699,6 +699,9 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/conversations/{conversation_id}/codex-agents", "GET"),
         ("/api/chat/operator/room-participants/{participant_id}/codex-actions", "POST"),
         ("/api/chat/conversations/{conversation_id}/board", "GET"),
+        ("/api/chat/conversations/{conversation_id}/board/summary", "GET"),
+        ("/api/chat/conversations/{conversation_id}/board/events", "GET"),
+        ("/api/chat/conversations/{conversation_id}/board/stream", "GET"),
         ("/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}", "GET"),
         ("/api/chat/operator/board-splits/{split_id}/decision", "POST"),
     }
