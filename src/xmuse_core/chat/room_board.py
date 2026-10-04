@@ -48,6 +48,8 @@ BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
 MAX_CONTRACT_CONTENT_BYTES = 65536
 MAX_VERIFICATION_ATTEMPTS = 3
+# Room for a few bounded gate output tails plus JSON escaping.
+MAX_VERIFICATION_EVIDENCE_BYTES = 16384
 VERIFICATION_LEASE_TTL_S = 1800
 VERIFICATION_STATUSES = ("pending", "running", "passed", "failed", "superseded", "error")
 BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
@@ -365,10 +367,18 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
                 if isinstance(item, dict) and item.get("status") != "passed"
             ]
             detail = f" Failing gates: {', '.join(failing)}." if failing else ""
+            evidence = payload.get("evidence")
+            tails = evidence.get("output_tails") if isinstance(evidence, dict) else None
+            tail_text = ""
+            if isinstance(tails, dict):
+                for gate_id, tail in tails.items():
+                    if isinstance(tail, str) and tail:
+                        tail_text = f"\nOutput tail of {gate_id}:\n```\n{tail}\n```"
+                        break
             return (
                 f"Module {module_id} verification failed ({reason}).{detail} "
                 "Fix the failure inside your charter paths, commit, and report "
-                "done again."
+                f"done again.{tail_text}"
             )
         return f"Module {module_id} verification {status} ({reason})."
     return activity_type
@@ -2258,7 +2268,7 @@ class RoomBoardStore:
                 }
             )
         clean_evidence = dict(evidence) if evidence is not None else {}
-        if len(_json(clean_evidence).encode("utf-8")) > 8192:
+        if len(_json(clean_evidence).encode("utf-8")) > MAX_VERIFICATION_EVIDENCE_BYTES:
             raise ValueError("room_board_verification_evidence_too_large")
         if patch_text is not None:
             if not isinstance(patch_text, str) or not patch_text.strip():
