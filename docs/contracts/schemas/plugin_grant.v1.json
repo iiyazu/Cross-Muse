@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plugin_grant/v1",
+  "title": "Plugin grant: issue, list and exchange responses",
+  "oneOf": [
+    { "$ref": "#/$defs/issue" },
+    { "$ref": "#/$defs/list" },
+    { "$ref": "#/$defs/exchange" }
+  ],
+  "$defs": {
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "nullableTimestamp": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "grant": {
+      "type": "object",
+      "properties": {
+        "grant_id": { "type": "string", "minLength": 1 },
+        "conversation_id": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
+        "scope": { "const": "board.split.decide" },
+        "status": { "enum": ["pending", "active", "expired", "revoked"] },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "activated_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "revoked_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "last_used_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "use_count": { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "grant_id",
+        "conversation_id",
+        "host",
+        "scope",
+        "status",
+        "created_at",
+        "activated_at",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "use_count"
+      ],
+      "additionalProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_issue/v1" },
+        "grant": { "$ref": "#/$defs/grant" },
+        "pairing_code": { "type": "string", "pattern": "^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}$" },
+        "pairing_expires_at": { "$ref": "#/$defs/timestamp" }
+      },
+      "required": ["schema_version", "grant", "pairing_code", "pairing_expires_at"],
+      "additionalProperties": false
+    },
+    "list": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_list/v1" },
+        "conversation_id": { "type": "string", "minLength": 1 },
+        "grants": { "type": "array", "items": { "$ref": "#/$defs/grant" }, "maxItems": 50 }
+      },
+      "required": ["schema_version", "conversation_id", "grants"],
+      "additionalProperties": false
+    },
+    "exchange": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_exchange/v1" },
+        "grant": { "$ref": "#/$defs/grant" },
+        "secret": { "type": "string", "pattern": "^xpg_[A-Za-z0-9_-]+_[A-Za-z0-9_-]{43}$" }
+      },
+      "required": ["schema_version", "grant", "secret"],
+      "additionalProperties": false
+    }
+  }
+}
