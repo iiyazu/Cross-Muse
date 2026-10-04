@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot live smoke of board module ownership with a mid-flight contract revision.
+"""One-shot live smoke of board module ownership with host-verified completion.
 
 This is not part of CI.  It builds a fresh temporary ``XMUSE_ROOT`` plus a
 fresh temporary source git repository, serves the real Room MCP app on an
@@ -7,13 +7,26 @@ ephemeral loopback port, and drives three real agents (a read-only lead and
 two ``workspace_write`` owners) through the durable Room host with a real
 ``RoomParticipantHost`` driving a ``RoomOwnerTransportRouter``.
 
-The run proves module ownership with a mid-flight contract revision: the lead
-proposes a two-module split, the script approves it as operator, both owners
-claim and implement their charters, then the backend owner publishes contract
-``api.greeting`` v2 which wakes the dependent frontend owner; the frontend
-realigns in the same provider session.  The script prints timed delivery
-evidence plus one JSON summary.  Agent child processes are always terminated
-before exit.
+A background thread runs the real ``RoomBoardVerificationWorker`` (the same
+worker the Chat API runs) against the smoke's ``chat.db`` so every owner
+``done`` report is verified with evidence while the smoke pumps deliveries.
+
+Two scenarios are supported (``--scenario``):
+
+* ``revision`` (default): the lead proposes a two-module split, the script
+  approves it as operator, both owners claim and implement their charters,
+  then the backend owner publishes contract ``api.greeting`` v2 which wakes
+  the dependent frontend owner; the frontend realigns in the same provider
+  session.
+* ``false-done``: split and charters proceed as above, then a Human drill
+  message tells the backend owner to commit a contract-breaking stub and
+  report ``done`` without running tests.  The host verification fails with
+  gate evidence, wakes the owner in the same provider session, and the owner
+  must fix and report ``done`` again until verification passes.  No further
+  Human message is sent after the drill.
+
+The script prints timed delivery evidence plus one JSON summary.  Agent child
+processes are always terminated before exit.
 """
 
 from __future__ import annotations
@@ -31,8 +44,9 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,9 +72,14 @@ from xmuse_core.chat.room_api_models import (
     RoomConversationCreate,
 )
 from xmuse_core.chat.room_application import RoomApplicationService
+from xmuse_core.chat.room_board_verification import (
+    BOARD_VERIFICATION_GATE_FAILED,
+    RoomBoardVerificationWorker,
+)
 from xmuse_core.chat.room_board_view import refresh_board_views
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_execution_profiles import get_execution_gate_profile
 from xmuse_core.chat.room_host import (
     LongTurnPolicy,
     RoomHostPolicy,
@@ -96,16 +115,95 @@ DEFAULT_OWNER_MODEL = "opencode-go/muse-spark-1.3-contributor"
 ALLOWED_FRONTEND_CLIS = ("opencode", "claude", "antigravity")
 
 CONTRACT_V1_CONTENT = (
-    "api/greeting.py defines greet(name: str) -> dict returning "
+    "src/api/greeting.py defines greet(name: str) -> dict returning "
     '{"message": "Hello, <name>!"}. '
-    "client/render.py defines render(name: str) -> str that calls "
+    "src/client/render.py defines render(name: str) -> str that calls "
     "api.greeting.greet and returns the message."
 )
 CONTRACT_V2_CONTENT = (
-    "api/greeting.py defines greet(name: str) -> dict returning "
+    "src/api/greeting.py defines greet(name: str) -> dict returning "
     '{"message": ..., "lang": "en"}. '
-    "client/render.py defines render(name: str) -> str that calls "
+    "src/client/render.py defines render(name: str) -> str that calls "
     'api.greeting.greet and returns "<message> [en]".'
+)
+
+ALLOWED_SCENARIOS = ("revision", "false-done")
+DEFAULT_SCENARIO = "revision"
+# Smallest fixed profile whose gates run pytest on changed Python paths: the
+# seed below satisfies its markers and local toolchain capability offline.
+DEFAULT_EXECUTION_PROFILE_ID = "python-uv/v1"
+
+SEED_PROJECT_NAME = "board-smoke-seed"
+SEED_PYPROJECT_TOML = """\
+[project]
+name = "board-smoke-seed"
+version = "0.1.0"
+description = "Tiny verifiable seed for the board owners smoke"
+requires-python = ">=3.11"
+dependencies = [
+    "packaging>=24",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18",
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/api", "src/client"]
+"""
+SEED_GITIGNORE = ".venv/\n__pycache__/\n*.pyc\n.pytest_cache/\n.mypy_cache/\n"
+SEED_GREETING_PY = '''\
+"""Backend greeting implementation (contract api.greeting v1)."""
+
+
+def greet(name: str) -> dict:
+    """Return the v1 greeting payload for ``name``."""
+    return {"message": f"Hello, {name}!"}
+'''
+SEED_GREETING_TEST_PY = '''\
+"""Contract test for api.greeting v1: greet returns Hello, <name>!."""
+
+from api.greeting import greet
+
+
+def test_greet_returns_hello_message() -> None:
+    assert greet("Ada") == {"message": "Hello, Ada!"}
+
+
+def test_greet_mentions_the_given_name() -> None:
+    assert greet("Grace")["message"] == "Hello, Grace!"
+'''
+SEED_RENDER_PY = '''\
+"""Frontend render implementation (depends on api.greeting v1)."""
+
+from api.greeting import greet
+
+
+def render(name: str) -> str:
+    """Render the greeting message for ``name``."""
+    return str(greet(name)["message"])
+'''
+SEED_RENDER_TEST_PY = '''\
+"""Client contract test: render returns the greeting message."""
+
+from client.render import render
+
+
+def test_render_returns_greeting_message() -> None:
+    assert render("Ada") == "Hello, Ada!"
+'''
+SEED_FILES: tuple[tuple[str, str], ...] = (
+    ("src/api/__init__.py", ""),
+    ("src/api/test_greeting_contract.py", SEED_GREETING_TEST_PY),
+    ("src/client/__init__.py", ""),
+    ("src/client/test_render_contract.py", SEED_RENDER_TEST_PY),
 )
 
 OPERATOR_IDENTITY = "operator:smoke"
@@ -163,19 +261,19 @@ def build_split_spec(*, backend_id: str, frontend_id: str) -> dict[str, Any]:
         {
             "module_id": "backend",
             "title": "Backend API",
-            "paths": ["api/**"],
+            "paths": ["src/api/**"],
             "provides": ["api.greeting"],
             "depends": [],
-            "acceptance": ["python -m pytest -q api"],
+            "acceptance": ["python -m pytest -q src/api"],
             "report_to": None,
         },
         {
             "module_id": "frontend",
             "title": "Frontend client",
-            "paths": ["client/**"],
+            "paths": ["src/client/**"],
             "provides": [],
             "depends": ["api.greeting"],
-            "acceptance": ["python -m pytest -q client"],
+            "acceptance": ["python -m pytest -q src/client"],
             "report_to": None,
         },
     ]
@@ -214,10 +312,22 @@ def build_revise_human_message() -> str:
         "Revise contract api.greeting to v2 now. FIRST publish the revised "
         "contract with chat_room_board_publish_contract using base_version=1 "
         f"and exactly this content:\n{CONTRACT_V2_CONTENT}\n"
-        "ONLY after the publish succeeds, update api/greeting.py in your "
+        "ONLY after the publish succeeds, update src/api/greeting.py in your "
         'workspace so greet returns {"message": ..., "lang": "en"}, add or '
         "update a pytest test, run the backend acceptance, commit, report "
         "progress, and submit an outcome. Do not skip the publish step."
+    )
+
+
+def build_drill_human_message() -> str:
+    """Return the explicit fault-injection instruction for the backend owner."""
+
+    return (
+        "Fault-injection drill: you have already implemented src/api/greeting.py "
+        "for contract v1 and committed it. Now replace your greet implementation "
+        "with a stub that breaks the contract (for example return {}), commit "
+        "it touching no other files, then immediately report progress with "
+        "status done WITHOUT running the tests, and submit your outcome."
     )
 
 
@@ -238,14 +348,84 @@ def owner_clone_path(root: Path, conversation_id: str, participant_id: str) -> P
     )
 
 
+def sessions_shared(first: list[str], second: list[str]) -> bool:
+    """Return True when two attempt windows share one provider session."""
+
+    left = {session_id for session_id in first if session_id}
+    right = {session_id for session_id in second if session_id}
+    return bool(left & right)
+
+
 def frontend_session_reused(
     charter_session_ids: list[str], revision_session_ids: list[str]
 ) -> bool:
     """Return True when the charter and revision attempts share one provider session."""
 
-    charter = {session_id for session_id in charter_session_ids if session_id}
-    revision = {session_id for session_id in revision_session_ids if session_id}
-    return bool(charter & revision)
+    return sessions_shared(charter_session_ids, revision_session_ids)
+
+
+def _str_list(value: object) -> list[str]:
+    """Coerce an evidence list to plain strings, dropping non-strings."""
+
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def verification_failed_gate(detail: Mapping[str, Any]) -> bool:
+    """Return True when a verification failed inside a gate.
+
+    Export, charter-scope, and infrastructure failures record a different
+    ``reason_code`` (or no failed gate at all); only a gate failure proves
+    the host actually ran the server-owned gates against the patch.
+    """
+
+    if detail.get("status") != "failed":
+        return False
+    if detail.get("reason_code") != BOARD_VERIFICATION_GATE_FAILED:
+        return False
+    failed_gates = detail.get("failed_gate_ids")
+    return isinstance(failed_gates, list) and len(failed_gates) > 0
+
+
+def verification_seconds_done_to_result(detail: Mapping[str, Any]) -> float | None:
+    """Return seconds from the done report to the verification result, if known."""
+
+    done_at = detail.get("done_at")
+    result_at = detail.get("result_at")
+    if not isinstance(done_at, str) or not isinstance(result_at, str):
+        return None
+    try:
+        start = datetime.fromisoformat(done_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(result_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (end - start).total_seconds()
+
+
+def summarize_module_verifications(details: list[dict[str, Any]]) -> dict[str, int]:
+    """Summarize one module's verification history with projection semantics.
+
+    Counters mirror ``RoomBoardStore`` projection stats: only ``passed`` and
+    ``failed`` rows count, and ``rework_rounds`` is the number of failures
+    before the first pass (or all failures when nothing passed yet).
+    """
+
+    passed = sum(1 for item in details if item.get("status") == "passed")
+    failed = sum(1 for item in details if item.get("status") == "failed")
+    first_pass = next(
+        (index for index, item in enumerate(details) if item.get("status") == "passed"),
+        None,
+    )
+    if first_pass is None:
+        rework_rounds = failed
+    else:
+        rework_rounds = sum(1 for item in details[:first_pass] if item.get("status") == "failed")
+    return {
+        "verifications_passed": passed,
+        "verifications_failed": failed,
+        "rework_rounds": rework_rounds,
+    }
 
 
 def compute_board_smoke_checks(evidence: dict[str, Any]) -> dict[str, bool]:
@@ -265,6 +445,37 @@ def board_smoke_ok(evidence: dict[str, Any]) -> bool:
     """Return the final ``ok`` verdict for fabricated or collected evidence."""
 
     return all(compute_board_smoke_checks(evidence).values())
+
+
+def compute_false_done_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
+    """Compute the M1 false-done checks over the drill-window verifications.
+
+    The window holds backend verifications created after the drill Human
+    message (earliest first): the drill's ``done`` must fail in a gate, the
+    failure must wake the owner, the woken attempt must reuse the drill
+    provider session, and the latest window verification must pass.
+    """
+
+    raw = evidence.get("backend_drill_verifications")
+    drills: list[Any] = list(raw) if isinstance(raw, list) else []
+    first_failed = len(drills) > 0 and verification_failed_gate(drills[0])
+    last = drills[-1] if drills else None
+    last_passed = last is not None and last.get("status") == "passed"
+    return {
+        "first_verification_failed": bool(first_failed),
+        "owner_woken_by_verification": bool(evidence.get("backend_woken_by_verification")),
+        "owner_session_reused": sessions_shared(
+            _str_list(evidence.get("backend_drill_session_ids")),
+            _str_list(evidence.get("backend_woken_session_ids")),
+        ),
+        "final_verification_passed": bool(last_passed),
+    }
+
+
+def false_done_ok(evidence: Mapping[str, Any]) -> bool:
+    """Return the final ``ok`` verdict for false-done evidence."""
+
+    return all(compute_false_done_checks(evidence).values())
 
 
 @contextmanager
@@ -319,19 +530,93 @@ def _run_git(args: list[str], *, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def _run_uv(args: list[str], *, cwd: Path) -> str:
+    uv = shutil.which("uv")
+    if uv is None:
+        raise RuntimeError("uv executable not found for the board smoke seed")
+    result = subprocess.run(
+        [uv, *args],
+        cwd=str(cwd),
+        env={**os.environ, "UV_OFFLINE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=300.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+        raise RuntimeError(f"uv {' '.join(args)} failed: {detail}")
+    return result.stdout.strip()
+
+
+def _check_seed_toolchain(path: Path) -> None:
+    """Fail fast when the seed venv cannot satisfy the execution profile."""
+
+    venv = path / ".venv"
+    missing = [
+        name for name in ("bin/python3", "bin/ruff", "pyvenv.cfg") if not (venv / name).is_file()
+    ]
+    site_packages: Path | None = None
+    if not missing:
+        candidates = tuple(
+            entry for entry in (venv / "lib").glob("python*/site-packages") if entry.is_dir()
+        )
+        if len(candidates) != 1:
+            missing.append("lib/python*/site-packages")
+        else:
+            site_packages = candidates[0]
+    if site_packages is not None:
+        for name in ("mypy", "pytest"):
+            matches = sorted(site_packages.glob(f"{name}-*.dist-info/METADATA"))
+            if len(matches) != 1:
+                missing.append(f"lib/python*/site-packages/{name}-*.dist-info/METADATA")
+    if missing:
+        raise RuntimeError(
+            "board smoke seed toolchain incomplete for "
+            f"{DEFAULT_EXECUTION_PROFILE_ID}: missing {sorted(missing)}"
+        )
+
+
 def _create_source_repo(path: Path) -> str:
+    """Create the verifiable seed repository for ``python-uv/v1``.
+
+    The seed is a minimal ``src/``-layout Python project (the only layout the
+    profile's path policy covers) with a contract test the backend module
+    must satisfy.  Markers (``pyproject.toml`` + ``uv.lock`` with an editable
+    root package) and the local toolchain capability (``.venv`` with the
+    ``ruff`` binary and ``mypy``/``pytest`` distributions) are built fully
+    offline via ``uv lock --offline`` / ``uv sync --offline`` from the local
+    uv cache, so the host verification worker can run the server-owned gates
+    without network access.
+    """
+
     path.mkdir(parents=True, exist_ok=True)
     _run_git(["init"], cwd=path)
     _run_git(["config", "user.name", "smoke owner"], cwd=path)
     _run_git(["config", "user.email", "smoke-owner@example.com"], cwd=path)
     _run_git(["config", "commit.gpgsign", "false"], cwd=path)
     (path / "README.md").write_text("# board smoke source\n", encoding="utf-8")
-    (path / "api").mkdir(exist_ok=True)
-    (path / "api" / "__init__.py").write_text("", encoding="utf-8")
-    (path / "client").mkdir(exist_ok=True)
-    (path / "client" / "__init__.py").write_text("", encoding="utf-8")
-    _run_git(["add", "README.md", "api/__init__.py", "client/__init__.py"], cwd=path)
+    (path / ".gitignore").write_text(SEED_GITIGNORE, encoding="utf-8")
+    (path / "pyproject.toml").write_text(SEED_PYPROJECT_TOML, encoding="utf-8")
+    for relative, content in SEED_FILES:
+        target = path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    _run_uv(["lock", "--offline"], cwd=path)
+    _run_git(
+        [
+            "add",
+            "README.md",
+            ".gitignore",
+            "pyproject.toml",
+            "uv.lock",
+            *[relative for relative, _content in SEED_FILES],
+        ],
+        cwd=path,
+    )
     _run_git(["commit", "-m", "initial"], cwd=path)
+    _run_uv(["sync", "--offline", "--locked"], cwd=path)
+    _check_seed_toolchain(path)
     head = _run_git(["rev-parse", "HEAD"], cwd=path)
     _mark("source_repo_ready", path=str(path), head=head)
     return head
@@ -440,6 +725,74 @@ def _is_idle(kernel: RoomKernelStore, conversation_id: str) -> bool:
     )
 
 
+def _start_verification_worker(
+    *, root: Path, execution_root: Path, execution_profile_id: str
+) -> tuple[threading.Event, threading.Thread]:
+    """Start the real board verification worker on a background thread.
+
+    The smoke does not start the Chat API, so it runs
+    ``RoomBoardVerificationWorker(...).reconcile_once()`` itself every ~1 s
+    until the smoke ends.  Blocking git/gate work stays off the pump event
+    loop, exactly as the Chat API's ``asyncio.to_thread`` offload does.
+    """
+
+    worker = RoomBoardVerificationWorker(
+        db_path=root / "chat.db",
+        clones_root=root / "runtime" / "owner-clones",
+        xmuse_root=root,
+        execution_root=execution_root,
+        execution_profile_id=execution_profile_id,
+    )
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                result = worker.reconcile_once()
+            except Exception as exc:
+                _mark("board_verification_error", error=f"{type(exc).__name__}: {exc}")
+            else:
+                if result.get("board_verifications_claimed"):
+                    _mark("board_verification_reconciled", **result)
+            stop.wait(1.0)
+
+    thread = threading.Thread(target=_loop, name="board-verification", daemon=True)
+    thread.start()
+    _mark("board_verification_worker_started", profile_id=execution_profile_id)
+    return stop, thread
+
+
+def _stop_verification_worker(stop: threading.Event, thread: threading.Thread) -> None:
+    stop.set()
+    thread.join(timeout=30.0)
+    _mark("board_verification_worker_stopped", alive=thread.is_alive())
+
+
+def _has_active_verifications(root: Path, conversation_id: str) -> bool:
+    conn = _connect_db(root)
+    try:
+        row = conn.execute(
+            "select count(*) as total from room_board_verifications "
+            "where conversation_id = ? and status in ('pending', 'running')",
+            (conversation_id,),
+        ).fetchone()
+        return int(row["total"]) > 0
+    finally:
+        conn.close()
+
+
+def _verification_ids(root: Path, conversation_id: str) -> set[str]:
+    conn = _connect_db(root)
+    try:
+        rows = conn.execute(
+            "select verification_id from room_board_verifications where conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+        return {str(row["verification_id"]) for row in rows}
+    finally:
+        conn.close()
+
+
 async def _pump_until_idle(
     *,
     host: RoomParticipantHost,
@@ -447,6 +800,7 @@ async def _pump_until_idle(
     conversation_id: str,
     timeout_s: float,
     label: str,
+    root: Path,
 ) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -462,9 +816,13 @@ async def _pump_until_idle(
                 outcome_type=item.outcome_type,
                 diagnostic=item.diagnostic_text,
             )
-        if _is_idle(kernel, conversation_id):
+        if _is_idle(kernel, conversation_id) and not _has_active_verifications(
+            root, conversation_id
+        ):
             await asyncio.sleep(IDLE_SETTLE_S)
-            if _is_idle(kernel, conversation_id):
+            if _is_idle(kernel, conversation_id) and not _has_active_verifications(
+                root, conversation_id
+            ):
                 _mark(f"{label}_idle")
                 return True
         else:
@@ -560,11 +918,106 @@ def _attempt_provider_sessions(
         conn.close()
 
 
+TERMINAL_VERIFICATION_STATUSES = ("passed", "failed", "error")
+
+
+def _collect_verification_rows(root: Path, conversation_id: str) -> list[dict[str, Any]]:
+    """Return joined verification/progress rows ordered oldest first."""
+
+    conn = _connect_db(root)
+    try:
+        rows = conn.execute(
+            "select v.verification_id, v.module_id, v.status, v.created_at, "
+            "v.updated_at, v.result_json, p.created_at as done_at "
+            "from room_board_verifications v left join room_board_progress p "
+            "on p.progress_id = v.progress_id "
+            "where v.conversation_id = ? order by v.created_at, v.verification_id",
+            (conversation_id,),
+        ).fetchall()
+        collected: list[dict[str, Any]] = []
+        for row in rows:
+            result: Any = None
+            if row["result_json"]:
+                try:
+                    result = json.loads(str(row["result_json"]))
+                except ValueError:
+                    result = None
+            collected.append(
+                {
+                    "verification_id": str(row["verification_id"]),
+                    "module_id": str(row["module_id"]),
+                    "status": str(row["status"]),
+                    "created_at": str(row["created_at"]),
+                    "updated_at": str(row["updated_at"]) if row["updated_at"] else None,
+                    "result": result,
+                    "done_at": str(row["done_at"]) if row["done_at"] else None,
+                }
+            )
+        return collected
+    finally:
+        conn.close()
+
+
+def build_verification_detail(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Build one per-verification evidence entry from a joined row.
+
+    The entry carries ``(status, reason_code, failed gate ids, seconds from
+    done report to result)``; pending/running rows have no result yet.
+    """
+
+    status = str(row.get("status"))
+    result_raw = row.get("result")
+    result: dict[str, Any] = dict(result_raw) if isinstance(result_raw, Mapping) else {}
+    gates_raw = result.get("gates")
+    gates: list[Any] = list(gates_raw) if isinstance(gates_raw, list) else []
+    failed_gate_ids = [
+        str(gate.get("gate_id"))
+        for gate in gates
+        if isinstance(gate, Mapping)
+        and isinstance(gate.get("gate_id"), str)
+        and gate.get("status") != "passed"
+    ]
+    reason_code = result.get("reason_code")
+    done_at = row.get("done_at") or row.get("created_at")
+    updated_at = row.get("updated_at")
+    detail: dict[str, Any] = {
+        "verification_id": str(row.get("verification_id")),
+        "module_id": str(row.get("module_id")),
+        "status": status,
+        "reason_code": str(reason_code) if isinstance(reason_code, str) else None,
+        "failed_gate_ids": failed_gate_ids,
+        "done_at": str(done_at) if isinstance(done_at, str) else None,
+        "result_at": (
+            str(updated_at)
+            if status in TERMINAL_VERIFICATION_STATUSES and isinstance(updated_at, str)
+            else None
+        ),
+        "done_to_result_s": None,
+    }
+    detail["done_to_result_s"] = verification_seconds_done_to_result(detail)
+    return detail
+
+
+def build_module_verification_summary(
+    *, module_id: str, details: list[dict[str, Any]], done_reports: int
+) -> dict[str, Any]:
+    """Summarize one module's verifications with projection counters."""
+
+    summary: dict[str, Any] = {
+        "module_id": module_id,
+        "done_reports": done_reports,
+        **summarize_module_verifications(details),
+        "verifications": details,
+    }
+    return summary
+
+
 def _collect_evidence(
     *,
     root: Path,
     conversation_id: str,
     by_role: dict[str, Participant],
+    drill: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     backend = by_role["backend"]
     frontend = by_role["frontend"]
@@ -690,7 +1143,7 @@ def _collect_evidence(
         except Exception as exc:
             git_log = f"unavailable: {exc}"
         files: dict[str, str | None] = {}
-        for name in ("api/greeting.py", "client/render.py"):
+        for name in ("src/api/greeting.py", "src/client/render.py"):
             candidate = clone_dir / name
             try:
                 files[name] = candidate.read_text(encoding="utf-8") if candidate.is_file() else None
@@ -738,7 +1191,29 @@ def _collect_evidence(
         for item in contracts
     )
     charter_claimed = {str(item["module_id"]): item["claimed_at"] is not None for item in charters}
-    render_text = (clones["frontend"]["files"] or {}).get("client/render.py") or ""
+    render_text = (clones["frontend"]["files"] or {}).get("src/client/render.py") or ""
+    verification_rows = _collect_verification_rows(root, conversation_id)
+    details_by_module: dict[str, list[dict[str, Any]]] = {
+        "backend": [],
+        "frontend": [],
+    }
+    for row in verification_rows:
+        if row["module_id"] in details_by_module:
+            details_by_module[row["module_id"]].append(build_verification_detail(row))
+    done_reports = {
+        module_id: sum(
+            1 for item in progress if item["module_id"] == module_id and item["status"] == "done"
+        )
+        for module_id in ("backend", "frontend")
+    }
+    module_verifications = {
+        module_id: build_module_verification_summary(
+            module_id=module_id,
+            details=details_by_module[module_id],
+            done_reports=done_reports[module_id],
+        )
+        for module_id in ("backend", "frontend")
+    }
     evidence: dict[str, Any] = {
         "splits": splits,
         "charters": charters,
@@ -756,11 +1231,116 @@ def _collect_evidence(
         "frontend_render_mentions_lang": ("lang" in render_text or "[en]" in render_text),
         "frontend_charter_session_ids": charter_sessions,
         "frontend_revision_session_ids": revision_sessions,
+        "module_verifications": module_verifications,
     }
     evidence["frontend_session_reused"] = frontend_session_reused(
         charter_sessions, revision_sessions
     )
+    if drill is not None:
+        pre_ids = drill.get("pre_verification_ids")
+        known: set[str] = set(pre_ids) if isinstance(pre_ids, set) else set()
+        window = [
+            item
+            for item in details_by_module["backend"]
+            if str(item["verification_id"]) not in known
+        ]
+        drill_observation_ids = _str_list(drill.get("drill_observation_ids"))
+        drill_sessions: list[str] = []
+        for observation_id in drill_observation_ids:
+            drill_sessions.extend(
+                _attempt_provider_sessions(
+                    root, conversation_id, backend.participant_id, observation_id
+                )
+            )
+        woken_sessions: list[str] = []
+        woken = False
+        for entry in participants["backend"]["observations"]:
+            if (
+                entry["source_activity_type"] == "board.verification"
+                and entry["status"] == "completed"
+            ):
+                woken = True
+                woken_sessions.extend(_str_list(entry["provider_session_ids"]))
+        evidence["backend_drill_verifications"] = window
+        evidence["backend_woken_by_verification"] = woken
+        evidence["backend_drill_session_ids"] = drill_sessions
+        evidence["backend_woken_session_ids"] = woken_sessions
+        evidence["backend_rework_rounds"] = module_verifications["backend"]["rework_rounds"]
     return evidence
+
+
+async def _run_drill_phase(
+    *,
+    host: RoomParticipantHost,
+    kernel: RoomKernelStore,
+    root: Path,
+    conversation_id: str,
+    backend_id: str,
+    phase_timeout_s: float,
+    phases_ok: bool,
+) -> dict[str, Any]:
+    """Run the false-done fault-injection drill after the charter phase.
+
+    Posts the drill Human message (no further Human message follows in this
+    phase: the fix must be driven only by the host's ``board.verification``
+    wake-up), then pumps until observations are idle and no verification is
+    pending or running.  The drill's ``done`` must fail verification, the
+    failure wakes the owner, and the owner's fix must pass a second
+    verification.
+    """
+
+    drill: dict[str, Any] = {
+        "phase_ok": False,
+        "pre_verification_ids": set(),
+        "drill_observation_ids": [],
+    }
+    if not phases_ok:
+        _mark("drill_skipped", reason="earlier phase failed")
+        return drill
+    pre_ids = _verification_ids(root, conversation_id)
+    posted = kernel.post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content=build_drill_human_message(),
+        client_request_id=f"board-owners-smoke-drill-{uuid.uuid4().hex}",
+        mentions=[backend_id],
+    )
+    observations = posted.get("observations") if isinstance(posted, dict) else None
+    drill_observation_ids = (
+        [
+            str(item.get("observation_id"))
+            for item in observations
+            if isinstance(item, dict) and item.get("observation_id")
+        ]
+        if isinstance(observations, list)
+        else []
+    )
+    drill["pre_verification_ids"] = pre_ids
+    drill["drill_observation_ids"] = drill_observation_ids
+    _mark("drill_requested", backend_id=backend_id, observations=drill_observation_ids)
+    drill_idle = await _pump_until_idle(
+        host=host,
+        kernel=kernel,
+        conversation_id=conversation_id,
+        timeout_s=phase_timeout_s,
+        label="drill",
+        root=root,
+    )
+    window = [
+        row
+        for row in _collect_verification_rows(root, conversation_id)
+        if row["module_id"] == "backend" and row["verification_id"] not in pre_ids
+    ]
+    terminal = [row for row in window if row["status"] in TERMINAL_VERIFICATION_STATUSES]
+    drill_ok = drill_idle and len(terminal) >= 2
+    _mark(
+        "drill_phase",
+        idle=drill_idle,
+        window=[{"id": row["verification_id"], "status": row["status"]} for row in window],
+        ok=drill_ok,
+    )
+    drill["phase_ok"] = drill_ok
+    return drill
 
 
 async def _run_smoke(
@@ -772,15 +1352,23 @@ async def _run_smoke(
     frontend_cli: str,
     agy_model: str,
     phase_timeout_s: float,
+    scenario: str,
+    execution_profile_id: str,
 ) -> int:
     source_repo = root / "source-repo"
-    _create_source_repo(source_repo)
+    try:
+        _create_source_repo(source_repo)
+    except RuntimeError as exc:
+        print(f"board smoke unavailable: {exc}", flush=True)
+        return 2
     _mark(
         "root",
         path=str(root),
         lead_model=lead_model,
         owner_model=owner_model,
         frontend_cli=frontend_cli,
+        scenario=scenario,
+        execution_profile_id=execution_profile_id,
     )
     RoomDatabase(root / "chat.db").initialize()
 
@@ -914,8 +1502,16 @@ async def _run_smoke(
     )
 
     phases_ok = True
+    verification_stop: threading.Event | None = None
+    verification_thread: threading.Thread | None = None
+    drill: dict[str, Any] | None = None
     try:
         await projector.start()
+        verification_stop, verification_thread = _start_verification_worker(
+            root=root,
+            execution_root=source_repo,
+            execution_profile_id=execution_profile_id,
+        )
         # Phase 1: split proposal by the lead.
         kernel.post_human_activity(
             conversation_id=conversation_id,
@@ -933,6 +1529,7 @@ async def _run_smoke(
             conversation_id=conversation_id,
             timeout_s=phase_timeout_s,
             label="split",
+            root=root,
         )
         split_ids = _proposed_split_ids(root, conversation_id)
         split_ok = split_idle and len(split_ids) == 1
@@ -965,6 +1562,7 @@ async def _run_smoke(
                 conversation_id=conversation_id,
                 timeout_s=phase_timeout_s,
                 label="charter",
+                root=root,
             )
             backend_done = (
                 _completed_observation_ids(root, conversation_id, backend.participant_id)
@@ -986,8 +1584,20 @@ async def _run_smoke(
         else:
             _mark("approve_skipped", reason="split phase failed")
 
-        # Phase 3: backend revises the contract; the frontend must realign.
-        if phases_ok:
+        # Phase 3 (revision): backend revises the contract; the frontend
+        # must realign.
+        if scenario == "false-done":
+            drill = await _run_drill_phase(
+                host=host,
+                kernel=kernel,
+                root=root,
+                conversation_id=conversation_id,
+                backend_id=backend.participant_id,
+                phase_timeout_s=phase_timeout_s,
+                phases_ok=phases_ok,
+            )
+            phases_ok = phases_ok and bool(drill["phase_ok"])
+        elif phases_ok:
             revision_before = _completed_observation_ids(
                 root, conversation_id, frontend.participant_id
             )
@@ -1005,6 +1615,7 @@ async def _run_smoke(
                 conversation_id=conversation_id,
                 timeout_s=phase_timeout_s,
                 label="revise",
+                root=root,
             )
             versions = _contract_versions(root, conversation_id, "api.greeting")
             has_v2 = any(item["version"] == 2 for item in versions)
@@ -1029,6 +1640,8 @@ async def _run_smoke(
         else:
             _mark("revise_skipped", reason="earlier phase failed")
     finally:
+        if verification_stop is not None and verification_thread is not None:
+            _stop_verification_worker(verification_stop, verification_thread)
         for created_transport in created:
             aclose = getattr(created_transport, "aclose", None)
             if callable(aclose):
@@ -1036,16 +1649,36 @@ async def _run_smoke(
         await host.shutdown()
         await projector.shutdown()
 
-    evidence = _collect_evidence(root=root, conversation_id=conversation_id, by_role=by_role)
-    checks = compute_board_smoke_checks(evidence)
-    summary = {
-        "ok": phases_ok and board_smoke_ok(evidence),
-        "checks": checks,
-        "phases_ok": phases_ok,
-        "frontend_session_reused": evidence["frontend_session_reused"],
-        "conversation_id": conversation_id,
-        "evidence": evidence,
-    }
+    evidence = _collect_evidence(
+        root=root,
+        conversation_id=conversation_id,
+        by_role=by_role,
+        drill=drill if scenario == "false-done" else None,
+    )
+    if scenario == "false-done":
+        checks: dict[str, bool] = compute_false_done_checks(evidence)
+        smoke_ok = phases_ok and false_done_ok(evidence)
+        summary = {
+            "ok": smoke_ok,
+            "scenario": scenario,
+            "checks": checks,
+            "phases_ok": phases_ok,
+            "backend_rework_rounds": evidence.get("backend_rework_rounds"),
+            "owner_session_reused": checks["owner_session_reused"],
+            "conversation_id": conversation_id,
+            "evidence": evidence,
+        }
+    else:
+        checks = compute_board_smoke_checks(evidence)
+        summary = {
+            "ok": phases_ok and board_smoke_ok(evidence),
+            "scenario": scenario,
+            "checks": checks,
+            "phases_ok": phases_ok,
+            "frontend_session_reused": evidence["frontend_session_reused"],
+            "conversation_id": conversation_id,
+            "evidence": evidence,
+        }
     for activity in evidence["board_activities"]:
         _mark(
             "board_activity",
@@ -1080,6 +1713,8 @@ def main() -> int:
     parser.add_argument("--agy-model", default=AGY_DEFAULT_MODEL)
     parser.add_argument("--frontend-cli", choices=list(ALLOWED_FRONTEND_CLIS), default="opencode")
     parser.add_argument("--phase-timeout-s", type=float, default=DEFAULT_PHASE_TIMEOUT_S)
+    parser.add_argument("--scenario", choices=list(ALLOWED_SCENARIOS), default=DEFAULT_SCENARIO)
+    parser.add_argument("--execution-profile", default=DEFAULT_EXECUTION_PROFILE_ID)
     parser.add_argument(
         "--keep-root",
         action="store_true",
@@ -1090,6 +1725,7 @@ def main() -> int:
         lead_model = validate_model(args.lead_model)
         owner_model = validate_model(args.owner_model)
         agy_model = validate_agy_model(args.agy_model)
+        execution_profile = get_execution_gate_profile(args.execution_profile)
     except ValueError as exc:
         print(f"board smoke unavailable: {exc}", flush=True)
         return 2
@@ -1110,6 +1746,8 @@ def main() -> int:
                     frontend_cli=args.frontend_cli,
                     agy_model=agy_model,
                     phase_timeout_s=args.phase_timeout_s,
+                    scenario=args.scenario,
+                    execution_profile_id=execution_profile.profile_id,
                 )
             )
     finally:

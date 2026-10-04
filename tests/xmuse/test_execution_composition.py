@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -444,6 +445,47 @@ def test_execution_failures_neither_block_api_start_nor_skip_room_shutdown(
         "state": "error",
         "code": "room_execution_runtime_stop_failed",
     }
+
+
+def test_board_verification_runs_in_its_own_loop_without_blocking_start(
+    tmp_path: Path,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def execution_reconcile():
+        calls.append("execution")
+        raise RuntimeError("execution keeps failing")
+
+    def board_verify():
+        calls.append("verify")
+        started.set()
+        release.wait(timeout=5)
+
+    app, _context = create_chat_api_foundation(
+        tmp_path,
+        execution_worktree=tmp_path / "repo",
+        auth_token=None,
+        initialize_database=False,
+        workroom_runtime_starter=lambda *_args: {"state": "ready", "ready": True},
+        workroom_runtime_stopper=lambda *_args: {"state": "stopped"},
+        workroom_runtime_inspector=lambda *_args: {"state": "ready", "ready": True},
+        workroom_runtime_recoverer=lambda *_args: {},
+        workroom_runtime_reconcile_interval_s=60,
+        title="board verification loop test",
+        execution_reconciler=execution_reconcile,
+        execution_reconcile_interval_s=0.01,
+        board_verification_reconciler=board_verify,
+    )
+
+    with TestClient(app) as client:
+        # The failing execution reconcile does not starve verification, and the
+        # API keeps serving while a verification is still running.
+        assert started.wait(timeout=5)
+        assert client.get("/health").status_code == 200
+        release.set()
+    assert "execution" in calls
 
 
 def test_execution_controller_duplicates_are_a_hard_process_guard() -> None:

@@ -100,3 +100,32 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
         "create index if not exists idx_room_board_progress_module "
         "on room_board_progress(conversation_id, module_id, created_at)"
     )
+    conn.execute(
+        """create table if not exists room_board_verifications (
+               verification_id text primary key,
+               conversation_id text not null references conversations(id),
+               module_id text not null,
+               participant_id text not null references participants(participant_id),
+               progress_id text not null references room_board_progress(progress_id),
+               status text not null check (
+                   status in ('pending','running','passed','failed','superseded','error')
+               ),
+               attempt_count integer not null default 0 check (attempt_count >= 0),
+               lease_owner text,
+               lease_token text,
+               lease_expires_at text,
+               head_commit text,
+               patch_digest text,
+               changed_paths_json text not null default '[]',
+               patch_text text,
+               not_before text,
+               result_json text,
+               activity_id text references room_activities(activity_id),
+               created_at text not null,
+               updated_at text not null
+           )"""
+    )
+    conn.execute(
+        "create index if not exists idx_room_board_verifications_module "
+        "on room_board_verifications(conversation_id, module_id, created_at)"
+    )

@@ -36,6 +36,7 @@ from xmuse.chat_api_runtime import (
 )
 from xmuse.operator_auth import resolve_operator_token
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
+from xmuse_core.chat.room_board_verification import RoomBoardVerificationWorker
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
 from xmuse_core.chat.room_memory_advisory_store import RoomMemoryAdvisoryStore
@@ -78,6 +79,14 @@ def create_app(
         launcher_root=REPO_ROOT,
         execution_profile_id=execution_profile_id,
     )
+    board_verification_worker = RoomBoardVerificationWorker(
+        db_path=resolved_root / "chat.db",
+        clones_root=resolved_root / "runtime" / "owner-clones",
+        xmuse_root=resolved_root,
+        execution_root=resolved_execution_root,
+        execution_profile_id=execution_profile_id,
+    )
+
     app, context = create_chat_api_foundation(
         resolved_root,
         execution_worktree=resolved_execution_root,
@@ -92,6 +101,8 @@ def create_app(
         execution_reconciler=execution_runtime.reconcile_once,
         execution_stopper=execution_runtime.stop_all,
         execution_reconcile_interval_s=execution_reconcile_interval_s,
+        # One job per tick, run via asyncio.to_thread off the event loop.
+        board_verification_reconciler=board_verification_worker.reconcile_once,
     )
     register_room_setup_routes(
         app,

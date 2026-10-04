@@ -131,7 +131,7 @@ def _split_payload(members):
             "title": "Beta module",
             "paths": ["src/beta/**"],
             "provides": ["api.beta"],
-            "depends": ["api.alpha"],
+            "depends": [],
             "acceptance": ["beta works"],
             "report_to": lead.participant_id,
         },
@@ -254,23 +254,23 @@ def test_revision_replaces_file_and_deletes_stale_keeping_inode(tmp_path: Path) 
     target.mkdir()
     before_inode = target.stat().st_ino
     materialize_owner_board_view(db, conversation_id, owner_a.participant_id, target)
-    assert (target / "contracts" / "api.alpha@v1.txt").exists()
+    assert (target / "contracts" / "api.beta@v1.txt").exists()
     store.publish_contract(
-        **_lease_kwargs(owner_a, leases[owner_a.participant_id], request_id="rev-1"),
-        contract_id="api.alpha",
+        **_lease_kwargs(owner_b, leases[owner_b.participant_id], request_id="rev-1"),
+        contract_id="api.beta",
         kind="api_schema",
-        content='{"alpha": 2}',
+        content='{"beta": 2}',
         base_version=1,
         rationale="revise",
     )
-    materialize_owner_board_view(db, conversation_id, owner_b.participant_id, target)
-    # Dependent owner B sees the revised contract under its new versioned name.
-    assert (target / "contracts" / "api.alpha@v2.txt").read_text() == '{"alpha": 2}'
-    assert not (target / "contracts" / "api.alpha@v1.txt").exists()
+    materialize_owner_board_view(db, conversation_id, owner_a.participant_id, target)
+    # Dependent owner A sees the revised contract under its new versioned name.
+    assert (target / "contracts" / "api.beta@v2.txt").read_text() == '{"beta": 2}'
+    assert not (target / "contracts" / "api.beta@v1.txt").exists()
     assert target.stat().st_ino == before_inode
     index = json.loads((target / "INDEX.json").read_text())
-    assert [c["file"] for c in index["contracts"] if c["contract_id"] == "api.alpha"] == [
-        "contracts/api.alpha@v2.txt"
+    assert [c["file"] for c in index["contracts"] if c["contract_id"] == "api.beta"] == [
+        "contracts/api.beta@v2.txt"
     ]
 
 
