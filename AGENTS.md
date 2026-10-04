@@ -143,6 +143,13 @@ do not load `.env`.
   or claim a module) are enforced server-side, not by prompts. A contract revision wakes
   every owner whose charter depends on it; a charter change never rewrites persona snapshots
   or provider session identity.
+- An owner's `done` report is a claim, not completion. It enqueues a durable verification in
+  the same transaction; a Chat API background loop (never the delivery path or startup)
+  exports the owner branch through the host mirror, rejects changes outside the charter
+  paths, and runs only the server-owned gate profile on a detached stage at the owner base.
+  Charter `acceptance` text is never executed. The result is an `infrastructure`
+  `board.verification` activity: a failure wakes the owner (repeated failures also the lead),
+  a newer `done` supersedes older verifications, and verification never promotes.
 - `room_context_envelope/v2` preserves the Human root, primary source and ancestry while
   bounding recent context to 64 KiB. Bundled roster personas are immutable Room snapshots and
   participate in provider session identity.
