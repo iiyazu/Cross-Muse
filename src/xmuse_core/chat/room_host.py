@@ -136,9 +136,19 @@ class LongTurnPolicy:
     stall_timeout_s: float = 900.0
     max_turn_s: float = 14400.0
     loop_repeat_limit: int = 8
+    # After this attempt's own outcome commits, the provider turn may still be
+    # wrapping up; cancelling it would rotate the provider session that the
+    # participant's next delivery should reuse.
+    post_outcome_grace_s: float = 120.0
 
     def __post_init__(self) -> None:
-        for name in ("renew_interval_s", "lease_chunk_s", "stall_timeout_s", "max_turn_s"):
+        for name in (
+            "renew_interval_s",
+            "lease_chunk_s",
+            "stall_timeout_s",
+            "max_turn_s",
+            "post_outcome_grace_s",
+        ):
             _positive_real(getattr(self, name), name)
         _positive_int(self.loop_repeat_limit, "loop_repeat_limit")
         if self.stall_timeout_s < self.renew_interval_s:
@@ -1744,6 +1754,18 @@ class RoomParticipantHost:
                 except ValueError as exc:
                     if "room_observation_lease_lost" not in str(exc):
                         raise
+                    if self._own_outcome_committed(kernel, observation, attempt_id):
+                        # The turn already produced durable Room truth; let the
+                        # provider finish naturally so its session survives.
+                        done, _ = await asyncio.wait(
+                            {task},
+                            timeout=max(
+                                0.0, min(policy.post_outcome_grace_s, deadline - loop.time())
+                            ),
+                        )
+                        if done:
+                            transport_status, reason, diagnostic = self._task_result(task)
+                            return transport_status, reason, diagnostic, False, False, False
                     # Superseded or lapsed: cancel the transport and let the
                     # shared post-delivery fence report lease_lost (or a
                     # concurrently committed completion).
@@ -1768,6 +1790,18 @@ class RoomParticipantHost:
             # completion that committed concurrently.
             transport_status, reason, diagnostic = self._task_result(task)
             return transport_status, reason, diagnostic, True, retained, False
+
+    @staticmethod
+    def _own_outcome_committed(
+        kernel: RoomKernelStore, observation: dict[str, Any], attempt_id: str
+    ) -> bool:
+        try:
+            current = kernel.get_observation(observation["observation_id"])
+        except (KeyError, ValueError):
+            return False
+        return (
+            current.get("status") == "completed" and current.get("current_attempt_id") == attempt_id
+        )
 
     def _failed_attempt_cleanup_proven(self, observation_id: str, attempt_id: str) -> bool:
         try:
