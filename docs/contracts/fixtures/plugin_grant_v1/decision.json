@@ -1,0 +1,22 @@
+{
+  "activity_ids": [
+    "activity_000000000000000000000000000f4240",
+    "activity_000000000000000000000000000f4242"
+  ],
+  "contracts": [
+    {
+      "contract_id": "api.alpha",
+      "version": 1
+    },
+    {
+      "contract_id": "api.beta",
+      "version": 1
+    }
+  ],
+  "modules": [
+    "alpha",
+    "beta"
+  ],
+  "split_id": "split_00000000000000000000000000000018",
+  "status": "approved"
+}
