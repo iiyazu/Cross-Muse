@@ -398,8 +398,8 @@ def test_provider_flags_default_to_disabled_and_stay_out_of_the_frontend_env(
         "XMUSE_CLAUDE_ACP",
         "XMUSE_ANTIGRAVITY",
         "XMUSE_CLAUDE_ACP_COMMAND",
-        "XMUSE_ANTIGRAVITY_AGENTAPI",
-        "XMUSE_ANTIGRAVITY_BRAIN_DIR",
+        "XMUSE_AGY_COMMAND",
+        "XMUSE_AGY_MODEL",
     ):
         assert key not in frontend.env
 
@@ -474,28 +474,33 @@ def test_antigravity_auto_detection_enables_and_requires_the_pinned_port(
 ) -> None:
     runtime = FakeRuntime(built_repo)
     dependencies = runtime.dependencies()
+    agy = tmp_path / "agy"
+    agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_text("#!/bin/sh\n", encoding="utf-8")
     dependencies.environ = {
         **dependencies.environ,
         "CODEX_HOME": str(tmp_path / "codex-home"),
-        "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
+        "HOME": str(tmp_path / "home"),
+        "XMUSE_AGY_COMMAND": str(agy),
+        "XMUSE_AGY_MODEL": "gemini-3.8-flash-high",
     }
     dependencies.which = lambda name: {
         "node": "/usr/bin/node",
         "codex": "/usr/bin/codex",
-        "/opt/agentapi": "/opt/agentapi",
+        "bwrap": str(bwrap),
+        "python3": sys.executable,
     }.get(name)
-    dependencies.discover_antigravity_language_server = lambda _environ: {
-        "ANTIGRAVITY_LS_ADDRESS": "127.0.0.1:65000",
-        "ANTIGRAVITY_CSRF_TOKEN": "observed",
-    }
 
     exit_code = _start(tmp_path / "runtime", dependencies)
 
     assert exit_code == 0
     api, frontend = runtime.specs
     assert api.env["XMUSE_ANTIGRAVITY"] == "1"
-    assert api.env["XMUSE_ANTIGRAVITY_AGENTAPI"] == "/opt/agentapi"
-    assert "XMUSE_ANTIGRAVITY_AGENTAPI" not in frontend.env
+    assert api.env["XMUSE_AGY_COMMAND"] == str(agy)
+    assert api.env["XMUSE_AGY_MODEL"] == "gemini-3.8-flash-high"
+    assert "XMUSE_AGY_COMMAND" not in frontend.env
+    assert "XMUSE_AGY_MODEL" not in frontend.env
 
 
 def test_antigravity_requires_the_pinned_mcp_port_before_spawn(
@@ -505,19 +510,21 @@ def test_antigravity_requires_the_pinned_mcp_port_before_spawn(
 ) -> None:
     runtime = FakeRuntime(built_repo)
     dependencies = runtime.dependencies()
+    agy = tmp_path / "agy"
+    agy.write_text("#!/bin/sh\n", encoding="utf-8")
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_text("#!/bin/sh\n", encoding="utf-8")
     dependencies.environ = {
         **dependencies.environ,
-        "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
+        "HOME": str(tmp_path / "home"),
+        "XMUSE_AGY_COMMAND": str(agy),
     }
     dependencies.which = lambda name: {
         "node": "/usr/bin/node",
         "codex": "/usr/bin/codex",
-        "/opt/agentapi": "/opt/agentapi",
+        "bwrap": str(bwrap),
+        "python3": sys.executable,
     }.get(name)
-    dependencies.discover_antigravity_language_server = lambda _environ: {
-        "ANTIGRAVITY_LS_ADDRESS": "127.0.0.1:65000",
-        "ANTIGRAVITY_CSRF_TOKEN": "observed",
-    }
     dependencies.port_available = lambda host, port: not (host == "127.0.0.1" and port == 8100)
 
     exit_code = workroom_cli.run_cli(

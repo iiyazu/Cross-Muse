@@ -20,7 +20,7 @@ from xmuse_core.chat.room_kernel import RoomKernelStore
 AVAILABLE_PROVIDER_CAPABILITIES = {
     "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
     "claude": {"available": True, "enabled": True, "confinement": "client_permission_gated"},
-    "antigravity": {"available": True, "enabled": True, "confinement": "instructed_read_only"},
+    "antigravity": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
     "opencode": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
 }
 

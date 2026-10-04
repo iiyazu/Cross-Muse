@@ -394,7 +394,6 @@ def start_workroom(
         capabilities = detect_provider_capabilities(
             environ=deps.environ,
             which=deps.which,
-            discover_language_server=deps.discover_antigravity_language_server,
         )
         claude_enabled = _resolve_provider_enablement("claude", claude, capabilities)
         antigravity_enabled = _resolve_provider_enablement("antigravity", antigravity, capabilities)

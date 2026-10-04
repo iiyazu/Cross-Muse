@@ -108,7 +108,7 @@ def test_bootstrap_projects_only_whitelisted_provider_capabilities(tmp_path: Pat
             "antigravity": {
                 "available": True,
                 "enabled": False,
-                "confinement": "instructed_read_only",
+                "confinement": "os_read_only_sandbox",
                 "address": "127.0.0.1:65000",
                 "csrf_token": "secret-token",
             },
@@ -133,7 +133,7 @@ def test_bootstrap_projects_only_whitelisted_provider_capabilities(tmp_path: Pat
         "antigravity": {
             "available": True,
             "enabled": False,
-            "confinement": "instructed_read_only",
+            "confinement": "os_read_only_sandbox",
         },
         "opencode": {
             "available": True,

@@ -15,7 +15,7 @@ capability. A Room selects a collaboration mode:
 
 Infrastructure owns delivery, identity, causality, attempts, safety, and privileged
 execution; it must not impersonate an Agent. Provider transports differ (Codex app-server,
-ACP, Antigravity agentapi), but every Agent writes Room truth only through the same
+ACP, the Antigravity agy CLI), but every Agent writes Room truth only through the same
 identity-, attempt-, and lease-bound Room MCP tools: one outcome tool that ends a turn, plus
 board tools for coordinating mid-turn (module charters, versioned interface contracts,
 progress, peer questions).
@@ -100,8 +100,7 @@ do not load `.env`.
   `--dangerously-skip-permissions` is passed only inside that sandbox.
   Non-owners are confined read-only (`os_read_only_sandbox`); `workspace_write`
   owners work in their own clone with the board view mounted read-only at
-  `.xmuse` (`os_workspace_write_sandbox`). The legacy agentapi transport remains
-  opt-in via `XMUSE_ANTIGRAVITY_TRANSPORT=agentapi`.
+  `.xmuse` (`os_workspace_write_sandbox`).
 - On WSL every provider bubblewrap sandbox (`os_read_only_sandbox` and
   `os_workspace_write_sandbox`, for OpenCode, agy and owners alike) also masks the Windows
   drives as empty tmpfs: every drvfs mount (`/mnt/c`, `/mnt/d`, ...) with its Windows-side

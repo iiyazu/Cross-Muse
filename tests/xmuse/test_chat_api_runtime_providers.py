@@ -11,7 +11,7 @@ DISABLED_CAPS = {
     "antigravity": {
         "available": False,
         "enabled": False,
-        "confinement": "instructed_read_only",
+        "confinement": "os_read_only_sandbox",
     },
     "opencode": {"available": False, "enabled": False, "confinement": "os_read_only_sandbox"},
 }
@@ -20,7 +20,7 @@ ANTIGRAVITY_CAPS = {
     "antigravity": {
         "available": True,
         "enabled": True,
-        "confinement": "instructed_read_only",
+        "confinement": "os_read_only_sandbox",
     },
 }
 
@@ -40,8 +40,8 @@ def _clear_provider_env(monkeypatch) -> None:
         "XMUSE_CLAUDE_ACP",
         "XMUSE_CLAUDE_ACP_COMMAND",
         "XMUSE_ANTIGRAVITY",
-        "XMUSE_ANTIGRAVITY_AGENTAPI",
-        "XMUSE_ANTIGRAVITY_BRAIN_DIR",
+        "XMUSE_AGY_COMMAND",
+        "XMUSE_AGY_MODEL",
         "XMUSE_OPENCODE",
         "XMUSE_OPENCODE_MODEL",
         "XMUSE_OPENCODE_BIN",
@@ -61,7 +61,8 @@ def test_runtime_config_forwards_runner_env_only_without_browser_keys(
         lambda: ANTIGRAVITY_CAPS,
     )
     monkeypatch.setenv("XMUSE_CLAUDE_ACP_COMMAND", "/opt/claude-acp-bridge")
-    monkeypatch.setenv("XMUSE_ANTIGRAVITY_AGENTAPI", "/opt/agentapi")
+    monkeypatch.setenv("XMUSE_AGY_COMMAND", "/opt/agy")
+    monkeypatch.setenv("XMUSE_AGY_MODEL", "gemini-3.8-flash-high")
 
     config = chat_api_runtime._workroom_room_runtime_config(
         tmp_path,
@@ -75,7 +76,8 @@ def test_runtime_config_forwards_runner_env_only_without_browser_keys(
         "XMUSE_ANTIGRAVITY": "1",
         "XMUSE_OPENCODE": "0",
         "XMUSE_CLAUDE_ACP_COMMAND": "/opt/claude-acp-bridge",
-        "XMUSE_ANTIGRAVITY_AGENTAPI": "/opt/agentapi",
+        "XMUSE_AGY_COMMAND": "/opt/agy",
+        "XMUSE_AGY_MODEL": "gemini-3.8-flash-high",
     }
 
 

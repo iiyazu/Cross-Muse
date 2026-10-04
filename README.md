@@ -25,7 +25,7 @@ Browser
   -> RoomDatabase / RoomKernel
   -> isolated Room Runner
   -> participant-bound provider session (Codex app-server, Claude Code ACP,
-     Antigravity agentapi, or OpenCode ACP under bubblewrap)
+     Antigravity agy CLI, or OpenCode ACP under bubblewrap)
   -> bundled Skill decision and context evidence
   -> Room-only MCP chat_room_submit_outcome
   -> durable outcome
