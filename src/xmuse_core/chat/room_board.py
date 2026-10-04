@@ -373,7 +373,10 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
             if isinstance(tails, dict):
                 for gate_id, tail in tails.items():
                     if isinstance(tail, str) and tail:
-                        tail_text = f"\nOutput tail of {gate_id}:\n```\n{tail}\n```"
+                        fence = "`" * max(
+                            3, 1 + max((len(m) for m in re.findall(r"`+", tail)), default=0)
+                        )
+                        tail_text = f"\nOutput tail of {gate_id}:\n{fence}\n{tail}\n{fence}"
                         break
             return (
                 f"Module {module_id} verification failed ({reason}).{detail} "

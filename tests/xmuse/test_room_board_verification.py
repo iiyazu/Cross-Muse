@@ -32,6 +32,7 @@ from xmuse_core.chat import room_board_verification as verification
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_board import (
     RoomBoardStore,
+    board_activity_content,
     charter_outside_paths,
     charter_path_allowed,
     split_dependency_cycle,
@@ -252,6 +253,51 @@ def test_gate_output_tail_is_sanitized_and_bounded() -> None:
     clipped = sanitize_gate_output_tail(b"aaaa\nbbbb\ncccc\n", 8)
     assert clipped == "cccc"
     assert sanitize_gate_output_tail(raw, 0) == ""
+
+
+def test_gate_output_tail_never_carries_absolute_paths() -> None:
+    raw = (
+        b'File "/workspace/src/api/greeting.py", line 3, in greet\n'
+        b'File "/opt/python/lib/python3.11/typing.py", line 9\n'
+        b"/deps/site-packages/pydantic/main.py:12: error\n"
+        b"cwd /workspace\n"
+        b"stage /srv/xmuse/stages/abc/src/x.py and /srv/xmuse/stages/abc\n"
+        b"leak /home/alice/.cache/uv/x.py and /mnt/d/Dev/repo/y.py\n"
+        b"win C:\\Users\\alice\\repo\\z.py tmp /tmp/pytest-of-alice/t0/a.py\n"
+        b"keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a\n"
+    )
+
+    text = sanitize_gate_output_tail(raw, 4096, ("/srv/xmuse/stages/abc",))
+
+    assert text.splitlines() == [
+        'File "src/api/greeting.py", line 3, in greet',
+        'File "<python>/lib/python3.11/typing.py", line 9',
+        "<site-packages>/pydantic/main.py:12: error",
+        "cwd .",
+        "stage src/x.py and .",
+        "leak <host-path> and <host-path>",
+        "win <host-path> tmp <host-path>",
+        "keep src/api/routes.py:7 and ratio 3/4 and https://example.test/a",
+    ]
+    assert "alice" not in text
+
+
+def test_failed_verification_fence_survives_backticks_in_tail() -> None:
+    tail = "E   assert '```' == '````'\nend"
+    content = board_activity_content(
+        "board.verification",
+        {
+            "module_id": "api",
+            "status": "failed",
+            "reason_code": "board_verification_gate_failed",
+            "gates": [{"gate_id": "python_uv_pytest", "status": "failed"}],
+            "evidence": {"output_tails": {"python_uv_pytest": tail}},
+        },
+    )
+
+    opening = content.index("`````\n")
+    assert content.endswith("\n`````")
+    assert content[opening + 6 :].removesuffix("\n`````") == tail
 
 
 def test_complete_rejects_wrong_lease_and_unknown_job(tmp_path: Path) -> None:
