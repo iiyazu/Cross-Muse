@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from xmuse_core.chat.room_opencode_sandbox import OPENCODE_WRITABLE_HOME_PATHS
+from xmuse_core.chat.room_opencode_sandbox import (
+    OPENCODE_WRITABLE_HOME_PATHS,
+    windows_drive_mounts,
+)
 from xmuse_core.chat.room_workspace_sandbox import (
     PROVIDER_STATE_HOME_PATHS,
     ROOM_WORKSPACE_WRITE_CONFINEMENT,
@@ -138,6 +141,57 @@ def test_masked_paths_enclosing_vs_inside(tmp_path: Path) -> None:
     )
     assert position[str(enclosing_root.resolve())] < workspace_bind
     assert position[str(inner_root.resolve())] > workspace_bind
+
+
+def test_windows_drives_masked_before_rebinds(tmp_path: Path) -> None:
+    home, _ = _make_home(tmp_path)
+    drive_c = tmp_path / "mnt" / "c"
+    drive_c.mkdir(parents=True)
+    drive_d = tmp_path / "mnt" / "d"
+    workspace = drive_d / "Dev" / "clone"
+    workspace.mkdir(parents=True)
+    inner_root = workspace / "xmuse-data"
+    inner_root.mkdir()
+
+    argv = build_workspace_write_sandbox_command(
+        bwrap=Path("/usr/bin/bwrap"),
+        provider="claude",
+        home=home,
+        workspace=workspace,
+        agent_argv=("agent",),
+        masked_paths=(inner_root, drive_d),
+        drive_mounts=(drive_c, drive_d),
+    )
+    tmpfs = _pairs(argv, "--tmpfs")
+    position = {target: index for index, target in tmpfs}
+    binds = _pairs(argv, "--bind")
+    workspace_bind = next(i for i, t in binds if t == str(workspace.resolve()))
+    own_bind = next(i for i, t in binds if t == str(home / ".claude"))
+    for drive in (drive_c, drive_d):
+        assert position[str(drive.resolve())] < own_bind < workspace_bind
+    # A drive named again in masked_paths is masked once, and masks inside the
+    # workspace still stay hidden after it is re-bound.
+    assert [t for _, t in tmpfs].count(str(drive_d.resolve())) == 1
+    assert position[str(inner_root.resolve())] > workspace_bind
+
+
+def test_no_drive_masks_off_wsl(tmp_path: Path) -> None:
+    home, workspace = _make_home(tmp_path)
+    argv = build_workspace_write_sandbox_command(
+        bwrap=Path("/usr/bin/bwrap"),
+        provider="claude",
+        home=home,
+        workspace=workspace,
+        agent_argv=("agent",),
+        drive_mounts=(),
+    )
+    masked = {t for _, t in _pairs(argv, "--tmpfs")}
+    masked |= {
+        argv[index + 2]
+        for index in range(len(argv) - 2)
+        if argv[index] == "--ro-bind" and argv[index + 1] == "/dev/null"
+    }
+    assert all(Path(target).is_relative_to(home) or target == "/tmp" for target in masked)
 
 
 def test_unknown_provider(tmp_path: Path) -> None:
@@ -342,3 +396,54 @@ def test_bwrap_board_view_is_read_only_inside_writable_workspace(tmp_path: Path)
     assert "board_read_only" in result.stdout
     assert "workspace_ok" in result.stdout
     assert (board / "charter.md").read_text() == "module: api\n"
+
+
+@pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is not usable here")
+@pytest.mark.skipif(not windows_drive_mounts(), reason="no Windows drives mounted (not WSL)")
+def test_bwrap_hides_windows_drives_but_keeps_a_workspace_on_one(tmp_path: Path) -> None:
+    import tempfile
+
+    bwrap = Path(str(shutil.which("bwrap")))
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    drives = [path for path in windows_drive_mounts() if path.is_dir()]
+    host_drive = next((drive for drive in drives if Path.cwd().is_relative_to(drive)), drives[0])
+    try:
+        holder = tempfile.TemporaryDirectory(prefix="xmuse-drive-sandbox-", dir=host_drive)
+    except OSError:
+        pytest.skip("Windows drive is not writable here")
+    with holder as raw:
+        workspace = Path(raw)
+        (workspace / "notes.txt").write_text("readable\n")
+        listings = "; ".join(
+            f'echo "{drive}=[$(ls -A "{drive}" | tr "\\n" " ")]"' for drive in drives
+        )
+        argv = build_workspace_write_sandbox_command(
+            bwrap=bwrap,
+            provider="claude",
+            home=home,
+            workspace=workspace,
+            agent_argv=(
+                "/bin/sh",
+                "-c",
+                f"cat notes.txt; touch created.txt && echo workspace_ok; {listings}",
+            ),
+        )
+        env = {"HOME": str(Path.home()), "PATH": "/usr/bin:/bin"}
+        result = subprocess.run(
+            argv, capture_output=True, text=True, timeout=30, check=False, env=env
+        )
+        if "Operation not permitted" in result.stderr or "No permissions" in result.stderr:
+            pytest.skip("unprivileged user namespaces are unavailable")
+        assert result.returncode == 0, result.stderr
+        assert "readable" in result.stdout
+        assert "workspace_ok" in result.stdout
+        assert (workspace / "created.txt").exists()
+        # Only the path down to the re-bound workspace survives on its drive;
+        # every other drive is an empty tmpfs.
+        for drive in drives:
+            if workspace.is_relative_to(drive):
+                first = workspace.relative_to(drive).parts[0]
+                assert f"{drive}=[{first} ]" in result.stdout
+            else:
+                assert f"{drive}=[]" in result.stdout

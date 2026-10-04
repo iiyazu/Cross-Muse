@@ -151,6 +151,30 @@ def test_masks_enclosing_the_workspace_come_first(tmp_path: Path) -> None:
     assert position[str(inner_root.resolve())] > workspace_bind
 
 
+def test_windows_drives_are_masked_before_every_rebind(tmp_path: Path) -> None:
+    drive_c = tmp_path / "mnt" / "c"
+    agy_on_drive = drive_c / "tools" / "agy"
+    agy_on_drive.parent.mkdir(parents=True)
+    agy_on_drive.write_text("#!/bin/sh\n")
+    drive_d = tmp_path / "mnt" / "d"
+    workspace = drive_d / "Dev" / "repo"
+    kwargs = _base_kwargs(tmp_path, workspace=workspace)
+    argv = build_agy_sandbox_command(
+        **{**kwargs, "agy": agy_on_drive},  # type: ignore[arg-type]
+        drive_mounts=(drive_c, drive_d),
+    )
+
+    position = {target: index for index, target in _pairs(argv, "--tmpfs")}
+    workspace_bind = argv.index(str(workspace.resolve()))
+    agy_bind = argv.index(str(agy_on_drive.resolve()))
+    home_mask = position[str(kwargs["home"])]
+    for drive in (drive_c, drive_d):
+        assert position[str(drive.resolve())] < home_mask < agy_bind < workspace_bind
+
+    plain = build_agy_sandbox_command(**kwargs, drive_mounts=())  # type: ignore[arg-type]
+    assert str(drive_d.resolve()) not in plain
+
+
 def test_missing_masked_paths_are_skipped(tmp_path: Path) -> None:
     kwargs = _base_kwargs(tmp_path)
     argv = build_agy_sandbox_command(

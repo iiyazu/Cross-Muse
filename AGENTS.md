@@ -102,6 +102,12 @@ do not load `.env`.
   owners work in their own clone with the board view mounted read-only at
   `.xmuse` (`os_workspace_write_sandbox`). The legacy agentapi transport remains
   opt-in via `XMUSE_ANTIGRAVITY_TRANSPORT=agentapi`.
+- On WSL every provider bubblewrap sandbox (`os_read_only_sandbox` and
+  `os_workspace_write_sandbox`, for OpenCode, agy and owners alike) also masks the Windows
+  drives as empty tmpfs: every drvfs mount (`/mnt/c`, `/mnt/d`, ...) with its Windows-side
+  `.ssh`, `.aws`, `.claude` and browser profiles. The masks go before any re-bind, so a
+  workspace or owner clone that lives on a drive stays reachable; nothing else on that drive
+  is. Off WSL there are no such mounts and nothing changes.
 - A roster may declare a Claude, OpenCode, or Antigravity participant `workspace_write` (an owner). An
   owner works in its own local clone (`git clone --no-hardlinks`, no origin remote, under
   `<root>/runtime/owner-clones`) with its provider's full native tools; its agent process

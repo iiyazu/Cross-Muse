@@ -4,8 +4,9 @@ Each owner agent works in its own local clone with full native tools, confined b
 an OS sandbox (bubblewrap): the whole filesystem is bound read-only, ``/tmp`` is a
 private tmpfs, only the owner clone (the workspace) and the agent provider's own
 state directories stay writable, and every other provider's state plus known
-credential stores are masked.  The network stays shared because dependency
-installs need it.
+credential stores are masked.  On WSL the Windows drives (``/mnt/c`` and the
+other drvfs mounts) are masked as well and an owner clone on one is re-bound over
+its mask.  The network stays shared because dependency installs need it.
 
 Known residual exposure: a provider's own credential necessarily stays readable
 to its own shell inside the sandbox (for example ``~/.claude`` for Claude or
@@ -20,6 +21,7 @@ from pathlib import Path
 from xmuse_core.chat.room_opencode_sandbox import (
     MASKED_HOME_PATHS,
     OPENCODE_WRITABLE_HOME_PATHS,
+    drive_masks,
 )
 
 ROOM_WORKSPACE_WRITE_CONFINEMENT = "os_workspace_write_sandbox"
@@ -39,6 +41,7 @@ def build_workspace_write_sandbox_command(
     agent_argv: Sequence[str],
     masked_paths: Iterable[Path] = (),
     readonly_binds: Sequence[tuple[Path, Path]] = (),
+    drive_mounts: Iterable[Path] | None = None,
 ) -> tuple[str, ...]:
     """Return the bubblewrap argv that runs ``agent_argv`` with a writable workspace.
 
@@ -46,6 +49,7 @@ def build_workspace_write_sandbox_command(
     provider's state and every :data:`MASKED_HOME_PATHS` entry is masked.
     ``readonly_binds`` mounts host directories read-only at destinations strictly
     inside the workspace (the board's charter/contract view at ``.xmuse``).
+    ``drive_mounts`` overrides Windows drive detection (``None`` detects).
     """
 
     if provider not in PROVIDER_STATE_HOME_PATHS:
@@ -90,8 +94,9 @@ def build_workspace_write_sandbox_command(
         candidates.extend(home_expanded / rel for rel in rels)
     candidates.extend(Path(item).expanduser() for item in masked_paths)
 
+    drives = drive_masks(drive_mounts)
     unique: list[Path] = []
-    seen: set[Path] = set()
+    seen: set[Path] = set(drives)
     for candidate in candidates:
         if not candidate.exists():
             continue
@@ -116,7 +121,8 @@ def build_workspace_write_sandbox_command(
         "--tmpfs",
         "/tmp",
     ]
-    for path in enclosing:
+    # Windows drives and masks enclosing the workspace go before every re-bind.
+    for path in [*drives, *enclosing]:
         argv.extend(_mask(path))
     for rel in own_rels:
         path = home_expanded / rel

@@ -18,6 +18,13 @@ participants get the same exact-title allowlist. Workspace-write owners are diff
 design: they keep their own MCP servers and Skills, and their OS sandbox (not the tool
 list) confines writes; a network-reached or delegating MCP server is outside that sandbox.
 
+The OS sandboxes (bubblewrap, for OpenCode, agy and every owner) bind the whole filesystem
+read-only and mask what must stay unreadable. On WSL that includes the
+Windows drives: every drvfs mount (`/mnt/c`, `/mnt/d`, ...) is replaced by an empty tmpfs so
+Windows-side credentials (`.ssh`, `.aws`, `.claude`, browser profiles) stay unreadable, and
+only a workspace or owner clone living on a drive is re-bound over that mask. On other hosts
+there are no drvfs mounts and the confinement is unchanged.
+
 ## Board tools
 
 | Tool | Caller | Effect |

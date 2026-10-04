@@ -5,7 +5,9 @@
 is an allowlist over ``$HOME``: the whole filesystem is bound read-only,
 ``/tmp`` is a private tmpfs, ``$HOME`` itself is masked, and only agy's own
 state (``~/.gemini/antigravity-cli``) and config (``~/.gemini/config`` plus a
-generated per-session MCP file) are re-exposed.  The Room MCP stdio bridge is
+generated per-session MCP file) are re-exposed.  On WSL the Windows drives
+(``/mnt/c`` and the other drvfs mounts) are masked before any re-bind, so a
+workspace on one stays reachable.  The Room MCP stdio bridge is
 mounted read-only at ``/tmp/xmuse-bridge/room_mcp_stdio.py`` and reached by
 agy through its ``call_mcp_tool`` tool.  The network stays shared because the
 model API and the loopback Room MCP need it.
@@ -22,6 +24,7 @@ import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
+from xmuse_core.chat.room_opencode_sandbox import drive_masks
 from xmuse_core.chat.room_workspace_sandbox import (
     ROOM_WORKSPACE_WRITE_CONFINEMENT as ROOM_AGY_OWNER_CONFINEMENT,
 )
@@ -107,12 +110,14 @@ def build_agy_sandbox_command(
     agy_args: Sequence[str],
     masked_paths: Iterable[Path] = (),
     readonly_binds: Sequence[tuple[Path, Path]] = (),
+    drive_mounts: Iterable[Path] | None = None,
 ) -> tuple[str, ...]:
     """Return the bubblewrap argv that runs ``agy *agy_args`` confined.
 
     ``agy_args`` are the raw agy CLI arguments (``--conversation`` included by
     the caller when resuming).  ``readonly_binds`` mounts host directories
     read-only at destinations strictly inside the workspace (the board view).
+    ``drive_mounts`` overrides Windows drive detection (``None`` detects).
     """
 
     if not agy_args or not all(isinstance(part, str) and part for part in agy_args):
@@ -156,8 +161,9 @@ def build_agy_sandbox_command(
     bridge_path = Path(bridge_script).expanduser()
 
     masked: list[Path] = [Path(item).expanduser() for item in masked_paths]
+    drives = drive_masks(drive_mounts)
     unique: list[Path] = []
-    seen: set[Path] = set()
+    seen: set[Path] = set(drives)
     for candidate in masked:
         if not candidate.exists():
             continue
@@ -183,7 +189,9 @@ def build_agy_sandbox_command(
         "--tmpfs",
         "/tmp",
     ]
-    for path in enclosing:
+    # Windows drives and masks enclosing the workspace go before every re-bind
+    # (agy itself, its state, the workspace).
+    for path in [*drives, *enclosing]:
         argv.extend(_mask(path))
     # Allowlisted home: mask everything, then re-expose only agy's own state
     # and config.
