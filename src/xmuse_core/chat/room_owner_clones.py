@@ -141,6 +141,18 @@ class OwnerCloneManager:
         self._write_metadata_clone(owner_id, branch=branch, base_commit=base_commit)
         return OwnerClone(owner_id=owner_id, path=target, branch=branch, base_commit=base_commit)
 
+    def read_base_commit(self, owner_id: str) -> str:
+        """Return the host-owned base commit for ``owner_id`` without running git.
+
+        The branch and base commit come from host-owned metadata written at
+        creation; the clone itself is owner-controlled and is never inspected
+        here.
+        """
+
+        if OWNER_ID_RE.fullmatch(owner_id) is None:
+            raise OwnerCloneError("owner_id_invalid")
+        return self._read_metadata_clone(owner_id).base_commit
+
     def export_patch(
         self, owner_id: str, *, base_commit: str, max_bytes: int = 200_000, max_files: int = 32
     ) -> OwnerPatch:

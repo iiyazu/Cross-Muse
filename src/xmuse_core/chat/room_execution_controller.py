@@ -468,16 +468,24 @@ def stage_exact_patch(
     run_id: str,
     candidate: ExactPatchCandidate,
     owner: ExecutionAttemptOwner | None = None,
+    require_target_at_base: bool = True,
 ) -> Iterator[StagedExactPatch]:
-    """Create and exclusively clean one detached worktree owned by this invocation."""
+    """Create and exclusively clean one detached worktree owned by this invocation.
+
+    The stage is always a detached worktree at ``candidate.base_head``.  Promotion
+    lands in the execution root, so by default the root must sit clean at that
+    base.  Verification-only callers (``require_target_at_base=False``) never
+    promote and only need the base commit to exist in the repository.
+    """
 
     patch = validate_candidate(candidate)
     root = execution_root.resolve(strict=True)
     guard = inspect_repository(root)
-    if guard.head != candidate.base_head:
-        raise RoomExecutionControllerError("execution_target_head_mismatch")
-    if not guard.clean:
-        raise RoomExecutionControllerError("execution_target_dirty")
+    if require_target_at_base:
+        if guard.head != candidate.base_head:
+            raise RoomExecutionControllerError("execution_target_head_mismatch")
+        if not guard.clean:
+            raise RoomExecutionControllerError("execution_target_dirty")
     runtime_root = xmuse_root.resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     actual_owner = owner or _current_attempt_owner()

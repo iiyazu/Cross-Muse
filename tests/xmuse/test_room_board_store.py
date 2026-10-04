@@ -95,7 +95,7 @@ def _split_payload(members):
             "title": "Alpha module",
             "paths": ["src/alpha/**"],
             "provides": ["api.alpha"],
-            "depends": ["api.beta"],
+            "depends": [],
             "acceptance": ["alpha works"],
             "report_to": lead.participant_id,
         },

@@ -94,6 +94,16 @@ def _render_charter_md(
         else:
             lines.append("- Acceptance: none")
         lines.append(f"- Report to: {report_to if report_to else 'none'}")
+        verification = entry.get("verification")
+        if isinstance(verification, dict) and verification.get("status"):
+            reason = verification.get("reason_code")
+            lines.append(
+                "- Verification: "
+                + str(verification.get("status"))
+                + (f" ({reason})" if reason else "")
+            )
+        else:
+            lines.append("- Verification: none yet")
         lines.append("")
     lines.append("## Other modules")
     lines.append("")

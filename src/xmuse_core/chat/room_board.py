@@ -9,11 +9,13 @@ observation lease exactly like participant outcomes and are idempotent per
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -33,6 +35,14 @@ TOOL_ASK = "chat_room_board_ask"
 BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
 MAX_CONTRACT_CONTENT_BYTES = 65536
+MAX_VERIFICATION_ATTEMPTS = 3
+VERIFICATION_LEASE_TTL_S = 1800
+VERIFICATION_STATUSES = ("pending", "running", "passed", "failed", "superseded", "error")
+BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
+BOARD_VERIFICATION_BASE_MISMATCH = "board_verification_base_mismatch"
+BOARD_VERIFICATION_DEPENDENCY_OVERLAP = "board_verification_dependency_overlap"
+VERIFICATION_DEFERRAL_DELAY_S = 15
+MAX_VERIFICATION_PATCH_BYTES = 200_000
 
 MODULE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
@@ -51,6 +61,87 @@ def contract_digest(content: str) -> str:
     """Return the ``sha256:<hex>`` digest of contract content."""
 
     return f"sha256:{sha256(content.encode('utf-8')).hexdigest()}"
+
+
+def charter_path_allowed(path: str, patterns: Sequence[str]) -> bool:
+    """Return True when a repo-relative path falls inside charter ``paths`` globs.
+
+    Matching is ``fnmatch``-style POSIX matching against the charter's relative
+    glob list.  The host-owned board view (``.xmuse/``) is never allowed, even
+    when a glob would match it.
+    """
+
+    if not isinstance(path, str) or not path:
+        return False
+    if path.startswith("/") or "\\" in path:
+        return False
+    if any(part in {"", ".", ".."} for part in path.split("/")):
+        return False
+    if path == ".xmuse" or path.startswith(".xmuse/"):
+        return False
+    for pattern in patterns:
+        if not isinstance(pattern, str) or not pattern:
+            continue
+        if fnmatch.fnmatchcase(path, pattern):
+            return True
+        if pattern.endswith("/**"):
+            stem = pattern[:-3]
+            if path == stem or path.startswith(stem + "/"):
+                return True
+    return False
+
+
+def charter_outside_paths(changed_paths: Sequence[str], patterns: Sequence[str]) -> list[str]:
+    """Return the changed paths that fall outside the charter ``paths`` globs."""
+
+    return [path for path in changed_paths if not charter_path_allowed(path, patterns)]
+
+
+def split_dependency_cycle(
+    modules: Sequence[dict[str, Any]], contracts: Sequence[dict[str, Any]]
+) -> list[str] | None:
+    """Return one module dependency cycle in a split, or None when it is acyclic.
+
+    A module depends on the provider module of every contract in its charter
+    ``depends``.  Verification stacks providers' verified work under their
+    dependents, so a cycle would leave every module in it waiting on another
+    forever; a shared interface belongs in a module of its own.
+    """
+
+    provider_of = {str(spec["contract_id"]): str(spec["provider_module_id"]) for spec in contracts}
+    edges: dict[str, list[str]] = {}
+    for charter in modules:
+        module_id = str(charter["module_id"])
+        edges[module_id] = sorted(
+            {
+                provider_of[contract_id]
+                for contract_id in charter.get("depends", [])
+                if contract_id in provider_of and provider_of[contract_id] != module_id
+            }
+        )
+    state: dict[str, int] = {}  # 1 = on the current path, 2 = done
+    path: list[str] = []
+
+    def visit(module_id: str) -> list[str] | None:
+        state[module_id] = 1
+        path.append(module_id)
+        for provider in edges.get(module_id, []):
+            if state.get(provider) == 1:
+                return [*path[path.index(provider) :], provider]
+            if provider not in state:
+                found = visit(provider)
+                if found is not None:
+                    return found
+        path.pop()
+        state[module_id] = 2
+        return None
+
+    for module_id in sorted(edges):
+        if module_id not in state:
+            found = visit(module_id)
+            if found is not None:
+                return found
+    return None
 
 
 def normalize_charter(value: Any) -> dict[str, Any]:
@@ -245,6 +336,28 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
         )
     if activity_type == "board.question":
         return f"Question for you: {payload.get('question')}"
+    if activity_type == "board.verification":
+        module_id = payload.get("module_id")
+        status = payload.get("status")
+        reason = payload.get("reason_code")
+        if status == "passed":
+            return (
+                f"Module {module_id} verification passed: the host verified your "
+                f"committed branch against the server gates ({reason or 'gates green'})."
+            )
+        if status == "failed":
+            failing = [
+                str(item.get("gate_id"))
+                for item in payload.get("gates", [])
+                if isinstance(item, dict) and item.get("status") != "passed"
+            ]
+            detail = f" Failing gates: {', '.join(failing)}." if failing else ""
+            return (
+                f"Module {module_id} verification failed ({reason}).{detail} "
+                "Fix the failure inside your charter paths, commit, and report "
+                "done again."
+            )
+        return f"Module {module_id} verification {status} ({reason})."
     return activity_type
 
 
@@ -740,6 +853,9 @@ class RoomBoardStore:
                     for spec in normalized_contracts
                 ):
                     raise ValueError("room_board_contract_missing")
+        cycle = split_dependency_cycle(normalized_modules, normalized_contracts)
+        if cycle is not None:
+            raise ValueError(f"room_board_split_dependency_cycle: {' -> '.join(cycle)}")
         fingerprint = sha256(
             _json(
                 {
@@ -1595,6 +1711,34 @@ class RoomBoardStore:
                         participant_ids=[recipient],
                         stamp=stamp,
                     )
+                verification_id: str | None = None
+                if status == "done":
+                    # A newer done claim supersedes older still-pending jobs; a
+                    # running job whose result arrives late is dropped as stale.
+                    conn.execute(
+                        "update room_board_verifications set status = 'superseded', "
+                        "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                        "updated_at = ? where conversation_id = ? and module_id = ? "
+                        "and status = 'pending'",
+                        (stamp, conversation_id, module_id),
+                    )
+                    verification_id = _id("boardverify")
+                    conn.execute(
+                        """insert into room_board_verifications
+                           (verification_id, conversation_id, module_id, participant_id,
+                            progress_id, status, attempt_count, changed_paths_json,
+                            created_at, updated_at)
+                           values (?, ?, ?, ?, ?, 'pending', 0, '[]', ?, ?)""",
+                        (
+                            verification_id,
+                            conversation_id,
+                            module_id,
+                            participant_id,
+                            progress_id,
+                            stamp,
+                            stamp,
+                        ),
+                    )
                 result = {
                     "progress_id": progress_id,
                     "module_id": module_id,
@@ -1602,6 +1746,7 @@ class RoomBoardStore:
                     "activity_id": str(activity["activity_id"]),
                     "activity_seq": int(activity["seq"]),
                     "woken_participant_ids": [item["participant_id"] for item in woken],
+                    "verification_id": verification_id,
                     "request_fingerprint": fingerprint,
                 }
                 self._write_request_log_conn(
@@ -1615,6 +1760,726 @@ class RoomBoardStore:
                 )
                 conn.commit()
                 return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _verification_view(row: sqlite3.Row) -> dict[str, Any]:
+        mapping = dict(row)
+        return {
+            "verification_id": str(row["verification_id"]),
+            "conversation_id": str(row["conversation_id"]),
+            "module_id": str(row["module_id"]),
+            "participant_id": str(row["participant_id"]),
+            "progress_id": str(row["progress_id"]),
+            "status": str(row["status"]),
+            "attempt_count": int(row["attempt_count"]),
+            "lease_token": row["lease_token"],
+            "lease_expires_at": row["lease_expires_at"],
+            "head_commit": row["head_commit"],
+            "patch_digest": row["patch_digest"],
+            "changed_paths": _decode(str(row["changed_paths_json"] or "[]")),
+            "result": _decode(row["result_json"]) if row["result_json"] else None,
+            "activity_id": row["activity_id"],
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "not_before": mapping.get("not_before"),
+        }
+
+    @staticmethod
+    def _module_verification_stats_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """Summarize verification state per module (latest row plus counters)."""
+
+        try:
+            ver_rows = conn.execute(
+                "select * from room_board_verifications where conversation_id = ? "
+                "order by created_at, verification_id",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        by_module: dict[str, list[sqlite3.Row]] = {}
+        for row in ver_rows:
+            by_module.setdefault(str(row["module_id"]), []).append(row)
+        try:
+            done_rows = conn.execute(
+                "select module_id, count(*) as total from room_board_progress "
+                "where conversation_id = ? and status = 'done' group by module_id",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            done_rows = []
+        done_reports = {str(row["module_id"]): int(row["total"]) for row in done_rows}
+        stats: dict[str, dict[str, Any]] = {}
+        for module_id, rows in by_module.items():
+            latest = rows[-1]
+            passed = sum(1 for row in rows if str(row["status"]) == "passed")
+            failed_rows = [row for row in rows if str(row["status"]) == "failed"]
+            first_pass_index: int | None = None
+            for index, row in enumerate(rows):
+                if str(row["status"]) == "passed":
+                    first_pass_index = index
+                    break
+            if first_pass_index is None:
+                rework_rounds = len(failed_rows)
+            else:
+                rework_rounds = sum(
+                    1 for row in rows[:first_pass_index] if str(row["status"]) == "failed"
+                )
+            latest_result = _decode(latest["result_json"]) if latest["result_json"] else None
+            stats[module_id] = {
+                "status": str(latest["status"]),
+                "verification_id": str(latest["verification_id"]),
+                "reason_code": (
+                    latest_result.get("reason_code") if isinstance(latest_result, dict) else None
+                ),
+                "result": latest_result,
+                "head_commit": latest["head_commit"],
+                "changed_paths": _decode(str(latest["changed_paths_json"] or "[]")),
+                "created_at": str(latest["created_at"]),
+                "done_reports": done_reports.get(module_id, 0),
+                "verifications_passed": passed,
+                "verifications_failed": len(failed_rows),
+                "rework_rounds": rework_rounds,
+            }
+        return stats
+
+    @staticmethod
+    def _browser_verification_summary(entry: dict[str, Any]) -> dict[str, Any]:
+        """Project only browser-safe verification fields (no digests, no paths)."""
+
+        return {
+            "status": entry["status"],
+            "verification_id": entry["verification_id"],
+            "reason_code": entry["reason_code"],
+            "done_reports": entry["done_reports"],
+            "verifications_passed": entry["verifications_passed"],
+            "verifications_failed": entry["verifications_failed"],
+            "rework_rounds": entry["rework_rounds"],
+        }
+
+    def get_module_charter(self, conversation_id: str, module_id: str) -> dict[str, Any] | None:
+        """Return the current charter for one module, or None when unknown."""
+
+        with self._connect() as conn:
+            row = self._current_charter_conn(
+                conn, conversation_id=conversation_id, module_id=module_id
+            )
+            if row is None:
+                return None
+            body = _decode(str(row["charter_json"]))
+            report_to = body.get("report_to") if isinstance(body, dict) else None
+            return {
+                "module_id": str(row["module_id"]),
+                "version": int(row["version"]),
+                "owner_participant_id": str(row["owner_participant_id"]),
+                "status": str(row["status"]),
+                "charter": body,
+                "report_to": report_to if isinstance(report_to, str) else None,
+            }
+
+    def provider_modules_for_module(self, conversation_id: str, module_id: str) -> list[str]:
+        """Return sorted provider module ids for one module's charter ``depends``.
+
+        Each entry is the ``provider_module_id`` of the latest version of a
+        contract listed in the module's current charter ``depends``, excluding
+        the module itself.  Contracts with no versions yet contribute nothing.
+        """
+
+        with self._connect() as conn:
+            return self._provider_modules_conn(
+                conn, conversation_id=conversation_id, module_id=module_id
+            )
+
+    @staticmethod
+    def _provider_modules_conn(
+        conn: sqlite3.Connection, *, conversation_id: str, module_id: str
+    ) -> list[str]:
+        charter = RoomBoardStore._current_charter_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        if charter is None:
+            return []
+        body = _decode(str(charter["charter_json"]))
+        depends = body.get("depends", []) if isinstance(body, dict) else []
+        providers: set[str] = set()
+        for contract_id in depends if isinstance(depends, list) else []:
+            if not isinstance(contract_id, str) or not contract_id:
+                continue
+            latest = RoomBoardStore._latest_contract_conn(
+                conn, conversation_id=conversation_id, contract_id=contract_id
+            )
+            if latest is None:
+                continue
+            provider = str(latest["provider_module_id"])
+            if provider and provider != module_id:
+                providers.add(provider)
+        return sorted(providers)
+
+    def latest_passed_board_verification(
+        self, conversation_id: str, module_id: str
+    ) -> dict[str, Any] | None:
+        """Return the latest ``passed`` verification for one module, if any."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from room_board_verifications where conversation_id = ? "
+                "and module_id = ? order by created_at, verification_id",
+                (conversation_id, module_id),
+            ).fetchall()
+        latest: dict[str, Any] | None = None
+        for row in rows:
+            if str(row["status"]) != "passed":
+                continue
+            mapping = dict(row)
+            result = _decode(mapping.get("result_json")) if mapping.get("result_json") else None
+            base_commit = None
+            if isinstance(result, dict):
+                raw_base = result.get("base_commit")
+                if isinstance(raw_base, str) and raw_base:
+                    base_commit = raw_base
+            changed = _decode(str(mapping.get("changed_paths_json") or "[]"))
+            latest = {
+                "verification_id": str(mapping["verification_id"]),
+                "module_id": str(mapping["module_id"]),
+                "head_commit": mapping["head_commit"],
+                "patch_digest": mapping["patch_digest"],
+                "patch_text": mapping.get("patch_text"),
+                "changed_paths": list(changed) if isinstance(changed, list) else [],
+                "base_commit": base_commit,
+                "created_at": str(mapping["created_at"]),
+                "result": result,
+            }
+        return latest
+
+    def has_newer_unresolved_verification(
+        self,
+        conversation_id: str,
+        module_id: str,
+        *,
+        after_created_at: str,
+        after_verification_id: str,
+    ) -> bool:
+        """Return True when a ``pending``/``running`` job is newer than a pass."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "select 1 from room_board_verifications where conversation_id = ? "
+                "and module_id = ? and status in ('pending', 'running') "
+                "and (created_at, verification_id) > (?, ?) limit 1",
+                (
+                    conversation_id,
+                    module_id,
+                    after_created_at,
+                    after_verification_id,
+                ),
+            ).fetchone()
+            return row is not None
+
+    def claim_next_board_verification(
+        self,
+        *,
+        worker_id: str,
+        lease_ttl_s: int = VERIFICATION_LEASE_TTL_S,
+        max_attempts: int = MAX_VERIFICATION_ATTEMPTS,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Claim one pending verification with a lease (``pending→running`` CAS).
+
+        Expired ``running`` rows return to ``pending`` on the next claim; rows
+        that exhausted ``max_attempts`` become ``error`` instead of being
+        claimed again.
+        """
+
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("room_board_worker_id_required")
+        if (
+            isinstance(lease_ttl_s, bool)
+            or not isinstance(lease_ttl_s, int)
+            or not 5 <= lease_ttl_s <= 7200
+        ):
+            raise ValueError("room_board_lease_ttl_invalid")
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+            raise ValueError("room_board_max_attempts_invalid")
+        if max_attempts < 1:
+            raise ValueError("room_board_max_attempts_invalid")
+        current, stamp = _current_stamp(now)
+        expires = _timestamp(current + timedelta(seconds=lease_ttl_s))
+        lease_token = uuid.uuid4().hex
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                conn.execute(
+                    "update room_board_verifications set status = 'pending', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "updated_at = ? where status = 'running' and lease_expires_at is not null "
+                    "and lease_expires_at <= ?",
+                    (stamp, stamp),
+                )
+                conn.execute(
+                    "update room_board_verifications set status = 'error', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "result_json = ?, updated_at = ? "
+                    "where status = 'pending' and attempt_count >= ?",
+                    (
+                        _json(
+                            {
+                                "status": "error",
+                                "reason_code": "board_verification_attempts_exhausted",
+                            }
+                        ),
+                        stamp,
+                        max_attempts,
+                    ),
+                )
+                row = conn.execute(
+                    "select * from room_board_verifications where status = 'pending' "
+                    "and (not_before is null or not_before <= ?) "
+                    "order by created_at, verification_id limit 1",
+                    (stamp,),
+                ).fetchone()
+                if row is None:
+                    conn.commit()
+                    return None
+                changed = conn.execute(
+                    "update room_board_verifications set status = 'running', "
+                    "attempt_count = attempt_count + 1, lease_owner = ?, lease_token = ?, "
+                    "lease_expires_at = ?, updated_at = ? "
+                    "where verification_id = ? and status = 'pending'",
+                    (
+                        worker_id,
+                        lease_token,
+                        expires,
+                        stamp,
+                        str(row["verification_id"]),
+                    ),
+                ).rowcount
+                if changed != 1:
+                    conn.commit()
+                    return None
+                claimed = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (str(row["verification_id"]),),
+                ).fetchone()
+                assert claimed is not None
+                result = self._verification_view(claimed)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    def complete_board_verification(
+        self,
+        *,
+        verification_id: str,
+        lease_token: str,
+        status: str,
+        reason_code: str | None,
+        head_commit: str | None,
+        patch_digest: str | None,
+        changed_paths: list[str],
+        gates: list[dict[str, Any]],
+        evidence: dict[str, Any] | None,
+        now: datetime | None = None,
+        patch_text: str | None = None,
+        stacked: list[dict[str, Any]] | None = None,
+        base_commit: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a terminal verification result with a ``board.verification`` activity.
+
+        The job lease is re-checked and a newer ``done`` report for the same
+        module wins: a stale result is dropped as ``superseded`` without an
+        activity.  Failures wake the owner so the next delivery reuses its
+        session; the third consecutive failure also wakes the lead/report_to.
+        """
+
+        if status not in ("passed", "failed", "error"):
+            raise ValueError("room_board_verification_status_invalid")
+        if status != "passed" and (not isinstance(reason_code, str) or not reason_code.strip()):
+            raise ValueError("room_board_verification_reason_required")
+        if reason_code is not None and (
+            not isinstance(reason_code, str) or not reason_code.strip()
+        ):
+            raise ValueError("room_board_verification_reason_required")
+        if not isinstance(changed_paths, list) or any(
+            not isinstance(item, str) for item in changed_paths
+        ):
+            raise ValueError("room_board_verification_paths_invalid")
+        clean_gates: list[dict[str, Any]] = []
+        for entry in gates:
+            if not isinstance(entry, dict) or not isinstance(entry.get("gate_id"), str):
+                raise ValueError("room_board_verification_gates_invalid")
+            exit_code = entry.get("exit_code")
+            if exit_code is not None and (
+                isinstance(exit_code, bool) or not isinstance(exit_code, int)
+            ):
+                raise ValueError("room_board_verification_gates_invalid")
+            gate_status = entry.get("status")
+            if gate_status not in ("passed", "failed", "cancelled"):
+                raise ValueError("room_board_verification_gates_invalid")
+            gate_reason = entry.get("reason_code")
+            if gate_reason is not None and not isinstance(gate_reason, str):
+                raise ValueError("room_board_verification_gates_invalid")
+            clean_gates.append(
+                {
+                    "gate_id": str(entry["gate_id"]),
+                    "status": str(gate_status),
+                    "exit_code": exit_code,
+                    "reason_code": gate_reason,
+                }
+            )
+        clean_evidence = dict(evidence) if evidence is not None else {}
+        if len(_json(clean_evidence).encode("utf-8")) > 8192:
+            raise ValueError("room_board_verification_evidence_too_large")
+        if patch_text is not None:
+            if not isinstance(patch_text, str) or not patch_text.strip():
+                raise ValueError("room_board_verification_patch_invalid")
+            if len(patch_text.encode("utf-8")) > MAX_VERIFICATION_PATCH_BYTES:
+                raise ValueError("room_board_verification_patch_too_large")
+        clean_stacked: list[dict[str, Any]] = []
+        if stacked is not None:
+            if not isinstance(stacked, list):
+                raise ValueError("room_board_verification_stacked_invalid")
+            for entry in stacked:
+                if not isinstance(entry, dict):
+                    raise ValueError("room_board_verification_stacked_invalid")
+                module = entry.get("module_id")
+                vid = entry.get("verification_id")
+                head = entry.get("head_commit")
+                if (
+                    not isinstance(module, str)
+                    or not module
+                    or not isinstance(vid, str)
+                    or not vid
+                    or not isinstance(head, str)
+                    or not head
+                ):
+                    raise ValueError("room_board_verification_stacked_invalid")
+                clean_stacked.append(
+                    {
+                        "module_id": module,
+                        "verification_id": vid,
+                        "head_commit": head,
+                    }
+                )
+        if base_commit is not None and (
+            not isinstance(base_commit, str) or not base_commit.strip()
+        ):
+            raise ValueError("room_board_verification_base_invalid")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_verification_lease_lost")
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (verification_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_verification_unknown")
+                if str(row["status"]) == "superseded":
+                    conn.commit()
+                    return {
+                        "verification_id": verification_id,
+                        "status": "dropped",
+                        "activity_id": None,
+                        "activity_seq": None,
+                        "woken_participant_ids": [],
+                        "escalated": False,
+                    }
+                if (
+                    str(row["status"]) != "running"
+                    or row["lease_token"] != lease_token
+                    or (
+                        row["lease_expires_at"] is not None
+                        and str(row["lease_expires_at"]) <= stamp
+                    )
+                ):
+                    raise ValueError("room_board_verification_lease_lost")
+                conversation_id = str(row["conversation_id"])
+                module_id = str(row["module_id"])
+                owner_id = str(row["participant_id"])
+                progress_id = str(row["progress_id"])
+                # A newer done report wins: this result is stale.
+                newer = conn.execute(
+                    "select 1 from room_board_verifications "
+                    "where conversation_id = ? and module_id = ? and verification_id != ? "
+                    "and (created_at, verification_id) > (?, ?) limit 1",
+                    (
+                        conversation_id,
+                        module_id,
+                        verification_id,
+                        str(row["created_at"]),
+                        verification_id,
+                    ),
+                ).fetchone()
+                if newer is not None:
+                    conn.execute(
+                        "update room_board_verifications set status = 'superseded', "
+                        "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                        "updated_at = ? where verification_id = ?",
+                        (stamp, verification_id),
+                    )
+                    conn.commit()
+                    return {
+                        "verification_id": verification_id,
+                        "status": "dropped",
+                        "activity_id": None,
+                        "activity_seq": None,
+                        "woken_participant_ids": [],
+                        "escalated": False,
+                    }
+                progress = conn.execute(
+                    "select * from room_board_progress where progress_id = ?",
+                    (progress_id,),
+                ).fetchone()
+                if progress is None:
+                    raise ValueError("room_board_verification_progress_unknown")
+                source = self._activity_from_conn(conn, str(progress["activity_id"]))
+                charter = self._current_charter_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                charter_body = (
+                    _decode(str(charter["charter_json"])) if charter is not None else None
+                )
+                report_to = (
+                    charter_body.get("report_to") if isinstance(charter_body, dict) else None
+                )
+                if not isinstance(report_to, str) or not report_to:
+                    report_to = None
+                lead = self._lead_participant_id(conn, conversation_id)
+                escalated = False
+                audience: list[str] = []
+                wake: list[str] = []
+                if status == "failed":
+                    history = conn.execute(
+                        "select status from room_board_verifications "
+                        "where conversation_id = ? and module_id = ? "
+                        "and status in ('passed', 'failed') "
+                        "order by created_at desc, verification_id desc limit 10",
+                        (conversation_id, module_id),
+                    ).fetchall()
+                    consecutive = 1
+                    for item in history:
+                        if str(item["status"]) == "failed":
+                            consecutive += 1
+                        else:
+                            break
+                    audience = [owner_id]
+                    wake = [owner_id]
+                    if consecutive >= 3:
+                        escalated = True
+                        escalation = report_to or lead
+                        if escalation and escalation not in audience:
+                            audience.append(escalation)
+                            wake.append(escalation)
+                elif status == "passed":
+                    target = report_to or lead
+                    audience = [target] if target else []
+                else:
+                    audience = [owner_id]
+                payload = {
+                    "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                    "verification_id": verification_id,
+                    "progress_id": progress_id,
+                    "module_id": module_id,
+                    "status": status,
+                    "reason_code": reason_code,
+                    "head_commit": head_commit,
+                    "changed_paths": list(changed_paths),
+                    "gates": clean_gates,
+                    "evidence": clean_evidence,
+                    "stacked": clean_stacked,
+                }
+                activity = self._insert_board_activity_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_type="board.verification",
+                    actor_kind="infrastructure",
+                    actor_identity="infrastructure:board-verification",
+                    actor_participant_id=None,
+                    causation_id=str(progress["activity_id"]),
+                    causal_depth=int(source["causal_depth"]) + 1,
+                    audience_participant_ids=audience,
+                    payload=payload,
+                    stamp=stamp,
+                )
+                result_json = _json(
+                    {
+                        "status": status,
+                        "reason_code": reason_code,
+                        "head_commit": head_commit,
+                        "patch_digest": patch_digest,
+                        "changed_paths": list(changed_paths),
+                        "gates": clean_gates,
+                        "evidence": clean_evidence,
+                        "stacked": clean_stacked,
+                        "base_commit": base_commit,
+                    }
+                )
+                conn.execute(
+                    "update room_board_verifications set status = ?, attempt_count = ?, "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "not_before = null, "
+                    "head_commit = ?, patch_digest = ?, changed_paths_json = ?, "
+                    "patch_text = coalesce(?, patch_text), "
+                    "result_json = ?, activity_id = ?, updated_at = ? "
+                    "where verification_id = ?",
+                    (
+                        status,
+                        int(row["attempt_count"]),
+                        head_commit,
+                        patch_digest,
+                        _json(list(changed_paths)),
+                        patch_text,
+                        result_json,
+                        str(activity["activity_id"]),
+                        stamp,
+                        verification_id,
+                    ),
+                )
+                woken: list[dict[str, Any]] = []
+                if wake:
+                    woken = self._wake_participants_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        activity_id=str(activity["activity_id"]),
+                        participant_ids=wake,
+                        stamp=stamp,
+                    )
+                conn.commit()
+                return {
+                    "verification_id": verification_id,
+                    "status": status,
+                    "activity_id": str(activity["activity_id"]),
+                    "activity_seq": int(activity["seq"]),
+                    "woken_participant_ids": [item["participant_id"] for item in woken],
+                    "escalated": escalated,
+                }
+            except Exception:
+                conn.rollback()
+                raise
+
+    def abandon_board_verification(
+        self,
+        *,
+        verification_id: str,
+        lease_token: str,
+        reason_code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Release a claimed job back to ``pending`` after a transient host error.
+
+        The attempt budget is enforced on the next claim: exhausted jobs become
+        ``error`` there instead of being claimed again.
+        """
+
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise ValueError("room_board_verification_reason_required")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_verification_lease_lost")
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (verification_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_verification_unknown")
+                if str(row["status"]) == "superseded":
+                    conn.commit()
+                    return {"verification_id": verification_id, "status": "dropped"}
+                if str(row["status"]) != "running" or row["lease_token"] != lease_token:
+                    raise ValueError("room_board_verification_lease_lost")
+                conn.execute(
+                    "update room_board_verifications set status = 'pending', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "result_json = ?, updated_at = ? where verification_id = ?",
+                    (
+                        _json({"status": "pending", "reason_code": reason_code}),
+                        stamp,
+                        verification_id,
+                    ),
+                )
+                conn.commit()
+                return {"verification_id": verification_id, "status": "pending"}
+            except Exception:
+                conn.rollback()
+                raise
+
+    def defer_board_verification(
+        self,
+        *,
+        verification_id: str,
+        lease_token: str,
+        providers: list[str],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Defer a claimed job until its provider modules have passed.
+
+        The job returns to ``pending`` without consuming an attempt (the
+        claim's increment is undone), records a waiting ``result_json``, and
+        sets ``not_before`` so the next claim skips it for a short backoff.  No
+        activity is written and nobody is woken.
+        """
+
+        if not isinstance(providers, list) or not providers:
+            raise ValueError("room_board_verification_providers_required")
+        clean_providers = sorted({item for item in providers if isinstance(item, str) and item})
+        if not clean_providers:
+            raise ValueError("room_board_verification_providers_required")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_verification_lease_lost")
+        current, stamp = _current_stamp(now)
+        not_before = _timestamp(current + timedelta(seconds=VERIFICATION_DEFERRAL_DELAY_S))
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (verification_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_verification_unknown")
+                if str(row["status"]) == "superseded":
+                    conn.commit()
+                    return {"verification_id": verification_id, "status": "dropped"}
+                if str(row["status"]) != "running" or row["lease_token"] != lease_token:
+                    raise ValueError("room_board_verification_lease_lost")
+                conn.execute(
+                    "update room_board_verifications set status = 'pending', "
+                    "attempt_count = case when attempt_count > 0 "
+                    "then attempt_count - 1 else 0 end, "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "result_json = ?, not_before = ?, updated_at = ? "
+                    "where verification_id = ?",
+                    (
+                        _json(
+                            {
+                                "status": "pending",
+                                "reason_code": BOARD_VERIFICATION_WAITING_FOR_PROVIDER,
+                                "providers": clean_providers,
+                            }
+                        ),
+                        not_before,
+                        stamp,
+                        verification_id,
+                    ),
+                )
+                conn.commit()
+                return {
+                    "verification_id": verification_id,
+                    "status": "pending",
+                    "not_before": not_before,
+                    "providers": clean_providers,
+                }
             except Exception:
                 conn.rollback()
                 raise
@@ -1766,6 +2631,9 @@ class RoomBoardStore:
 
         with self._connect() as conn:
             charter_map = self._active_charter_owner_map(conn, conversation_id=conversation_id)
+            verification_stats = self._module_verification_stats_conn(
+                conn, conversation_id=conversation_id
+            )
             my_modules: list[dict[str, Any]] = []
             other_modules: list[dict[str, Any]] = []
             for module_id in sorted(charter_map):
@@ -1783,6 +2651,20 @@ class RoomBoardStore:
                             "owner_participant_id": str(info["owner_participant_id"]),
                             "status": str(info["status"]),
                             "charter": body,
+                            "verification": verification_stats.get(module_id)
+                            or {
+                                "status": None,
+                                "verification_id": None,
+                                "reason_code": None,
+                                "result": None,
+                                "head_commit": None,
+                                "changed_paths": [],
+                                "created_at": None,
+                                "done_reports": 0,
+                                "verifications_passed": 0,
+                                "verifications_failed": 0,
+                                "rework_rounds": 0,
+                            },
                         }
                     )
                 else:
@@ -1939,9 +2821,18 @@ class RoomBoardStore:
             latest_progress: dict[str, sqlite3.Row] = {}
             for row in progress_rows:
                 latest_progress[str(row["module_id"])] = row
+            verification_stats = self._module_verification_stats_conn(
+                conn, conversation_id=conversation_id
+            )
+            done_reports: dict[str, int] = {}
+            for candidate in progress_rows:
+                if str(candidate["status"]) == "done":
+                    key = str(candidate["module_id"])
+                    done_reports[key] = done_reports.get(key, 0) + 1
             progress: list[dict[str, Any]] = []
             for module_id in sorted(latest_progress):
                 row = latest_progress[module_id]
+                stats = verification_stats.get(module_id)
                 progress.append(
                     {
                         "progress_id": str(row["progress_id"]),
@@ -1952,6 +2843,19 @@ class RoomBoardStore:
                         "claims": _decode(str(row["claims_json"])),
                         "activity_id": row["activity_id"],
                         "created_at": str(row["created_at"]),
+                        "verification": (
+                            self._browser_verification_summary(stats)
+                            if stats is not None
+                            else {
+                                "status": None,
+                                "verification_id": None,
+                                "reason_code": None,
+                                "done_reports": done_reports.get(module_id, 0),
+                                "verifications_passed": 0,
+                                "verifications_failed": 0,
+                                "rework_rounds": 0,
+                            }
+                        ),
                     }
                 )
             activity_rows = conn.execute(
