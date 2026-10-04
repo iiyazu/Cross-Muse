@@ -49,11 +49,6 @@ from xmuse_core.chat.room_agy_sandbox import (
     write_agy_mcp_config,
 )
 from xmuse_core.chat.room_agy_transport import AgyTransportConfig
-from xmuse_core.chat.room_antigravity_transport import (
-    AntigravityTransportConfig,
-    resolve_antigravity_agentapi_path,
-    resolve_antigravity_brain_dir,
-)
 from xmuse_core.chat.room_codex_native_runtime import (
     run_room_codex_native_loop,
 )
@@ -102,7 +97,6 @@ CODEX_AUTH_FILE_NAME = "auth.json"
 CLAUDE_ACP_FLAG_ENV = "XMUSE_CLAUDE_ACP"
 CLAUDE_ACP_COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
 ANTIGRAVITY_FLAG_ENV = "XMUSE_ANTIGRAVITY"
-ANTIGRAVITY_TRANSPORT_ENV = "XMUSE_ANTIGRAVITY_TRANSPORT"
 OPENCODE_FLAG_ENV = "XMUSE_OPENCODE"
 OPENCODE_MODEL_ENV = "XMUSE_OPENCODE_MODEL"
 # OpenCode Go subscription model; the hosted free variant
@@ -216,9 +210,6 @@ async def run_room_runner(
         for acp_transport in active.acp_transports:
             with suppress(Exception):
                 await acp_transport.aclose()
-        for antigravity_transport in active.antigravity_transports:
-            with suppress(Exception):
-                await antigravity_transport.aclose()
         for agy_transport in active.agy_transports:
             with suppress(Exception):
                 await agy_transport.aclose()
@@ -311,52 +302,32 @@ async def run_room_runner(
                     claude_acp_command,
                 )
 
-            antigravity_config: AntigravityTransportConfig | None = None
             agy_config: AgyTransportConfig | None = None
             agy_executable: Path | None = None
             agy_default_model: str | None = None
             agy_bridge_script: Path | None = None
             agy_python3: Path | None = None
             if antigravity_enabled:
-                antigravity_transport_name = _resolve_antigravity_transport_name()
-                if antigravity_transport_name == "agentapi":
-                    agentapi_path = resolve_antigravity_agentapi_path()
-                    if (executable_resolver or shutil.which)(str(agentapi_path)) is None:
-                        raise RoomRunnerError("room_runner_antigravity_agentapi_unavailable")
-                    if mcp_port != DEFAULT_MCP_PORT:
-                        # Antigravity agents reach the Room through the operator's global
-                        # Antigravity MCP configuration, which pins 127.0.0.1:8100.
-                        raise RoomRunnerError("room_runner_antigravity_mcp_port_required")
-                    antigravity_config = AntigravityTransportConfig(
-                        workspace=resolved_worktree,
-                        agentapi_command=(str(agentapi_path),),
-                        brain_dir=resolve_antigravity_brain_dir(),
-                    )
-                    logger.info(
-                        "Antigravity participant transport enabled agentapi=%s",
-                        agentapi_path,
-                    )
-                else:
-                    (
-                        agy_executable,
-                        agy_default_model,
-                        agy_bridge_script,
-                        agy_python3,
-                    ) = _resolve_agy_paths(executable_resolver=executable_resolver)
-                    agy_config = _agy_config(
-                        root=root,
-                        worktree=resolved_worktree,
-                        room_mcp_url=f"http://{DEFAULT_MCP_HOST}:{mcp_port}{ROOM_MCP_PATH}",
-                        agy_executable=agy_executable,
-                        model=agy_default_model,
-                        bridge_script=agy_bridge_script,
-                        python3=agy_python3,
-                        executable_resolver=executable_resolver,
-                    )
-                    logger.info(
-                        "Antigravity participant transport enabled cli=agy model=%s",
-                        agy_config.default_model,
-                    )
+                (
+                    agy_executable,
+                    agy_default_model,
+                    agy_bridge_script,
+                    agy_python3,
+                ) = _resolve_agy_paths(executable_resolver=executable_resolver)
+                agy_config = _agy_config(
+                    root=root,
+                    worktree=resolved_worktree,
+                    room_mcp_url=f"http://{DEFAULT_MCP_HOST}:{mcp_port}{ROOM_MCP_PATH}",
+                    agy_executable=agy_executable,
+                    model=agy_default_model,
+                    bridge_script=agy_bridge_script,
+                    python3=agy_python3,
+                    executable_resolver=executable_resolver,
+                )
+                logger.info(
+                    "Antigravity participant transport enabled cli=agy model=%s",
+                    agy_config.default_model,
+                )
 
             opencode_acp_config: AcpTransportConfig | None = None
             if opencode_enabled:
@@ -388,7 +359,6 @@ async def run_room_runner(
                     runner_generation=generation,
                     runner_boot_id=boot_id,
                     claude_acp_config=claude_acp_config,
-                    antigravity_config=antigravity_config,
                     agy_config=agy_config,
                     opencode_acp_config=opencode_acp_config,
                     owner_settings=_owner_workspace_write_settings(
@@ -959,20 +929,6 @@ def _resolve_claude_acp_command(
     return command
 
 
-def _resolve_antigravity_transport_name(
-    environ: Mapping[str, str] | None = None,
-) -> str:
-    """Return the Antigravity transport: ``cli`` (default) or ``agentapi`` opt-in."""
-
-    source = os.environ if environ is None else environ
-    raw = str(source.get(ANTIGRAVITY_TRANSPORT_ENV, "") or "").strip().lower()
-    if not raw:
-        return "cli"
-    if raw in ("cli", "agentapi"):
-        return raw
-    raise RoomRunnerError("room_runner_antigravity_transport_invalid")
-
-
 def _resolve_agy_paths(
     *,
     environ: Mapping[str, str] | None = None,
@@ -1204,8 +1160,7 @@ def main_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "admit Antigravity participants through the sandboxed agy CLI transport "
-            "(also enabled by XMUSE_ANTIGRAVITY=1; XMUSE_ANTIGRAVITY_TRANSPORT=agentapi "
-            "selects the legacy agentapi transport)"
+            "(also enabled by XMUSE_ANTIGRAVITY=1)"
         ),
     )
     parser.add_argument(

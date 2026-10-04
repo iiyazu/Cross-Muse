@@ -15,7 +15,7 @@ from xmuse_core.chat.participant_store import ParticipantStore
 AVAILABLE_PROVIDER_CAPABILITIES = {
     "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
     "claude": {"available": True, "enabled": True, "confinement": "client_permission_gated"},
-    "antigravity": {"available": True, "enabled": True, "confinement": "instructed_read_only"},
+    "antigravity": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
     "opencode": {"available": True, "enabled": True, "confinement": "os_read_only_sandbox"},
 }
 
@@ -169,7 +169,7 @@ def test_room_setup_options_mark_templates_with_unavailable_providers(tmp_path: 
                 "antigravity": {
                     "available": False,
                     "enabled": False,
-                    "confinement": "instructed_read_only",
+                    "confinement": "os_read_only_sandbox",
                 },
             },
         )
@@ -210,7 +210,7 @@ def test_room_setup_rejects_unavailable_template_provider_before_writing(
             "antigravity": {
                 "available": False,
                 "enabled": False,
-                "confinement": "instructed_read_only",
+                "confinement": "os_read_only_sandbox",
             },
         },
     )
@@ -258,7 +258,7 @@ def test_room_setup_replay_survives_a_provider_becoming_unavailable(tmp_path: Pa
             "antigravity": {
                 "available": False,
                 "enabled": False,
-                "confinement": "instructed_read_only",
+                "confinement": "os_read_only_sandbox",
             },
         },
     )

@@ -2,7 +2,7 @@
 
 Detection is deliberately safe to project: it reports only availability,
 enablement, and confinement posture per provider kind.  Executable paths,
-language-server addresses, PIDs, and tokens never leave the server.
+PIDs, and tokens never leave the server.
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from xmuse_core.chat.room_acp_transport import ROOM_ACP_CONFINEMENT, ROOM_OPENCODE_CONFINEMENT
-from xmuse_core.chat.room_antigravity_transport import (
-    ROOM_ANTIGRAVITY_CONFINEMENT,
-    discover_antigravity_language_server_env,
-    resolve_antigravity_agentapi_path,
+from xmuse_core.chat.room_agy_sandbox import (
+    AGY_EXECUTABLE_ENV,
+    AGY_MODEL_ENV,
+    ROOM_AGY_READ_ONLY_CONFINEMENT,
+    resolve_agy_executable,
+    resolve_agy_python3,
 )
 from xmuse_core.chat.room_opencode_sandbox import (
     OPENCODE_BWRAP_ENV,
@@ -32,16 +34,14 @@ ROOM_MCP_PINNED_HOST = "127.0.0.1"
 CLAUDE_FLAG_ENV = "XMUSE_CLAUDE_ACP"
 CLAUDE_COMMAND_ENV = "XMUSE_CLAUDE_ACP_COMMAND"
 ANTIGRAVITY_FLAG_ENV = "XMUSE_ANTIGRAVITY"
-ANTIGRAVITY_AGENTAPI_ENV = "XMUSE_ANTIGRAVITY_AGENTAPI"
-ANTIGRAVITY_BRAIN_DIR_ENV = "XMUSE_ANTIGRAVITY_BRAIN_DIR"
 OPENCODE_FLAG_ENV = "XMUSE_OPENCODE"
 OPENCODE_MODEL_ENV = "XMUSE_OPENCODE_MODEL"
 ROOM_RUNNER_PROVIDER_ENV_KEYS = (
     CLAUDE_FLAG_ENV,
     CLAUDE_COMMAND_ENV,
     ANTIGRAVITY_FLAG_ENV,
-    ANTIGRAVITY_AGENTAPI_ENV,
-    ANTIGRAVITY_BRAIN_DIR_ENV,
+    AGY_EXECUTABLE_ENV,
+    AGY_MODEL_ENV,
     OPENCODE_FLAG_ENV,
     OPENCODE_MODEL_ENV,
     OPENCODE_EXECUTABLE_ENV,
@@ -72,7 +72,6 @@ def detect_provider_capabilities(
     *,
     environ: Mapping[str, str] | None = None,
     which: Callable[[str], str | None] = shutil.which,
-    discover_language_server: (Callable[[Mapping[str, str]], Mapping[str, str]] | None) = None,
 ) -> dict[str, dict[str, object]]:
     """Detect one safe capability record per provider kind.
 
@@ -83,16 +82,14 @@ def detect_provider_capabilities(
     """
 
     source = os.environ if environ is None else environ
-    discovery = discover_language_server or discover_antigravity_language_server_env
 
     codex_available = which("codex") is not None and _codex_credentials_present(source)
     claude_available = which("claude") is not None and which("npx") is not None
-    antigravity_available = which(str(resolve_antigravity_agentapi_path(source))) is not None
-    if antigravity_available:
-        try:
-            discovery(source)
-        except Exception:
-            antigravity_available = False
+    antigravity_available = (
+        resolve_agy_executable(source, which) is not None
+        and resolve_bwrap_executable(source, which) is not None
+        and resolve_agy_python3(source, which) is not None
+    )
     # OpenCode runs only inside its read-only bubblewrap sandbox.
     opencode_available = (
         resolve_opencode_executable(source, which) is not None
@@ -118,7 +115,7 @@ def detect_provider_capabilities(
         "antigravity": {
             "available": antigravity_available,
             "enabled": resolved_enabled(ANTIGRAVITY_FLAG_ENV, antigravity_available),
-            "confinement": ROOM_ANTIGRAVITY_CONFINEMENT,
+            "confinement": ROOM_AGY_READ_ONLY_CONFINEMENT,
         },
         "opencode": {
             "available": opencode_available,
