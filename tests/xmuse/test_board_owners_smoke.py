@@ -158,6 +158,9 @@ def test_drill_human_message_is_explicit_fault_injection() -> None:
 
     assert "Fault-injection" in message
     assert "src/api/greeting.py" in message
+    assert "already implemented" in message
+    assert "replace" in message.lower()
+    assert "breaks the contract" in message
     assert "no other files" in message
     assert "WITHOUT running the tests" in message
     assert "status done" in message
@@ -390,12 +393,12 @@ def test_seed_pins_the_v1_contract_protocol() -> None:
         assert dependency in smoke.SEED_PYPROJECT_TOML
 
     by_path = dict(smoke.SEED_FILES)
+    # The charter phase must have real work: implementations are not
+    # pre-written; only package markers and contract tests are seeded.
     assert set(by_path) == {
         "src/api/__init__.py",
-        "src/api/greeting.py",
         "src/api/test_greeting_contract.py",
         "src/client/__init__.py",
-        "src/client/render.py",
         "src/client/test_render_contract.py",
     }
     # The backend contract test pins the v1 protocol from CONTRACT_V1_CONTENT.
@@ -405,4 +408,3 @@ def test_seed_pins_the_v1_contract_protocol() -> None:
         'greet("Ada") == {"message": "Hello, Ada!"}'
         in (by_path["src/api/test_greeting_contract.py"])
     )
-    assert 'Hello, {name}!"' in by_path["src/api/greeting.py"]

@@ -18,6 +18,7 @@ from xmuse_core.chat.room_board import (
     RoomBoardStore,
     charter_outside_paths,
     charter_path_allowed,
+    split_dependency_cycle,
 )
 from xmuse_core.chat.room_board_view import materialize_owner_board_view
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
@@ -119,7 +120,7 @@ def _split_payload(members, *, paths: list[str] | None = None):
             "title": "Alpha module",
             "paths": charter_paths,
             "provides": ["api.alpha"],
-            "depends": ["api.beta"],
+            "depends": [],
             "acceptance": ["alpha works"],
             "report_to": lead.participant_id,
         },
@@ -959,3 +960,475 @@ def test_owner_prompt_describes_host_verification() -> None:
 
     assert "commit before reporting done" in prompt
     assert "failed verification" in prompt
+
+
+# ---------------------------------------------------------------------------
+# dependency-aware verification (M1.1)
+# ---------------------------------------------------------------------------
+
+
+def _stack_board(tmp_path: Path, *, home_name: str = "home-stack"):
+    db_parent = tmp_path / home_name
+    db_parent.mkdir(parents=True, exist_ok=True)
+    db = db_parent / "chat.db"
+    conversation = RoomTestStore(db).create_conversation("board room")
+    participants = ParticipantStore(db)
+    members = [
+        participants.add(
+            conversation_id=conversation.id,
+            role=f"role-{index}",
+            display_name=f"Agent {index}",
+            cli_kind="codex",
+            model="gpt-5",
+        )
+        for index in range(3)
+    ]
+    with RoomDatabase(db).connect() as conn:
+        write_room_collaboration_policy_conn(
+            conn,
+            conversation_id=conversation.id,
+            mode="broadcast",
+            lead_participant_id=members[0].participant_id,
+            updated_at="2026-01-01T00:00:00.000000Z",
+        )
+        conn.commit()
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation.id,
+        human_id="human",
+        content="kickoff",
+        client_request_id="kickoff",
+    )
+    return db, conversation.id, members
+
+
+def _stack_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    backend_paths: list[str] | None = None,
+    frontend_paths: list[str] | None = None,
+    home_name: str = "home-stack",
+    source_name: str = "source-stack",
+):
+    db, conversation_id, members = _stack_board(tmp_path, home_name=home_name)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    obs_backend = _claim(db, conversation_id, members[1], owner="host-b")
+    obs_frontend = _claim(db, conversation_id, members[2], owner="host-f")
+    modules = [
+        {
+            "module_id": "backend",
+            "title": "Backend API",
+            "paths": backend_paths or ["src/api/**"],
+            "provides": ["api.greeting"],
+            "depends": [],
+            "acceptance": ["backend works"],
+            "report_to": members[0].participant_id,
+        },
+        {
+            "module_id": "frontend",
+            "title": "Frontend client",
+            "paths": frontend_paths or ["src/client/**"],
+            "provides": [],
+            "depends": ["api.greeting"],
+            "acceptance": ["frontend works"],
+            "report_to": members[0].participant_id,
+        },
+    ]
+    assignments = {
+        "backend": members[1].participant_id,
+        "frontend": members[2].participant_id,
+    }
+    contracts = [
+        {
+            "contract_id": "api.greeting",
+            "provider_module_id": "backend",
+            "kind": "protocol",
+            "content": "greet v1",
+            "rationale": "initial",
+        }
+    ]
+    proposed = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="propose-1"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    home = tmp_path / home_name
+    source = _source_repo(tmp_path / source_name)
+    clones_root = home / "runtime" / "owner-clones"
+    manager = OwnerCloneManager(clones_root)
+    backend_clone = manager.ensure(
+        source, owner_id_for_participant(conversation_id, members[1].participant_id)
+    )
+    frontend_clone = manager.ensure(
+        source, owner_id_for_participant(conversation_id, members[2].participant_id)
+    )
+    worker = _stubbed_worker(
+        monkeypatch,
+        db_path=db,
+        clones_root=clones_root,
+        xmuse_root=home,
+        execution_root=source,
+        execution_profile_id="python-uv/v1",
+    )
+    return {
+        "db": db,
+        "conversation_id": conversation_id,
+        "members": members,
+        "store": store,
+        "source": source,
+        "backend_clone": backend_clone,
+        "frontend_clone": frontend_clone,
+        "worker": worker,
+        "leases": {
+            members[1].participant_id: obs_backend,
+            members[2].participant_id: obs_frontend,
+        },
+    }
+
+
+def _report_module_done(
+    ctx, member_index: int, module_id: str, request_id: str, *, now: datetime = NOW
+) -> dict[str, Any]:
+    members = ctx["members"]
+    owner = members[member_index]
+    kwargs = _lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id=request_id)
+    kwargs["now"] = now
+    return ctx["store"].report_progress(
+        **kwargs,
+        module_id=module_id,
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+
+
+def _verification_activities(db: Path) -> list[dict[str, Any]]:
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        rows = conn.execute(
+            "select * from room_activities where activity_type = 'board.verification'"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def test_provider_modules_resolve_from_latest_contracts(tmp_path: Path) -> None:
+    # Build a lightweight board without clones to exercise the store helper.
+    db, conversation_id, members = _stack_board(tmp_path, home_name="home-prov")
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members, paths=["src/alpha/**"])
+    proposed = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="propose-1"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    # beta depends on api.alpha (provided by alpha); alpha depends on nothing.
+    assert store.provider_modules_for_module(conversation_id, "alpha") == []
+    assert store.provider_modules_for_module(conversation_id, "beta") == ["alpha"]
+
+
+def test_upstream_modules_walk_chains_and_diamonds() -> None:
+    edges = {"c": ["a", "b"], "b": ["a"], "a": [], "d": ["c"]}
+
+    class _Store:
+        def provider_modules_for_module(self, _conversation_id: str, module_id: str):
+            return edges[module_id]
+
+    store: Any = _Store()
+    assert verification.upstream_modules(store, "room", "d") == ["a", "b", "c"]
+    assert verification.upstream_modules(store, "room", "c") == ["a", "b"]
+    assert verification.upstream_modules(store, "room", "a") == []
+
+
+def test_patch_text_paths_reads_only_own_headers() -> None:
+    text = (
+        "diff --git a/src/b/x.py b/src/b/x.py\n--- a/src/b/x.py\n+++ b/src/b/x.py\n"
+        "@@ -1 +1 @@\n-a\n+b\n"
+        "diff --git a/src/b/old.py b/src/b/new.py\nrename from src/b/old.py\n"
+    )
+
+    assert verification.patch_text_paths(text) == [
+        "src/b/new.py",
+        "src/b/old.py",
+        "src/b/x.py",
+    ]
+    # Diamond: b's own patch and a's patch do not overlap even though b's
+    # recorded verification paths include a's files.
+    assert verification.find_overlapping_paths([["src/a/y.py"], ["src/b/x.py"]]) == []
+
+
+def test_split_dependency_cycle_is_detected() -> None:
+    contracts = [
+        {"contract_id": "api.a", "provider_module_id": "a"},
+        {"contract_id": "api.b", "provider_module_id": "b"},
+        {"contract_id": "api.c", "provider_module_id": "c"},
+    ]
+    acyclic = [
+        {"module_id": "a", "depends": []},
+        {"module_id": "b", "depends": ["api.a"]},
+        {"module_id": "c", "depends": ["api.a", "api.b"]},
+    ]
+    cyclic = [
+        {"module_id": "a", "depends": ["api.c"]},
+        {"module_id": "b", "depends": ["api.a"]},
+        {"module_id": "c", "depends": ["api.b"]},
+    ]
+
+    assert split_dependency_cycle(acyclic, contracts) is None
+    assert split_dependency_cycle(cyclic, contracts) == ["a", "c", "b", "a"]
+
+
+def test_cyclic_split_is_rejected(tmp_path: Path) -> None:
+    db, conversation_id, members = _stack_board(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    modules[0]["depends"] = ["api.beta"]
+
+    with pytest.raises(ValueError, match="room_board_split_dependency_cycle"):
+        store.propose_split(
+            **_lease_kwargs(members[0], lead_obs, request_id="propose-cycle"),
+            modules=modules,
+            assignments=assignments,
+            contracts=contracts,
+        )
+
+
+def test_frontend_stacks_backend_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _stack_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    backend_head = _commit_in_clone(
+        ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1"
+    )
+    _report_module_done(ctx, 1, "backend", "done-b1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+
+    captured: dict[str, Any] = {}
+
+    def _capturing_gate(layout: Any, gate_id: str) -> GateResult:
+        stage = Path(str(layout.stage))
+        captured["greeting"] = (stage / "src/api/greeting.py").read_text(encoding="utf-8")
+        captured["render"] = (stage / "src/client/render.py").read_text(encoding="utf-8")
+        return _passing_gate(gate_id)
+
+    monkeypatch.setattr(verification, "run_gate", _capturing_gate)
+    frontend_head = _commit_in_clone(
+        ctx["frontend_clone"].path, "src/client/render.py", "RENDER = 1\n", "frontend v1"
+    )
+    _report_module_done(ctx, 2, "frontend", "done-f1")
+
+    result = ctx["worker"].reconcile_once()
+
+    assert result["board_verifications_passed"] == 1
+    assert captured["greeting"] == "GREET = 1\n"
+    assert captured["render"] == "RENDER = 1\n"
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        row = conn.execute(
+            "select * from room_board_verifications where module_id = 'frontend'"
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "passed"
+        assert row["head_commit"] == frontend_head
+        assert row["patch_text"] is not None
+        assert "RENDER" in str(row["patch_text"])
+        result_json = json.loads(str(row["result_json"]))
+    assert result_json["stacked"] == [
+        {
+            "module_id": "backend",
+            "verification_id": result_json["stacked"][0]["verification_id"],
+            "head_commit": backend_head,
+        }
+    ]
+    activities = _verification_activities(ctx["db"])
+    assert activities
+    payload = json.loads(str(activities[-1]["payload_json"]))
+    assert payload["module_id"] == "frontend"
+    assert payload["stacked"] == result_json["stacked"]
+    # The stage ran with both files; the recorded paths are the combined set.
+    assert sorted(result_json["changed_paths"]) == [
+        "src/api/greeting.py",
+        "src/client/render.py",
+    ]
+
+
+def test_frontend_defers_until_backend_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _stack_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    t0 = NOW
+    t1 = t0 + timedelta(seconds=5)
+    t2 = t0 + timedelta(seconds=60)
+    _commit_in_clone(
+        ctx["frontend_clone"].path, "src/client/render.py", "RENDER = 1\n", "frontend v1"
+    )
+    frontend_report = _report_module_done(ctx, 2, "frontend", "done-f1", now=t0)
+    before_activities = len(_verification_activities(ctx["db"]))
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        obs_before = conn.execute("select count(*) from room_observations").fetchone()[0]
+
+    deferred = ctx["worker"].reconcile_once(now=t0)
+
+    assert deferred["board_verifications_claimed"] == 1
+    assert deferred["board_verifications_passed"] == 0
+    assert deferred["board_verifications_failed"] == 0
+    row = _verification_row(ctx["db"], frontend_report["verification_id"])
+    assert row["status"] == "pending"
+    assert int(row["attempt_count"]) == 0
+    assert row["not_before"] is not None
+    waiting = json.loads(str(row["result_json"]))
+    assert waiting["status"] == "pending"
+    assert waiting["reason_code"] == "board_verification_waiting_for_provider"
+    assert waiting["providers"] == ["backend"]
+    # A deferral writes no activity and wakes nobody.
+    assert len(_verification_activities(ctx["db"])) == before_activities
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        obs_after = conn.execute("select count(*) from room_observations").fetchone()[0]
+    assert obs_after == obs_before
+    projected = ctx["store"].board_projection(conversation_id=ctx["conversation_id"])
+    entry = next(item for item in projected["progress"] if item["module_id"] == "frontend")
+    assert entry["verification"]["status"] == "pending"
+    assert entry["verification"]["reason_code"] == "board_verification_waiting_for_provider"
+
+    # The backend passes while the frontend waits.
+    _commit_in_clone(ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1")
+    _report_module_done(ctx, 1, "backend", "done-b1", now=t1)
+    backend_result = ctx["worker"].reconcile_once(now=t1)
+    assert backend_result["board_verifications_passed"] == 1
+
+    final = ctx["worker"].reconcile_once(now=t2)
+    assert final["board_verifications_passed"] == 1
+    row = _verification_row(ctx["db"], frontend_report["verification_id"])
+    assert row["status"] == "passed"
+
+
+def test_newer_backend_pending_defers_frontend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _stack_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    t0 = NOW
+    t1 = NOW + timedelta(seconds=60)
+    t2 = NOW + timedelta(seconds=120)
+    _commit_in_clone(ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1")
+    _report_module_done(ctx, 1, "backend", "done-b1", now=t0)
+    assert ctx["worker"].reconcile_once(now=t0)["board_verifications_passed"] == 1
+
+    _commit_in_clone(
+        ctx["frontend_clone"].path, "src/client/render.py", "RENDER = 1\n", "frontend v1"
+    )
+    frontend_report = _report_module_done(ctx, 2, "frontend", "done-f1", now=t1)
+    _commit_in_clone(ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 2\n", "backend v2")
+    _report_module_done(ctx, 1, "backend", "done-b2", now=t1 + timedelta(seconds=5))
+
+    deferred = ctx["worker"].reconcile_once(now=t2)
+    assert deferred["board_verifications_claimed"] == 1
+    row = _verification_row(ctx["db"], frontend_report["verification_id"])
+    assert row["status"] == "pending"
+    waiting = json.loads(str(row["result_json"]))
+    assert waiting["reason_code"] == "board_verification_waiting_for_provider"
+    assert waiting["providers"] == ["backend"]
+
+
+def test_deferred_job_does_not_block_next_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _stack_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    t0 = NOW
+    t1 = t0 + timedelta(seconds=5)
+    _commit_in_clone(
+        ctx["frontend_clone"].path, "src/client/render.py", "RENDER = 1\n", "frontend v1"
+    )
+    _report_module_done(ctx, 2, "frontend", "done-f1", now=t0)
+    assert ctx["worker"].reconcile_once(now=t0)["board_verifications_deferred"] == 1
+
+    _commit_in_clone(ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1")
+    backend_report = _report_module_done(ctx, 1, "backend", "done-b1", now=t1)
+    claimed = ctx["store"].claim_next_board_verification(worker_id="w1", now=t1)
+    assert claimed is not None
+    assert claimed["verification_id"] == backend_report["verification_id"]
+
+
+def test_overlapping_provider_paths_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _stack_fixture(
+        tmp_path,
+        monkeypatch,
+        backend_paths=["src/api/**", "src/shared/**"],
+        frontend_paths=["src/client/**", "src/shared/**"],
+        home_name="home-overlap",
+        source_name="source-overlap",
+    )
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    _commit_in_clone(
+        ctx["backend_clone"].path, "src/shared/common.py", "BACKEND = 1\n", "backend shared"
+    )
+    _report_module_done(ctx, 1, "backend", "done-b1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+
+    _commit_in_clone(
+        ctx["frontend_clone"].path,
+        "src/shared/common.py",
+        "FRONTEND = 1\n",
+        "frontend shared",
+    )
+    frontend_report = _report_module_done(ctx, 2, "frontend", "done-f1")
+    result = ctx["worker"].reconcile_once()
+    assert result["board_verifications_failed"] == 1
+    row = _verification_row(ctx["db"], frontend_report["verification_id"])
+    assert row["status"] == "failed"
+    outcome = json.loads(str(row["result_json"]))
+    assert outcome["reason_code"] == "board_verification_dependency_overlap"
+    assert outcome["evidence"]["overlapping_paths"] == ["src/shared/common.py"]
+
+
+def test_stacked_list_in_result_and_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _stack_fixture(
+        tmp_path,
+        monkeypatch,
+        home_name="home-stacked",
+        source_name="source-stacked",
+    )
+    monkeypatch.setattr(verification, "run_gate", lambda _layout, gate_id: _passing_gate(gate_id))
+    backend_head = _commit_in_clone(
+        ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "backend v1"
+    )
+    _report_module_done(ctx, 1, "backend", "done-b1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        backend_row = conn.execute(
+            "select * from room_board_verifications where module_id = 'backend'"
+        ).fetchone()
+    backend_vid = str(backend_row["verification_id"])
+
+    _commit_in_clone(
+        ctx["frontend_clone"].path, "src/client/render.py", "RENDER = 1\n", "frontend v1"
+    )
+    frontend_report = _report_module_done(ctx, 2, "frontend", "done-f1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+
+    row = _verification_row(ctx["db"], frontend_report["verification_id"])
+    result_json = json.loads(str(row["result_json"]))
+    assert result_json["stacked"] == [
+        {"module_id": "backend", "verification_id": backend_vid, "head_commit": backend_head}
+    ]
+    activities = _verification_activities(ctx["db"])
+    payload = json.loads(str(activities[-1]["payload_json"]))
+    assert payload["module_id"] == "frontend"
+    assert payload["stacked"] == result_json["stacked"]

@@ -117,6 +117,8 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
                head_commit text,
                patch_digest text,
                changed_paths_json text not null default '[]',
+               patch_text text,
+               not_before text,
                result_json text,
                activity_id text references room_activities(activity_id),
                created_at text not null,

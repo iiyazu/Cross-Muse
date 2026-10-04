@@ -38,6 +38,11 @@ MAX_CONTRACT_CONTENT_BYTES = 65536
 MAX_VERIFICATION_ATTEMPTS = 3
 VERIFICATION_LEASE_TTL_S = 1800
 VERIFICATION_STATUSES = ("pending", "running", "passed", "failed", "superseded", "error")
+BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
+BOARD_VERIFICATION_BASE_MISMATCH = "board_verification_base_mismatch"
+BOARD_VERIFICATION_DEPENDENCY_OVERLAP = "board_verification_dependency_overlap"
+VERIFICATION_DEFERRAL_DELAY_S = 15
+MAX_VERIFICATION_PATCH_BYTES = 200_000
 
 MODULE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
@@ -90,6 +95,53 @@ def charter_outside_paths(changed_paths: Sequence[str], patterns: Sequence[str])
     """Return the changed paths that fall outside the charter ``paths`` globs."""
 
     return [path for path in changed_paths if not charter_path_allowed(path, patterns)]
+
+
+def split_dependency_cycle(
+    modules: Sequence[dict[str, Any]], contracts: Sequence[dict[str, Any]]
+) -> list[str] | None:
+    """Return one module dependency cycle in a split, or None when it is acyclic.
+
+    A module depends on the provider module of every contract in its charter
+    ``depends``.  Verification stacks providers' verified work under their
+    dependents, so a cycle would leave every module in it waiting on another
+    forever; a shared interface belongs in a module of its own.
+    """
+
+    provider_of = {str(spec["contract_id"]): str(spec["provider_module_id"]) for spec in contracts}
+    edges: dict[str, list[str]] = {}
+    for charter in modules:
+        module_id = str(charter["module_id"])
+        edges[module_id] = sorted(
+            {
+                provider_of[contract_id]
+                for contract_id in charter.get("depends", [])
+                if contract_id in provider_of and provider_of[contract_id] != module_id
+            }
+        )
+    state: dict[str, int] = {}  # 1 = on the current path, 2 = done
+    path: list[str] = []
+
+    def visit(module_id: str) -> list[str] | None:
+        state[module_id] = 1
+        path.append(module_id)
+        for provider in edges.get(module_id, []):
+            if state.get(provider) == 1:
+                return [*path[path.index(provider) :], provider]
+            if provider not in state:
+                found = visit(provider)
+                if found is not None:
+                    return found
+        path.pop()
+        state[module_id] = 2
+        return None
+
+    for module_id in sorted(edges):
+        if module_id not in state:
+            found = visit(module_id)
+            if found is not None:
+                return found
+    return None
 
 
 def normalize_charter(value: Any) -> dict[str, Any]:
@@ -801,6 +853,9 @@ class RoomBoardStore:
                     for spec in normalized_contracts
                 ):
                     raise ValueError("room_board_contract_missing")
+        cycle = split_dependency_cycle(normalized_modules, normalized_contracts)
+        if cycle is not None:
+            raise ValueError(f"room_board_split_dependency_cycle: {' -> '.join(cycle)}")
         fingerprint = sha256(
             _json(
                 {
@@ -1711,6 +1766,7 @@ class RoomBoardStore:
 
     @staticmethod
     def _verification_view(row: sqlite3.Row) -> dict[str, Any]:
+        mapping = dict(row)
         return {
             "verification_id": str(row["verification_id"]),
             "conversation_id": str(row["conversation_id"]),
@@ -1728,6 +1784,7 @@ class RoomBoardStore:
             "activity_id": row["activity_id"],
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
+            "not_before": mapping.get("not_before"),
         }
 
     @staticmethod
@@ -1824,6 +1881,104 @@ class RoomBoardStore:
                 "report_to": report_to if isinstance(report_to, str) else None,
             }
 
+    def provider_modules_for_module(self, conversation_id: str, module_id: str) -> list[str]:
+        """Return sorted provider module ids for one module's charter ``depends``.
+
+        Each entry is the ``provider_module_id`` of the latest version of a
+        contract listed in the module's current charter ``depends``, excluding
+        the module itself.  Contracts with no versions yet contribute nothing.
+        """
+
+        with self._connect() as conn:
+            return self._provider_modules_conn(
+                conn, conversation_id=conversation_id, module_id=module_id
+            )
+
+    @staticmethod
+    def _provider_modules_conn(
+        conn: sqlite3.Connection, *, conversation_id: str, module_id: str
+    ) -> list[str]:
+        charter = RoomBoardStore._current_charter_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        if charter is None:
+            return []
+        body = _decode(str(charter["charter_json"]))
+        depends = body.get("depends", []) if isinstance(body, dict) else []
+        providers: set[str] = set()
+        for contract_id in depends if isinstance(depends, list) else []:
+            if not isinstance(contract_id, str) or not contract_id:
+                continue
+            latest = RoomBoardStore._latest_contract_conn(
+                conn, conversation_id=conversation_id, contract_id=contract_id
+            )
+            if latest is None:
+                continue
+            provider = str(latest["provider_module_id"])
+            if provider and provider != module_id:
+                providers.add(provider)
+        return sorted(providers)
+
+    def latest_passed_board_verification(
+        self, conversation_id: str, module_id: str
+    ) -> dict[str, Any] | None:
+        """Return the latest ``passed`` verification for one module, if any."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from room_board_verifications where conversation_id = ? "
+                "and module_id = ? order by created_at, verification_id",
+                (conversation_id, module_id),
+            ).fetchall()
+        latest: dict[str, Any] | None = None
+        for row in rows:
+            if str(row["status"]) != "passed":
+                continue
+            mapping = dict(row)
+            result = _decode(mapping.get("result_json")) if mapping.get("result_json") else None
+            base_commit = None
+            if isinstance(result, dict):
+                raw_base = result.get("base_commit")
+                if isinstance(raw_base, str) and raw_base:
+                    base_commit = raw_base
+            changed = _decode(str(mapping.get("changed_paths_json") or "[]"))
+            latest = {
+                "verification_id": str(mapping["verification_id"]),
+                "module_id": str(mapping["module_id"]),
+                "head_commit": mapping["head_commit"],
+                "patch_digest": mapping["patch_digest"],
+                "patch_text": mapping.get("patch_text"),
+                "changed_paths": list(changed) if isinstance(changed, list) else [],
+                "base_commit": base_commit,
+                "created_at": str(mapping["created_at"]),
+                "result": result,
+            }
+        return latest
+
+    def has_newer_unresolved_verification(
+        self,
+        conversation_id: str,
+        module_id: str,
+        *,
+        after_created_at: str,
+        after_verification_id: str,
+    ) -> bool:
+        """Return True when a ``pending``/``running`` job is newer than a pass."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "select 1 from room_board_verifications where conversation_id = ? "
+                "and module_id = ? and status in ('pending', 'running') "
+                "and (created_at, verification_id) > (?, ?) limit 1",
+                (
+                    conversation_id,
+                    module_id,
+                    after_created_at,
+                    after_verification_id,
+                ),
+            ).fetchone()
+            return row is not None
+
     def claim_next_board_verification(
         self,
         *,
@@ -1882,7 +2037,9 @@ class RoomBoardStore:
                 )
                 row = conn.execute(
                     "select * from room_board_verifications where status = 'pending' "
-                    "order by created_at, verification_id limit 1"
+                    "and (not_before is null or not_before <= ?) "
+                    "order by created_at, verification_id limit 1",
+                    (stamp,),
                 ).fetchone()
                 if row is None:
                     conn.commit()
@@ -1928,6 +2085,9 @@ class RoomBoardStore:
         gates: list[dict[str, Any]],
         evidence: dict[str, Any] | None,
         now: datetime | None = None,
+        patch_text: str | None = None,
+        stacked: list[dict[str, Any]] | None = None,
+        base_commit: str | None = None,
     ) -> dict[str, Any]:
         """Record a terminal verification result with a ``board.verification`` activity.
 
@@ -1975,6 +2135,41 @@ class RoomBoardStore:
         clean_evidence = dict(evidence) if evidence is not None else {}
         if len(_json(clean_evidence).encode("utf-8")) > 8192:
             raise ValueError("room_board_verification_evidence_too_large")
+        if patch_text is not None:
+            if not isinstance(patch_text, str) or not patch_text.strip():
+                raise ValueError("room_board_verification_patch_invalid")
+            if len(patch_text.encode("utf-8")) > MAX_VERIFICATION_PATCH_BYTES:
+                raise ValueError("room_board_verification_patch_too_large")
+        clean_stacked: list[dict[str, Any]] = []
+        if stacked is not None:
+            if not isinstance(stacked, list):
+                raise ValueError("room_board_verification_stacked_invalid")
+            for entry in stacked:
+                if not isinstance(entry, dict):
+                    raise ValueError("room_board_verification_stacked_invalid")
+                module = entry.get("module_id")
+                vid = entry.get("verification_id")
+                head = entry.get("head_commit")
+                if (
+                    not isinstance(module, str)
+                    or not module
+                    or not isinstance(vid, str)
+                    or not vid
+                    or not isinstance(head, str)
+                    or not head
+                ):
+                    raise ValueError("room_board_verification_stacked_invalid")
+                clean_stacked.append(
+                    {
+                        "module_id": module,
+                        "verification_id": vid,
+                        "head_commit": head,
+                    }
+                )
+        if base_commit is not None and (
+            not isinstance(base_commit, str) or not base_commit.strip()
+        ):
+            raise ValueError("room_board_verification_base_invalid")
         if not isinstance(lease_token, str) or not lease_token:
             raise ValueError("room_board_verification_lease_lost")
         _, stamp = _current_stamp(now)
@@ -2099,6 +2294,7 @@ class RoomBoardStore:
                     "changed_paths": list(changed_paths),
                     "gates": clean_gates,
                     "evidence": clean_evidence,
+                    "stacked": clean_stacked,
                 }
                 activity = self._insert_board_activity_conn(
                     conn,
@@ -2122,12 +2318,16 @@ class RoomBoardStore:
                         "changed_paths": list(changed_paths),
                         "gates": clean_gates,
                         "evidence": clean_evidence,
+                        "stacked": clean_stacked,
+                        "base_commit": base_commit,
                     }
                 )
                 conn.execute(
                     "update room_board_verifications set status = ?, attempt_count = ?, "
                     "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "not_before = null, "
                     "head_commit = ?, patch_digest = ?, changed_paths_json = ?, "
+                    "patch_text = coalesce(?, patch_text), "
                     "result_json = ?, activity_id = ?, updated_at = ? "
                     "where verification_id = ?",
                     (
@@ -2136,6 +2336,7 @@ class RoomBoardStore:
                         head_commit,
                         patch_digest,
                         _json(list(changed_paths)),
+                        patch_text,
                         result_json,
                         str(activity["activity_id"]),
                         stamp,
@@ -2209,6 +2410,76 @@ class RoomBoardStore:
                 )
                 conn.commit()
                 return {"verification_id": verification_id, "status": "pending"}
+            except Exception:
+                conn.rollback()
+                raise
+
+    def defer_board_verification(
+        self,
+        *,
+        verification_id: str,
+        lease_token: str,
+        providers: list[str],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Defer a claimed job until its provider modules have passed.
+
+        The job returns to ``pending`` without consuming an attempt (the
+        claim's increment is undone), records a waiting ``result_json``, and
+        sets ``not_before`` so the next claim skips it for a short backoff.  No
+        activity is written and nobody is woken.
+        """
+
+        if not isinstance(providers, list) or not providers:
+            raise ValueError("room_board_verification_providers_required")
+        clean_providers = sorted({item for item in providers if isinstance(item, str) and item})
+        if not clean_providers:
+            raise ValueError("room_board_verification_providers_required")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_verification_lease_lost")
+        current, stamp = _current_stamp(now)
+        not_before = _timestamp(current + timedelta(seconds=VERIFICATION_DEFERRAL_DELAY_S))
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (verification_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_verification_unknown")
+                if str(row["status"]) == "superseded":
+                    conn.commit()
+                    return {"verification_id": verification_id, "status": "dropped"}
+                if str(row["status"]) != "running" or row["lease_token"] != lease_token:
+                    raise ValueError("room_board_verification_lease_lost")
+                conn.execute(
+                    "update room_board_verifications set status = 'pending', "
+                    "attempt_count = case when attempt_count > 0 "
+                    "then attempt_count - 1 else 0 end, "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "result_json = ?, not_before = ?, updated_at = ? "
+                    "where verification_id = ?",
+                    (
+                        _json(
+                            {
+                                "status": "pending",
+                                "reason_code": BOARD_VERIFICATION_WAITING_FOR_PROVIDER,
+                                "providers": clean_providers,
+                            }
+                        ),
+                        not_before,
+                        stamp,
+                        verification_id,
+                    ),
+                )
+                conn.commit()
+                return {
+                    "verification_id": verification_id,
+                    "status": "pending",
+                    "not_before": not_before,
+                    "providers": clean_providers,
+                }
             except Exception:
                 conn.rollback()
                 raise

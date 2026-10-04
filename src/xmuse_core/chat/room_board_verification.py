@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from xmuse_core.chat.room_board import (
+    BOARD_VERIFICATION_BASE_MISMATCH,
+    BOARD_VERIFICATION_DEPENDENCY_OVERLAP,
+    BOARD_VERIFICATION_WAITING_FOR_PROVIDER,
     MAX_VERIFICATION_ATTEMPTS,
     VERIFICATION_LEASE_TTL_S,
     RoomBoardStore,
@@ -81,6 +84,14 @@ class BoardVerificationTransientError(RuntimeError):
         super().__init__(code)
 
 
+class BoardVerificationDeferred(RuntimeError):
+    """A provider module is not ready: defer the job without an attempt."""
+
+    def __init__(self, providers: list[str]) -> None:
+        self.providers = sorted({str(item) for item in providers if item})
+        super().__init__(BOARD_VERIFICATION_WAITING_FOR_PROVIDER)
+
+
 @dataclass(frozen=True)
 class BoardVerificationOutcome:
     status: str
@@ -90,6 +101,9 @@ class BoardVerificationOutcome:
     changed_paths: tuple[str, ...]
     gates: tuple[dict[str, Any], ...]
     evidence: dict[str, Any]
+    stacked: tuple[dict[str, Any], ...] = ()
+    patch_text: str | None = None
+    base_commit: str | None = None
 
 
 def _failed(
@@ -100,6 +114,9 @@ def _failed(
     changed_paths: tuple[str, ...] = (),
     gates: tuple[dict[str, Any], ...] = (),
     evidence: dict[str, Any] | None = None,
+    stacked: tuple[dict[str, Any], ...] = (),
+    patch_text: str | None = None,
+    base_commit: str | None = None,
 ) -> BoardVerificationOutcome:
     return BoardVerificationOutcome(
         status="failed",
@@ -109,7 +126,59 @@ def _failed(
         changed_paths=changed_paths,
         gates=gates,
         evidence=dict(evidence) if evidence is not None else {},
+        stacked=stacked,
+        patch_text=patch_text,
+        base_commit=base_commit,
     )
+
+
+def combine_verification_patches(patches: list[str]) -> str:
+    """Combine provider patches and the dependent patch into one diff."""
+
+    parts: list[str] = []
+    for patch in patches:
+        if not patch:
+            continue
+        text = patch if patch.endswith("\n") else patch + "\n"
+        parts.append(text)
+    return "".join(parts)
+
+
+def patch_text_paths(patch_text: str) -> list[str]:
+    """Return the sorted paths named by ``diff --git`` headers of one patch."""
+
+    paths: set[str] = set()
+    for line in patch_text.splitlines():
+        if not line.startswith("diff --git a/"):
+            continue
+        old, separator, new = line[len("diff --git a/") :].partition(" b/")
+        if separator:
+            paths.update(item for item in (old, new) if item)
+    return sorted(paths)
+
+
+def upstream_modules(store: RoomBoardStore, conversation_id: str, module_id: str) -> list[str]:
+    """Return every module ``module_id`` transitively depends on, sorted."""
+
+    seen: set[str] = set()
+    frontier = [module_id]
+    while frontier:
+        current = frontier.pop()
+        for provider in store.provider_modules_for_module(conversation_id, current):
+            if provider != module_id and provider not in seen:
+                seen.add(provider)
+                frontier.append(provider)
+    return sorted(seen)
+
+
+def find_overlapping_paths(path_groups: list[list[str]]) -> list[str]:
+    """Return sorted paths touched by more than one stacked patch."""
+
+    counts: dict[str, int] = {}
+    for group in path_groups:
+        for path in sorted(set(group)):
+            counts[path] = counts.get(path, 0) + 1
+    return sorted(path for path, total in counts.items() if total > 1)
 
 
 class RoomBoardVerificationWorker:
@@ -161,11 +230,27 @@ class RoomBoardVerificationWorker:
                 "board_verifications_failed": 0,
                 "board_verifications_dropped": 0,
                 "board_verifications_abandoned": 0,
+                "board_verifications_deferred": 0,
             }
         verification_id = str(claimed["verification_id"])
         lease_token = str(claimed["lease_token"])
         try:
             outcome = self._verify_claim(claimed)
+        except BoardVerificationDeferred as exc:
+            store.defer_board_verification(
+                verification_id=verification_id,
+                lease_token=lease_token,
+                providers=list(exc.providers),
+                now=now,
+            )
+            return {
+                "board_verifications_claimed": 1,
+                "board_verifications_passed": 0,
+                "board_verifications_failed": 0,
+                "board_verifications_dropped": 0,
+                "board_verifications_abandoned": 0,
+                "board_verifications_deferred": 1,
+            }
         except BoardVerificationTransientError as exc:
             store.abandon_board_verification(
                 verification_id=verification_id,
@@ -179,6 +264,7 @@ class RoomBoardVerificationWorker:
                 "board_verifications_failed": 0,
                 "board_verifications_dropped": 0,
                 "board_verifications_abandoned": 1,
+                "board_verifications_deferred": 0,
             }
         result = store.complete_board_verification(
             verification_id=verification_id,
@@ -191,6 +277,9 @@ class RoomBoardVerificationWorker:
             gates=[dict(item) for item in outcome.gates],
             evidence=dict(outcome.evidence),
             now=now,
+            patch_text=outcome.patch_text,
+            stacked=[dict(item) for item in outcome.stacked],
+            base_commit=outcome.base_commit,
         )
         terminal = str(result["status"])
         return {
@@ -199,6 +288,7 @@ class RoomBoardVerificationWorker:
             "board_verifications_failed": 1 if terminal == "failed" else 0,
             "board_verifications_dropped": 1 if terminal == "dropped" else 0,
             "board_verifications_abandoned": 0,
+            "board_verifications_deferred": 0,
         }
 
     def _verify_claim(self, claimed: Mapping[str, Any]) -> BoardVerificationOutcome:
@@ -230,17 +320,110 @@ class RoomBoardVerificationWorker:
             if exc.code in _TRANSIENT_CLONE_CODES:
                 raise BoardVerificationTransientError(exc.code) from exc
             return _failed(exc.code)
-        changed = tuple(sorted(set(patch.changed_paths)))
-        patch_digest = f"sha256:{sha256(patch.unified_diff.encode('utf-8')).hexdigest()}"
-        outside = charter_outside_paths(changed, patterns)
+        own_changed = tuple(sorted(set(patch.changed_paths)))
+        own_digest = f"sha256:{sha256(patch.unified_diff.encode('utf-8')).hexdigest()}"
+        outside = charter_outside_paths(own_changed, patterns)
         if outside:
             return _failed(
                 BOARD_VERIFICATION_OUTSIDE_CHARTER,
                 head_commit=patch.head_commit,
-                patch_digest=patch_digest,
-                changed_paths=changed,
+                patch_digest=own_digest,
+                changed_paths=own_changed,
                 evidence={"offending_paths": sorted(outside)},
+                base_commit=base_commit,
             )
+        # Every upstream module, not only direct providers: a provider's code may
+        # need its own providers' code (splits are acyclic, see propose_split).
+        providers = upstream_modules(store, conversation_id, module_id)
+        stacked: list[dict[str, Any]] = []
+        provider_texts: list[str] = []
+        provider_path_groups: list[list[str]] = []
+        if providers:
+            blocked: list[str] = []
+            latest_by_provider: dict[str, dict[str, Any]] = {}
+            for provider_id in providers:
+                latest = store.latest_passed_board_verification(conversation_id, provider_id)
+                if latest is None:
+                    blocked.append(provider_id)
+                    continue
+                if store.has_newer_unresolved_verification(
+                    conversation_id,
+                    provider_id,
+                    after_created_at=str(latest["created_at"]),
+                    after_verification_id=str(latest["verification_id"]),
+                ):
+                    blocked.append(provider_id)
+                    continue
+                latest_by_provider[provider_id] = latest
+            if blocked:
+                raise BoardVerificationDeferred(blocked)
+            for provider_id in providers:
+                latest = latest_by_provider[provider_id]
+                text = latest.get("patch_text")
+                if not isinstance(text, str) or not text.strip():
+                    return _failed(
+                        "board_verification_provider_patch_missing",
+                        head_commit=patch.head_commit,
+                        patch_digest=own_digest,
+                        changed_paths=own_changed,
+                        base_commit=base_commit,
+                    )
+                provider_base = latest.get("base_commit")
+                if (
+                    isinstance(provider_base, str)
+                    and provider_base
+                    and provider_base != base_commit
+                ):
+                    return _failed(
+                        BOARD_VERIFICATION_BASE_MISMATCH,
+                        head_commit=patch.head_commit,
+                        patch_digest=own_digest,
+                        changed_paths=own_changed,
+                        evidence={
+                            "base_commit": base_commit,
+                            "provider_bases": {
+                                provider: latest_by_provider[provider].get("base_commit")
+                                for provider in providers
+                            },
+                        },
+                        base_commit=base_commit,
+                    )
+                # A passed verification records the union of every stacked path;
+                # only the provider's own patch bytes are stacked, so its own
+                # paths come from that patch.
+                paths = patch_text_paths(text)
+                provider_texts.append(text)
+                provider_path_groups.append(sorted(set(paths)))
+                stacked.append(
+                    {
+                        "module_id": provider_id,
+                        "verification_id": str(latest["verification_id"]),
+                        "head_commit": str(latest["head_commit"] or ""),
+                    }
+                )
+            overlapping = find_overlapping_paths([*provider_path_groups, list(own_changed)])
+            if overlapping:
+                return _failed(
+                    BOARD_VERIFICATION_DEPENDENCY_OVERLAP,
+                    head_commit=patch.head_commit,
+                    patch_digest=own_digest,
+                    changed_paths=tuple(
+                        sorted(set(own_changed) | {p for g in provider_path_groups for p in g})
+                    ),
+                    evidence={"overlapping_paths": overlapping},
+                    stacked=tuple(stacked),
+                    base_commit=base_commit,
+                )
+        stacked_tuple = tuple(stacked)
+        if provider_texts:
+            combined_text = combine_verification_patches([*provider_texts, patch.unified_diff])
+            combined_changed = tuple(
+                sorted(set(own_changed) | {p for g in provider_path_groups for p in g})
+            )
+        else:
+            combined_text = patch.unified_diff
+            combined_changed = own_changed
+        combined_digest = f"sha256:{sha256(combined_text.encode('utf-8')).hexdigest()}"
         try:
             repository_manifest_digest = build_repository_manifest_digest(
                 self._execution_root, self._profile
@@ -257,7 +440,7 @@ class RoomBoardVerificationWorker:
         try:
             plan = build_execution_gate_plan(
                 profile_id=self._profile.profile_id,
-                changed_paths=changed,
+                changed_paths=combined_changed,
                 repository_manifest_digest=repository_manifest_digest,
                 toolchain_capability_digest=toolchain_capability_digest,
             )
@@ -265,16 +448,19 @@ class RoomBoardVerificationWorker:
             return _failed(
                 exc.code,
                 head_commit=patch.head_commit,
-                patch_digest=patch_digest,
-                changed_paths=changed,
+                patch_digest=own_digest,
+                changed_paths=combined_changed,
+                stacked=stacked_tuple,
+                patch_text=patch.unified_diff,
+                base_commit=base_commit,
             )
         candidate = ExactPatchCandidate(
             candidate_id=verification_id,
-            patch_text=patch.unified_diff,
-            patch_sha256=patch_digest,
-            candidate_digest=patch_digest,
+            patch_text=combined_text,
+            patch_sha256=combined_digest,
+            candidate_digest=combined_digest,
             base_head=patch.base_commit,
-            allowed_files=changed,
+            allowed_files=combined_changed,
             policy_revision=1,
             risk_policy_revision=BOARD_VERIFICATION_RISK_POLICY,
         )
@@ -306,8 +492,11 @@ class RoomBoardVerificationWorker:
             return _failed(
                 exc.code,
                 head_commit=patch.head_commit,
-                patch_digest=patch_digest,
-                changed_paths=changed,
+                patch_digest=own_digest,
+                changed_paths=combined_changed,
+                stacked=stacked_tuple,
+                patch_text=patch.unified_diff,
+                base_commit=base_commit,
             )
         except RoomExecutionSandboxError as exc:
             raise BoardVerificationTransientError(exc.code) from exc
@@ -325,8 +514,8 @@ class RoomBoardVerificationWorker:
             return _failed(
                 BOARD_VERIFICATION_GATE_FAILED,
                 head_commit=patch.head_commit,
-                patch_digest=patch_digest,
-                changed_paths=changed,
+                patch_digest=own_digest,
+                changed_paths=combined_changed,
                 gates=gates,
                 evidence={
                     "failed_gates": failed_gates,
@@ -335,15 +524,21 @@ class RoomBoardVerificationWorker:
                         "only gate_id/exit_code/reason_code are recorded."
                     ),
                 },
+                stacked=stacked_tuple,
+                patch_text=patch.unified_diff,
+                base_commit=base_commit,
             )
         return BoardVerificationOutcome(
             status="passed",
             reason_code=None,
             head_commit=patch.head_commit,
-            patch_digest=patch_digest,
-            changed_paths=changed,
+            patch_digest=own_digest,
+            changed_paths=combined_changed,
             gates=gates,
             evidence={},
+            stacked=stacked_tuple,
+            patch_text=patch.unified_diff,
+            base_commit=base_commit,
         )
 
 
@@ -352,7 +547,10 @@ __all__ = [
     "BOARD_VERIFICATION_OUTSIDE_CHARTER",
     "BOARD_VERIFICATION_RISK_POLICY",
     "BOARD_VERIFICATION_WORKER_ID",
+    "BoardVerificationDeferred",
     "BoardVerificationOutcome",
     "BoardVerificationTransientError",
     "RoomBoardVerificationWorker",
+    "combine_verification_patches",
+    "find_overlapping_paths",
 ]
