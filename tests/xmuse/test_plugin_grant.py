@@ -1267,13 +1267,22 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
         counter["next"] += 1
         return f"grant_fixture{counter['next']:026d}"
 
-    codes = ["ABCD-EFGH", "JKMP-NQRS", "TVWX-YZ23"]
+    codes = [
+        "AAAA-AAAA",
+        "BBBB-BBBB",
+        "CCCC-CCCC",
+        "DDDD-DDDD",
+        "EEEE-EEEE",
+        "FFFF-FFFF",
+        "GGGG-GGGG",
+        "HHHH-HHHH",
+    ]
 
     def fake_code() -> str:
-        return codes[counter["next"] % len(codes)]
+        return codes[(counter["next"] - 1) % len(codes)]
 
     def fake_secret(grant_id: str) -> str:
-        return f"xpg_{grant_id}_" + "C" * 43
+        return f"xpg_{grant_id}_" + "A" * 43
 
     monkeypatch.setattr(grants_mod, "_new_grant_id", fake_grant_id)
     monkeypatch.setattr(grants_mod, "_new_pairing_code", fake_code)
@@ -1281,10 +1290,70 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
 
     client, conversation_id, split, _ctx = _fixture_app(tmp_path)
     responses: dict[str, Any] = {}
+    PAST = "2026-01-01T00:00:00.000000Z"
 
     issued = _issue(client, conversation_id)
     assert issued.status_code == 201
     responses["issue"] = issued.json()
+    assert responses["issue"]["pairing_code"] == "AAAA-AAAA"
+
+    exchanged = _exchange(client, responses["issue"]["pairing_code"], "claude-code")
+    assert exchanged.status_code == 200
+    responses["exchange"] = exchanged.json()
+    exchange_grant_id = str(responses["exchange"]["grant"]["grant_id"])
+    assert responses["exchange"]["secret"] == f"xpg_{exchange_grant_id}_" + "A" * 43
+
+    second_split_id = _second_room_with_split(tmp_path, conversation_id)
+    board_after_second = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
+    second_split = next(
+        item for item in board_after_second["splits"] if item["split_id"] == second_split_id
+    )
+
+    mismatch = _decide(
+        client,
+        second_split_id,
+        secret=responses["exchange"]["secret"],
+        conversation_id=conversation_id,
+        digest="sha256:" + "0" * 64,
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["detail"]["code"] == "room_board_split_digest_mismatch"
+    responses["room_board_split_digest_mismatch"] = mismatch.json()
+
+    decided = _decide(
+        client,
+        second_split_id,
+        secret=responses["exchange"]["secret"],
+        conversation_id=conversation_id,
+        digest=second_split["digest"],
+    )
+    assert decided.status_code == 200
+    responses["decision"] = decided.json()
+
+    pending_issue = _issue(client, conversation_id, host="host-pending")
+    assert pending_issue.status_code == 201
+    active_issue = _issue(client, conversation_id, host="host-active")
+    assert active_issue.status_code == 201
+    active_exchange = _exchange(client, active_issue.json()["pairing_code"], "host-active")
+    assert active_exchange.status_code == 200
+    active_secret = str(active_exchange.json()["secret"])
+    expired_issue = _issue(client, conversation_id, host="host-expired")
+    assert expired_issue.status_code == 201
+    expired_grant_id = str(expired_issue.json()["grant"]["grant_id"])
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            "update plugin_grants set pairing_expires_at = ?, expires_at = ? where grant_id = ?",
+            (PAST, PAST, expired_grant_id),
+        )
+        conn.commit()
+    revoked_issue = _issue(client, conversation_id, host="host-revoked")
+    assert revoked_issue.status_code == 201
+    revoked_resp = client.post(
+        f"/api/chat/operator/plugin-grants/{revoked_issue.json()['grant']['grant_id']}/revoke",
+        json={"conversation_id": conversation_id},
+        headers=OPERATOR_HEADERS,
+    )
+    assert revoked_resp.status_code == 200
 
     listed = client.get(
         "/api/chat/operator/plugin-grants",
@@ -1293,20 +1362,8 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     assert listed.status_code == 200
     responses["list"] = listed.json()
-
-    exchanged = _exchange(client, responses["issue"]["pairing_code"], "claude-code")
-    assert exchanged.status_code == 200
-    responses["exchange"] = exchanged.json()
-
-    decided = _decide(
-        client,
-        split["split_id"],
-        secret=responses["exchange"]["secret"],
-        conversation_id=conversation_id,
-        digest=split["digest"],
-    )
-    assert decided.status_code == 200
-    responses["decision"] = decided.json()
+    statuses = {item["status"] for item in responses["list"]["grants"]}
+    assert {"pending", "active", "expired", "revoked"} <= statuses
 
     self_revoked = client.post(
         "/api/chat/plugin/grants/revoke",
@@ -1326,6 +1383,77 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
     assert operator_revoked.status_code == 200
     responses["operator_revoke"] = operator_revoked.json()
 
+    unknown_secret = f"xpg_grant_fixture{'9' * 26}_{'A' * 43}"
+    invalid = _decide(
+        client,
+        split["split_id"],
+        secret=unknown_secret,
+        conversation_id=conversation_id,
+        digest=split["digest"],
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"]["code"] == "plugin_grant_invalid"
+    responses["plugin_grant_invalid"] = invalid.json()
+
+    pairing_invalid = _exchange(client, "ZZZZ-2222", "claude-code")
+    assert pairing_invalid.status_code == 401
+    assert pairing_invalid.json()["detail"]["code"] == "plugin_pairing_invalid"
+    responses["plugin_pairing_invalid"] = pairing_invalid.json()
+
+    for _ in range(9):
+        attempt = _exchange(client, "ZZZZ-2222", "claude-code")
+        assert attempt.status_code == 401
+    locked = _exchange(client, "ZZZZ-2222", "claude-code")
+    assert locked.status_code == 429
+    assert locked.json()["detail"]["code"] == "plugin_pairing_locked"
+    assert int(locked.headers["retry-after"]) >= 1
+    responses["plugin_pairing_locked"] = locked.json()
+
+    origin_body = {
+        "conversation_id": conversation_id,
+        "decision": "approve",
+        "expected_digest": second_split["digest"],
+    }
+    origin_denied = client.post(
+        f"/api/chat/plugin/board-splits/{second_split_id}/decision",
+        json=origin_body,
+        headers={"Authorization": f"Bearer {active_secret}", "Origin": "http://app"},
+    )
+    assert origin_denied.status_code == 403
+    assert origin_denied.json()["detail"]["code"] == "plugin_origin_forbidden"
+    responses["plugin_origin_forbidden"] = origin_denied.json()
+
+    plain_denied = client.post(
+        f"/api/chat/plugin/board-splits/{second_split_id}/decision",
+        content=json.dumps(origin_body),
+        headers={"Authorization": f"Bearer {active_secret}", "Content-Type": "text/plain"},
+    )
+    assert plain_denied.status_code == 415
+    assert plain_denied.json()["detail"]["code"] == "plugin_content_type_invalid"
+    responses["plugin_content_type_invalid"] = plain_denied.json()
+
+    replay = _decide(
+        client,
+        second_split_id,
+        secret=active_secret,
+        conversation_id=conversation_id,
+        digest=second_split["digest"],
+    )
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "room_board_split_decided"
+    responses["room_board_split_decided"] = replay.json()
+
+    stale = _decide(
+        client,
+        split["split_id"],
+        secret=active_secret,
+        conversation_id=conversation_id,
+        digest=split["digest"],
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "room_board_split_not_proposed"
+    responses["room_board_split_not_proposed"] = stale.json()
+
     jsonschema.validate(responses["issue"], SCHEMA)
     jsonschema.validate(responses["list"], SCHEMA)
     jsonschema.validate(responses["exchange"], SCHEMA)
@@ -1334,6 +1462,20 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
         jsonschema.validate(responses[name]["grant"], grant_schema)
         assert set(responses[name]) == {"schema_version", "grant"}
     assert responses["decision"]["status"] == "approved"
+    for name in (
+        "plugin_grant_invalid",
+        "plugin_pairing_invalid",
+        "plugin_pairing_locked",
+        "plugin_origin_forbidden",
+        "plugin_content_type_invalid",
+        "room_board_split_decided",
+        "room_board_split_not_proposed",
+        "room_board_split_digest_mismatch",
+    ):
+        payload = responses[name]
+        assert set(payload) == {"detail"}, name
+        assert set(payload["detail"]) >= {"code", "message"}, name
+        assert payload["detail"]["code"] == name, name
 
     update = os.environ.get("UPDATE_PLUGIN_GRANT_FIXTURES") == "1"
     if update:

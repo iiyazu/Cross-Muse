@@ -1,22 +1,16 @@
 {
   "activity_ids": [
-    "activity_000000000000000000000000000f4240",
-    "activity_000000000000000000000000000f4242"
+    "activity_000000000000000000000000000f4246"
   ],
   "contracts": [
     {
-      "contract_id": "api.alpha",
-      "version": 1
-    },
-    {
-      "contract_id": "api.beta",
+      "contract_id": "api.gamma",
       "version": 1
     }
   ],
   "modules": [
-    "alpha",
-    "beta"
+    "gamma"
   ],
-  "split_id": "split_00000000000000000000000000000018",
+  "split_id": "split_000000000000000000000000000f4243",
   "status": "approved"
 }
