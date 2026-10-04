@@ -1,0 +1,506 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_projection.v2.json",
+  "title": "room_board_projection/v2",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_projection/v2" },
+    "metrics_version": { "const": "board_metrics/v1" },
+    "conversation_id": { "type": "string" },
+    "server_time": { "type": "string" },
+    "board_seq": { "type": "integer", "minimum": 0 },
+    "revision": { "type": "string" },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "verification": { "type": "integer" },
+        "reviews": { "type": "integer" },
+        "integrations": { "type": "integer" },
+        "lessons": { "type": "integer" }
+      },
+      "required": ["verification", "reviews", "integrations", "lessons"],
+      "additionalProperties": false
+    },
+    "participants": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/participant" }
+    },
+    "modules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/module" }
+    },
+    "contracts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/contractSummary" }
+    },
+    "splits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/split" }
+    },
+    "stale_dependents": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/staleDependent" }
+    },
+    "attention": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/attentionItem" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "required": [
+    "schema_version",
+    "metrics_version",
+    "conversation_id",
+    "server_time",
+    "board_seq",
+    "revision",
+    "capabilities",
+    "participants",
+    "modules",
+    "contracts",
+    "splits",
+    "stale_dependents",
+    "attention",
+    "events"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    },
+    "participant": {
+      "type": "object",
+      "properties": {
+        "participant_id": { "type": "string" },
+        "display_name": { "type": "string" },
+        "provider_kind": { "enum": ["codex", "claude", "antigravity", "opencode"] },
+        "model_family": { "type": "string" },
+        "role_preset": { "type": ["string", "null"] },
+        "is_lead": { "type": "boolean" }
+      },
+      "required": [
+        "participant_id",
+        "display_name",
+        "provider_kind",
+        "model_family",
+        "role_preset",
+        "is_lead"
+      ],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "none",
+            "waiting_for_provider",
+            "pending",
+            "running",
+            "passed",
+            "failed",
+            "error"
+          ]
+        },
+        "verification_id": { "type": ["string", "null"] },
+        "reason_code": { "type": ["string", "null"] },
+        "escalated": { "type": "boolean" },
+        "gate_ids": { "type": "array", "items": { "type": "string" } },
+        "stacked": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module_id": { "type": "string" },
+              "verification_id": { "type": "string" }
+            },
+            "required": ["module_id", "verification_id"],
+            "additionalProperties": false
+          }
+        },
+        "head_commit": { "type": ["string", "null"] },
+        "changed_path_count": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": ["string", "null"] }
+      },
+      "required": [
+        "status",
+        "verification_id",
+        "reason_code",
+        "escalated",
+        "gate_ids",
+        "stacked",
+        "head_commit",
+        "changed_path_count",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "counters": {
+      "type": "object",
+      "properties": {
+        "done_reports": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "superseded": { "type": "integer", "minimum": 0 },
+        "errored": { "type": "integer", "minimum": 0 },
+        "rework_rounds": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["done_reports", "passed", "failed", "superseded", "errored", "rework_rounds"],
+      "additionalProperties": false
+    },
+    "moduleAttention": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["none", "operator", "lead", "owner"] },
+        "reason_code": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "reason_code"],
+      "additionalProperties": false
+    },
+    "module": {
+      "type": "object",
+      "properties": {
+        "module_id": { "type": "string" },
+        "title": { "$ref": "#/$defs/agentText" },
+        "owner_participant_id": { "type": "string" },
+        "report_to": { "type": ["string", "null"] },
+        "charter_version": { "type": "integer", "minimum": 1 },
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "provides": { "type": "array", "items": { "type": "string" } },
+        "depends": { "type": "array", "items": { "type": "string" } },
+        "lifecycle": {
+          "enum": ["assigned", "claimed", "working", "blocked", "ready_for_review", "done_claimed"]
+        },
+        "verification": { "$ref": "#/$defs/verification" },
+        "counters": { "$ref": "#/$defs/counters" },
+        "state": {
+          "enum": [
+            "assigned",
+            "claimed",
+            "working",
+            "blocked",
+            "ready_for_review",
+            "done_claimed",
+            "verifying",
+            "waiting_for_provider",
+            "verified",
+            "verification_failed",
+            "verification_error"
+          ]
+        },
+        "attention": { "$ref": "#/$defs/moduleAttention" }
+      },
+      "required": [
+        "module_id",
+        "title",
+        "owner_participant_id",
+        "report_to",
+        "charter_version",
+        "paths",
+        "provides",
+        "depends",
+        "lifecycle",
+        "verification",
+        "counters",
+        "state",
+        "attention"
+      ],
+      "additionalProperties": false
+    },
+    "contractSummary": {
+      "type": "object",
+      "properties": {
+        "contract_id": { "type": "string" },
+        "latest_version": { "type": "integer", "minimum": 1 },
+        "versions_count": { "type": "integer", "minimum": 1 },
+        "digest": { "type": "string" },
+        "provider_module_id": { "type": "string" },
+        "kind": { "enum": ["api_schema", "types", "protocol", "text"] },
+        "author_participant_id": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": [
+        "contract_id",
+        "latest_version",
+        "versions_count",
+        "digest",
+        "provider_module_id",
+        "kind",
+        "author_participant_id",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "split": {
+      "type": "object",
+      "properties": {
+        "split_id": { "type": "string" },
+        "status": { "enum": ["proposed", "approved", "rejected", "superseded"] },
+        "proposed_by_participant_id": { "type": "string" },
+        "created_at": { "type": "string" },
+        "decided_at": { "type": ["string", "null"] },
+        "digest": { "type": "string" },
+        "decided_via": { "type": ["string", "null"] },
+        "actions": {
+          "type": "object",
+          "properties": {
+            "decide": {
+              "type": "object",
+              "properties": {
+                "available": { "type": "boolean" },
+                "method": { "const": "POST" },
+                "href": { "type": "string" },
+                "expected_digest": { "type": "string" },
+                "allowed_decisions": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "required": [
+                "available",
+                "method",
+                "href",
+                "expected_digest",
+                "allowed_decisions"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": ["decide"],
+          "additionalProperties": false
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "module_id": { "type": "string" },
+              "title": { "$ref": "#/$defs/agentText" },
+              "owner_participant_id": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "provides": { "type": "array", "items": { "type": "string" } },
+              "depends": { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+              "module_id",
+              "title",
+              "owner_participant_id",
+              "paths",
+              "provides",
+              "depends"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "contract_id": { "type": "string" },
+              "provider_module_id": { "type": "string" },
+              "kind": { "enum": ["api_schema", "types", "protocol", "text"] },
+              "digest": { "type": "string" }
+            },
+            "required": ["contract_id", "provider_module_id", "kind", "digest"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "split_id",
+        "status",
+        "proposed_by_participant_id",
+        "created_at",
+        "decided_at",
+        "digest",
+        "decided_via",
+        "actions",
+        "modules",
+        "contracts"
+      ],
+      "additionalProperties": false
+    },
+    "staleDependent": {
+      "type": "object",
+      "properties": {
+        "contract_id": { "type": "string" },
+        "revised_version": { "type": "integer", "minimum": 2 },
+        "revised_seq": { "type": "integer", "minimum": 1 },
+        "module_id": { "type": "string" },
+        "owner_participant_id": { "type": "string" }
+      },
+      "required": [
+        "contract_id",
+        "revised_version",
+        "revised_seq",
+        "module_id",
+        "owner_participant_id"
+      ],
+      "additionalProperties": false
+    },
+    "attentionItem": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["operator", "lead", "owner"] },
+        "reason_code": { "type": "string" },
+        "module_id": { "type": ["string", "null"] },
+        "split_id": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "reason_code", "module_id", "split_id"],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "kind": {
+          "enum": [
+            "split_proposed",
+            "split_rejected",
+            "charter_assigned",
+            "claimed",
+            "contract_published",
+            "contract_revised",
+            "progress",
+            "question",
+            "verification"
+          ]
+        },
+        "at": { "type": "string" },
+        "module_id": { "type": ["string", "null"] },
+        "actor": {
+          "type": "object",
+          "properties": {
+            "kind": { "enum": ["participant", "operator", "infrastructure"] },
+            "participant_id": { "type": ["string", "null"] }
+          },
+          "required": ["kind", "participant_id"],
+          "additionalProperties": false
+        },
+        "data": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "module_ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["split_id", "module_ids"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "decided_via": { "type": ["string", "null"] }
+              },
+              "required": ["split_id", "decided_via"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "owner_participant_id": { "type": "string" },
+                "charter_version": { "type": "integer" },
+                "decided_via": { "type": ["string", "null"] }
+              },
+              "required": ["split_id", "owner_participant_id", "charter_version", "decided_via"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "contract_id": { "type": "string" },
+                "version": { "type": "integer" },
+                "kind": { "enum": ["api_schema", "types", "protocol", "text"] },
+                "digest": { "type": "string" },
+                "rationale": { "$ref": "#/$defs/nullableAgentText" }
+              },
+              "required": ["contract_id", "version", "kind", "digest", "rationale"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": { "enum": ["working", "blocked", "ready_for_review", "done"] },
+                "summary": { "$ref": "#/$defs/agentText" },
+                "claims": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/agentText" },
+                  "maxItems": 8
+                },
+                "claims_total": { "type": "integer", "minimum": 0 }
+              },
+              "required": ["status", "summary", "claims", "claims_total"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "target_participant_id": { "type": "string" },
+                "question": { "$ref": "#/$defs/agentText" }
+              },
+              "required": ["target_participant_id", "question"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "verification_id": { "type": "string" },
+                "status": { "enum": ["passed", "failed", "error"] },
+                "reason_code": { "type": ["string", "null"] },
+                "gate_ids": { "type": "array", "items": { "type": "string" } },
+                "escalated": { "type": "boolean" },
+                "stacked": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "module_id": { "type": "string" },
+                      "verification_id": { "type": "string" }
+                    },
+                    "required": ["module_id", "verification_id"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "verification_id",
+                "status",
+                "reason_code",
+                "gate_ids",
+                "escalated",
+                "stacked"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["seq", "kind", "at", "module_id", "actor", "data"],
+      "additionalProperties": false
+    }
+  }
+}

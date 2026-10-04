@@ -86,13 +86,47 @@ class GateResult:
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
 _UNSAFE_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f‎‏‪-‮⁦-⁩]")
+# Sandbox mount points (see ``_bwrap_command``): the stage is the repository
+# root, the rest are fixed toolchain mounts that carry no host information.
+_SANDBOX_PATH_PLACEHOLDERS = (
+    ("/workspace/", ""),
+    ("/opt/python/", "<python>/"),
+    ("/deps/site-packages/", "<site-packages>/"),
+    ("/repo-git/", "<git>/"),
+    ("/tools/", "<tools>/"),
+)
+# Fallback for host paths that still reach the output (for example a Python
+# frame from a host-side file): Unix home, WSL drive, temp and Windows drive roots.
+_HOST_PATH_RE = re.compile(
+    r"(?:(?<![\w./-])(?:/home/|/root/|/Users/|/mnt/[a-z]/|/tmp/|/var/tmp/)"
+    r"|(?<![\w])[A-Za-z]:[\\/])"
+    r"[^\s'\"`:,)\]]*"
+)
 
 
-def sanitize_gate_output_tail(raw: bytes, limit_bytes: int) -> str:
+def scrub_gate_output_paths(text: str, host_roots: tuple[str, ...] = ()) -> str:
+    """Replace host and sandbox absolute paths with repository-relative text or
+    placeholders, so tails never carry the host layout (contract §2)."""
+
+    for root in sorted(
+        (r.rstrip("/") for r in host_roots if r and r != "/"), key=len, reverse=True
+    ):
+        text = text.replace(root + "/", "").replace(root, ".")
+    for prefix, replacement in _SANDBOX_PATH_PLACEHOLDERS:
+        text = text.replace(prefix, replacement)
+    text = re.sub(r"(?<![\w./-])/workspace(?![\w/])", ".", text)
+    return _HOST_PATH_RE.sub("<host-path>", text)
+
+
+def sanitize_gate_output_tail(
+    raw: bytes, limit_bytes: int, host_roots: tuple[str, ...] = ()
+) -> str:
     """Return the last ``limit_bytes`` of gate output as safe, display-only text.
 
     Terminal escape sequences, control characters (except newline and tab) and
-    bidirectional overrides are removed; a cut leading line is dropped.
+    bidirectional overrides are removed, absolute paths are made repository
+    relative or replaced (``host_roots`` are the known stage roots); a cut
+    leading line is dropped.
     """
 
     if limit_bytes <= 0 or not raw:
@@ -103,7 +137,7 @@ def sanitize_gate_output_tail(raw: bytes, limit_bytes: int) -> str:
     text = _UNSAFE_CHAR_RE.sub("", text.replace("\r", "\n"))
     if clipped and "\n" in text:
         text = text.split("\n", 1)[1]
-    return text.strip("\n")
+    return scrub_gate_output_paths(text, host_roots).strip("\n")
 
 
 @dataclass(frozen=True)
@@ -732,7 +766,7 @@ def run_gate(
         duration_ms=duration_ms,
         output_bytes=collector.total_bytes,
         output_tail=(
-            sanitize_gate_output_tail(collector.tail(), output_tail_bytes)
+            sanitize_gate_output_tail(collector.tail(), output_tail_bytes, (str(layout.stage),))
             if output_tail_bytes > 0
             else None
         ),

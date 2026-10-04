@@ -1,4 +1,5 @@
 import type {
+  RoomBoardCache,
   RoomCache,
   RoomCodexCache,
   RoomExecutionCache,
@@ -70,5 +71,18 @@ export function createEmptyCodexCache(): RoomCodexCache {
     error: null,
     actionPending: {},
     actionErrors: {}
+  };
+}
+
+export function createEmptyBoardCache(): RoomBoardCache {
+  return {
+    projection: null,
+    summary: null,
+    loading: false,
+    requestGeneration: 0,
+    consecutiveFailures: 0,
+    lastSyncedAt: 0,
+    error: null,
+    contractDetails: {}
   };
 }

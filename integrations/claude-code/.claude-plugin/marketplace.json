@@ -1,0 +1,15 @@
+{
+  "name": "xmuse-marketplace",
+  "description": "Marketplace for the xmuse read-only board status plugin",
+  "owner": {
+    "name": "xmuse"
+  },
+  "plugins": [
+    {
+      "name": "xmuse",
+      "source": "./",
+      "description": "Read-only xmuse room board status: status line, toasts, pane and a status tool. Never writes, never handles tokens.",
+      "version": "0.1.0"
+    }
+  ]
+}

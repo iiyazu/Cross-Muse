@@ -167,6 +167,8 @@ class RoomApplicationService:
         split_id: str,
         decision: str,
         operator_identity: str,
+        decided_via: str = "web",
+        expected_digest: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         try:
@@ -175,6 +177,8 @@ class RoomApplicationService:
                 split_id=split_id,
                 decision=decision,
                 operator_identity=operator_identity,
+                decided_via=decided_via,
+                expected_digest=expected_digest,
                 now=now,
             )
         except RoomApplicationError:

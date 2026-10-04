@@ -104,6 +104,9 @@ def _render_charter_md(
             )
         else:
             lines.append("- Verification: none yet")
+        state = entry.get("state")
+        if isinstance(state, str) and state:
+            lines.append(f"- State: {state}")
         review = entry.get("review")
         if isinstance(review, dict) and review.get("status"):
             reviewer = review.get("reviewer_participant_id") or review.get("reviewer_kind")
