@@ -1,0 +1,20 @@
+{
+  "name": "xmuse",
+  "version": "0.1.0",
+  "description": "Read-only xmuse room board status for the OpenCode TUI: footer status line, toasts and /xmuse commands. Never writes, never handles tokens.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tui": "./src/tui.tsx"
+  },
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  },
+  "peerDependencies": {
+    "@opentui/solid": ">=0.5.14",
+    "solid-js": ">=1.9.0"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}
