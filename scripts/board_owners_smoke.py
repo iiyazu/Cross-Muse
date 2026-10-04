@@ -1624,7 +1624,11 @@ async def _run_smoke(
         RoomConversationCreate(
             title="Board owners smoke",
             client_request_id=f"board-owners-smoke-{uuid.uuid4().hex}",
-            collaboration=RoomCollaborationInit(mode="addressed", lead_role="lead"),
+            collaboration=RoomCollaborationInit(
+                mode="addressed",
+                lead_role="lead",
+                review_policy="cross_family" if scenario == "review" else "off",
+            ),
             initial_participants=[
                 ParticipantInit(
                     role="lead",

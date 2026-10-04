@@ -67,6 +67,7 @@ class RoomCollaborationInit(BaseModel):
 
     mode: Literal["broadcast", "addressed"]
     lead_role: str | None = Field(default=None, min_length=1, max_length=64)
+    review_policy: Literal["off", "cross_family"] = "off"
 
     @field_validator("lead_role", mode="before")
     @classmethod

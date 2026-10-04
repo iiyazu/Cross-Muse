@@ -151,10 +151,14 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
                 verdict_activity_id text references room_activities(activity_id),
                 decided_via text,
                 operator_identity text,
+                escalation_json text,
                 created_at text not null,
                 updated_at text not null
             )"""
     )
+    review_columns = {row[1] for row in conn.execute("pragma table_info(room_board_reviews)")}
+    if "escalation_json" not in review_columns:
+        conn.execute("alter table room_board_reviews add column escalation_json text")
     conn.execute(
         "create index if not exists idx_room_board_reviews_module "
         "on room_board_reviews(conversation_id, module_id, created_at)"

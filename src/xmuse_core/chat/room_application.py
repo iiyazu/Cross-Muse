@@ -406,10 +406,13 @@ class RoomApplicationService:
         verdict: str,
         summary: str,
         findings: list[dict[str, Any]] | None = None,
+        expected_digest: str | None = None,
         operator_identity: str,
         decided_via: str = "web",
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        # The digest is the human's proof of what they were shown; the server never
+        # fills it in on the caller's behalf (a missing one fails as a mismatch).
         try:
             return RoomBoardStore(self._db_path).decide_review(
                 conversation_id=conversation_id,
@@ -417,9 +420,58 @@ class RoomApplicationService:
                 verdict=verdict,
                 summary=summary,
                 findings=findings,
+                expected_digest=expected_digest or "",
                 operator_identity=operator_identity,
                 decided_via=decided_via,
                 now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_review_material(
+        self,
+        conversation_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).review_material(
+                conversation_id=conversation_id,
+                review_id=review_id,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_review_detail(
+        self,
+        conversation_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).review_detail(
+                conversation_id=conversation_id,
+                review_id=review_id,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_verification_detail(
+        self,
+        conversation_id: str,
+        verification_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).verification_detail(
+                conversation_id=conversation_id,
+                verification_id=verification_id,
             )
         except RoomApplicationError:
             raise

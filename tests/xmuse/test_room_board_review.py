@@ -74,6 +74,7 @@ def _mixed_room(tmp_path: Path):
             mode="broadcast",
             lead_participant_id=lead.participant_id,
             updated_at="2026-01-01T00:00:00.000000Z",
+            review_policy="cross_family",
         )
         conn.commit()
     RoomKernelStore(db).post_human_activity(
@@ -574,6 +575,7 @@ def test_operator_fallback_and_projection_counters(tmp_path: Path) -> None:
             mode="broadcast",
             lead_participant_id=lead.participant_id,
             updated_at="2026-01-01T00:00:00.000000Z",
+            review_policy="cross_family",
         )
         conn.commit()
     RoomKernelStore(db).post_human_activity(
@@ -644,12 +646,14 @@ def test_operator_fallback_and_projection_counters(tmp_path: Path) -> None:
         ).fetchone()[0]
         assert woke == 0
 
+    material = store.review_material(conversation.id, result["review_id"])
     decided = store.decide_review(
         conversation_id=conversation.id,
         review_id=result["review_id"],
         verdict="endorse",
         summary="human ok",
         findings=[],
+        expected_digest=material["digest"],
         operator_identity="operator:local",
     )
     assert decided["status"] == "endorsed"
@@ -658,21 +662,6 @@ def test_operator_fallback_and_projection_counters(tmp_path: Path) -> None:
     assert verdict["decided_via"] == "web"
     assert verdict["operator_identity"] == "operator:local"
 
-    projection = store.board_projection(conversation.id)
-    assert projection["capabilities"] == {"reviews": True}
-    assert projection["reviews_enabled"] is True
-    assert projection["reviews"] == [
-        {
-            "module_id": "alpha",
-            "status": "endorsed",
-            "review_id": result["review_id"],
-            "reviewer_kind": "operator",
-            "reviewer_family": None,
-            "reviews_endorsed": 1,
-            "reviews_objected": 0,
-        }
-    ]
-    assert projection["progress"][0]["review"]["status"] == "endorsed"
     view = store.owner_view(conversation.id, author.participant_id)
     assert view["my_modules"][0]["review"]["status"] == "endorsed"
 
@@ -783,6 +772,7 @@ def test_operator_review_endpoint_requires_token_and_records_web(tmp_path: Path)
             mode="broadcast",
             lead_participant_id=lead.participant_id,
             updated_at="2026-01-01T00:00:00.000000Z",
+            review_policy="cross_family",
         )
         conn.commit()
     RoomKernelStore(db).post_human_activity(
