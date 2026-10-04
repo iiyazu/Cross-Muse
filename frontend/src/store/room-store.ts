@@ -26,6 +26,11 @@ import {
   updateRoomExecutionPolicy
 } from "@/lib/api";
 import {
+  fetchBoardContract,
+  fetchRoomBoard,
+  fetchRoomBoardSummary
+} from "@/lib/board-api";
+import {
   normalizeRoomList,
   normalizeRoomMemoryProjection,
   normalizeRoomOperationsProjection,
@@ -70,6 +75,7 @@ import {
   readCodexConsolePreference
 } from "@/store/codex-console-preferences";
 import {
+  createEmptyBoardCache,
   createEmptyCodexCache,
   createEmptyExecutionCache,
   createEmptyMemoryCache,
@@ -78,6 +84,7 @@ import {
 import { createUiDomainActions } from "@/store/ui-action-factory";
 import type {
   PendingRoomMessage,
+  RoomBoardCache,
   RoomCache,
   RoomCodexCache,
   RoomExecutionCache,
@@ -88,6 +95,7 @@ import type {
 export type { ScrollAnchor } from "@/store/room-persistence";
 export type {
   PendingRoomMessage,
+  RoomBoardCache,
   RoomCache,
   RoomCodexCache,
   RoomExecutionCache,
@@ -105,6 +113,7 @@ const ROOM_LIST_REFRESH_MS = 12_000;
 const emptyCache = createEmptyRoomCache;
 const emptyExecutionCache = createEmptyExecutionCache;
 const emptyMemoryCache = createEmptyMemoryCache;
+const emptyBoardCache = createEmptyBoardCache;
 const emptyCodexCache = createEmptyCodexCache;
 
 const syncCoordinator = createRoomSyncCoordinator();
@@ -119,6 +128,8 @@ const executionControllers = new Map<string, AbortController>();
 const executionRequests = new Map<string, Promise<void>>();
 const memoryControllers = new Map<string, AbortController>();
 const memoryRequests = new Map<string, Promise<void>>();
+const boardControllers = new Map<string, AbortController>();
+const boardRequests = new Map<string, Promise<void>>();
 const codexControllers = new Map<string, AbortController>();
 const codexRequests = new Map<string, Promise<void>>();
 let codexFocusHandler: (() => void) | null = null;
@@ -296,6 +307,12 @@ function abortMemoryRequest(roomId: string) {
   memoryRequests.delete(roomId);
 }
 
+function abortBoardRequest(roomId: string) {
+  boardControllers.get(roomId)?.abort();
+  boardControllers.delete(roomId);
+  boardRequests.delete(roomId);
+}
+
 function abortCodexRequest(roomId: string) {
   codexControllers.get(roomId)?.abort();
   codexControllers.delete(roomId);
@@ -368,6 +385,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   operationsConsecutiveFailures: 0,
   executionsByRoom: {},
   memoryByRoom: {},
+  boardByRoom: {},
   codexByRoom: {},
   codexPreferenceRevision: 0,
   executionActionPending: null,
@@ -447,6 +465,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       abortEventRequest(previous);
       abortExecutionRequest(previous);
       abortMemoryRequest(previous);
+      abortBoardRequest(previous);
       abortCodexRequest(previous);
     }
     const savedDraft = readRoomDraft(browserStorage("session"), roomId);
@@ -474,6 +493,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     if (get().inspectorOpen) {
       void get().refreshExecutions(roomId);
       void get().refreshMemory(roomId);
+      void get().refreshBoard(roomId);
       void get().refreshCodexAgents(roomId);
     }
     get().startSync();
@@ -1005,6 +1025,140 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     return request;
   },
 
+  async refreshBoard(roomId = get().selectedRoomId ?? "") {
+    if (!roomId) return;
+    const inFlight = boardRequests.get(roomId);
+    if (inFlight) return inFlight;
+    const current = get().boardByRoom[roomId] ?? emptyBoardCache();
+    const generation = current.requestGeneration + 1;
+    const controller = new AbortController();
+    boardControllers.set(roomId, controller);
+    set((state) => ({
+      boardByRoom: {
+        ...state.boardByRoom,
+        [roomId]: {
+          ...(state.boardByRoom[roomId] ?? emptyBoardCache()),
+          loading: true,
+          requestGeneration: generation
+        }
+      }
+    }));
+    let request!: Promise<void>;
+    request = (async () => {
+      try {
+        const summary = await fetchRoomBoardSummary(roomId, apiOptions(controller.signal));
+        if (
+          controller.signal.aborted ||
+          get().boardByRoom[roomId]?.requestGeneration !== generation
+        ) return;
+        const cached = get().boardByRoom[roomId] ?? emptyBoardCache();
+        if (cached.projection && cached.projection.revision === summary.revision) {
+          set((state) => {
+            const cache = state.boardByRoom[roomId] ?? emptyBoardCache();
+            if (cache.requestGeneration !== generation) return {};
+            return {
+              boardByRoom: {
+                ...state.boardByRoom,
+                [roomId]: {
+                  ...cache,
+                  summary,
+                  loading: false,
+                  consecutiveFailures: 0,
+                  lastSyncedAt: Date.now(),
+                  error: null
+                }
+              }
+            };
+          });
+          return;
+        }
+        const projection = await fetchRoomBoard(roomId, apiOptions(controller.signal));
+        if (
+          controller.signal.aborted ||
+          get().boardByRoom[roomId]?.requestGeneration !== generation
+        ) return;
+        set((state) => {
+          const cache = state.boardByRoom[roomId] ?? emptyBoardCache();
+          if (cache.requestGeneration !== generation) return {};
+          return {
+            boardByRoom: {
+              ...state.boardByRoom,
+              [roomId]: {
+                ...cache,
+                projection,
+                summary,
+                loading: false,
+                consecutiveFailures: 0,
+                lastSyncedAt: Date.now(),
+                error: null
+              }
+            }
+          };
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        set((state) => {
+          const cache = state.boardByRoom[roomId] ?? emptyBoardCache();
+          if (cache.requestGeneration !== generation) return {};
+          return {
+            boardByRoom: {
+              ...state.boardByRoom,
+              [roomId]: {
+                ...cache,
+                loading: false,
+                consecutiveFailures: cache.consecutiveFailures + 1,
+                error: describeError(error)
+              }
+            }
+          };
+        });
+      } finally {
+        if (boardControllers.get(roomId) === controller) boardControllers.delete(roomId);
+        if (boardRequests.get(roomId) === request) boardRequests.delete(roomId);
+      }
+    })();
+    boardRequests.set(roomId, request);
+    return request;
+  },
+
+  async loadBoardContract(contractId, version, roomId = get().selectedRoomId ?? "") {
+    if (!contractId) return;
+    const actualRoomId = typeof roomId === "string" && roomId ? roomId : get().selectedRoomId ?? "";
+    const actualVersion = typeof version === "number" ? version : undefined;
+    if (!actualRoomId) return;
+    try {
+      const detail = await fetchBoardContract(actualRoomId, contractId, {
+        ...apiOptions(),
+        ...(actualVersion !== undefined ? { version: actualVersion } : {})
+      });
+      if (get().selectedRoomId !== actualRoomId && !get().boardByRoom[actualRoomId]) return;
+      set((state) => {
+        const cache = state.boardByRoom[actualRoomId] ?? emptyBoardCache();
+        return {
+          boardByRoom: {
+            ...state.boardByRoom,
+            [actualRoomId]: {
+              ...cache,
+              contractDetails: { ...cache.contractDetails, [contractId]: detail },
+              error: cache.error
+            }
+          }
+        };
+      });
+    } catch (error) {
+      if (isCallerAbort(error)) return;
+      set((state) => {
+        const cache = state.boardByRoom[actualRoomId] ?? emptyBoardCache();
+        return {
+          boardByRoom: {
+            ...state.boardByRoom,
+            [actualRoomId]: { ...cache, error: describeError(error) }
+          }
+        };
+      });
+    }
+  },
+
   async refreshCodexAgents(roomId = get().selectedRoomId ?? "") {
     if (!roomId) return;
     const inFlight = codexRequests.get(roomId);
@@ -1464,6 +1618,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       void get().refreshOperations();
       void get().refreshExecutions();
       void get().refreshMemory();
+      void get().refreshBoard();
       void get().refreshCodexAgents();
     }
   },
@@ -1524,6 +1679,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     get().startOperationsSync();
     get().startExecutionSync();
     get().startMemorySync();
+    get().startBoardSync();
     get().startCodexSync();
     get().startAgentStream();
   },
@@ -1598,6 +1754,34 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       void get().refreshMemory(roomId);
     }
     scheduleMemory();
+  },
+
+  startBoardSync() {
+    const currentBoardEpoch = syncCoordinator.restart("board");
+    const scheduleBoard = () => {
+      if (!syncCoordinator.isCurrent("board", currentBoardEpoch)) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      const roomId = get().selectedRoomId;
+      const cache = roomId ? get().boardByRoom[roomId] : null;
+      const tabVisible = !hidden && get().dockTab === "room";
+      const active = tabVisible && (get().inspectorOpen || Boolean(cache?.projection ?? cache?.summary));
+      const base = active ? 5_000 : 15_000;
+      const delay = Math.min(
+        30_000,
+        base * 2 ** Math.min(cache?.consecutiveFailures ?? 0, 2)
+      );
+      const jitter = Math.round(delay * 0.12 * Math.random());
+      syncCoordinator.schedule("board", currentBoardEpoch, delay + jitter, async () => {
+        const currentRoomId = get().selectedRoomId;
+        if (currentRoomId && !hidden) await get().refreshBoard(currentRoomId);
+        scheduleBoard();
+      });
+    };
+    const roomId = get().selectedRoomId;
+    if (roomId && get().inspectorOpen && !get().boardByRoom[roomId]?.projection) {
+      void get().refreshBoard(roomId);
+    }
+    scheduleBoard();
   },
 
   startCodexSync() {
@@ -1741,6 +1925,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     for (const controller of memoryControllers.values()) controller.abort();
     memoryControllers.clear();
     memoryRequests.clear();
+    for (const controller of boardControllers.values()) controller.abort();
+    boardControllers.clear();
+    boardRequests.clear();
     for (const controller of codexControllers.values()) controller.abort();
     codexControllers.clear();
     codexRequests.clear();
@@ -1764,6 +1951,16 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       ),
       memoryByRoom: Object.fromEntries(
         Object.entries(state.memoryByRoom).map(([roomId, cache]) => [
+          roomId,
+          {
+            ...cache,
+            loading: false,
+            requestGeneration: cache.requestGeneration + 1
+          }
+        ])
+      ),
+      boardByRoom: Object.fromEntries(
+        Object.entries(state.boardByRoom).map(([roomId, cache]) => [
           roomId,
           {
             ...cache,
