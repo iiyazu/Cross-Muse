@@ -239,33 +239,27 @@
                 "available": { "type": "boolean" },
                 "method": { "const": "POST" },
                 "href": { "type": "string" },
-                "material_href": { "type": "string" },
                 "expected_digest": { "type": "string" },
                 "allowed_verdicts": {
                   "type": "array",
                   "items": { "enum": ["endorse", "object"] },
                   "minItems": 2,
                   "maxItems": 2
-                },
-                "surfaces": {
-                  "type": "array",
-                  "items": { "const": "web" },
-                  "minItems": 1,
-                  "maxItems": 1
                 }
               },
-              "required": [
-                "available",
-                "method",
-                "href",
-                "material_href",
-                "expected_digest",
-                "allowed_verdicts",
-                "surfaces"
-              ],
+              "required": ["available", "method", "href", "expected_digest", "allowed_verdicts"],
+              "additionalProperties": false
+            },
+            "material": {
+              "type": "object",
+              "properties": {
+                "available": { "type": "boolean" }
+              },
+              "required": ["available"],
               "additionalProperties": false
             }
           },
+          "dependentRequired": { "decide": ["material"], "material": ["decide"] },
           "additionalProperties": false
         }
       },

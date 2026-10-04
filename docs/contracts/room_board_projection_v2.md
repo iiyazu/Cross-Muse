@@ -299,7 +299,7 @@ its reviewer. The rule's inputs are stored with the review (§5.1 `rule_inputs`)
   "findings_count": { "blocker": 0, "major": 0, "minor": 0 },
   "decided_via": null,            // board_tool | web
   "updated_at": null,
-  "actions": {}                   // { "decide": … } only while pending with reviewer_kind == operator
+  "actions": {}                   // { "decide", "material" } only while pending with reviewer_kind == operator
 }
 ```
 
@@ -316,16 +316,19 @@ no longer active or its delivery of the request exhausted its attempts
 (`board_review_reviewer_unresponsive`). The `review_id` and `digest` stay; a new
 `review_requested` event carries `escalated_from`; the former reviewer can no longer decide.
 
-`actions.decide` (operator reviews only, Web only — §8.2):
+`actions` (operator reviews only, Web only — §8.1, §8.2):
 
 ```jsonc
-{ "available": true, "method": "POST",
-  "href": "/api/chat/operator/board-reviews/<review_id>/decision",
-  "material_href": "/api/chat/operator/board-reviews/<review_id>/material",
-  "expected_digest": "sha256:…",          // equals `digest`
-  "allowed_verdicts": ["endorse", "object"],
-  "surfaces": ["web"] }
+{ "decide": { "available": true, "method": "POST",
+              "href": "/api/chat/operator/board-reviews/<review_id>/decision",
+              "expected_digest": "sha256:…",   // equals `digest`
+              "allowed_verdicts": ["endorse", "object"] },
+  "material": { "available": true } }        // no href: the Web uses its own fixed proxy route
 ```
+
+Both are present only while `status == "pending"` and `reviewer_kind == "operator"`. The
+material route's path never appears in any payload; host plugins, the CLI and the mod act on
+neither descriptor.
 
 `Finding` = `{ "severity": "blocker|major|minor", "path": "src/x.py" /* repository-relative or
 null */, "text": AgentText }`. An `object` verdict carries at least one `blocker` or `major`
@@ -568,7 +571,7 @@ room_board_review_digest_mismatch`, nothing decided); `decided_via` may only be 
 purpose. The review must be pending with `reviewer_kind == "operator"` (else `409
 room_board_review_not_pending`). `endorse` is refused with `409
 room_board_review_material_incomplete` when the material (§8.2) is truncated: a human does not
-endorse what they could not read. `object` needs a `blocker` or `major` finding (`422
+endorse what they could not read; `object` stays allowed. `object` needs a `blocker` or `major` finding (`422
 room_board_review_findings_invalid`). The P3 plugin grant never covers this route.
 
 ### 8.2 Review material — the one patch route
