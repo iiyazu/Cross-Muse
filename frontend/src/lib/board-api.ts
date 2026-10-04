@@ -611,3 +611,49 @@ export async function fetchBoardContract(
   );
   return normalizeBoardContract(raw);
 }
+
+export type BoardSplitDecision = "approve" | "reject";
+
+export type BoardSplitDecisionOptions = ApiClientOptions & {
+  conversationId: string;
+};
+
+export async function decideBoardSplit(
+  split: BoardSplit,
+  decision: BoardSplitDecision,
+  options: BoardSplitDecisionOptions
+): Promise<unknown> {
+  const descriptor = split.actions?.decide;
+  const expectedHref = `/api/chat/operator/board-splits/${encodeURIComponent(split.split_id)}/decision`;
+  if (
+    !descriptor ||
+    descriptor.available !== true ||
+    descriptor.method !== "POST" ||
+    descriptor.href !== expectedHref ||
+    !descriptor.allowed_decisions.includes(decision) ||
+    !descriptor.expected_digest
+  ) {
+    throw new XmuseApiError({
+      code: "room_board_split_descriptor_invalid",
+      message: "Board split is no longer actionable",
+      retryable: false,
+      status: 400
+    });
+  }
+  const { conversationId, ...clientOptions } = options;
+  return fetchJson<unknown>(
+    `/api/room-board-splits/${encodeURIComponent(split.split_id)}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        decision,
+        expected_digest: descriptor.expected_digest
+      }),
+      cache: "no-store",
+      credentials: "same-origin"
+    },
+    { ...clientOptions, timeoutMs: clientOptions.timeoutMs ?? 30_000 }
+  );
+}

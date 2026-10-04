@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  decideBoardSplit,
   fetchBoardContract,
   fetchRoomBoard,
   fetchRoomBoardSummary,
@@ -10,6 +11,7 @@ import {
   normalizeBoardSummary,
   normalizeRoomBoardProjection
 } from "./board-api";
+import type { BoardSplit } from "./board-types";
 
 const FIXTURE_DIR = path.resolve(process.cwd(), "../docs/contracts/fixtures/board_v2");
 
@@ -62,25 +64,20 @@ describe("board API normalizers", () => {
 
   it("parses Split.actions.decide when present and tolerates its absence", () => {
     const { payload } = fixtures().find((item) => item.name === "split_pending.json")!;
-    const without = normalizeRoomBoardProjection(payload.projection);
-    expect(without.splits[0].actions).toBeUndefined();
+    const withDecide = normalizeRoomBoardProjection(payload.projection);
+    const decide = withDecide.splits[0].actions?.decide;
+    expect(decide?.available).toBe(true);
+    expect(decide?.method).toBe("POST");
+    expect(decide?.href).toBe(
+      `/api/chat/operator/board-splits/${withDecide.splits[0].split_id}/decision`
+    );
+    expect(decide?.expected_digest).toBe(withDecide.splits[0].digest);
+    expect(decide?.allowed_decisions).toEqual(["approve", "reject"]);
     const raw = JSON.parse(JSON.stringify(payload.projection)) as Record<string, unknown>;
     const split = (raw.splits as Array<Record<string, unknown>>)[0];
-    split.actions = {
-      decide: {
-        available: true,
-        method: "POST",
-        href: "/api/chat/operator/board-splits/split_1/decision",
-        expected_digest: "sha256:abc",
-        allowed_decisions: ["approve", "reject"]
-      }
-    };
-    const withDecide = normalizeRoomBoardProjection(raw);
-    expect(withDecide.splits[0].actions?.decide?.available).toBe(true);
-    expect(withDecide.splits[0].actions?.decide?.allowed_decisions).toEqual([
-      "approve",
-      "reject"
-    ]);
+    delete split.actions;
+    const without = normalizeRoomBoardProjection(raw);
+    expect(without.splits[0].actions).toBeUndefined();
   });
 
   it("throws a typed error only for an unusable envelope", () => {
@@ -185,5 +182,67 @@ describe("board API fetchers", () => {
       "http://127.0.0.1:8201/api/chat/conversations/conv%2F1/board/contracts/api%2Fone?version=2"
     );
     expect(calls[0][1]).toMatchObject({ method: "GET", cache: "no-store" });
+  });
+});
+
+describe("decideBoardSplit", () => {
+  function pendingSplit(): BoardSplit {
+    const payload = JSON.parse(
+      fs.readFileSync(path.join(FIXTURE_DIR, "split_pending.json"), "utf8")
+    ) as { projection: unknown };
+    const projection = normalizeRoomBoardProjection(payload.projection);
+    const split = projection.splits.find((item) => item.status === "proposed");
+    if (!split) throw new Error("split_pending fixture has no proposed split");
+    return JSON.parse(JSON.stringify(split)) as BoardSplit;
+  }
+
+  it("refuses an unavailable descriptor, a disallowed decision, and an href mismatch", async () => {
+    const fetcher = vi.fn(async () => Response.json({ ok: true }));
+    const options = {
+      conversationId: "conv-1",
+      fetcher: fetcher as typeof fetch
+    };
+    const unavailable = pendingSplit();
+    unavailable.actions = {
+      decide: { ...unavailable.actions!.decide!, available: false }
+    };
+    await expect(decideBoardSplit(unavailable, "approve", options)).rejects.toMatchObject({
+      code: "room_board_split_descriptor_invalid"
+    });
+    const disallowed = pendingSplit();
+    disallowed.actions = {
+      decide: { ...disallowed.actions!.decide!, allowed_decisions: ["approve"] }
+    };
+    await expect(decideBoardSplit(disallowed, "reject", options)).rejects.toMatchObject({
+      code: "room_board_split_descriptor_invalid"
+    });
+    const mismatched = pendingSplit();
+    mismatched.actions = {
+      decide: { ...mismatched.actions!.decide!, href: "https://evil.invalid/decision" }
+    };
+    await expect(decideBoardSplit(mismatched, "approve", options)).rejects.toMatchObject({
+      code: "room_board_split_descriptor_invalid"
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("sends exactly the fixed-route body with the caller room id", async () => {
+    const split = pendingSplit();
+    const fetcher = vi.fn(async () => Response.json({ status: "decided" }));
+    await decideBoardSplit(split, "approve", {
+      conversationId: "conv/1",
+      fetcher: fetcher as typeof fetch
+    });
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(
+      `/api/room-board-splits/${encodeURIComponent(split.split_id)}/decision`
+    );
+    expect(calls[0][1]).toMatchObject({ method: "POST", cache: "no-store" });
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({
+      conversation_id: "conv/1",
+      decision: "approve",
+      expected_digest: split.actions?.decide?.expected_digest
+    });
   });
 });

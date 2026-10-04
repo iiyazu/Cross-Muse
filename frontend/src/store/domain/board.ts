@@ -1,6 +1,7 @@
 import type { XmuseApiErrorShape } from "@/lib/types";
 import type {
   BoardContractDetail,
+  BoardSplit,
   RoomBoardProjection,
   RoomBoardSummary
 } from "@/lib/board-types";
@@ -20,19 +21,25 @@ export type RoomBoardCache = {
 
 export type BoardDomainState = {
   boardByRoom: Record<string, RoomBoardCache>;
+  boardActionPending: { kind: "approve" | "reject"; splitId: string } | null;
+  boardActionError: XmuseApiErrorShape | null;
 };
 
 export type BoardDomainActions = {
   refreshBoard: (roomId?: string) => Promise<void>;
   loadBoardContract: (contractId: string, version?: number, roomId?: string) => Promise<void>;
+  decideBoardSplit: (split: BoardSplit, decision: "approve" | "reject", roomId?: string) => Promise<boolean>;
   startBoardSync: () => void;
 };
 
 export type BoardDomain = BoardDomainState & BoardDomainActions;
-export type BoardReadCapability = DomainCapability<BoardDomain, "boardByRoom">;
+export type BoardReadCapability = DomainCapability<
+  BoardDomain,
+  "boardByRoom" | "boardActionPending" | "boardActionError"
+>;
 export type BoardWriteCapability = DomainCapability<
   BoardDomain,
-  "refreshBoard" | "loadBoardContract"
+  "refreshBoard" | "loadBoardContract" | "decideBoardSplit"
 >;
 
 export function createBoardCacheSelector(

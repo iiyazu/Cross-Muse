@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { BoardSplit } from "@/lib/board-types";
+
 const boardApiMocks = vi.hoisted(() => ({
   fetchRoomBoardSummary: vi.fn(),
   fetchRoomBoard: vi.fn(),
-  fetchBoardContract: vi.fn()
+  fetchBoardContract: vi.fn(),
+  decideBoardSplit: vi.fn()
 }));
 
 vi.mock("@/lib/board-api", () => boardApiMocks);
@@ -104,6 +107,8 @@ beforeEach(() => {
     executionsByRoom: {},
     memoryByRoom: {},
     boardByRoom: {},
+    boardActionPending: null,
+    boardActionError: null,
     codexByRoom: {},
     inspectorOpen: true,
     dockTab: "room"
@@ -193,5 +198,108 @@ describe("board store sync", () => {
     await pending;
     expect(useRoomStore.getState().boardByRoom["room-a"]?.projection).toBeNull();
     expect(useRoomStore.getState().selectedRoomId).toBe("room-b");
+  });
+});
+
+describe("board split decisions", () => {
+  const digest = `sha256:${"c".repeat(64)}`;
+
+  function split(): BoardSplit {
+    return {
+      split_id: "split-1",
+      status: "proposed",
+      proposed_by_participant_id: "lead",
+      created_at: "2026-10-04T12:00:00Z",
+      decided_at: null,
+      digest,
+      decided_via: null,
+      modules: [],
+      contracts: [],
+      actions: {
+        decide: {
+          available: true,
+          method: "POST",
+          href: "/api/chat/operator/board-splits/split-1/decision",
+          expected_digest: digest,
+          allowed_decisions: ["approve", "reject"]
+        }
+      }
+    };
+  }
+
+  function refreshedBoard() {
+    boardApiMocks.fetchRoomBoardSummary.mockResolvedValue(summary("2:bbb"));
+    boardApiMocks.fetchRoomBoard.mockResolvedValue(projection("2:bbb"));
+  }
+
+  it("refreshes the board cache on a successful decision", async () => {
+    refreshedBoard();
+    boardApiMocks.decideBoardSplit.mockResolvedValue({ status: "decided" });
+    const applied = await useRoomStore.getState().decideBoardSplit(
+      { ...split() },
+      "approve",
+      "room-a"
+    );
+    expect(applied).toBe(true);
+    expect(boardApiMocks.decideBoardSplit).toHaveBeenCalledTimes(1);
+    const request = boardApiMocks.decideBoardSplit.mock.calls[0];
+    expect(request[1]).toBe("approve");
+    expect(useRoomStore.getState().boardByRoom["room-a"]?.summary?.revision).toBe("2:bbb");
+    expect(useRoomStore.getState().boardActionPending).toBeNull();
+    expect(useRoomStore.getState().boardActionError).toBeNull();
+  });
+
+  it("refreshes and keeps the 409 notice without retrying on a stale decision", async () => {
+    refreshedBoard();
+    boardApiMocks.decideBoardSplit.mockRejectedValueOnce(new Error("digest mismatch"));
+    apiMocks.describeError.mockReturnValueOnce({
+      code: "room_board_split_digest_mismatch",
+      message: "stale digest",
+      retryable: false,
+      status: 409
+    });
+    const applied = await useRoomStore.getState().decideBoardSplit(
+      { ...split() },
+      "reject",
+      "room-a"
+    );
+    expect(applied).toBe(false);
+    expect(boardApiMocks.decideBoardSplit).toHaveBeenCalledTimes(1);
+    expect(useRoomStore.getState().boardByRoom["room-a"]?.summary?.revision).toBe("2:bbb");
+    expect(useRoomStore.getState().boardActionPending).toBeNull();
+    expect(useRoomStore.getState().boardActionError?.status).toBe(409);
+  });
+
+  it("blocks a second decision while one is in flight", async () => {
+    refreshedBoard();
+    let resolveDecision!: (value: unknown) => void;
+    boardApiMocks.decideBoardSplit.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveDecision = resolve; })
+    );
+    const first = useRoomStore.getState().decideBoardSplit({ ...split() }, "approve", "room-a");
+    const second = await useRoomStore.getState().decideBoardSplit(
+      { ...split() },
+      "reject",
+      "room-a"
+    );
+    expect(second).toBe(false);
+    expect(boardApiMocks.decideBoardSplit).toHaveBeenCalledTimes(1);
+    resolveDecision({ status: "decided" });
+    expect(await first).toBe(true);
+  });
+
+  it("does not corrupt the other room cache when switching rooms mid-request", async () => {
+    refreshedBoard();
+    let resolveDecision!: (value: unknown) => void;
+    boardApiMocks.decideBoardSplit.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveDecision = resolve; })
+    );
+    const pending = useRoomStore.getState().decideBoardSplit({ ...split() }, "approve", "room-a");
+    useRoomStore.setState({ selectedRoomId: "room-b" });
+    resolveDecision({ status: "decided" });
+    expect(await pending).toBe(true);
+    expect(useRoomStore.getState().boardByRoom["room-a"]?.summary?.revision).toBe("2:bbb");
+    expect(useRoomStore.getState().boardByRoom["room-b"]).toBeUndefined();
+    expect(useRoomStore.getState().boardActionPending).toBeNull();
   });
 });

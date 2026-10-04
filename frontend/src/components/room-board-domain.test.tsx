@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -175,5 +175,97 @@ describe("RoomBoardDomain", () => {
     const contract = rerendered.container.querySelector(".room-board-contract");
     expect(within(contract as HTMLElement).getByText("plain contract body")).toBeInTheDocument();
     expect(contract?.querySelector("pre")).toBeInTheDocument();
+  });
+
+  it("enables approve/reject on a proposed split and jumps from the attention strip", async () => {
+    const user = userEvent.setup();
+    const cache = cacheFor("split_pending.json");
+    const { container } = render(
+      <RoomBoardDomain cache={cache} onDecide={vi.fn(async () => true)} onLoadContract={vi.fn()} />
+    );
+    const approve = screen.getByRole("button", { name: "批准拆分" });
+    const reject = screen.getByRole("button", { name: "拒绝" });
+    expect(approve).toBeEnabled();
+    expect(reject).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "查看拆分" }));
+    const card = container.querySelector("[data-split-id]") as HTMLDetailsElement | null;
+    expect(card?.open).toBe(true);
+  });
+
+  it("opens a digest-bound dialog, closes on Esc, and returns focus", async () => {
+    const user = userEvent.setup();
+    const cache = cacheFor("split_pending.json");
+    const split = cache.projection!.splits[0];
+    render(
+      <RoomBoardDomain cache={cache} onDecide={vi.fn(async () => true)} onLoadContract={vi.fn()} />
+    );
+    const approve = screen.getByRole("button", { name: "批准拆分" });
+    await user.click(approve);
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("批准后将创建章程");
+    expect(dialog).toHaveTextContent("alpha");
+    expect(dialog).toHaveTextContent("beta");
+    expect(dialog).toHaveTextContent(split.digest.slice("sha256:".length, "sha256:".length + 12));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(approve));
+  });
+
+  it("confirms with the exact split and decision", async () => {
+    const user = userEvent.setup();
+    const cache = cacheFor("split_pending.json");
+    const split = cache.projection!.splits[0];
+    const onDecide = vi.fn(async () => true);
+    render(<RoomBoardDomain cache={cache} onDecide={onDecide} onLoadContract={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "拒绝" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("丢弃该拆分");
+    await user.click(screen.getByRole("button", { name: "确认" }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith(split, "reject");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("hides decision buttons and shows provenance after the decision", () => {
+    const { container } = render(
+      <RoomBoardDomain
+        cache={cacheFor("split_approved_via_plugin.json")}
+        onDecide={vi.fn(async () => true)}
+        onLoadContract={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole("button", { name: "批准拆分" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拒绝" })).toBeNull();
+    expect(container.textContent).toContain("插件（claude-code）");
+  });
+
+  it("surfaces the stale notice on 409 and a labeled error otherwise", () => {
+    const stale: RoomBoardCache = {
+      ...cacheFor("split_pending.json"),
+      contractDetails: {}
+    };
+    const staleError = {
+      code: "room_board_split_digest_mismatch",
+      message: "stale digest",
+      status: 409
+    };
+    const first = render(
+      <RoomBoardDomain
+        actionError={staleError}
+        cache={stale}
+        onDecide={vi.fn(async () => false)}
+        onLoadContract={vi.fn()}
+      />
+    );
+    expect(first.getByRole("alert")).toHaveTextContent("看板状态已变化，已刷新");
+    first.unmount();
+    const second = render(
+      <RoomBoardDomain
+        actionError={{ code: "room_board_split_decided", message: "decided", status: 400 }}
+        cache={stale}
+        onDecide={vi.fn(async () => false)}
+        onLoadContract={vi.fn()}
+      />
+    );
+    expect(second.getByRole("alert")).toHaveTextContent("拆分已经决策");
   });
 });

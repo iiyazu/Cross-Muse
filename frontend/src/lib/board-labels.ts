@@ -99,6 +99,8 @@ const REASON_CODE_LABELS: Record<string, string> = {
   room_board_contract_unknown: "契约未知",
   room_board_version_invalid: "契约版本无效",
   room_board_split_digest_mismatch: "拆分摘要不一致",
+  room_board_split_decided: "拆分已经决策",
+  room_board_split_not_proposed: "拆分不在待审批状态",
   room_board_query_invalid: "查询无效",
   room_board_decided_via_invalid: "决策来源无效"
 };
@@ -133,6 +135,18 @@ export function boardVerificationStatusLabel(status: string): string {
 
 export function boardSplitStatusLabel(status: string): string {
   return BOARD_SPLIT_STATUS_LABELS[status as BoardSplitStatus] ?? BOARD_SPLIT_STATUS_LABELS.unknown;
+}
+
+/** Decision provenance (§8): web | cli | plugin:<host> | null (hide). */
+export function boardDecidedViaLabel(decidedVia: string | null | undefined): string | null {
+  if (!decidedVia) return null;
+  if (decidedVia === "web") return "网页";
+  if (decidedVia === "cli") return "命令行";
+  if (decidedVia.startsWith("plugin:")) {
+    const host = decidedVia.slice("plugin:".length);
+    return host ? `插件（${host}）` : "插件";
+  }
+  return `未知来源（${decidedVia}）`;
 }
 
 export function boardContractKindLabel(kind: string): string {

@@ -956,9 +956,18 @@ function RoomInspectorTab({ onRequestCancel, onRequestMemoryRebuild }: Pick<Work
   const cancelRun = useRoomStore((state) => state.cancelExecutionRun);
   const resolveCandidate = useRoomStore((state) => state.resolveMemoryCandidate);
   const loadBoardContract = useRoomStore((state) => state.loadBoardContract);
+  const boardActionPending = useRoomStore((state) => state.boardActionPending);
+  const boardActionError = useRoomStore((state) => state.boardActionError);
+  const decideBoardSplit = useRoomStore((state) => state.decideBoardSplit);
   const projection = cache?.projection;
   return <>
-    <RoomBoardDomain cache={board} onLoadContract={(contractId) => { void loadBoardContract(contractId); }} />
+    <RoomBoardDomain
+      actionError={boardActionError}
+      actionPending={boardActionPending}
+      cache={board}
+      onDecide={decideBoardSplit}
+      onLoadContract={(contractId) => { void loadBoardContract(contractId); }}
+    />
     <RoomExecutionDomain actionError={executionError} actionPending={Boolean(executionPending)} cache={execution} onCancelRun={cancelRun} onDecideCandidate={decideCandidate} onSelectCandidate={selectCandidate} onUpdatePolicy={updatePolicy} />
     <RoomMemoryDomain actionError={memoryError} actionPending={Boolean(memoryPending)} cache={memory} rebuildDescriptor={rebuildDescriptor} rebuildError={rebuildError} rebuildPending={rebuildPending} onRebuild={onRequestMemoryRebuild} onResolve={resolveCandidate} />
     <RoomEvidenceDomain controlPending={cache?.controlPending ?? null} onCancel={onRequestCancel} onRetry={(id, descriptor) => { void control(id, "retry", descriptor); }} participants={projection?.participants ?? []} turns={projection?.turns ?? EMPTY_ROOM_TURNS} />
@@ -1050,9 +1059,10 @@ function WorkspaceStatus({ notice }: { notice: string | null }) {
   const controlError = useRoomStore((state) => roomId ? state.roomsById[roomId]?.controlError ?? null : null);
   const executionError = useRoomStore((state) => state.executionActionError);
   const memoryError = useRoomStore((state) => state.memoryActionError);
+  const boardError = useRoomStore((state) => state.boardActionError);
   return <WorkspaceStatusRegion message={!browserOnline
     ? "浏览器离线；Room 与 Runtime 状态暂不更新。"
-    : controlError?.status === 409 || executionError?.status === 409 || memoryError?.status === 409
+    : controlError?.status === 409 || executionError?.status === 409 || memoryError?.status === 409 || boardError?.status === 409
       ? "状态已经变化，已刷新耐久投影。"
       : notice}
   />;

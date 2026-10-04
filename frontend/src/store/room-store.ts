@@ -28,7 +28,8 @@ import {
 import {
   fetchBoardContract,
   fetchRoomBoard,
-  fetchRoomBoardSummary
+  fetchRoomBoardSummary,
+  decideBoardSplit as requestBoardSplitDecision
 } from "@/lib/board-api";
 import {
   normalizeRoomList,
@@ -386,6 +387,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   executionsByRoom: {},
   memoryByRoom: {},
   boardByRoom: {},
+  boardActionPending: null,
+  boardActionError: null,
   codexByRoom: {},
   codexPreferenceRevision: 0,
   executionActionPending: null,
@@ -1156,6 +1159,37 @@ export const useRoomStore = create<RoomState>((set, get) => ({
           }
         };
       });
+    }
+  },
+
+  async decideBoardSplit(split, decision, roomId = get().selectedRoomId ?? "") {
+    const actualRoomId = typeof roomId === "string" && roomId ? roomId : get().selectedRoomId ?? "";
+    if (!actualRoomId || get().boardActionPending) return false;
+    set({
+      boardActionPending: { kind: decision, splitId: split.split_id },
+      boardActionError: null
+    });
+    try {
+      await requestBoardSplitDecision(split, decision, {
+        ...apiOptions(),
+        conversationId: actualRoomId
+      });
+      set({ boardActionPending: null, boardActionError: null });
+      abortBoardRequest(actualRoomId);
+      await get().refreshBoard(actualRoomId);
+      return true;
+    } catch (error) {
+      if (isCallerAbort(error)) {
+        set({ boardActionPending: null });
+        return false;
+      }
+      const failure = describeError(error);
+      set({ boardActionPending: null, boardActionError: failure });
+      if (failure.status === 409) {
+        abortBoardRequest(actualRoomId);
+        await get().refreshBoard(actualRoomId);
+      }
+      return false;
     }
   },
 

@@ -259,6 +259,56 @@
   gap: var(--space-2);
 }
 
+.room-board-split-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.room-board-provenance {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-board-attention-jump {
+  font-size: 10px;
+  padding: 1px 8px;
+}
+
+.room-board-confirm-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: var(--space-2) 0 0;
+  font-size: 11px;
+  text-align: left;
+}
+
+.room-board-confirm-facts dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.room-board-confirm-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.room-board-confirm-facts ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.room-board-confirm-facts code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .room-board-contract button {
   width: 100%;
   display: grid;

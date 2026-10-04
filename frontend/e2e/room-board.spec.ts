@@ -24,9 +24,9 @@ async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, headers: corsHeaders, body: JSON.stringify(body) });
 }
 
-async function installBoardFixture(page: Page, scenario: "verified" | "verification_failed_rework") {
+async function installBoardFixture(page: Page, scenario: "verified" | "verification_failed_rework" | "split_pending") {
   const { projection, summary } = boardFixture(
-    scenario === "verified" ? "verified.json" : "verification_failed_rework.json"
+    scenario === "verified" ? "verified.json" : scenario === "split_pending" ? "split_pending.json" : "verification_failed_rework.json"
   );
   const boardProjection =
     scenario === "verified"
@@ -267,4 +267,60 @@ test("board panel surfaces failed gates and rework rounds", async ({ page }) => 
   await expect(board.locator('[data-state="verification_failed"]')).toBeVisible();
   await expect(board).toContainText("patch_diff_check");
   await expect(board).toContainText("返工");
+});
+
+test("board panel approves a proposed split through the fixed decision route", async ({ page }) => {
+  await installBoardFixture(page, "split_pending");
+  let decided = false;
+  let decisionUrl: string | null = null;
+  let decisionBody: unknown = null;
+  await page.route(
+    (url) =>
+      url.hostname === "127.0.0.1" &&
+      (url.pathname === "/api/chat/conversations/conv-1/board" ||
+        url.pathname === "/api/chat/conversations/conv-1/board/summary"),
+    async (route) => {
+      const { projection, summary } = boardFixture(
+        decided ? "split_approved_via_plugin.json" : "split_pending.json"
+      );
+      const url = new URL(route.request().url());
+      await json(
+        route,
+        url.pathname.endsWith("/board/summary") ? summary : projection
+      );
+    }
+  );
+  await page.route("**/api/room-board-splits/*/decision", async (route) => {
+    const request = route.request();
+    decisionUrl = request.url();
+    decisionBody = request.postDataJSON();
+    decided = true;
+    await json(route, {});
+  });
+
+  await page.goto("/rooms/conv-1");
+  await page.getByRole("button", { name: /工作台/ }).click();
+  const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Room" }).click();
+  const board = inspector.getByRole("region", { name: "协作看板" });
+  await expect(board).toBeVisible();
+  await board.getByRole("button", { name: "批准拆分" }).click();
+  const dialog = board.getByRole("alertdialog");
+  await expect(dialog).toContainText("批准后将创建章程");
+  await dialog.getByRole("button", { name: "确认" }).click();
+
+  await expect
+    .poll(() => decisionBody, { timeout: 10_000 })
+    .not.toBeNull();
+  expect(decisionUrl).toContain("/api/room-board-splits/");
+  expect(decisionUrl).toContain("/decision");
+  expect(decisionBody).toBeTruthy();
+  expect(Object.keys(decisionBody as Record<string, unknown>).sort()).toEqual([
+    "conversation_id",
+    "decision",
+    "expected_digest"
+  ]);
+  expect(decisionBody).toMatchObject({ conversation_id: "conv-1", decision: "approve" });
+  await expect(board).toContainText("插件（claude-code）");
+  await expect(board.getByRole("button", { name: "批准拆分" })).toHaveCount(0);
 });

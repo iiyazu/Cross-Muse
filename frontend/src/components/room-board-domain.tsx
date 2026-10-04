@@ -1,8 +1,11 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+
 import { sanitizeAgentTextValue } from "@/lib/board-api";
 import {
   boardAttentionKindLabel,
   boardAttentionReasonLabel,
   boardContractKindLabel,
+  boardDecidedViaLabel,
   boardEventKindLabel,
   boardLifecycleLabel,
   boardReasonLabel,
@@ -177,7 +180,13 @@ function CountsRow({ projection }: { projection: RoomBoardProjection }) {
   );
 }
 
-function AttentionStrip({ items }: { items: BoardAttentionItem[] }) {
+function AttentionStrip({
+  items,
+  onViewSplit
+}: {
+  items: BoardAttentionItem[];
+  onViewSplit?: (splitId: string) => void;
+}) {
   if (!items.length) return null;
   const rank = (kind: string) => (kind === "operator" ? 0 : kind === "lead" ? 1 : 2);
   const sorted = [...items].sort((left, right) => {
@@ -197,6 +206,18 @@ function AttentionStrip({ items }: { items: BoardAttentionItem[] }) {
           <span>{boardAttentionReasonLabel(item.reason_code)}</span>
           {item.module_id ? <code>{item.module_id}</code> : null}
           {item.split_id ? <code>{item.split_id}</code> : null}
+          {item.kind === "operator" &&
+          item.reason_code === "board_attention_split_pending" &&
+          item.split_id &&
+          onViewSplit ? (
+            <button
+              className="room-quiet-button room-board-attention-jump"
+              onClick={() => onViewSplit(item.split_id as string)}
+              type="button"
+            >
+              查看拆分
+            </button>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -299,10 +320,144 @@ function ModuleCard({
   );
 }
 
-function SplitCard({ split, projection }: { split: BoardSplit; projection: RoomBoardProjection }) {
-  const proposer = participantName(projection, split.proposed_by_participant_id);
+export type BoardSplitDecision = "approve" | "reject";
+
+function shortSplitDigest(digest: string): string {
+  const hex = digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest;
+  return hex.slice(0, 12);
+}
+
+function SplitDecisionDialog({
+  split,
+  decision,
+  ownerNameOf,
+  pending,
+  onClose,
+  onConfirm
+}: {
+  split: BoardSplit;
+  decision: BoardSplitDecision;
+  ownerNameOf: (participantId: string) => string;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+  const title = decision === "approve" ? "批准这个拆分？" : "拒绝这个拆分？";
+  const consequence =
+    decision === "approve"
+      ? "批准后将创建章程、通知各 Owner 开工。"
+      : "拒绝后将丢弃该拆分，不创建章程。";
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape" && !pending) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    } else if (event.key === "Tab") {
+      event.stopPropagation();
+      if (event.shiftKey && document.activeElement === closeRef.current) {
+        event.preventDefault();
+        confirmRef.current?.focus();
+      } else if (!event.shiftKey && document.activeElement === confirmRef.current) {
+        event.preventDefault();
+        closeRef.current?.focus();
+      }
+    }
+  }
   return (
-    <details className="room-board-split">
+    <div className="room-dialog-layer" onKeyDown={handleKeyDown}>
+      <button
+        aria-label="关闭拆分确认"
+        className="room-dialog-scrim"
+        disabled={pending}
+        onClick={onClose}
+        type="button"
+      />
+      <div
+        aria-modal="true"
+        aria-labelledby="board-split-confirm-title"
+        className="room-confirm-dialog"
+        role="alertdialog"
+      >
+        <span className="room-dialog-kicker">Board split decision</span>
+        <h2 id="board-split-confirm-title">{title}</h2>
+        <p>{consequence}</p>
+        <dl className="room-board-confirm-facts">
+          <dt>模块</dt>
+          <dd>
+            <ul>
+              {split.modules.map((item) => (
+                <li key={item.module_id}>
+                  <code>{item.module_id}</code>
+                  <span>Owner {ownerNameOf(item.owner_participant_id)}</span>
+                  <AgentTextView value={item.title} />
+                </li>
+              ))}
+            </ul>
+          </dd>
+          {split.contracts.length ? (
+            <>
+              <dt>契约</dt>
+              <dd>{split.contracts.map((item) => item.contract_id).join("、")}</dd>
+            </>
+          ) : null}
+          <dt>摘要绑定</dt>
+          <dd>
+            <code title={split.digest}>{shortSplitDigest(split.digest)}</code>
+          </dd>
+        </dl>
+        <div className="room-dialog-actions">
+          <button
+            className="room-quiet-button"
+            disabled={pending}
+            onClick={onClose}
+            ref={closeRef}
+            type="button"
+          >
+            返回
+          </button>
+          <button
+            className={decision === "reject" ? "room-danger-button" : "room-primary-button"}
+            disabled={pending}
+            onClick={() => void onConfirm()}
+            ref={confirmRef}
+            type="button"
+          >
+            {pending ? "正在提交…" : "确认"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SplitCard({
+  split,
+  projection,
+  actionPending,
+  cardRef,
+  onRequestDecision
+}: {
+  split: BoardSplit;
+  projection: RoomBoardProjection;
+  actionPending: boolean;
+  cardRef: (element: HTMLDetailsElement | null) => void;
+  onRequestDecision: (split: BoardSplit, decision: BoardSplitDecision) => void;
+}) {
+  const proposer = participantName(projection, split.proposed_by_participant_id);
+  const decideAvailable = split.status === "proposed" && split.actions?.decide?.available === true;
+  const via = boardDecidedViaLabel(split.decided_via);
+  return (
+    <details
+      className="room-board-split"
+      data-split-id={split.split_id}
+      id={`board-split-${split.split_id}`}
+      ref={cardRef}
+    >
       <summary>
         <code>{split.split_id.slice(0, 12)}…</code>
         <span>{boardSplitStatusLabel(split.status)}</span>
@@ -317,8 +472,34 @@ function SplitCard({ split, projection }: { split: BoardSplit; projection: RoomB
         ))}
       </ul>
       {split.contracts.length ? <p>契约 {split.contracts.map((item) => item.contract_id).join("、")}</p> : null}
+      {via ? <p className="room-board-provenance">经由 {via}</p> : null}
+      {split.status === "proposed" ? (
+        <div className="room-board-split-actions">
+          <button
+            className="room-primary-button"
+            disabled={!decideAvailable || actionPending}
+            onClick={() => onRequestDecision(split, "approve")}
+            type="button"
+          >
+            批准拆分
+          </button>
+          <button
+            className="room-danger-button"
+            disabled={!decideAvailable || actionPending}
+            onClick={() => onRequestDecision(split, "reject")}
+            type="button"
+          >
+            拒绝
+          </button>
+        </div>
+      ) : null}
     </details>
   );
+}
+
+function boardActionErrorText(error: { code: string; message: string; status: number }): string {
+  if (error.status === 409) return "看板状态已变化，已刷新";
+  return `拆分决策未完成：${boardReasonLabel(error.code)}`;
 }
 
 function EventSummary({ event }: { event: BoardEvent }) {
@@ -415,10 +596,16 @@ function EventLine({
 
 export function RoomBoardDomain({
   cache,
-  onLoadContract
+  onLoadContract,
+  actionPending = null,
+  actionError = null,
+  onDecide
 }: {
   cache: RoomBoardCache | null;
   onLoadContract: (contractId: string) => void;
+  actionPending?: { kind: "approve" | "reject"; splitId: string } | null;
+  actionError?: { code: string; message: string; status: number } | null;
+  onDecide?: (split: BoardSplit, decision: BoardSplitDecision) => Promise<boolean>;
 }) {
   const projection = cache?.projection ?? null;
   const summary = cache?.summary ?? null;
@@ -430,6 +617,36 @@ export function RoomBoardDomain({
     projection.splits.length === 0 &&
     projection.events.length === 0;
   const eventsNewest = projection ? [...projection.events].sort((a, b) => b.seq - a.seq) : [];
+  const [confirmation, setConfirmation] = useState<{
+    split: BoardSplit;
+    decision: BoardSplitDecision;
+  } | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const splitRefs = useRef(new Map<string, HTMLDetailsElement>());
+
+  function requestDecision(split: BoardSplit, decision: BoardSplitDecision) {
+    returnFocusRef.current = document.activeElement as HTMLElement | null;
+    setConfirmation({ split, decision });
+  }
+
+  function closeConfirmation() {
+    setConfirmation(null);
+    requestAnimationFrame(() => returnFocusRef.current?.focus());
+  }
+
+  async function confirmDecision() {
+    if (!confirmation || !onDecide) return;
+    await onDecide(confirmation.split, confirmation.decision);
+    closeConfirmation();
+  }
+
+  function viewSplit(splitId: string) {
+    const card = splitRefs.current.get(splitId);
+    if (!card) return;
+    card.open = true;
+    card.scrollIntoView?.({ block: "nearest" });
+    card.querySelector("summary")?.focus({ preventScroll: true });
+  }
 
   return (
     <section aria-label="协作看板" className="room-board">
@@ -446,7 +663,7 @@ export function RoomBoardDomain({
         <p className="room-operations-empty">尚未建立协作看板</p>
       ) : (
         <>
-          <AttentionStrip items={attention} />
+          <AttentionStrip items={attention} onViewSplit={viewSplit} />
           {projection ? <CountsRow projection={projection} /> : null}
           {isEmpty ? (
             <p className="room-operations-empty">尚未建立协作看板</p>
@@ -460,8 +677,23 @@ export function RoomBoardDomain({
               {projection.splits.length ? (
                 <div aria-label="拆分提议" className="room-board-splits">
                   {projection.splits.map((split) => (
-                    <SplitCard key={split.split_id} projection={projection} split={split} />
+                    <SplitCard
+                      actionPending={actionPending !== null}
+                      cardRef={(element) => {
+                        if (element) splitRefs.current.set(split.split_id, element);
+                        else splitRefs.current.delete(split.split_id);
+                      }}
+                      key={split.split_id}
+                      onRequestDecision={requestDecision}
+                      projection={projection}
+                      split={split}
+                    />
                   ))}
+                  {actionError ? (
+                    <p className="room-operations-warning" role="alert">
+                      {boardActionErrorText(actionError)}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               {projection.contracts.length ? (
@@ -515,6 +747,16 @@ export function RoomBoardDomain({
           )}
         </>
       )}
+      {confirmation && projection ? (
+        <SplitDecisionDialog
+          decision={confirmation.decision}
+          onClose={closeConfirmation}
+          onConfirm={confirmDecision}
+          ownerNameOf={(participantId) => participantName(projection, participantId)}
+          pending={actionPending !== null}
+          split={confirmation.split}
+        />
+      ) : null}
     </section>
   );
 }
