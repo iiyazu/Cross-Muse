@@ -598,12 +598,14 @@ function EventLine({
 
 export function RoomBoardDomain({
   cache,
+  roomId,
   onLoadContract,
   actionPending = null,
   actionError = null,
   onDecide
 }: {
   cache: RoomBoardCache | null;
+  roomId?: string;
   onLoadContract: (contractId: string) => void;
   actionPending?: { kind: "approve" | "reject"; splitId: string } | null;
   actionError?: { code: string; message: string; status: number } | null;
@@ -699,8 +701,8 @@ export function RoomBoardDomain({
                 </div>
               ) : null}
               <RoomGrantsDomain
-                conversationId={projection.conversation_id}
-                key={projection.conversation_id}
+                conversationId={roomId ?? projection.conversation_id}
+                key={roomId ?? projection.conversation_id}
               />
               {projection.contracts.length ? (
                 <div aria-label="契约列表" className="room-board-contracts">
