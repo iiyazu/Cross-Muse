@@ -1112,13 +1112,20 @@ def test_curated_profile_reads_frozen_v2_advisories_and_rejects_drift(
     assert "server-key" not in request.full_url
     assert request.get_header("X-api-key") == "server-key"
 
-    # Non-curated profiles keep the unchanged v1 contract.
-    v1_document = {"schema": "memoryos_external_advisories/v1", "items": []}
-    v1_opener = _HttpOpener([_HttpResponse(json.dumps(v1_document).encode())])
+    # Non-curated profiles have no external proposer: the heuristic kernel's
+    # v1 advisories are never requested.
+    v1_opener = _HttpOpener([])
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: v1_opener)
-    archive_adapter = MemoryOSArchiveAdapter("http://127.0.0.1:8301", "server-key")
-    assert archive_adapter.list_advisories(session_id="session-room-0001") == []
-    assert v1_opener.requests[0].full_url.endswith("/sessions/session-room-0001/advisories")
+    for profile in ("archive-only", "full-local"):
+        other_adapter = MemoryOSArchiveAdapter(
+            "http://127.0.0.1:8301",
+            "server-key",
+            profile=profile,  # type: ignore[arg-type]
+        )
+        with pytest.raises(MemoryOSAdapterError) as unsupported:
+            other_adapter.list_advisories(session_id="session-room-0001")
+        assert unsupported.value.code == "memoryos_advisory_profile_unsupported"
+    assert v1_opener.requests == []
 
     def drop_topic_key(payload: dict[str, Any]) -> None:
         del payload["items"][0]["topic_key"]

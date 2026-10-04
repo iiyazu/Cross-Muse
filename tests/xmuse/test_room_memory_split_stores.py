@@ -91,7 +91,7 @@ def test_receipt_store_preserves_two_phase_context_binding(tmp_path: Path) -> No
     assert store.list_attempt_receipts(conversation_id) == [bound]
 
 
-def test_advisory_store_reproves_sources_and_records_governance_receipt(
+def test_advisory_store_receipts_an_unattributed_advisory_as_rejected(
     tmp_path: Path,
 ) -> None:
     db, _registry, conversation_id, records, root, claims = root_and_claims(tmp_path)
@@ -124,7 +124,8 @@ def test_advisory_store_reproves_sources_and_records_governance_receipt(
     )
     receipts = store.list_external_advisory_receipts(conversation_id)
 
-    assert result and result[0]["kind"] == "room_fact"
+    assert result == []
     assert replay == []
-    assert receipts[0]["status"] == "accepted"
-    assert receipts[0]["source_activity_ids"] == [activity_id]
+    assert len(receipts) == 1
+    assert receipts[0]["status"] == "rejected"
+    assert receipts[0]["reason_code"] == "room_memory_advisory_unattributed"

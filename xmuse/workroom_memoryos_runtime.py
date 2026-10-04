@@ -615,8 +615,8 @@ class MemoryOSRuntimeCoordinator:
             and hybrid.get("semantic") is True
             and hybrid.get("rrf") is True
             and capabilities.get("message_ingest") is True
-            and capabilities.get("agentic_advisory") is True
-            and capabilities.get("paging") is True
+            # The heuristic agent kernel and paging are deliberately off, so
+            # their capabilities are not part of readiness.
         )
 
     def _schedule_recovery(self, *, code: str) -> dict[str, Any]:

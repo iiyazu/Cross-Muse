@@ -309,8 +309,8 @@ def test_full_local_requires_the_complete_hybrid_capability_proof(tmp_path: Path
         "capabilities": {
             "hybrid": {"lexical": True, "semantic": False, "rrf": True},
             "message_ingest": True,
-            "agentic_advisory": True,
-            "paging": True,
+            "agentic_advisory": False,
+            "paging": False,
         },
     }
 
@@ -320,6 +320,23 @@ def test_full_local_requires_the_complete_hybrid_capability_proof(tmp_path: Path
     assert status["code"] == "memoryos_full_local_capability_missing"
     assert len(runtime.specs) == 1
     assert runtime.group_signals == []
+
+
+def test_full_local_is_ready_with_the_heuristic_kernel_and_paging_off(tmp_path: Path) -> None:
+    _runtime, fixture = _coordinator(tmp_path, profile="full-local")
+    fixture.dependencies.http_json = lambda _url: {
+        "status": "ok",
+        "capabilities": {
+            "hybrid": {"lexical": True, "semantic": True, "rrf": True},
+            "message_ingest": True,
+            "agentic_advisory": False,
+            "paging": False,
+        },
+    }
+
+    status = fixture.coordinator.reconcile()
+
+    assert status["state"] == "ready"
 
 
 def test_generation_change_wins_over_due_recovery(tmp_path: Path) -> None:

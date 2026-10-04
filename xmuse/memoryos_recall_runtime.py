@@ -16,8 +16,8 @@ from xmuse.memoryos_evidence import (
 )
 from xmuse.memoryos_http_client import MemoryOSAdapterError
 from xmuse_core.chat.memoryos_supervisor import (
+    MEMORYOS_CURATOR_PROFILE,
     MemoryOSProfile,
-    memoryos_profile_is_full_local,
 )
 from xmuse_core.chat.room_memory_ports import (
     RoomMemoryAdvisoryGovernancePort,
@@ -97,7 +97,9 @@ class MemoryOSRecallRuntime:
                 ),
                 timeout=self.recall_timeout_s,
             )
-            if memoryos_profile_is_full_local(self._client.profile):
+            # Only the Curator's advisories carry an external proposer identity;
+            # no other MemoryOS proposal may enter the Room.
+            if self._client.profile == MEMORYOS_CURATOR_PROFILE:
                 await self._record_advisories(
                     session_id=session_id,
                     conversation_id=request.conversation_id,

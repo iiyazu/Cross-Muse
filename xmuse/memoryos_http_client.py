@@ -31,17 +31,6 @@ MEMORYOS_SOURCE_EVIDENCE_PROFILE = "source_evidence/v1"
 MEMORYOS_SOURCE_EVIDENCE_V2_PROFILE = "source_evidence/v2"
 _MAX_REQUEST_BYTES = 64 * 1024
 _MEMORYOS_CONTEXT_HTTP_MAX_BYTES = 128 * 1024
-_ADVISORY_V1_KEYS = frozenset(
-    {
-        "advisory_id",
-        "session_id",
-        "fingerprint",
-        "proposal_type",
-        "content",
-        "source_refs",
-        "created_at",
-    }
-)
 _ADVISORY_V2_KEYS = frozenset(
     {
         "advisory_id",
@@ -286,41 +275,16 @@ class MemoryOSHTTPClient:
             raise
 
     def list_advisories(self, *, session_id: str) -> list[Mapping[str, Any]]:
+        """List the Curator's advisories (``memoryos_external_advisories/v2``).
+
+        Only the curated profile has an external proposer identity; MemoryOS'
+        heuristic kernel proposals (v1) are never requested.
+        """
+
+        if self.profile != MEMORYOS_CURATOR_PROFILE:
+            raise MemoryOSAdapterError("memoryos_advisory_profile_unsupported")
         path = f"/sessions/{urllib.parse.quote(session_id, safe='')}/advisories"
-        if self.profile == MEMORYOS_CURATOR_PROFILE:
-            return self._list_curated_advisories(path)
-        payload = self._request_json(
-            "GET",
-            path,
-            None,
-            max_response_bytes=64 * 1024,
-        )
-        if payload.get("schema") != "memoryos_external_advisories/v1":
-            raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
-        raw_items = payload.get("items")
-        if not isinstance(raw_items, list) or len(raw_items) > 32:
-            raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
-        result: list[Mapping[str, Any]] = []
-        for item in raw_items:
-            if not isinstance(item, Mapping) or set(item) != _ADVISORY_V1_KEYS:
-                raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
-            if (
-                not isinstance(item.get("advisory_id"), str)
-                or not isinstance(item.get("session_id"), str)
-                or item.get("session_id") != session_id
-                or not isinstance(item.get("fingerprint"), str)
-                or not _FINGERPRINT_RE.fullmatch(item["fingerprint"])
-                or item.get("proposal_type") not in {"archive_write", "core_promotion_request"}
-                or not isinstance(item.get("content"), str)
-                or not item["content"].strip()
-                or len(item["content"].encode("utf-8")) > 4096
-                or not isinstance(item.get("source_refs"), list)
-                or not 0 < len(item["source_refs"]) <= 8
-                or not isinstance(item.get("created_at"), str)
-            ):
-                raise MemoryOSAdapterError("memoryos_advisory_contract_invalid")
-            result.append(item)
-        return result
+        return self._list_curated_advisories(path)
 
     def _list_curated_advisories(self, path: str) -> list[Mapping[str, Any]]:
         payload = self._request_json(
