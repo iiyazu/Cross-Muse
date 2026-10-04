@@ -204,6 +204,8 @@ class RoomBoardSplitDecisionRequest(BaseModel):
 
     conversation_id: str = Field(min_length=1, max_length=200)
     decision: Literal["approve", "reject"]
+    expected_digest: str | None = Field(default=None, max_length=200)
+    decided_via: str = Field(default="web", max_length=64)
 
     @field_validator("conversation_id", mode="before")
     @classmethod

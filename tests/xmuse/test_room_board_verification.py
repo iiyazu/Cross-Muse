@@ -5,12 +5,28 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.xmuse.board_scenarios import (
+    DIGEST_A,
+    DIGEST_B,
+    NOW,
+    T0,
+    _activity_payload,
+    _approved_board,
+    _claim,
+    _lease_kwargs,
+    _observations_for,
+    _report_done,
+    _round,
+    _round_time,
+    _split_payload,
+    _verification_row,
+)
 from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.chat import room_board_verification as verification
 from xmuse_core.chat.participant_store import ParticipantStore
@@ -28,11 +44,6 @@ from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_observation_transport_base import build_room_observation_prompt
 from xmuse_core.chat.room_owner_clones import OwnerCloneError, OwnerCloneManager
 from xmuse_core.chat.room_owner_ids import owner_id_for_participant
-
-T0 = datetime(2026, 1, 1, tzinfo=UTC)
-NOW = T0 + timedelta(seconds=10)
-DIGEST_A = "sha256:" + "a" * 64
-DIGEST_B = "sha256:" + "b" * 64
 
 _GIT_ENV = {
     **os.environ,
@@ -53,182 +64,6 @@ def _git(repo: Path, *args: str) -> str:
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
-
-
-def _board_room(tmp_path: Path, db_name: str = "chat.db", count: int = 3):
-    db = tmp_path / db_name
-    conversation = RoomTestStore(db).create_conversation("board room")
-    participants = ParticipantStore(db)
-    members = [
-        participants.add(
-            conversation_id=conversation.id,
-            role=f"role-{index}",
-            display_name=f"Agent {index}",
-            cli_kind="codex",
-            model="gpt-5",
-        )
-        for index in range(count)
-    ]
-    with RoomDatabase(db).connect() as conn:
-        write_room_collaboration_policy_conn(
-            conn,
-            conversation_id=conversation.id,
-            mode="broadcast",
-            lead_participant_id=members[0].participant_id,
-            updated_at="2026-01-01T00:00:00.000000Z",
-        )
-        conn.commit()
-    RoomKernelStore(db).post_human_activity(
-        conversation_id=conversation.id,
-        human_id="human",
-        content="kickoff",
-        client_request_id="kickoff",
-    )
-    return db, conversation.id, members
-
-
-def _claim(db: Path, conversation_id: str, participant, *, owner: str):
-    claimed = RoomKernelStore(db).claim_next_observation_batch(
-        conversation_id=conversation_id,
-        participant_id=participant.participant_id,
-        lease_owner=owner,
-        lease_ttl_s=300.0,
-        now=T0,
-    )
-    assert claimed is not None
-    return claimed["observation"]
-
-
-def _lease_kwargs(participant, observation, *, request_id: str) -> dict[str, Any]:
-    return {
-        "conversation_id": observation["conversation_id"],
-        "participant_id": participant.participant_id,
-        "caller_identity": f"god:testsess:{participant.participant_id}",
-        "observation_id": observation["observation_id"],
-        "lease_token": observation["lease_token"],
-        "client_request_id": request_id,
-        "now": NOW,
-    }
-
-
-def _split_payload(members, *, paths: list[str] | None = None):
-    lead, owner_a, owner_b = members[0], members[1], members[2]
-    charter_paths = paths or ["src/alpha/**"]
-    modules = [
-        {
-            "module_id": "alpha",
-            "title": "Alpha module",
-            "paths": charter_paths,
-            "provides": ["api.alpha"],
-            "depends": [],
-            "acceptance": ["alpha works"],
-            "report_to": lead.participant_id,
-        },
-        {
-            "module_id": "beta",
-            "title": "Beta module",
-            "paths": ["src/beta/**"],
-            "provides": ["api.beta"],
-            "depends": ["api.alpha"],
-            "acceptance": ["beta works"],
-            "report_to": lead.participant_id,
-        },
-    ]
-    assignments = {"alpha": owner_a.participant_id, "beta": owner_b.participant_id}
-    contracts = [
-        {
-            "contract_id": "api.alpha",
-            "provider_module_id": "alpha",
-            "kind": "api_schema",
-            "content": '{"alpha": 1}',
-            "rationale": "alpha surface",
-        },
-        {
-            "contract_id": "api.beta",
-            "provider_module_id": "beta",
-            "kind": "types",
-            "content": "type Beta = string;",
-            "rationale": "beta surface",
-        },
-    ]
-    return modules, assignments, contracts
-
-
-def _approved_board(tmp_path: Path, *, paths: list[str] | None = None):
-    db, conversation_id, members = _board_room(tmp_path)
-    store = RoomBoardStore(db)
-    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
-    obs_a = _claim(db, conversation_id, members[1], owner="host-a")
-    obs_b = _claim(db, conversation_id, members[2], owner="host-b")
-    modules, assignments, contracts = _split_payload(members, paths=paths)
-    proposed = store.propose_split(
-        **_lease_kwargs(members[0], lead_obs, request_id="propose-1"),
-        modules=modules,
-        assignments=assignments,
-        contracts=contracts,
-    )
-    decided = store.decide_split(
-        conversation_id=conversation_id,
-        split_id=proposed["split_id"],
-        decision="approve",
-        operator_identity="operator:host",
-    )
-    assert decided["status"] == "approved"
-    return {
-        "db": db,
-        "conversation_id": conversation_id,
-        "members": members,
-        "store": store,
-        "leases": {
-            members[0].participant_id: lead_obs,
-            members[1].participant_id: obs_a,
-            members[2].participant_id: obs_b,
-        },
-    }
-
-
-def _report_done(ctx, member_index: int, request_id: str, *, now: datetime = NOW) -> dict[str, Any]:
-    members = ctx["members"]
-    owner = members[member_index]
-    kwargs = _lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id=request_id)
-    kwargs["now"] = now
-    return ctx["store"].report_progress(
-        **kwargs,
-        module_id="alpha",
-        status="done",
-        summary="finished",
-        claims=[],
-    )
-
-
-def _verification_row(db: Path, verification_id: str) -> dict[str, Any]:
-    with RoomDatabase(db).connect(readonly=True) as conn:
-        row = conn.execute(
-            "select * from room_board_verifications where verification_id = ?",
-            (verification_id,),
-        ).fetchone()
-    assert row is not None
-    return dict(row)
-
-
-def _observations_for(db: Path, participant_id: str, activity_id: str) -> list[Any]:
-    with RoomDatabase(db).connect(readonly=True) as conn:
-        return conn.execute(
-            "select * from room_observations where participant_id = ? and activity_id = ?",
-            (participant_id, activity_id),
-        ).fetchall()
-
-
-def _activity_payload(db: Path, activity_id: str) -> dict[str, Any]:
-    with RoomDatabase(db).connect(readonly=True) as conn:
-        row = conn.execute(
-            "select * from room_activities where activity_id = ?", (activity_id,)
-        ).fetchone()
-    assert row is not None
-    return {
-        "row": dict(row),
-        "payload": json.loads(str(row["payload_json"])),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -464,48 +299,6 @@ def test_stale_result_is_dropped_without_activity(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _complete(
-    ctx,
-    verification_id: str,
-    lease_token: str,
-    *,
-    status: str,
-    reason: str | None = None,
-    now: datetime = NOW,
-) -> dict[str, Any]:
-    return ctx["store"].complete_board_verification(
-        verification_id=verification_id,
-        lease_token=lease_token,
-        status=status,
-        reason_code=reason,
-        head_commit="b" * 40,
-        patch_digest=DIGEST_A,
-        changed_paths=["src/alpha/a.py"],
-        gates=[{"gate_id": "patch_diff_check", "status": "passed", "exit_code": 0}],
-        evidence={},
-        now=now,
-    )
-
-
-def _round(ctx, request_id: str, *, status: str, reason: str | None = None, now: datetime = NOW):
-    reported = _report_done(ctx, 1, request_id, now=now)
-    claimed = ctx["store"].claim_next_board_verification(worker_id="w1", now=now)
-    assert claimed is not None
-    result = _complete(
-        ctx,
-        reported["verification_id"],
-        claimed["lease_token"],
-        status=status,
-        reason=reason,
-        now=now + timedelta(seconds=30),
-    )
-    return reported, result
-
-
-def _round_time(index: int) -> datetime:
-    return NOW + timedelta(seconds=60 * index)
-
-
 def test_failed_completion_wakes_owner_with_evidence(tmp_path: Path) -> None:
     ctx = _approved_board(tmp_path)
     owner, lead = ctx["members"][1], ctx["members"][0]
@@ -591,16 +384,19 @@ def test_board_projection_counters_and_browser_safety(tmp_path: Path) -> None:
     _round(ctx, "done-3", status="passed", now=_round_time(2))
 
     payload = ctx["store"].board_projection(conversation_id=ctx["conversation_id"])
-    entry = next(item for item in payload["progress"] if item["module_id"] == "alpha")
-    assert entry["verification"] == {
-        "status": "passed",
-        "verification_id": entry["verification"]["verification_id"],
-        "reason_code": None,
+    entry = next(item for item in payload["modules"] if item["module_id"] == "alpha")
+    assert entry["counters"] == {
         "done_reports": 3,
-        "verifications_passed": 1,
-        "verifications_failed": 2,
+        "passed": 1,
+        "failed": 2,
+        "superseded": 0,
+        "errored": 0,
         "rework_rounds": 2,
     }
+    assert entry["lifecycle"] == "done_claimed"
+    assert entry["state"] == "verified"
+    assert entry["verification"]["status"] == "passed"
+    assert "payload" not in entry
 
 
 def test_owner_view_shows_latest_verification_result(tmp_path: Path) -> None:
@@ -617,12 +413,15 @@ def test_owner_view_shows_latest_verification_result(tmp_path: Path) -> None:
     assert mine["verification"]["reason_code"] == "owner_patch_empty"
     assert mine["verification"]["done_reports"] == 1
     assert mine["verification"]["verifications_failed"] == 1
+    assert mine["lifecycle"] == "done_claimed"
+    assert mine["state"] == "verification_failed"
 
     target = tmp_path / "board-view"
     target.mkdir()
     materialize_owner_board_view(ctx["db"], ctx["conversation_id"], owner.participant_id, target)
     charter_md = (target / "charter.md").read_text(encoding="utf-8")
     assert "Verification: failed" in charter_md
+    assert "- State: verification_failed" in charter_md
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +525,7 @@ def _owner_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         split_id=proposed["split_id"],
         decision="approve",
         operator_identity="operator:host",
+        now=NOW,
     )
     source = _source_repo(tmp_path / "source")
     clones_root = home / "runtime" / "owner-clones"
@@ -1059,6 +859,7 @@ def _stack_fixture(
         split_id=proposed["split_id"],
         decision="approve",
         operator_identity="operator:host",
+        now=NOW,
     )
     home = tmp_path / home_name
     source = _source_repo(tmp_path / source_name)
@@ -1097,17 +898,7 @@ def _stack_fixture(
 def _report_module_done(
     ctx, member_index: int, module_id: str, request_id: str, *, now: datetime = NOW
 ) -> dict[str, Any]:
-    members = ctx["members"]
-    owner = members[member_index]
-    kwargs = _lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id=request_id)
-    kwargs["now"] = now
-    return ctx["store"].report_progress(
-        **kwargs,
-        module_id=module_id,
-        status="done",
-        summary="finished",
-        claims=[],
-    )
+    return _report_done(ctx, member_index, request_id, now=now, module_id=module_id)
 
 
 def _verification_activities(db: Path) -> list[dict[str, Any]]:
@@ -1300,8 +1091,8 @@ def test_frontend_defers_until_backend_passes(
         obs_after = conn.execute("select count(*) from room_observations").fetchone()[0]
     assert obs_after == obs_before
     projected = ctx["store"].board_projection(conversation_id=ctx["conversation_id"])
-    entry = next(item for item in projected["progress"] if item["module_id"] == "frontend")
-    assert entry["verification"]["status"] == "pending"
+    entry = next(item for item in projected["modules"] if item["module_id"] == "frontend")
+    assert entry["verification"]["status"] == "waiting_for_provider"
     assert entry["verification"]["reason_code"] == "board_verification_waiting_for_provider"
 
     # The backend passes while the frontend waits.

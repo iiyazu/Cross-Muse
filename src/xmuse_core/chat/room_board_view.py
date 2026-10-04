@@ -104,6 +104,9 @@ def _render_charter_md(
             )
         else:
             lines.append("- Verification: none yet")
+        state = entry.get("state")
+        if isinstance(state, str) and state:
+            lines.append(f"- State: {state}")
         lines.append("")
     lines.append("## Other modules")
     lines.append("")

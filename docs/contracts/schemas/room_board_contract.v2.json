@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_contract.v2.json",
+  "title": "room_board_contract/v2",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_contract/v2" },
+    "conversation_id": { "type": "string" },
+    "contract_id": { "type": "string" },
+    "provider_module_id": { "type": "string" },
+    "kind": { "enum": ["api_schema", "types", "protocol", "text"] },
+    "versions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "minimum": 1 },
+          "digest": { "type": "string" },
+          "author_participant_id": { "type": "string" },
+          "created_at": { "type": "string" },
+          "rationale": { "$ref": "#/$defs/nullableAgentText" }
+        },
+        "required": ["version", "digest", "author_participant_id", "created_at", "rationale"],
+        "additionalProperties": false
+      }
+    },
+    "version": { "type": "integer", "minimum": 1 },
+    "content": { "$ref": "#/$defs/agentText" }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "contract_id",
+    "provider_module_id",
+    "kind",
+    "versions",
+    "version",
+    "content"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    }
+  }
+}

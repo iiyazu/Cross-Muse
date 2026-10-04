@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_events.v1.json",
+  "title": "room_board_events/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_events/v1" },
+    "conversation_id": { "type": "string" },
+    "board_seq": { "type": "integer", "minimum": 0 },
+    "revision": { "type": "string" },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" }
+    },
+    "has_more": { "type": "boolean" },
+    "reset": { "type": "boolean" }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "board_seq",
+    "revision",
+    "events",
+    "has_more",
+    "reset"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "kind": {
+          "enum": [
+            "split_proposed",
+            "split_rejected",
+            "charter_assigned",
+            "claimed",
+            "contract_published",
+            "contract_revised",
+            "progress",
+            "question",
+            "verification"
+          ]
+        },
+        "at": { "type": "string" },
+        "module_id": { "type": ["string", "null"] },
+        "actor": {
+          "type": "object",
+          "properties": {
+            "kind": { "enum": ["participant", "operator", "infrastructure"] },
+            "participant_id": { "type": ["string", "null"] }
+          },
+          "required": ["kind", "participant_id"],
+          "additionalProperties": false
+        },
+        "data": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "module_ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["split_id", "module_ids"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "decided_via": { "type": ["string", "null"] }
+              },
+              "required": ["split_id", "decided_via"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "split_id": { "type": "string" },
+                "owner_participant_id": { "type": "string" },
+                "charter_version": { "type": "integer" },
+                "decided_via": { "type": ["string", "null"] }
+              },
+              "required": ["split_id", "owner_participant_id", "charter_version", "decided_via"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "contract_id": { "type": "string" },
+                "version": { "type": "integer" },
+                "kind": { "enum": ["api_schema", "types", "protocol", "text"] },
+                "digest": { "type": "string" },
+                "rationale": { "$ref": "#/$defs/nullableAgentText" }
+              },
+              "required": ["contract_id", "version", "kind", "digest", "rationale"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": { "enum": ["working", "blocked", "ready_for_review", "done"] },
+                "summary": { "$ref": "#/$defs/agentText" },
+                "claims": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/agentText" },
+                  "maxItems": 8
+                },
+                "claims_total": { "type": "integer", "minimum": 0 }
+              },
+              "required": ["status", "summary", "claims", "claims_total"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "target_participant_id": { "type": "string" },
+                "question": { "$ref": "#/$defs/agentText" }
+              },
+              "required": ["target_participant_id", "question"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "verification_id": { "type": "string" },
+                "status": { "enum": ["passed", "failed", "error"] },
+                "reason_code": { "type": ["string", "null"] },
+                "gate_ids": { "type": "array", "items": { "type": "string" } },
+                "escalated": { "type": "boolean" },
+                "stacked": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "module_id": { "type": "string" },
+                      "verification_id": { "type": "string" }
+                    },
+                    "required": ["module_id", "verification_id"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "verification_id",
+                "status",
+                "reason_code",
+                "gate_ids",
+                "escalated",
+                "stacked"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["seq", "kind", "at", "module_id", "actor", "data"],
+      "additionalProperties": false
+    }
+  }
+}

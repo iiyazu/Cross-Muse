@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_summary.v1.json",
+  "title": "room_board_summary/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_summary/v1" },
+    "conversation_id": { "type": "string" },
+    "server_time": { "type": "string" },
+    "board_seq": { "type": "integer", "minimum": 0 },
+    "revision": { "type": "string" },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "verification": { "type": "integer" },
+        "reviews": { "type": "integer" },
+        "integrations": { "type": "integer" },
+        "lessons": { "type": "integer" }
+      },
+      "required": ["verification", "reviews", "integrations", "lessons"],
+      "additionalProperties": false
+    },
+    "modules_total": { "type": "integer", "minimum": 0 },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "assigned": { "type": "integer", "minimum": 0 },
+        "claimed": { "type": "integer", "minimum": 0 },
+        "working": { "type": "integer", "minimum": 0 },
+        "blocked": { "type": "integer", "minimum": 0 },
+        "ready_for_review": { "type": "integer", "minimum": 0 },
+        "done_claimed": { "type": "integer", "minimum": 0 },
+        "verifying": { "type": "integer", "minimum": 0 },
+        "waiting_for_provider": { "type": "integer", "minimum": 0 },
+        "verified": { "type": "integer", "minimum": 0 },
+        "verification_failed": { "type": "integer", "minimum": 0 },
+        "verification_error": { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "assigned",
+        "claimed",
+        "working",
+        "blocked",
+        "ready_for_review",
+        "done_claimed",
+        "verifying",
+        "waiting_for_provider",
+        "verified",
+        "verification_failed",
+        "verification_error"
+      ],
+      "additionalProperties": false
+    },
+    "attention_total": { "type": "integer", "minimum": 0 },
+    "attention": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/attentionItem" }
+    }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "server_time",
+    "board_seq",
+    "revision",
+    "capabilities",
+    "modules_total",
+    "counts",
+    "attention_total",
+    "attention"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "attentionItem": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["operator", "lead", "owner"] },
+        "reason_code": { "type": "string" },
+        "module_id": { "type": ["string", "null"] },
+        "split_id": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "reason_code", "module_id", "split_id"],
+      "additionalProperties": false
+    }
+  }
+}

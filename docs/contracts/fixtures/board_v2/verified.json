@@ -1,0 +1,444 @@
+{
+  "events_page": {
+    "board_seq": 6,
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "alpha",
+            "beta"
+          ],
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "alpha",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "beta",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "alpha",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000021"
+        },
+        "kind": "verification",
+        "module_id": "alpha",
+        "seq": 6
+      }
+    ],
+    "has_more": false,
+    "reset": false,
+    "revision": "6:90a05618badc",
+    "schema_version": "room_board_events/v1"
+  },
+  "projection": {
+    "attention": [],
+    "board_seq": 6,
+    "capabilities": {
+      "integrations": 0,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "contracts": [
+      {
+        "author_participant_id": "part_00000000000000000000000000000003",
+        "contract_id": "api.alpha",
+        "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "alpha",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000004",
+        "contract_id": "api.beta",
+        "digest": "sha256:c7c1bbc4fa3f758507b8c7e10e44dd153781f3a38dd6c41c63e8f19090eb9184",
+        "kind": "types",
+        "latest_version": 1,
+        "provider_module_id": "beta",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      }
+    ],
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "alpha",
+            "beta"
+          ],
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "alpha",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "beta",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "alpha",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000021"
+        },
+        "kind": "verification",
+        "module_id": "alpha",
+        "seq": 6
+      }
+    ],
+    "metrics_version": "board_metrics/v1",
+    "modules": [
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 1,
+          "errored": 0,
+          "failed": 0,
+          "passed": 1,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "done_claimed",
+        "module_id": "alpha",
+        "owner_participant_id": "part_00000000000000000000000000000003",
+        "paths": [
+          "src/alpha/**"
+        ],
+        "provides": [
+          "api.alpha"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "verified",
+        "title": {
+          "text": "Alpha module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 1,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "updated_at": "2026-01-01T00:00:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000021"
+        }
+      },
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [
+          "api.alpha"
+        ],
+        "lifecycle": "assigned",
+        "module_id": "beta",
+        "owner_participant_id": "part_00000000000000000000000000000004",
+        "paths": [
+          "src/beta/**"
+        ],
+        "provides": [
+          "api.beta"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "assigned",
+        "title": {
+          "text": "Beta module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      }
+    ],
+    "participants": [
+      {
+        "display_name": "Agent 0",
+        "is_lead": true,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000002",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 1",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000003",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 2",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000004",
+        "provider_kind": "codex",
+        "role_preset": null
+      }
+    ],
+    "revision": "6:90a05618badc",
+    "schema_version": "room_board_projection/v2",
+    "server_time": "2026-10-04T12:00:00.000000Z",
+    "splits": [
+      {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "method": "POST"
+          }
+        },
+        "contracts": [
+          {
+            "contract_id": "api.alpha",
+            "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
+            "kind": "api_schema",
+            "provider_module_id": "alpha"
+          },
+          {
+            "contract_id": "api.beta",
+            "digest": "sha256:c7c1bbc4fa3f758507b8c7e10e44dd153781f3a38dd6c41c63e8f19090eb9184",
+            "kind": "types",
+            "provider_module_id": "beta"
+          }
+        ],
+        "created_at": "2026-01-01T00:00:10.000000Z",
+        "decided_at": "2026-01-01T00:00:10.000000Z",
+        "decided_via": "web",
+        "digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
+        "modules": [
+          {
+            "depends": [],
+            "module_id": "alpha",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "src/alpha/**"
+            ],
+            "provides": [
+              "api.alpha"
+            ],
+            "title": {
+              "text": "Alpha module",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [
+              "api.alpha"
+            ],
+            "module_id": "beta",
+            "owner_participant_id": "part_00000000000000000000000000000004",
+            "paths": [
+              "src/beta/**"
+            ],
+            "provides": [
+              "api.beta"
+            ],
+            "title": {
+              "text": "Beta module",
+              "truncated": false,
+              "untrusted": true
+            }
+          }
+        ],
+        "proposed_by_participant_id": "part_00000000000000000000000000000002",
+        "split_id": "split_00000000000000000000000000000018",
+        "status": "approved"
+      }
+    ],
+    "stale_dependents": []
+  },
+  "summary": {
+    "attention": [],
+    "attention_total": 0,
+    "board_seq": 6,
+    "capabilities": {
+      "integrations": 0,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "counts": {
+      "assigned": 1,
+      "blocked": 0,
+      "claimed": 0,
+      "done_claimed": 0,
+      "ready_for_review": 0,
+      "verification_error": 0,
+      "verification_failed": 0,
+      "verified": 1,
+      "verifying": 0,
+      "waiting_for_provider": 0,
+      "working": 0
+    },
+    "modules_total": 2,
+    "revision": "6:90a05618badc",
+    "schema_version": "room_board_summary/v1",
+    "server_time": "2026-10-04T12:00:00.000000Z"
+  }
+}

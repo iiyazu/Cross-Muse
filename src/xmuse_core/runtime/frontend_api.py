@@ -13,6 +13,16 @@ DEFAULT_FRONTEND_ORIGINS = (
 )
 LOOPBACK_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 _LOOPBACK_ORIGIN_PATTERN = re.compile(LOOPBACK_ORIGIN_RE)
+# ``testserver`` is Starlette's TestClient host: a bare single-label name that a
+# rebinding web page cannot choose, so it does not weaken the loopback guard.
+LOOPBACK_HOST_RE = r"^(localhost|127\.0\.0\.1|\[::1\]|testserver)(:\d{1,5})?$"
+_LOOPBACK_HOST_PATTERN = re.compile(LOOPBACK_HOST_RE, re.IGNORECASE)
+
+
+def is_loopback_host_header(value: str | None) -> bool:
+    """True when a ``Host`` header names the loopback interface (DNS-rebinding guard)."""
+
+    return bool(value) and bool(_LOOPBACK_HOST_PATTERN.match(str(value).strip()))
 
 
 def resolve_frontend_origins(environ: Mapping[str, str] | None = None) -> list[str]:
