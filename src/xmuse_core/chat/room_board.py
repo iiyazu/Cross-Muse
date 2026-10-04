@@ -22,6 +22,18 @@ from typing import Any
 
 from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 from xmuse_core.chat.room_batches import canonical_observation_id
+from xmuse_core.chat.room_board_projection import (
+    MAX_CONSECUTIVE_FAILURES,
+    ProgressFact,
+    VerificationFact,
+    build_board_projection,
+    build_contract_detail,
+    compute_counters,
+    derive_lifecycle,
+    derive_state,
+    derive_verification_axis,
+    split_digest,
+)
 from xmuse_core.chat.room_collaboration import collaboration_policy_row
 from xmuse_core.chat.room_database import RoomDatabase
 
@@ -48,6 +60,7 @@ MAX_VERIFICATION_PATCH_BYTES = 200_000
 
 MODULE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,47}$")
 CONTRACT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+DECIDED_VIA_RE = re.compile(r"^(web|cli|plugin:[a-z0-9][a-z0-9_-]{0,31})$")
 CHARTER_KEYS = frozenset(
     {"module_id", "title", "paths", "provides", "depends", "acceptance", "report_to"}
 )
@@ -709,16 +722,37 @@ class RoomBoardStore:
                     current=current,
                 )
                 charter_map = self._active_charter_owner_map(conn, conversation_id=conversation_id)
-                charters = [
-                    {
-                        "module_id": module_id,
-                        "version": info["version"],
-                        "owner_participant_id": info["owner_participant_id"],
-                        "status": info["status"],
-                        "charter": info["charter"],
-                    }
-                    for module_id, info in sorted(charter_map.items())
-                ]
+                charter_rows = {
+                    str(row["module_id"]): row
+                    for row in conn.execute(
+                        "select * from room_board_charters where conversation_id = ? "
+                        "order by module_id, version",
+                        (conversation_id,),
+                    ).fetchall()
+                }
+                charters = []
+                for module_id, info in sorted(charter_map.items()):
+                    charter_row = charter_rows.get(module_id)
+                    lifecycle: str | None = None
+                    state: str | None = None
+                    if charter_row is not None:
+                        lifecycle, state = self._module_lifecycle_state_conn(
+                            conn,
+                            conversation_id=conversation_id,
+                            module_id=module_id,
+                            charter_row=charter_row,
+                        )
+                    charters.append(
+                        {
+                            "module_id": module_id,
+                            "version": info["version"],
+                            "owner_participant_id": info["owner_participant_id"],
+                            "status": info["status"],
+                            "charter": info["charter"],
+                            "lifecycle": lifecycle,
+                            "state": state,
+                        }
+                    )
                 contract_rows = conn.execute(
                     "select * from room_board_contracts where conversation_id = ? "
                     "order by contract_id, version",
@@ -1007,12 +1041,16 @@ class RoomBoardStore:
         split_id: str,
         decision: str,
         operator_identity: str,
+        decided_via: str = "web",
+        expected_digest: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if decision not in ("approve", "reject"):
             raise ValueError("room_board_decision_invalid")
         if not isinstance(operator_identity, str) or not operator_identity.strip():
             raise ValueError("room_operator_identity_required")
+        if not isinstance(decided_via, str) or not DECIDED_VIA_RE.match(decided_via):
+            raise ValueError("room_board_decided_via_invalid")
         _, stamp = _current_stamp(now)
         with self._connect() as conn:
             conn.execute("begin immediate")
@@ -1027,6 +1065,8 @@ class RoomBoardStore:
                     raise ValueError("room_board_split_decided")
                 proposal = self._activity_from_conn(conn, str(split["activity_id"]))
                 bundle = _decode(str(split["split_json"]))
+                if expected_digest is not None and expected_digest != split_digest(bundle):
+                    raise ValueError("room_board_split_digest_mismatch")
                 normalized_modules = list(bundle["modules"])
                 assignments = dict(bundle["assignments"])
                 normalized_contracts = list(bundle["contracts"])
@@ -1045,6 +1085,7 @@ class RoomBoardStore:
                             "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
                             "split_id": split_id,
                             "decision": "rejected",
+                            "decided_via": decided_via,
                         },
                         stamp=stamp,
                     )
@@ -1129,6 +1170,7 @@ class RoomBoardStore:
                             "module_id": module_id,
                             "version": 1,
                             "owner_participant_id": owner,
+                            "decided_via": decided_via,
                             "charter": charter,
                             "contracts": [
                                 {
@@ -1826,19 +1868,10 @@ class RoomBoardStore:
         stats: dict[str, dict[str, Any]] = {}
         for module_id, rows in by_module.items():
             latest = rows[-1]
-            passed = sum(1 for row in rows if str(row["status"]) == "passed")
-            failed_rows = [row for row in rows if str(row["status"]) == "failed"]
-            first_pass_index: int | None = None
-            for index, row in enumerate(rows):
-                if str(row["status"]) == "passed":
-                    first_pass_index = index
-                    break
-            if first_pass_index is None:
-                rework_rounds = len(failed_rows)
-            else:
-                rework_rounds = sum(
-                    1 for row in rows[:first_pass_index] if str(row["status"]) == "failed"
-                )
+            counters = compute_counters(
+                [str(row["status"]) for row in rows],
+                done_reports=done_reports.get(module_id, 0),
+            )
             latest_result = _decode(latest["result_json"]) if latest["result_json"] else None
             stats[module_id] = {
                 "status": str(latest["status"]),
@@ -1850,26 +1883,72 @@ class RoomBoardStore:
                 "head_commit": latest["head_commit"],
                 "changed_paths": _decode(str(latest["changed_paths_json"] or "[]")),
                 "created_at": str(latest["created_at"]),
-                "done_reports": done_reports.get(module_id, 0),
-                "verifications_passed": passed,
-                "verifications_failed": len(failed_rows),
-                "rework_rounds": rework_rounds,
+                "done_reports": counters["done_reports"],
+                "verifications_passed": counters["passed"],
+                "verifications_failed": counters["failed"],
+                "rework_rounds": counters["rework_rounds"],
             }
         return stats
 
     @staticmethod
-    def _browser_verification_summary(entry: dict[str, Any]) -> dict[str, Any]:
-        """Project only browser-safe verification fields (no digests, no paths)."""
+    def _module_lifecycle_state_conn(
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        module_id: str,
+        charter_row: sqlite3.Row,
+    ) -> tuple[str, str]:
+        """Derive (lifecycle, state) with the projection's pure functions."""
 
-        return {
-            "status": entry["status"],
-            "verification_id": entry["verification_id"],
-            "reason_code": entry["reason_code"],
-            "done_reports": entry["done_reports"],
-            "verifications_passed": entry["verifications_passed"],
-            "verifications_failed": entry["verifications_failed"],
-            "rework_rounds": entry["rework_rounds"],
-        }
+        owner = str(charter_row["owner_participant_id"])
+        progress_rows = conn.execute(
+            "select * from room_board_progress where conversation_id = ? and module_id = ? "
+            "order by created_at, rowid",
+            (conversation_id, module_id),
+        ).fetchall()
+        reports = [
+            ProgressFact(
+                status=str(row["status"]),
+                participant_id=str(row["participant_id"]),
+                created_at=str(row["created_at"]),
+                seq=0,
+            )
+            for row in progress_rows
+        ]
+        verification_rows = conn.execute(
+            "select * from room_board_verifications where conversation_id = ? and module_id = ? "
+            "order by created_at, rowid",
+            (conversation_id, module_id),
+        ).fetchall()
+        jobs = []
+        for row in verification_rows:
+            decoded_result = _decode(row["result_json"]) if row["result_json"] else None
+            reason = (
+                decoded_result.get("reason_code")
+                if isinstance(decoded_result, dict)
+                and isinstance(decoded_result.get("reason_code"), str)
+                else None
+            )
+            jobs.append(
+                VerificationFact(
+                    verification_id=str(row["verification_id"]),
+                    status=str(row["status"]),
+                    reason_code=reason,
+                    created_at=str(row["created_at"]),
+                )
+            )
+        claimed_at = charter_row["claimed_at"]
+        lifecycle = derive_lifecycle(
+            claimed_at=None if claimed_at is None else str(claimed_at),
+            charter_created_at=str(charter_row["created_at"]),
+            owner_participant_id=owner,
+            reports=reports,
+        )
+        axis = derive_verification_axis(
+            charter_created_at=str(charter_row["created_at"]),
+            jobs=jobs,
+        )
+        return lifecycle, derive_state(lifecycle, str(axis["status"]))
 
     def get_module_charter(self, conversation_id: str, module_id: str) -> dict[str, Any] | None:
         """Return the current charter for one module, or None when unknown."""
@@ -1989,72 +2068,6 @@ class RoomBoardStore:
             ).fetchone()
             return row is not None
 
-    def _mark_verification_error_conn(
-        self, conn: sqlite3.Connection, *, job: sqlite3.Row, stamp: str
-    ) -> None:
-        """Terminate an attempts-exhausted job as ``error`` and say so on the board.
-
-        The host could not verify the claim (an infrastructure fault, not the
-        owner's patch), so the activity goes to report_to/lead and wakes nobody.
-        """
-
-        reason_code = "board_verification_attempts_exhausted"
-        conversation_id = str(job["conversation_id"])
-        module_id = str(job["module_id"])
-        progress = conn.execute(
-            "select activity_id from room_board_progress where progress_id = ?",
-            (str(job["progress_id"]),),
-        ).fetchone()
-        activity_id: str | None = None
-        if progress is not None and progress["activity_id"]:
-            source = self._activity_from_conn(conn, str(progress["activity_id"]))
-            charter = self._current_charter_conn(
-                conn, conversation_id=conversation_id, module_id=module_id
-            )
-            body = _decode(str(charter["charter_json"])) if charter is not None else None
-            report_to = body.get("report_to") if isinstance(body, dict) else None
-            target = (
-                report_to
-                if isinstance(report_to, str) and report_to
-                else self._lead_participant_id(conn, conversation_id)
-            )
-            activity = self._insert_board_activity_conn(
-                conn,
-                conversation_id=conversation_id,
-                activity_type="board.verification",
-                actor_kind="infrastructure",
-                actor_identity="infrastructure:board-verification",
-                actor_participant_id=None,
-                causation_id=str(progress["activity_id"]),
-                causal_depth=int(source["causal_depth"]) + 1,
-                audience_participant_ids=[target] if target else [],
-                payload={
-                    "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
-                    "verification_id": str(job["verification_id"]),
-                    "progress_id": str(job["progress_id"]),
-                    "module_id": module_id,
-                    "status": "error",
-                    "reason_code": reason_code,
-                    "head_commit": None,
-                    "changed_paths": [],
-                    "gates": [],
-                    "evidence": {},
-                },
-                stamp=stamp,
-            )
-            activity_id = str(activity["activity_id"])
-        conn.execute(
-            "update room_board_verifications set status = 'error', "
-            "lease_owner = null, lease_token = null, lease_expires_at = null, "
-            "result_json = ?, activity_id = ?, updated_at = ? where verification_id = ?",
-            (
-                _json({"status": "error", "reason_code": reason_code}),
-                activity_id,
-                stamp,
-                str(job["verification_id"]),
-            ),
-        )
-
     def claim_next_board_verification(
         self,
         *,
@@ -2095,14 +2108,68 @@ class RoomBoardStore:
                     "and lease_expires_at <= ?",
                     (stamp, stamp),
                 )
+                # Rows that exhausted their attempt budget become ``error``
+                # with a durable ``board.verification`` activity each, in the
+                # same transaction. A row already ``error`` is never selected
+                # again, so this is idempotent.
                 exhausted = conn.execute(
                     "select * from room_board_verifications "
                     "where status = 'pending' and attempt_count >= ? "
-                    "order by created_at, verification_id",
+                    "order by created_at, rowid",
                     (max_attempts,),
                 ).fetchall()
-                for job in exhausted:
-                    self._mark_verification_error_conn(conn, job=job, stamp=stamp)
+                error_result_json = _json(
+                    {
+                        "status": "error",
+                        "reason_code": "board_verification_attempts_exhausted",
+                    }
+                )
+                for expired in exhausted:
+                    progress = conn.execute(
+                        "select * from room_board_progress where progress_id = ?",
+                        (str(expired["progress_id"]),),
+                    ).fetchone()
+                    if progress is None:
+                        continue
+                    source = self._activity_from_conn(conn, str(progress["activity_id"]))
+                    activity = self._insert_board_activity_conn(
+                        conn,
+                        conversation_id=str(expired["conversation_id"]),
+                        activity_type="board.verification",
+                        actor_kind="infrastructure",
+                        actor_identity="infrastructure:board-verification",
+                        actor_participant_id=None,
+                        causation_id=str(progress["activity_id"]),
+                        causal_depth=int(source["causal_depth"]) + 1,
+                        audience_participant_ids=[str(expired["participant_id"])],
+                        payload={
+                            "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                            "verification_id": str(expired["verification_id"]),
+                            "progress_id": str(expired["progress_id"]),
+                            "module_id": str(expired["module_id"]),
+                            "status": "error",
+                            "reason_code": "board_verification_attempts_exhausted",
+                            "head_commit": expired["head_commit"],
+                            "changed_paths": [],
+                            "gates": [],
+                            "evidence": {},
+                            "stacked": [],
+                            "escalated": False,
+                        },
+                        stamp=stamp,
+                    )
+                    conn.execute(
+                        "update room_board_verifications set status = 'error', "
+                        "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                        "result_json = ?, activity_id = ?, updated_at = ? "
+                        "where verification_id = ? and status = 'pending'",
+                        (
+                            error_result_json,
+                            str(activity["activity_id"]),
+                            stamp,
+                            str(expired["verification_id"]),
+                        ),
+                    )
                 row = conn.execute(
                     "select * from room_board_verifications where status = 'pending' "
                     "and (not_before is null or not_before <= ?) "
@@ -2340,7 +2407,7 @@ class RoomBoardStore:
                             break
                     audience = [owner_id]
                     wake = [owner_id]
-                    if consecutive >= 3:
+                    if consecutive >= MAX_CONSECUTIVE_FAILURES:
                         escalated = True
                         escalation = report_to or lead
                         if escalation and escalation not in audience:
@@ -2363,6 +2430,7 @@ class RoomBoardStore:
                     "gates": clean_gates,
                     "evidence": clean_evidence,
                     "stacked": clean_stacked,
+                    "escalated": escalated,
                 }
                 activity = self._insert_board_activity_conn(
                     conn,
@@ -2712,6 +2780,19 @@ class RoomBoardStore:
                 provides = list(body.get("provides", [])) if isinstance(body, dict) else []
                 depends = list(body.get("depends", [])) if isinstance(body, dict) else []
                 if str(info["owner_participant_id"]) == participant_id:
+                    charter_row = conn.execute(
+                        """select * from room_board_charters
+                           where conversation_id = ? and module_id = ?
+                           order by version desc limit 1""",
+                        (conversation_id, module_id),
+                    ).fetchone()
+                    assert charter_row is not None
+                    lifecycle, state = self._module_lifecycle_state_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        module_id=module_id,
+                        charter_row=charter_row,
+                    )
                     my_modules.append(
                         {
                             "module_id": module_id,
@@ -2719,6 +2800,8 @@ class RoomBoardStore:
                             "owner_participant_id": str(info["owner_participant_id"]),
                             "status": str(info["status"]),
                             "charter": body,
+                            "lifecycle": lifecycle,
+                            "state": state,
                             "verification": verification_stats.get(module_id)
                             or {
                                 "status": None,
@@ -2792,174 +2875,17 @@ class RoomBoardStore:
                 "contracts": contracts,
             }
 
-    def board_projection(self, conversation_id: str) -> dict[str, Any]:
-        """Operator projection: splits, current charters, latest contracts/progress."""
+    def board_projection(
+        self, conversation_id: str, *, now: datetime | None = None
+    ) -> dict[str, Any]:
+        """Operator projection: the ``room_board_projection/v2`` read model."""
 
         with self._connect() as conn:
-            split_rows = conn.execute(
-                "select * from room_board_splits where conversation_id = ? "
-                "order by created_at, split_id",
-                (conversation_id,),
-            ).fetchall()
-            splits: list[dict[str, Any]] = []
-            for split in split_rows:
-                bundle = _decode(str(split["split_json"]))
-                modules = bundle.get("modules", []) if isinstance(bundle, dict) else []
-                assignments = bundle.get("assignments", {}) if isinstance(bundle, dict) else {}
-                specs = bundle.get("contracts", []) if isinstance(bundle, dict) else []
-                summaries: list[dict[str, Any]] = []
-                for spec in specs if isinstance(specs, list) else []:
-                    if not isinstance(spec, dict):
-                        continue
-                    summaries.append(
-                        {
-                            "contract_id": str(spec.get("contract_id")),
-                            "provider_module_id": str(spec.get("provider_module_id")),
-                            "kind": str(spec.get("kind")),
-                            "digest": contract_digest(str(spec.get("content", ""))),
-                        }
-                    )
-                summaries.sort(key=lambda item: str(item["contract_id"]))
-                decided_at = split["decided_at"]
-                splits.append(
-                    {
-                        "split_id": str(split["split_id"]),
-                        "status": str(split["status"]),
-                        "proposed_by_participant_id": str(split["proposed_by_participant_id"]),
-                        "created_at": str(split["created_at"]),
-                        "decided_at": None if decided_at is None else str(decided_at),
-                        "modules": modules,
-                        "assignments": assignments,
-                        "contracts": summaries,
-                    }
-                )
-            charter_rows = conn.execute(
-                "select * from room_board_charters where conversation_id = ? "
-                "order by module_id, version",
-                (conversation_id,),
-            ).fetchall()
-            latest_charters: dict[str, sqlite3.Row] = {}
-            for row in charter_rows:
-                latest_charters[str(row["module_id"])] = row
-            charters: list[dict[str, Any]] = []
-            for module_id in sorted(latest_charters):
-                row = latest_charters[module_id]
-                claimed_at = row["claimed_at"]
-                charters.append(
-                    {
-                        "module_id": str(row["module_id"]),
-                        "version": int(row["version"]),
-                        "owner_participant_id": str(row["owner_participant_id"]),
-                        "status": str(row["status"]),
-                        "charter": _decode(str(row["charter_json"])),
-                        "split_id": str(row["split_id"]),
-                        "claimed_at": None if claimed_at is None else str(claimed_at),
-                        "created_at": str(row["created_at"]),
-                    }
-                )
-            contract_rows = conn.execute(
-                "select * from room_board_contracts where conversation_id = ? "
-                "order by contract_id, version",
-                (conversation_id,),
-            ).fetchall()
-            latest_contracts: dict[str, sqlite3.Row] = {}
-            for row in contract_rows:
-                latest_contracts[str(row["contract_id"])] = row
-            contracts: list[dict[str, Any]] = []
-            for contract_id in sorted(latest_contracts):
-                row = latest_contracts[contract_id]
-                contracts.append(
-                    {
-                        "contract_id": str(row["contract_id"]),
-                        "id": str(row["contract_id"]),
-                        "version": int(row["version"]),
-                        "digest": str(row["digest"]),
-                        "provider_module_id": str(row["provider_module_id"]),
-                        "kind": str(row["kind"]),
-                        "author_participant_id": str(row["author_participant_id"]),
-                        "author": str(row["author_participant_id"]),
-                        "created_at": str(row["created_at"]),
-                    }
-                )
-            progress_rows = conn.execute(
-                "select * from room_board_progress where conversation_id = ? "
-                "order by created_at, progress_id",
-                (conversation_id,),
-            ).fetchall()
-            latest_progress: dict[str, sqlite3.Row] = {}
-            for row in progress_rows:
-                latest_progress[str(row["module_id"])] = row
-            verification_stats = self._module_verification_stats_conn(
-                conn, conversation_id=conversation_id
+            return build_board_projection(
+                conn,
+                conversation_id,
+                now=now or datetime.now(UTC),
             )
-            done_reports: dict[str, int] = {}
-            for candidate in progress_rows:
-                if str(candidate["status"]) == "done":
-                    key = str(candidate["module_id"])
-                    done_reports[key] = done_reports.get(key, 0) + 1
-            progress: list[dict[str, Any]] = []
-            for module_id in sorted(latest_progress):
-                row = latest_progress[module_id]
-                stats = verification_stats.get(module_id)
-                progress.append(
-                    {
-                        "progress_id": str(row["progress_id"]),
-                        "module_id": str(row["module_id"]),
-                        "participant_id": str(row["participant_id"]),
-                        "status": str(row["status"]),
-                        "summary": str(row["summary"]),
-                        "claims": _decode(str(row["claims_json"])),
-                        "activity_id": row["activity_id"],
-                        "created_at": str(row["created_at"]),
-                        "verification": (
-                            self._browser_verification_summary(stats)
-                            if stats is not None
-                            else {
-                                "status": None,
-                                "verification_id": None,
-                                "reason_code": None,
-                                "done_reports": done_reports.get(module_id, 0),
-                                "verifications_passed": 0,
-                                "verifications_failed": 0,
-                                "rework_rounds": 0,
-                            }
-                        ),
-                    }
-                )
-            activity_rows = conn.execute(
-                "select * from room_activities where conversation_id = ? "
-                "and activity_type like 'board.%' order by seq desc limit 50",
-                (conversation_id,),
-            ).fetchall()
-            activities: list[dict[str, Any]] = []
-            for row in reversed(activity_rows):
-                audience = _decode(row["audience_json"]) if row["audience_json"] else None
-                participant_ids = (
-                    audience.get("participant_ids") if isinstance(audience, dict) else None
-                )
-                if not isinstance(participant_ids, list):
-                    participant_ids = []
-                activities.append(
-                    {
-                        "activity_id": str(row["activity_id"]),
-                        "seq": int(row["seq"]),
-                        "activity_type": str(row["activity_type"]),
-                        "actor_participant_id": row["actor_participant_id"],
-                        "audience_participant_ids": list(participant_ids),
-                        "audience": list(participant_ids),
-                        "payload": _decode(str(row["payload_json"])),
-                        "created_at": str(row["created_at"]),
-                    }
-                )
-            return {
-                "schema_version": "room_board_projection/v1",
-                "conversation_id": conversation_id,
-                "splits": splits,
-                "charters": charters,
-                "contracts": contracts,
-                "progress": progress,
-                "activities": activities,
-            }
 
     def board_contract_detail(
         self,
@@ -2967,32 +2893,7 @@ class RoomBoardStore:
         contract_id: str,
         version: int | None = None,
     ) -> dict[str, Any] | None:
-        """Fetch one contract with content, or None when unknown."""
+        """Fetch one contract with content (``room_board_contract/v2``), or None."""
 
         with self._connect() as conn:
-            if version is None:
-                row = self._latest_contract_conn(
-                    conn, conversation_id=conversation_id, contract_id=contract_id
-                )
-            else:
-                row = conn.execute(
-                    """select * from room_board_contracts
-                       where conversation_id = ? and contract_id = ? and version = ?""",
-                    (conversation_id, contract_id, version),
-                ).fetchone()
-            if row is None:
-                return None
-            return {
-                "contract_id": str(row["contract_id"]),
-                "id": str(row["contract_id"]),
-                "version": int(row["version"]),
-                "digest": str(row["digest"]),
-                "provider_module_id": str(row["provider_module_id"]),
-                "kind": str(row["kind"]),
-                "content": str(row["content"]),
-                "author_participant_id": str(row["author_participant_id"]),
-                "author": str(row["author_participant_id"]),
-                "rationale": row["rationale"],
-                "activity_id": row["activity_id"],
-                "created_at": str(row["created_at"]),
-            }
+            return build_contract_detail(conn, conversation_id, contract_id, version)

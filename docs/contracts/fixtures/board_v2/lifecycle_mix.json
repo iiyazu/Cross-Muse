@@ -1,0 +1,847 @@
+{
+  "events_page": {
+    "board_seq": 11,
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "m-assigned",
+            "m-claimed",
+            "m-working",
+            "m-blocked",
+            "m-ready"
+          ],
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-assigned",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-claimed",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-working",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-blocked",
+        "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-ready",
+        "seq": 7
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {},
+        "kind": "claimed",
+        "module_id": "m-claimed",
+        "seq": 8
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "working",
+          "summary": {
+            "text": "m-working working",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-working",
+        "seq": 9
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "blocked",
+          "summary": {
+            "text": "m-blocked blocked",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-blocked",
+        "seq": 10
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "ready_for_review",
+          "summary": {
+            "text": "m-ready ready_for_review",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-ready",
+        "seq": 11
+      }
+    ],
+    "has_more": false,
+    "reset": false,
+    "revision": "11:0189a6adfa1f",
+    "schema_version": "room_board_events/v1"
+  },
+  "projection": {
+    "attention": [
+      {
+        "kind": "lead",
+        "module_id": "m-blocked",
+        "reason_code": "board_attention_module_blocked",
+        "split_id": null
+      }
+    ],
+    "board_seq": 11,
+    "capabilities": {
+      "integrations": 0,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "contracts": [
+      {
+        "author_participant_id": "part_00000000000000000000000000000003",
+        "contract_id": "api.m-assigned",
+        "digest": "sha256:7fa36a5563888314065127ad7c6283c5a81efe51867449c155e8cc82a707c2fe",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m-assigned",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000004",
+        "contract_id": "api.m-blocked",
+        "digest": "sha256:8ed1d9b7c5381619eed154cd2b01011d35462110597052932bbf4417a5480a53",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m-blocked",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000004",
+        "contract_id": "api.m-claimed",
+        "digest": "sha256:4a25d84f576f2177fa629670fc63d366eb0aaa925cc39813f15412d5496a4474",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m-claimed",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000003",
+        "contract_id": "api.m-ready",
+        "digest": "sha256:967781dfccff0e766c2c5ce1d1b99bc0b0955991d6f8fe092a8076d0a66c9732",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m-ready",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000003",
+        "contract_id": "api.m-working",
+        "digest": "sha256:e573f801b8af76f2ffc6c5d752e2510c1d5e9305b3c4379605b28bde0745c4b1",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m-working",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      }
+    ],
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "m-assigned",
+            "m-claimed",
+            "m-working",
+            "m-blocked",
+            "m-ready"
+          ],
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-assigned",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-claimed",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-working",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-blocked",
+        "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_00000000000000000000000000000018"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m-ready",
+        "seq": 7
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {},
+        "kind": "claimed",
+        "module_id": "m-claimed",
+        "seq": 8
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "working",
+          "summary": {
+            "text": "m-working working",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-working",
+        "seq": 9
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "blocked",
+          "summary": {
+            "text": "m-blocked blocked",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-blocked",
+        "seq": 10
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "ready_for_review",
+          "summary": {
+            "text": "m-ready ready_for_review",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m-ready",
+        "seq": 11
+      }
+    ],
+    "metrics_version": "board_metrics/v1",
+    "modules": [
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "assigned",
+        "module_id": "m-assigned",
+        "owner_participant_id": "part_00000000000000000000000000000003",
+        "paths": [
+          "src/assigned/**"
+        ],
+        "provides": [
+          "api.m-assigned"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "assigned",
+        "title": {
+          "text": "Assigned module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      },
+      {
+        "attention": {
+          "kind": "lead",
+          "reason_code": "board_attention_module_blocked"
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "blocked",
+        "module_id": "m-blocked",
+        "owner_participant_id": "part_00000000000000000000000000000004",
+        "paths": [
+          "src/blocked/**"
+        ],
+        "provides": [
+          "api.m-blocked"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "blocked",
+        "title": {
+          "text": "Blocked module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      },
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "claimed",
+        "module_id": "m-claimed",
+        "owner_participant_id": "part_00000000000000000000000000000004",
+        "paths": [
+          "src/claimed/**"
+        ],
+        "provides": [
+          "api.m-claimed"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "claimed",
+        "title": {
+          "text": "Claimed module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      },
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "ready_for_review",
+        "module_id": "m-ready",
+        "owner_participant_id": "part_00000000000000000000000000000003",
+        "paths": [
+          "src/ready/**"
+        ],
+        "provides": [
+          "api.m-ready"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "ready_for_review",
+        "title": {
+          "text": "Ready module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      },
+      {
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "done_reports": 0,
+          "errored": 0,
+          "failed": 0,
+          "passed": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "lifecycle": "working",
+        "module_id": "m-working",
+        "owner_participant_id": "part_00000000000000000000000000000003",
+        "paths": [
+          "src/working/**"
+        ],
+        "provides": [
+          "api.m-working"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "state": "working",
+        "title": {
+          "text": "Working module",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 0,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": null,
+          "reason_code": null,
+          "stacked": [],
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        }
+      }
+    ],
+    "participants": [
+      {
+        "display_name": "Agent 0",
+        "is_lead": true,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000002",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 1",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000003",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 2",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000004",
+        "provider_kind": "codex",
+        "role_preset": null
+      }
+    ],
+    "revision": "11:0189a6adfa1f",
+    "schema_version": "room_board_projection/v2",
+    "server_time": "2026-10-04T12:00:00.000000Z",
+    "splits": [
+      {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:b1c058769dd63c216838089c4712ea283ebc3cbb83505b383b61cf4e3defaecd",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "method": "POST"
+          }
+        },
+        "contracts": [
+          {
+            "contract_id": "api.m-assigned",
+            "digest": "sha256:7fa36a5563888314065127ad7c6283c5a81efe51867449c155e8cc82a707c2fe",
+            "kind": "api_schema",
+            "provider_module_id": "m-assigned"
+          },
+          {
+            "contract_id": "api.m-blocked",
+            "digest": "sha256:8ed1d9b7c5381619eed154cd2b01011d35462110597052932bbf4417a5480a53",
+            "kind": "api_schema",
+            "provider_module_id": "m-blocked"
+          },
+          {
+            "contract_id": "api.m-claimed",
+            "digest": "sha256:4a25d84f576f2177fa629670fc63d366eb0aaa925cc39813f15412d5496a4474",
+            "kind": "api_schema",
+            "provider_module_id": "m-claimed"
+          },
+          {
+            "contract_id": "api.m-ready",
+            "digest": "sha256:967781dfccff0e766c2c5ce1d1b99bc0b0955991d6f8fe092a8076d0a66c9732",
+            "kind": "api_schema",
+            "provider_module_id": "m-ready"
+          },
+          {
+            "contract_id": "api.m-working",
+            "digest": "sha256:e573f801b8af76f2ffc6c5d752e2510c1d5e9305b3c4379605b28bde0745c4b1",
+            "kind": "api_schema",
+            "provider_module_id": "m-working"
+          }
+        ],
+        "created_at": "2026-01-01T00:00:10.000000Z",
+        "decided_at": "2026-01-01T00:00:10.000000Z",
+        "decided_via": "web",
+        "digest": "sha256:b1c058769dd63c216838089c4712ea283ebc3cbb83505b383b61cf4e3defaecd",
+        "modules": [
+          {
+            "depends": [],
+            "module_id": "m-assigned",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "src/assigned/**"
+            ],
+            "provides": [
+              "api.m-assigned"
+            ],
+            "title": {
+              "text": "Assigned module",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [],
+            "module_id": "m-claimed",
+            "owner_participant_id": "part_00000000000000000000000000000004",
+            "paths": [
+              "src/claimed/**"
+            ],
+            "provides": [
+              "api.m-claimed"
+            ],
+            "title": {
+              "text": "Claimed module",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [],
+            "module_id": "m-working",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "src/working/**"
+            ],
+            "provides": [
+              "api.m-working"
+            ],
+            "title": {
+              "text": "Working module",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [],
+            "module_id": "m-blocked",
+            "owner_participant_id": "part_00000000000000000000000000000004",
+            "paths": [
+              "src/blocked/**"
+            ],
+            "provides": [
+              "api.m-blocked"
+            ],
+            "title": {
+              "text": "Blocked module",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [],
+            "module_id": "m-ready",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "src/ready/**"
+            ],
+            "provides": [
+              "api.m-ready"
+            ],
+            "title": {
+              "text": "Ready module",
+              "truncated": false,
+              "untrusted": true
+            }
+          }
+        ],
+        "proposed_by_participant_id": "part_00000000000000000000000000000002",
+        "split_id": "split_00000000000000000000000000000018",
+        "status": "approved"
+      }
+    ],
+    "stale_dependents": []
+  },
+  "summary": {
+    "attention": [
+      {
+        "kind": "lead",
+        "module_id": "m-blocked",
+        "reason_code": "board_attention_module_blocked",
+        "split_id": null
+      }
+    ],
+    "attention_total": 1,
+    "board_seq": 11,
+    "capabilities": {
+      "integrations": 0,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "counts": {
+      "assigned": 1,
+      "blocked": 1,
+      "claimed": 1,
+      "done_claimed": 0,
+      "ready_for_review": 1,
+      "verification_error": 0,
+      "verification_failed": 0,
+      "verified": 0,
+      "verifying": 0,
+      "waiting_for_provider": 0,
+      "working": 1
+    },
+    "modules_total": 5,
+    "revision": "11:0189a6adfa1f",
+    "schema_version": "room_board_summary/v1",
+    "server_time": "2026-10-04T12:00:00.000000Z"
+  }
+}
