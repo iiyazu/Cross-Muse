@@ -167,7 +167,10 @@ do not load `.env`.
   With the opt-in `full-local-curated` profile, the MemoryOS Curator may propose memory
   candidates as an external proposer (`proposer_kind=memoryos_curator`), never as an Agent;
   every proposal cites Room activities with verbatim quotes that are re-proved in `chat.db`
-  and passes the same approval rules. Its LLM key reaches only the MemoryOS sidecar.
+  and passes the same approval rules. Its LLM key reaches only the MemoryOS sidecar. The
+  Curator is the only memory proposer besides Agents: MemoryOS' heuristic agent kernel and
+  paging stay off, and any other MemoryOS advisory is rejected rather than attributed to the
+  recalling participant.
 - The MemoryOS sidecar and Room Runner may receive the server-only MemoryOS API key. Room
   MCP, Codex sessions, the browser, Operations, commands, receipts, and logs must not.
 - The Workroom manager automatically restarts only its identity-confirmed-dead MemoryOS

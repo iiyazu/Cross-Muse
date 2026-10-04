@@ -226,11 +226,23 @@ def test_v2_projection_is_capability_gated_and_keeps_v1_compatibility() -> None:
     )
     assert projection["schema_version"] == "room_memory_projection/v2"
     assert projection["profile"] == "full-local"
+    # full-local has no memory proposer; only the Curator profile does.
     assert projection["capabilities"] == {
         "hybrid": True,
         "message_ingest": True,
-        "agentic_advisory": True,
+        "agentic_advisory": False,
     }
+    curated = build_room_memory_projection_v2(
+        "conv-1",
+        binding_store=store,
+        governance_store=store,
+        delivery_store=store,
+        recall_store=store,
+        advisory_store=store,
+        runtime_status={"enabled": True, "state": "ready", "profile": "full-local-curated"},
+    )
+    assert curated["profile"] == "full-local"
+    assert curated["capabilities"]["agentic_advisory"] is True
     # A legacy store has no message ledger; v2 remains bounded and does not
     # invent counts from the archival outbox.
     assert projection["sync"]["messages"] == {

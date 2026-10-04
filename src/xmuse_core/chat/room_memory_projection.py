@@ -396,7 +396,8 @@ def build_room_memory_projection(
         projection["capabilities"] = {
             "hybrid": full_local and runtime["state"] == "ready",
             "message_ingest": full_local and runtime["state"] == "ready",
-            "agentic_advisory": full_local and runtime["state"] == "ready",
+            # Only the Curator proposes memory now; the heuristic kernel is off.
+            "agentic_advisory": profile == "full-local-curated" and runtime["state"] == "ready",
         }
         projection["sync"]["messages"] = _outbox_counts(message_counts)
     return projection

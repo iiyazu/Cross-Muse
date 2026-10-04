@@ -811,7 +811,7 @@ def test_recall_request_separates_pending_bindings_from_unusable_authority(
     assert uncertain.value.code == "room_memory_recall_unavailable"
 
 
-def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(
+def test_heuristic_kernel_advisory_is_rejected_not_attributed_to_the_participant(
     tmp_path: Path,
 ) -> None:
     db, registry, conversation_id, records, first_root, first_claims = root_and_claims(tmp_path)
@@ -853,25 +853,25 @@ def test_external_advisory_accepts_recalled_historical_source_and_is_idempotent(
         ],
     }
     recall_store = RoomMemoryAdvisoryStore(db)
-    first = recall_store.record_external_advisories(
-        conversation_id=conversation_id,
-        attempt_id=claim["attempt"]["attempt_id"],
-        advisories=[advisory],
-    )
-    assert first and first[0]["kind"] == "room_fact"
-    assert (
-        recall_store.record_external_advisories(
-            conversation_id=conversation_id,
-            attempt_id=claim["attempt"]["attempt_id"],
-            advisories=[advisory],
+    for _ in range(2):
+        # A source-backed heuristic proposal still has no proposer identity of
+        # its own; it must not become a candidate authored by the participant.
+        assert (
+            recall_store.record_external_advisories(
+                conversation_id=conversation_id,
+                attempt_id=claim["attempt"]["attempt_id"],
+                advisories=[advisory],
+            )
+            == []
         )
-        == []
-    )
     receipts = recall_store.list_external_advisory_receipts(conversation_id)
-    assert receipts[0]["status"] == "accepted"
-    assert receipts[0]["reason_code"] == "room_memory_advisory_accepted"
-    assert receipts[0]["source_activity_ids"] == [first_root["activity"]["activity_id"]]
-    assert second_root["activity"]["activity_id"] not in receipts[0]["source_activity_ids"]
+    assert len(receipts) == 1
+    assert receipts[0]["status"] == "rejected"
+    assert receipts[0]["reason_code"] == "room_memory_advisory_unattributed"
+    assert receipts[0]["source_activity_ids"] == []
+    assert second_root["activity"]["activity_id"]
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select count(*) from room_memory_candidates").fetchone()[0] == 0
 
 
 def test_external_advisory_bridge_failure_leaves_durable_receipt(tmp_path: Path) -> None:
@@ -1358,7 +1358,7 @@ def test_curated_candidates_dedupe_across_attempts_and_authors(tmp_path: Path) -
         assert receipts[advisory_id]["candidate_digest"] == first[0]["candidate_digest"]
 
 
-def test_curated_attempt_cap_is_eight_and_agent_path_stays_three(tmp_path: Path) -> None:
+def test_curated_attempt_cap_is_eight_and_other_advisories_are_rejected(tmp_path: Path) -> None:
     (
         db,
         _registry,
@@ -1402,8 +1402,19 @@ def test_curated_attempt_cap_is_eight_and_agent_path_stays_three(tmp_path: Path)
         advisories=advisories,
     )
     proposers = Counter(str(item["proposer_kind"]) for item in result)
-    assert proposers == {"participant": 3, "memoryos_curator": 8}
-    assert RoomMemoryGovernanceStore(db).count_candidates(conversation_id) == 11
+    assert proposers == {"memoryos_curator": 8}
+    assert RoomMemoryGovernanceStore(db).count_candidates(conversation_id) == 8
+    reasons = Counter(
+        str(receipt["reason_code"])
+        for receipt in store.list_external_advisory_receipts(conversation_id)
+    )
+    # Every advisory is receipted: 8 accepted, the ninth over the cap, and the
+    # four heuristic ones unattributed.
+    assert reasons == {
+        "room_memory_advisory_accepted": 8,
+        "room_memory_advisory_over_cap": 1,
+        "room_memory_advisory_unattributed": 4,
+    }
     with sqlite3.connect(db) as conn:
         stored_kinds = {
             str(row[0])

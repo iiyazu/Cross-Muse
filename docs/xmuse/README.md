@@ -138,9 +138,13 @@ manifest is reported as degraded without executing its files. `--memory` is the 
 alias for source/development executables and `--no-memory` is the explicit `off` shortcut.
 `--memory-profile full-local-curated` (memory mode `on` only) adds the opt-in MemoryOS
 Curator, an external proposer that cites Room activities with verbatim quotes re-proved in
-`chat.db` and passes the same approval rules; its `XMUSE_MEMORYOS_LLM_API_KEY` /
+`chat.db` and passes the same approval rules; its `XMUSE_MEMORYOS_LLM_PROVIDER` (`opencode` by
+default with a pinned model, or `deepseek`), `XMUSE_MEMORYOS_LLM_API_KEY` and
 `XMUSE_MEMORYOS_LLM_MODEL` reach only the sidecar child environment, and a missing key leaves
-Room readiness intact while the Curator reports degraded.
+Room readiness intact while the Curator reports degraded. MemoryOS' heuristic agent kernel
+and paging stay off in every profile; any non-Curator advisory is receipted
+`room_memory_advisory_unattributed` instead of becoming a candidate under the recalling
+participant's name.
 The bootstrap projection exposes only these safe capabilities and recommended action codes;
 it never returns executable paths, process identity, API keys or MemoryOS internal IDs.
 
