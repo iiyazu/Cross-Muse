@@ -199,6 +199,28 @@ describe("board store sync", () => {
     expect(useRoomStore.getState().boardByRoom["room-a"]?.projection).toBeNull();
     expect(useRoomStore.getState().selectedRoomId).toBe("room-b");
   });
+
+  it("loads the board as soon as the inspector opens instead of waiting for the poll", async () => {
+    boardApiMocks.fetchRoomBoardSummary.mockResolvedValue(summary("1:aaa"));
+    boardApiMocks.fetchRoomBoard.mockResolvedValue(projection("1:aaa"));
+    useRoomStore.setState({ inspectorOpen: false });
+    useRoomStore.getState().setInspectorOpen(true);
+    await vi.waitFor(() => {
+      expect(useRoomStore.getState().boardByRoom["room-a"]?.projection?.revision).toBe("1:aaa");
+    });
+    useRoomStore.getState().stopSync();
+  });
+
+  it("loads the board when the Room dock tab is selected", async () => {
+    boardApiMocks.fetchRoomBoardSummary.mockResolvedValue(summary("1:aaa"));
+    boardApiMocks.fetchRoomBoard.mockResolvedValue(projection("1:aaa"));
+    useRoomStore.setState({ inspectorOpen: false, dockTab: "runtime" });
+    useRoomStore.getState().setDockTab("room");
+    await vi.waitFor(() => {
+      expect(useRoomStore.getState().boardByRoom["room-a"]?.projection?.revision).toBe("1:aaa");
+    });
+    useRoomStore.getState().stopSync();
+  });
 });
 
 describe("board split decisions", () => {

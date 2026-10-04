@@ -121,9 +121,11 @@
   white-space: nowrap;
 }
 
+/* Solid badges take the page background as text colour: dark text on the light dark-theme
+   status colours, light text on the deep light-theme ones. Both clear WCAG AA (4.5:1). */
 .room-board-badge.is-verified {
   background: var(--success);
-  color: #fff;
+  color: var(--bg);
 }
 
 .room-board-badge.is-claimed {
@@ -135,7 +137,7 @@
 .room-board-badge.is-failed,
 .room-board-badge.is-error {
   background: var(--danger);
-  color: #fff;
+  color: var(--bg);
 }
 
 .room-board-badge.is-verifying {

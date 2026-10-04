@@ -244,16 +244,22 @@ test("board panel distinguishes done_claimed from verified", async ({ page }) =>
   await inspector.getByRole("tab", { name: "Room" }).click();
   const board = inspector.getByRole("region", { name: "协作看板" });
   await expect(board).toBeVisible();
-  const verified = board.locator('[data-state="verified"]');
-  const claimed = board.locator('[data-state="done_claimed"]');
-  await expect(verified).toContainText("已验证");
-  await expect(claimed).toContainText("自称完成");
+  // The summary chips and the module badges both carry data-state; the badges are role=status.
+  const verified = board.getByRole("status", { name: /^已验证/ }).first();
+  const claimed = board.getByRole("status", { name: /^自称完成/ }).first();
+  await expect(verified).toHaveAttribute("data-state", "verified");
+  await expect(claimed).toHaveAttribute("data-state", "done_claimed");
   expect(await verified.getAttribute("aria-label")).not.toBe(
     await claimed.getAttribute("aria-label")
   );
 
-  const results = await new AxeBuilder({ page }).include(".room-board").analyze();
-  expect(results.violations).toEqual([]);
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value;
+    }, theme);
+    const results = await new AxeBuilder({ page }).include(".room-board").analyze();
+    expect(results.violations, `axe violations in the ${theme} theme`).toEqual([]);
+  }
 });
 
 test("board panel surfaces failed gates and rework rounds", async ({ page }) => {
@@ -264,7 +270,9 @@ test("board panel surfaces failed gates and rework rounds", async ({ page }) => 
   await inspector.getByRole("tab", { name: "Room" }).click();
   const board = inspector.getByRole("region", { name: "协作看板" });
   await expect(board).toBeVisible();
-  await expect(board.locator('[data-state="verification_failed"]')).toBeVisible();
+  await expect(
+    board.getByRole("status", { name: /^验证失败/ }).first()
+  ).toHaveAttribute("data-state", "verification_failed");
   await expect(board).toContainText("patch_diff_check");
   await expect(board).toContainText("返工");
 });
@@ -304,6 +312,8 @@ test("board panel approves a proposed split through the fixed decision route", a
   await inspector.getByRole("tab", { name: "Room" }).click();
   const board = inspector.getByRole("region", { name: "协作看板" });
   await expect(board).toBeVisible();
+  // The proposal sits in a collapsed card; the attention row's jump button opens it.
+  await board.getByRole("button", { name: "查看拆分" }).click();
   await board.getByRole("button", { name: "批准拆分" }).click();
   const dialog = board.getByRole("alertdialog");
   await expect(dialog).toContainText("批准后将创建章程");
