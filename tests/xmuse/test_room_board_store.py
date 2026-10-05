@@ -664,6 +664,148 @@ def test_decide_split_approve_reject_and_double_decide(tmp_path):
         )
 
 
+def test_decide_split_grant_id_rule(tmp_path):
+    db, conversation_id, members = _board_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    proposed = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="grant-propose"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    split_id = proposed["split_id"]
+    # A plugin decision without a grant id is a programming error.
+    with pytest.raises(ValueError, match="room_board_grant_id_invalid"):
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=split_id,
+            decision="approve",
+            operator_identity="operator:host",
+            decided_via="plugin:claude-code",
+        )
+    with pytest.raises(ValueError, match="room_board_grant_id_invalid"):
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=split_id,
+            decision="approve",
+            operator_identity="operator:host",
+            decided_via="plugin:claude-code",
+            grant_id="",
+        )
+    # A grant id on a non-plugin decision is a programming error.
+    with pytest.raises(ValueError, match="room_board_grant_id_invalid"):
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=split_id,
+            decision="approve",
+            operator_identity="operator:host",
+            decided_via="web",
+            grant_id="grant_some",
+        )
+    with pytest.raises(ValueError, match="room_board_grant_id_invalid"):
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=split_id,
+            decision="approve",
+            operator_identity="operator:host",
+            decided_via="cli",
+            grant_id="grant_some",
+        )
+    assert (
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=split_id,
+            decision="approve",
+            operator_identity="plugin-grant:grant_abc",
+            decided_via="plugin:claude-code",
+            grant_id="grant_abc",
+        )["status"]
+        == "approved"
+    )
+    with RoomDatabase(db).connect() as conn:
+        rows = conn.execute(
+            "select payload_json from room_activities where conversation_id = ? "
+            "and activity_type = 'board.charter_assigned' order by seq",
+            (conversation_id,),
+        ).fetchall()
+    assert len(rows) == 2
+    for row in rows:
+        payload = json.loads(str(row["payload_json"]))
+        assert payload["decided_via"] == "plugin:claude-code"
+        assert payload["grant_id"] == "grant_abc"
+
+
+def test_decide_split_reject_grant_id_recorded_and_web_cli_null(tmp_path):
+    db, conversation_id, members = _board_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    first = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="reject-propose-1"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    assert (
+        store.decide_split(
+            conversation_id=conversation_id,
+            split_id=first["split_id"],
+            decision="reject",
+            operator_identity="plugin-grant:grant_xyz",
+            decided_via="plugin:opencode",
+            grant_id="grant_xyz",
+        )["status"]
+        == "rejected"
+    )
+    with RoomDatabase(db).connect() as conn:
+        row = conn.execute(
+            "select payload_json from room_activities where conversation_id = ? "
+            "and activity_type = 'board.split_rejected'",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    payload = json.loads(str(row["payload_json"]))
+    assert payload["decided_via"] == "plugin:opencode"
+    assert payload["grant_id"] == "grant_xyz"
+
+    for decided_via in ("web", "cli"):
+        nxt = store.propose_split(
+            **_lease_kwargs(members[0], lead_obs, request_id=f"reject-propose-{decided_via}"),
+            modules=modules,
+            assignments=assignments,
+            contracts=contracts,
+        )
+        assert (
+            store.decide_split(
+                conversation_id=conversation_id,
+                split_id=nxt["split_id"],
+                decision="reject",
+                operator_identity="operator:host",
+                decided_via=decided_via,
+            )["status"]
+            == "rejected"
+        )
+    with RoomDatabase(db).connect() as conn:
+        rows = conn.execute(
+            "select payload_json from room_activities where conversation_id = ? "
+            "and activity_type = 'board.split_rejected' order by seq",
+            (conversation_id,),
+        ).fetchall()
+    assert len(rows) == 3
+    assert [json.loads(str(row["payload_json"]))["decided_via"] for row in rows] == [
+        "plugin:opencode",
+        "web",
+        "cli",
+    ]
+    assert [json.loads(str(row["payload_json"]))["grant_id"] for row in rows] == [
+        "grant_xyz",
+        None,
+        None,
+    ]
+
+
 def test_claim_owner_rules_and_repeat_claim(tmp_path):
     db, conversation_id, members = _board_room(tmp_path)
     store = RoomBoardStore(db)

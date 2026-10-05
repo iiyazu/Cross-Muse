@@ -347,14 +347,18 @@ def register_room_board_routes(
         payload: RoomBoardSplitDecisionRequest,
     ) -> dict[str, Any]:
         require_operator_token(request, configured_token=operator_token)
-        if not isinstance(payload.decided_via, str) or not DECIDED_VIA_RE.match(
-            payload.decided_via
+        # Plugin provenance comes only from a plugin grant (plugin_grant_v1 §4.2), never from
+        # an operator-token request.
+        if (
+            not isinstance(payload.decided_via, str)
+            or not DECIDED_VIA_RE.match(payload.decided_via)
+            or payload.decided_via.startswith("plugin:")
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=operator_error(
                     "room_board_decided_via_invalid",
-                    "decided_via must be web, cli, or plugin:<host>",
+                    "decided_via must be web or cli",
                 ),
             )
         try:
