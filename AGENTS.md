@@ -143,7 +143,7 @@ do not load `.env`.
   applies either way.
 - Managed MCP exposes only `/health`, `/mcp/room`, `chat_room_submit_outcome`, and the
   `chat_room_board_*` tools (read, propose_split, claim, publish_contract, report_progress,
-  ask). New batch deliveries bind that outcome to the exact batch and may name a reply
+  ask, review). New batch deliveries bind that outcome to the exact batch and may name a reply
   target from the delivered members. Provider final text is not Room truth.
 - Board tools require the caller's live lease exactly like the outcome tool, are idempotent
   by `client_request_id`, and append a `board.*` Room activity in the same transaction as the
@@ -159,6 +159,11 @@ do not load `.env`.
   Charter `acceptance` text is never executed. The result is an `infrastructure`
   `board.verification` activity: a failure wakes the owner (repeated failures also the lead),
   a newer `done` supersedes older verifications, and verification never promotes.
+- Cross-family board review is server-assigned by rule `cross_family/v1`: the author
+  never chooses its reviewer and never reviews its own work; only the assigned
+  reviewer participant may rule with `chat_room_board_review`; when no other model
+  family is present a Human reviews instead, never a same-family fallback; the
+  assignment inputs are persisted with the review.
 - `room_context_envelope/v2` preserves the Human root, primary source and ancestry while
   bounding recent context to 64 KiB. Bundled roster personas are immutable Room snapshots and
   participate in provider session identity.

@@ -31,6 +31,11 @@ def load_scenarios() -> list[tuple[str, dict]]:
     scenarios: list[tuple[str, dict]] = []
     for path in sorted(FIXTURE_DIR.glob("*.json")):
         name = path.stem
+        if "." in name:
+            # Sidecar golden files (<scenario>.review/material/verification.json)
+            # live next to the scenarios per the board contract; they are not
+            # scenarios themselves.
+            continue
         if not name.replace("_", "").isalnum() or not name[0].isalpha():
             raise ValueError(f"fixture name is not a TS identifier: {name}")
         with open(path, encoding="utf-8") as fh:

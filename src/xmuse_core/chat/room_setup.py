@@ -75,6 +75,7 @@ class _RequestedParticipant:
 class _CollaborationSpec:
     mode: str
     lead_index: int | None
+    review_policy: str
 
 
 class RoomSetupService:
@@ -201,6 +202,7 @@ class RoomSetupService:
                         mode=collaboration.mode,
                         lead_participant_id=lead_participant_id,
                         updated_at=created_at,
+                        review_policy=collaboration.review_policy,
                     )
                 conn.execute(
                     """insert into room_setup_requests(
@@ -277,9 +279,11 @@ class RoomSetupService:
         if request.collaboration is not None:
             mode = request.collaboration.mode
             lead_role = request.collaboration.lead_role
+            review_policy = request.collaboration.review_policy
         elif template_collaboration is not None:
             mode = template_collaboration.mode
             lead_role = template_collaboration.lead_role
+            review_policy = "off"
         else:
             return None
         roles = [spec.role for spec in specs]
@@ -287,13 +291,16 @@ class RoomSetupService:
             return _CollaborationSpec(
                 mode=mode,
                 lead_index=0 if mode == "addressed" else None,
+                review_policy=review_policy,
             )
         if lead_role not in roles:
             raise RoomSetupError(
                 "room_participant_invalid",
                 f"collaboration lead role {lead_role!r} does not match any participant role",
             )
-        return _CollaborationSpec(mode=mode, lead_index=roles.index(lead_role))
+        return _CollaborationSpec(
+            mode=mode, lead_index=roles.index(lead_role), review_policy=review_policy
+        )
 
     def _normalize_participant(self, requested: _RequestedParticipant) -> _ParticipantSpec:
         participant = requested.participant
@@ -403,7 +410,7 @@ def _request_fingerprint(
         ],
     }
     if collaboration is not None:
-        payload["collaboration"] = {
+        collaboration_payload: dict[str, object] = {
             "mode": collaboration.mode,
             "lead_role": (
                 specs[collaboration.lead_index].role
@@ -411,4 +418,9 @@ def _request_fingerprint(
                 else None
             ),
         }
+        # Only a non-default policy enters the fingerprint, so replays of setups
+        # made before the policy existed keep their original fingerprint.
+        if collaboration.review_policy != "off":
+            collaboration_payload["review_policy"] = collaboration.review_policy
+        payload["collaboration"] = collaboration_payload
     return hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()

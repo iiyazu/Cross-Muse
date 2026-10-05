@@ -23,6 +23,7 @@ from xmuse_core.chat.room_mcp_contract import (
     ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME,
     ROOM_BOARD_READ_TOOL_NAME,
     ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME,
+    ROOM_BOARD_REVIEW_TOOL_NAME,
     ROOM_OUTCOME_TOOL_NAME,
     room_tool_schema,
     room_tool_schemas,
@@ -39,6 +40,7 @@ _BOARD_METHODS = {
     ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME: "board_publish_contract",
     ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME: "board_report_progress",
     ROOM_BOARD_ASK_TOOL_NAME: "board_ask",
+    ROOM_BOARD_REVIEW_TOOL_NAME: "board_review",
 }
 
 DEFAULT_XMUSE_ROOT = default_xmuse_root(Path(__file__).resolve().parent)

@@ -90,6 +90,7 @@ class RoomApplicationService:
         lease_token: str,
         client_request_id: str,
         contract_ref: str | None = None,
+        review_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         participants = ParticipantStore(self._db_path)
@@ -109,6 +110,7 @@ class RoomApplicationService:
                 lease_token=lease_token,
                 client_request_id=client_request_id,
                 contract_ref=contract_ref,
+                review_id=review_id,
                 now=now,
             )
         except RoomApplicationError:
@@ -346,6 +348,130 @@ class RoomApplicationService:
                 question=question,
                 references=references,
                 now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_review(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        god_session_id: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        review_id: str,
+        verdict: str,
+        summary: str,
+        findings: list[dict[str, Any]] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        participants = ParticipantStore(self._db_path)
+        try:
+            identity = verify_room_participant_identity(
+                participants,
+                registry_path=self._registry_path,
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                god_session_id=god_session_id,
+            )
+            return RoomBoardStore(self._db_path).review(
+                conversation_id=conversation_id,
+                participant_id=participant_id,
+                caller_identity=identity.caller_identity,
+                observation_id=observation_id,
+                lease_token=lease_token,
+                client_request_id=client_request_id,
+                review_id=review_id,
+                verdict=verdict,
+                summary=summary,
+                findings=findings,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_decide_review(
+        self,
+        *,
+        conversation_id: str,
+        review_id: str,
+        verdict: str,
+        summary: str,
+        findings: list[dict[str, Any]] | None = None,
+        expected_digest: str | None = None,
+        operator_identity: str,
+        decided_via: str = "web",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        # The digest is the human's proof of what they were shown; the server never
+        # fills it in on the caller's behalf (a missing one fails as a mismatch).
+        try:
+            return RoomBoardStore(self._db_path).decide_review(
+                conversation_id=conversation_id,
+                review_id=review_id,
+                verdict=verdict,
+                summary=summary,
+                findings=findings,
+                expected_digest=expected_digest or "",
+                operator_identity=operator_identity,
+                decided_via=decided_via,
+                now=now,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_review_material(
+        self,
+        conversation_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).review_material(
+                conversation_id=conversation_id,
+                review_id=review_id,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_review_detail(
+        self,
+        conversation_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).review_detail(
+                conversation_id=conversation_id,
+                review_id=review_id,
+            )
+        except RoomApplicationError:
+            raise
+        except (KeyError, ValueError) as exc:
+            code = str(exc).split(":", 1)[0]
+            raise RoomApplicationError(code, str(exc)) from exc
+
+    def board_verification_detail(
+        self,
+        conversation_id: str,
+        verification_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return RoomBoardStore(self._db_path).verification_detail(
+                conversation_id=conversation_id,
+                verification_id=verification_id,
             )
         except RoomApplicationError:
             raise

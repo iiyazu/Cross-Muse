@@ -133,7 +133,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "8:0858d801e234",
+    "revision": "8:5ee8f395a99c",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -307,6 +307,7 @@
     "metrics_version": "board_metrics/v1",
     "modules": [
       {
+        "accepted": false,
         "attention": {
           "kind": "none",
           "reason_code": null
@@ -317,6 +318,8 @@
           "errored": 0,
           "failed": 0,
           "passed": 0,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
@@ -331,6 +334,26 @@
           "api.backend"
         ],
         "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "state": "assigned",
         "title": {
           "text": "Backend API",
@@ -350,6 +373,7 @@
         }
       },
       {
+        "accepted": false,
         "attention": {
           "kind": "owner",
           "reason_code": "board_attention_contract_stale"
@@ -360,6 +384,8 @@
           "errored": 0,
           "failed": 0,
           "passed": 0,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
@@ -376,6 +402,26 @@
           "api.frontend"
         ],
         "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "state": "working",
         "title": {
           "text": "Frontend client",
@@ -395,6 +441,7 @@
         }
       },
       {
+        "accepted": false,
         "attention": {
           "kind": "none",
           "reason_code": null
@@ -405,6 +452,8 @@
           "errored": 0,
           "failed": 0,
           "passed": 0,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
@@ -419,6 +468,26 @@
         ],
         "provides": [],
         "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "state": "working",
         "title": {
           "text": "Sidecar worker",
@@ -464,7 +533,8 @@
         "role_preset": null
       }
     ],
-    "revision": "8:0858d801e234",
+    "review_policy": "off",
+    "revision": "8:5ee8f395a99c",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -567,6 +637,7 @@
     ]
   },
   "summary": {
+    "accepted_total": 0,
     "attention": [
       {
         "kind": "owner",
@@ -598,7 +669,7 @@
       "working": 2
     },
     "modules_total": 3,
-    "revision": "8:0858d801e234",
+    "revision": "8:5ee8f395a99c",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

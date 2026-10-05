@@ -71,6 +71,8 @@ const ATTENTION_REASON_LABELS: Record<string, string> = {
   board_attention_verification_error: "验证异常需人工介入",
   board_attention_verification_escalated: "验证失败已升级",
   board_attention_verification_failed: "验证失败待返工",
+  board_attention_review_operator_pending: "待你复核",
+  board_attention_review_objected: "复核被驳回待返工",
   board_attention_module_blocked: "模块已阻塞",
   board_attention_contract_stale: "契约已修订待跟进"
 };
