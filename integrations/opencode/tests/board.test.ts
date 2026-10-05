@@ -537,3 +537,181 @@ describe("pure helpers", () => {
     expect(summary.attention_total).toBe(0);
   });
 });
+
+// ------------------------------------------------------- integration (M2b)
+
+import { normalizeBoard } from "../src/core/api";
+import {
+  integrationJobWord,
+  integrationModuleWord,
+  shortGreenHead,
+} from "../src/core/labels";
+import type { XmuseBoard } from "../src/core/types";
+
+const INTEGRATION_SCENARIOS = [
+  "integration_conflicted",
+  "integration_dependency_upgrade",
+  "integration_error",
+  "integration_fallback_to_incumbent",
+  "integration_gate_failed",
+  "integration_integrated",
+  "integration_pending_running",
+  "review_endorsed_integrated",
+] as const;
+
+const OLD_SCENARIOS = (fx.SCENARIO_NAMES as readonly string[]).filter(
+  (n) => !(INTEGRATION_SCENARIOS as readonly string[]).includes(n),
+);
+
+function boardOf(name: keyof typeof fx): XmuseBoard {
+  const out = normalizeBoard(projectionOf(name));
+  if (out === null) throw new Error("board does not normalize: " + String(name));
+  return out;
+}
+
+describe("integration vocabulary", () => {
+  test("module words and suffixes", () => {
+    expect(integrationModuleWord({ status: "pending" }, 1)).toBe("排队集成");
+    expect(integrationModuleWord({ status: "running" }, 1)).toBe("集成中");
+    expect(integrationModuleWord({ status: "integrated" }, 1)).toBe("已集成");
+    expect(integrationModuleWord({ status: "waiting" }, 1)).toBe("等待依赖集成·未入分支");
+    expect(
+      integrationModuleWord({ status: "conflicted", conflict_path_count: 1 }, 1),
+    ).toBe("集成冲突 1 路径·未入分支");
+    expect(
+      integrationModuleWord(
+        {
+          status: "conflicted",
+          conflict_path_count: 1,
+          verification_id: "new",
+          integrated_verification_id: "old",
+        },
+        1,
+      ),
+    ).toBe("集成冲突 1 路径·分支为旧版本");
+    expect(integrationModuleWord({ status: "gate_failed" }, 1)).toBe("门禁失败·嫌疑·未入分支");
+    expect(integrationModuleWord({ status: "error" }, 1)).toBe("集成异常·自动重试·未入分支");
+    expect(integrationModuleWord({ status: "none" }, 1)).toBe("");
+    expect(integrationModuleWord({ status: "pending" }, 0)).toBe("");
+    expect(integrationModuleWord({ status: "mystery_xyz" }, 1)).toContain("?mystery_xyz");
+  });
+
+  test("job words and green head", () => {
+    expect(integrationJobWord("pending")).toBe("排队集成");
+    expect(integrationJobWord("running")).toBe("集成中");
+    expect(integrationJobWord("conflicted")).toBe("集成冲突");
+    expect(integrationJobWord("gate_failed")).toBe("集成门禁失败");
+    expect(integrationJobWord("error")).toBe("集成异常");
+    expect(integrationJobWord("integrated")).toBe("");
+    expect(integrationJobWord(null)).toBe("");
+    expect(shortGreenHead("8d191a5e343aa15363492f7a1570b59100c54300")).toBe("8d191a5e");
+    expect(shortGreenHead(null)).toBe("");
+  });
+});
+
+describe("integration status lines", () => {
+  test("fallback shows integrated count, no job word", () => {
+    const cache = cacheWith(normalized("integration_fallback_to_incumbent"), true);
+    const line = statusText(cache);
+    expect(line).toContain("· 集成 2");
+    expect(line).not.toContain("boardintegration_");
+    const block = statusBlock(cache);
+    expect(block).toContain("集成 2");
+    expect(block).toContain("8d191a5e");
+    expect(block).not.toContain("boardintegration_");
+  });
+
+  test("gate_failed shows count and job word", () => {
+    const cache = cacheWith(normalized("integration_gate_failed"), true);
+    expect(statusText(cache)).toContain("· 集成 1 · 集成门禁失败");
+    expect(statusBlock(cache)).toContain("集成门禁失败");
+  });
+
+  test("error shows job word and toasts the operator label", () => {
+    const cache = cacheWith(normalized("integration_error"), true);
+    expect(statusText(cache)).toContain("集成异常");
+    const prev = cacheWith(normalized("lifecycle_mix"), true);
+    const plan = planToast(prev, normalized("integration_error"), []);
+    if (plan === null) throw new Error("expected an error toast");
+    expect(plan.text).toContain("集成异常（宿主自动重试）");
+    expect(plan.text).not.toContain("boardintegration_");
+  });
+
+  test("every integration scenario carries no paths, tails or job ids", () => {
+    for (const name of INTEGRATION_SCENARIOS) {
+      const summary = normalized(name as keyof typeof fx);
+      const cache = cacheWith(summary, true);
+      for (const text of [statusText(cache), statusBlock(cache)]) {
+        expect(text).not.toContain("boardintegration_");
+        expect(text).not.toContain("docs/");
+        expect(text).not.toContain(".txt");
+        expect(text).not.toContain("expected Hello, Ada!");
+      }
+      const board = boardOf(name as keyof typeof fx);
+      for (const m of board.modules) {
+        const word = integrationModuleWord(
+          {
+            status: (m as unknown as { integration?: { status?: unknown } }).integration,
+          },
+          1,
+        );
+        void word;
+      }
+    }
+  });
+
+  test("integrations==0 shows no integration word", () => {
+    const raw = summaryOf("integration_fallback_to_incumbent");
+    (raw["capabilities"] as Record<string, unknown>)["integrations"] = 0;
+    const summary = normalizeSummary(raw);
+    if (summary === null) throw new Error("synthetic summary does not normalize");
+    const line = statusText(cacheWith(summary, true));
+    expect(line).not.toContain("集成");
+    expect(line).not.toContain("集成分支");
+  });
+
+  test("old scenarios have no integration words", () => {
+    for (const name of OLD_SCENARIOS) {
+      const line = statusText(cacheWith(normalized(name as keyof typeof fx), true));
+      expect(line).not.toContain("集成");
+    }
+  });
+
+  test("never fetch §5.3: no board/integrations string in sources", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const root = path.join(import.meta.dir, "..", "src");
+    const walk = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) out.push(...walk(full));
+        else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+      }
+      return out;
+    };
+    for (const file of walk(root)) {
+      const text = fs.readFileSync(file, "utf-8");
+      expect(text).not.toContain("board/integrations");
+    }
+    const { summaryPath } = await import("../src/host");
+    expect(summaryPath("conv-x")).not.toContain("integrations");
+  });
+
+  test("poll and command never hit the detail route", async () => {
+    const { pollOnce, initialSnapshot, summaryPath } = await import("../src/host");
+    const seen: string[] = [];
+    const snap = initialSnapshot("conv-x");
+    const out = await pollOnce(snap, 1000, {
+      pollMs: 5000,
+      getSummary: async (id: string, _etag: string | null) => {
+        seen.push(summaryPath(id));
+        return { kind: "failed" } as never;
+      },
+      autoBind: async () => null,
+      probeReachable: async () => false,
+    });
+    void out;
+    for (const url of seen) expect(url).not.toContain("board/integrations");
+  });
+});

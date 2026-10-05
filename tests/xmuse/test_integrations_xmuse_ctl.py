@@ -879,3 +879,304 @@ def test_readme_documents_commands() -> None:
         assert needle in readme, f"README missing {needle!r}"
     for code in ("0", "2", "3", "4", "5"):
         assert code in readme, f"README missing exit code {code}"
+
+
+INTEGRATION_SCENARIOS = [
+    "integration_conflicted",
+    "integration_dependency_upgrade",
+    "integration_error",
+    "integration_fallback_to_incumbent",
+    "integration_gate_failed",
+    "integration_integrated",
+    "integration_pending_running",
+    "review_endorsed_integrated",
+]
+
+OLD_SCENARIOS = [stem for stem in EXPECTED_SCENARIOS if stem not in INTEGRATION_SCENARIOS]
+
+
+def _integration_sidecar_texts(stem: str) -> tuple[list[str], list[str], list[str]]:
+    """Paths, output tails and job ids that must never reach host output."""
+    sidecar = FIXTURE_DIR / f"{stem}.integration.json"
+    paths: list[str] = []
+    tails: list[str] = []
+    if sidecar.is_file():
+        detail = json.loads(sidecar.read_text(encoding="utf-8"))
+        for item in detail.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            for conflict in item.get("conflicts", []):
+                if isinstance(conflict, dict):
+                    path = conflict.get("path")
+                    if isinstance(path, str) and path != "":
+                        paths.append(path)
+        for gate in detail.get("gates", []):
+            if not isinstance(gate, dict):
+                continue
+            tail = gate.get("output_tail")
+            if isinstance(tail, dict):
+                text = tail.get("text")
+                if isinstance(text, str) and text != "":
+                    tails.append(text)
+    fixture = json.loads((FIXTURE_DIR / f"{stem}.json").read_text(encoding="utf-8"))
+    job_ids: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ("integration_id", "applied_verification_id") and isinstance(item, str):
+                    if item.startswith("boardintegration_"):
+                        job_ids.append(item)
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(fixture)
+    return paths, tails, sorted(set(job_ids))
+
+
+@pytest.mark.parametrize("stem", INTEGRATION_SCENARIOS)
+def test_integration_scenarios_show_words_not_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+    stem: str,
+) -> None:
+    room_id = _room_id(stem)
+    paths, tails, job_ids = _integration_sidecar_texts(stem)
+    # The conflicted fixtures are where a path would leak: they must have
+    # at least one path in the sidecar to make this test meaningful.
+    if stem in ("integration_conflicted", "integration_fallback_to_incumbent"):
+        assert paths, f"no conflict paths in {stem}.integration.json"
+    if stem == "integration_gate_failed":
+        assert tails, "no gate output tail in integration_gate_failed.integration.json"
+    for argv in (
+        ["status", "--line", "--room", room_id],
+        ["status", "--room", room_id],
+        ["status", "--json", "--room", room_id],
+        ["board", "--room", room_id],
+        ["board", "--json", "--room", room_id],
+        ["watch", "--once", "--room", room_id],
+    ):
+        code, out, err = _run(monkeypatch, capsys, server, argv, cwd=tmp_path)
+        assert code == 0, f"{argv} exited {code}: {out} {err}"
+        _assert_clean(out)
+        for path in paths:
+            assert path not in out, f"{argv} leaked conflict path {path!r} in {stem}"
+        for tail in tails:
+            assert tail not in out, f"{argv} leaked output_tail in {stem}"
+        for job_id in job_ids:
+            assert job_id not in out, f"{argv} leaked job id in {stem}"
+        assert "boardintegration_" not in out, f"{argv} leaked job id prefix in {stem}"
+        if "--json" in argv:
+            payload = json.loads(out)
+            text = json.dumps(payload, ensure_ascii=False)
+            for path in paths:
+                assert path not in text
+            assert "boardintegration_" not in text
+
+
+def test_integration_fallback_exact_words(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+) -> None:
+    room_id = _room_id("integration_fallback_to_incumbent")
+    code, out, _ = _run(monkeypatch, capsys, server, ["board", "--room", room_id], cwd=tmp_path)
+    assert code == 0
+    m1_line = next(line for line in out.splitlines() if line.startswith("m1 "))
+    assert "集成冲突 1 路径·分支为旧版本" in m1_line
+    # reviews are off here: accepted shows as 已验证, integrated as 已集成.
+    assert "已验证 3 · 已集成 2" in out
+    assert "集成分支 8d191a5e" in out
+    code, out, _ = _run(
+        monkeypatch, capsys, server, ["status", "--line", "--room", room_id], cwd=tmp_path
+    )
+    assert code == 0
+    assert "已集成 2" in out
+    # The job itself integrated: no job word on the status line.
+    assert "集成冲突" not in out
+
+
+def test_integration_gate_failed_exact_words(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+) -> None:
+    room_id = _room_id("integration_gate_failed")
+    code, out, _ = _run(monkeypatch, capsys, server, ["board", "--room", room_id], cwd=tmp_path)
+    assert code == 0
+    m2_line = next(line for line in out.splitlines() if line.startswith("m2 "))
+    assert "门禁失败·嫌疑" in m2_line
+    assert "·未入分支" in m2_line
+    assert "集成门禁失败" in out  # lead room-level item label, no job id
+    assert "boardintegration_" not in out
+    code, out, _ = _run(
+        monkeypatch, capsys, server, ["status", "--line", "--room", room_id], cwd=tmp_path
+    )
+    assert code == 0
+    assert "已集成 1" in out
+    assert "集成门禁失败" in out
+
+
+def test_integration_error_exact_words(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+) -> None:
+    room_id = _room_id("integration_error")
+    code, out, _ = _run(monkeypatch, capsys, server, ["board", "--room", room_id], cwd=tmp_path)
+    assert code == 0
+    m1_line = next(line for line in out.splitlines() if line.startswith("m1 "))
+    assert "集成异常·自动重试" in m1_line
+    assert "·未入分支" in m1_line
+    assert "集成异常（宿主自动重试）" in out  # operator room-level item, no target
+    code, out, _ = _run(
+        monkeypatch, capsys, server, ["status", "--line", "--room", room_id], cwd=tmp_path
+    )
+    assert code == 0
+    assert "集成异常" in out
+    assert "boardintegration_" not in out
+
+
+def test_integrations_off_shows_no_integration_word(tmp_path: Path) -> None:
+    sys.path.insert(0, str(CTL_ROOT))
+    from xmuse_ctl import api as ctl_api
+    from xmuse_ctl import render as ctl_render
+
+    # Old quiet fixture with the flag flipped off: no integration word
+    # anywhere, even in JSON labels.
+    fixture = json.loads((FIXTURE_DIR / "verified.json").read_text(encoding="utf-8"))
+    summary_payload = dict(fixture["summary"])
+    summary_payload["capabilities"] = {"verification": 1, "reviews": 0, "integrations": 0}
+    board_payload = dict(fixture["projection"])
+    board_payload["capabilities"] = {"verification": 1, "reviews": 0, "integrations": 0}
+    summary = ctl_api.normalize_summary(summary_payload)
+    board = ctl_api.normalize_board(board_payload)
+    assert summary is not None and board is not None
+    for text in (
+        ctl_render.status_line(summary),
+        ctl_render.status_block(summary),
+        ctl_render.board_text(board, "http://127.0.0.1:3000"),
+        json.dumps(ctl_render.board_json(board, "http://127.0.0.1:3000"), ensure_ascii=False),
+        json.dumps(ctl_render.status_json(summary), ensure_ascii=False),
+    ):
+        assert "集成" not in text
+        assert "集成分支" not in text
+        assert "门禁失败" not in text
+    # Fallback data with the flag off: module words hidden even though the
+    # payload still carries conflicted state (stale attention aside).
+    fallback = json.loads(
+        (FIXTURE_DIR / "integration_fallback_to_incumbent.json").read_text(encoding="utf-8")
+    )
+    fb_board_payload = dict(fallback["projection"])
+    fb_board_payload["capabilities"] = {"verification": 1, "reviews": 0, "integrations": 0}
+    fb_board = ctl_api.normalize_board(fb_board_payload)
+    assert fb_board is not None
+    fb_text = ctl_render.board_text(fb_board, "http://127.0.0.1:3000")
+    assert "集成冲突" not in fb_text
+    assert "分支为旧版本" not in fb_text
+
+
+@pytest.mark.parametrize("stem", OLD_SCENARIOS)
+def test_old_scenarios_status_line_has_no_integration_word(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+    stem: str,
+) -> None:
+    room_id = _room_id(stem)
+    code, out, _ = _run(
+        monkeypatch, capsys, server, ["status", "--line", "--room", room_id], cwd=tmp_path
+    )
+    assert code == 0
+    assert "集成" not in out
+    assert "集成分支" not in out
+
+
+def test_never_fetch_integration_detail() -> None:
+    for path in _package_sources():
+        text = path.read_text(encoding="utf-8")
+        assert "board/integrations" not in text, f"{path.name} references §5.3"
+
+
+def test_status_board_watch_never_hit_integration_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    server: object,
+    tmp_path: Path,
+) -> None:
+    assert isinstance(server, dict)
+    state = server["state"]
+    assert isinstance(state, dict)
+    log = state["log"]
+    assert isinstance(log, list)
+    log.clear()
+    room_id = _room_id("integration_conflicted")
+    assert _run(monkeypatch, capsys, server, ["status", "--room", room_id], cwd=tmp_path)[0] == 0
+    assert _run(monkeypatch, capsys, server, ["board", "--room", room_id], cwd=tmp_path)[0] == 0
+    assert (
+        _run(monkeypatch, capsys, server, ["watch", "--once", "--room", room_id], cwd=tmp_path)[0]
+        == 0
+    )
+    for entry in log:
+        assert "board/integrations" not in entry
+
+
+def test_vocabulary_matches_hosts() -> None:
+    sys.path.insert(0, str(CTL_ROOT))
+    from xmuse_ctl import labels as ctl_labels
+
+    assert ctl_labels.ATTENTION_REASON_LABELS["board_attention_integration_error"] == (
+        "集成异常（宿主自动重试）"
+    )
+    assert (
+        ctl_labels.ATTENTION_REASON_LABELS["board_attention_integration_conflict"]
+        == "集成冲突待处理"
+    )
+    assert (
+        ctl_labels.ATTENTION_REASON_LABELS["board_attention_integration_gate_failed"]
+        == "集成门禁失败"
+    )
+    assert ctl_labels.INTEGRATION_REASON_LABELS["board_integration_conflict"] == "集成冲突"
+    assert ctl_labels.INTEGRATION_REASON_LABELS["board_integration_gate_failed"] == "集成门禁未通过"
+    assert (
+        ctl_labels.INTEGRATION_REASON_LABELS["board_integration_waiting_for_dependency"]
+        == "等待依赖集成"
+    )
+    assert (
+        ctl_labels.INTEGRATION_REASON_LABELS["board_integration_would_drop_accepted"]
+        == "集成会丢失已验收代码，已停止"
+    )
+    assert (
+        ctl_labels.INTEGRATION_REASON_LABELS["board_integration_attempts_exhausted"]
+        == "集成多次失败"
+    )
+    # One table per code base: the TS sources must carry the same words.
+    claude_labels = (REPO_ROOT / "integrations" / "claude-code" / "src" / "labels.ts").read_text(
+        encoding="utf-8"
+    )
+    for needle in (
+        "集成异常（宿主自动重试）",
+        "集成冲突待处理",
+        "集成门禁失败",
+        "集成冲突",
+        "集成门禁未通过",
+        "等待依赖集成",
+        "集成会丢失已验收代码，已停止",
+        "集成多次失败",
+        "排队集成",
+        "集成中",
+        "已集成",
+        "门禁失败·嫌疑",
+        "集成异常·自动重试",
+        "分支为旧版本",
+        "未入分支",
+    ):
+        assert needle in claude_labels, f"claude labels.ts missing {needle!r}"

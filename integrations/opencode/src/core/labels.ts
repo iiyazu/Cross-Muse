@@ -73,9 +73,90 @@ export function findingsPart(blocker: number, major: number, minor: number): str
 }
 
 // Fixed labels for review attention rows. Null for every other reason
-// code: callers keep showing those codes as before.
+// code: callers keep showing those codes as before. Integration
+// room-level items share the same table: the operator error toasts,
+// the lead gate failure and the owner conflict stay on their existing
+// toast/attention paths (no new toast for per-module conflicts).
 export function reviewAttentionLabel(reason: unknown): string | null {
   if (reason === "board_attention_review_operator_pending") return "待你复核";
   if (reason === "board_attention_review_objected") return "复核被驳回待返工";
+  if (reason === "board_attention_integration_error") return "集成异常（宿主自动重试）";
+  if (reason === "board_attention_integration_conflict") return "集成冲突待处理";
+  if (reason === "board_attention_integration_gate_failed") return "集成门禁失败";
   return null;
+}
+
+// Fixed words for the board_integration_* reason codes (§9). Copied
+// exactly from frontend/src/lib/board-labels.ts: the hosts show codes
+// through these labels only, never raw gate or path text.
+const INTEGRATION_REASON_LABELS: { [code: string]: string } = {
+  board_integration_conflict: "集成冲突",
+  board_integration_gate_failed: "集成门禁未通过",
+  board_integration_waiting_for_dependency: "等待依赖集成",
+  board_integration_would_drop_accepted: "集成会丢失已验收代码，已停止",
+  board_integration_attempts_exhausted: "集成多次失败",
+};
+
+export function integrationReasonLabel(reason: unknown): string | null {
+  if (typeof reason === "string" && INTEGRATION_REASON_LABELS[reason] !== undefined)
+    return INTEGRATION_REASON_LABELS[reason];
+  return null;
+}
+
+// Room-level job word (§3.11, §7.1): latest status, or summary status.
+// integrated and null/empty show nothing.
+export function integrationJobWord(status: unknown): string {
+  if (status === null || status === undefined || status === "" || status === "integrated") return "";
+  if (status === "pending") return "排队集成";
+  if (status === "running") return "集成中";
+  if (status === "conflicted") return "集成冲突";
+  if (status === "gate_failed") return "集成门禁失败";
+  if (status === "error") return "集成异常";
+  return "?" + safe(status, 32);
+}
+
+// 8 hex of the green head commit. Empty when there is no head.
+export function shortGreenHead(commit: unknown): string {
+  if (typeof commit !== "string" || commit === "") return "";
+  return safe(commit, 64).slice(0, 8);
+}
+
+export type ModuleIntegrationInput = {
+  status: unknown;
+  conflict_path_count?: unknown;
+  verification_id?: unknown;
+  integrated_verification_id?: unknown;
+};
+
+// One fixed-word module integration part (§3.11). Empty when integrations
+// are off, when the status is "none"/missing, or when the status is
+// unknown-but-empty. Counts and ids only: never a path, never gate text.
+export function integrationModuleWord(
+  input: ModuleIntegrationInput | null | undefined,
+  integrations: unknown,
+): string {
+  if (integrations !== 1) return "";
+  if (input === null || input === undefined) return "";
+  const status = input.status;
+  if (status === null || status === undefined || status === "" || status === "none") return "";
+  let base = "";
+  if (status === "pending") base = "排队集成";
+  else if (status === "running") base = "集成中";
+  else if (status === "integrated") base = "已集成";
+  else if (status === "waiting") base = "等待依赖集成";
+  else if (status === "conflicted") {
+    const n =
+      typeof input.conflict_path_count === "number" && Number.isFinite(input.conflict_path_count)
+        ? Math.max(0, Math.floor(input.conflict_path_count))
+        : 0;
+    base = "集成冲突 " + String(n) + " 路径";
+  } else if (status === "gate_failed") base = "门禁失败·嫌疑";
+  else if (status === "error") base = "集成异常·自动重试";
+  else base = "?" + safe(status, 32);
+  const ver = typeof input.verification_id === "string" ? input.verification_id : null;
+  const old = typeof input.integrated_verification_id === "string" ? input.integrated_verification_id : null;
+  if (old !== null && old !== "" && ver !== null && old !== ver) return base + "·分支为旧版本";
+  if ((old === null || old === "") && (status === "conflicted" || status === "gate_failed" || status === "error" || status === "waiting"))
+    return base + "·未入分支";
+  return base;
 }

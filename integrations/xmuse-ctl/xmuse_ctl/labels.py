@@ -75,13 +75,27 @@ ATTENTION_REASON_LABELS: dict[str, str] = {
     "board_attention_verification_failed": "验证失败待返工",
     "board_attention_review_operator_pending": "待你复核",
     "board_attention_review_objected": "复核被驳回待返工",
+    "board_attention_integration_error": "集成异常（宿主自动重试）",
+    "board_attention_integration_conflict": "集成冲突待处理",
+    "board_attention_integration_gate_failed": "集成门禁失败",
     "board_attention_module_blocked": "模块已阻塞",
     "board_attention_contract_stale": "契约已修订待跟进",
+}
+
+# Fixed words for the board_integration_* reason codes (§9). Copied
+# exactly from frontend/src/lib/board-labels.ts.
+INTEGRATION_REASON_LABELS: dict[str, str] = {
+    "board_integration_conflict": "集成冲突",
+    "board_integration_gate_failed": "集成门禁未通过",
+    "board_integration_waiting_for_dependency": "等待依赖集成",
+    "board_integration_would_drop_accepted": "集成会丢失已验收代码，已停止",
+    "board_integration_attempts_exhausted": "集成多次失败",
 }
 
 # Extra structured reason codes the watch summaries may cite.
 _REASON_LABELS: dict[str, str] = {
     **ATTENTION_REASON_LABELS,
+    **INTEGRATION_REASON_LABELS,
     "board_verification_gate_failed": "门禁未通过",
     "board_verification_outside_charter": "超出章程范围",
     "board_verification_waiting_for_provider": "等待上游模块",
@@ -119,6 +133,7 @@ _EVENT_KIND_LABELS: dict[str, str] = {
     "verification": "验证结果",
     "review_requested": "请求复核",
     "review": "复核结论",
+    "integration": "集成结果",
 }
 
 
@@ -207,3 +222,86 @@ def attention_mark(kind: object) -> str:
     if isinstance(kind, str) and kind in _ATTENTION_MARKS:
         return _ATTENTION_MARKS[kind]
     return "?"
+
+
+def integration_job_word(status: object) -> str:
+    """Room-level job word (§3.11, §7.1); empty when integrated or absent."""
+    if status is None or status == "" or status == "integrated":
+        return ""
+    if status == "pending":
+        return "排队集成"
+    if status == "running":
+        return "集成中"
+    if status == "conflicted":
+        return "集成冲突"
+    if status == "gate_failed":
+        return "集成门禁失败"
+    if status == "error":
+        return "集成异常"
+    return "?" + safe(status, 32)
+
+
+def short_green_head(commit: object) -> str:
+    """8 hex of the green head commit; empty when there is no head."""
+    if not isinstance(commit, str) or commit == "":
+        return ""
+    return safe(commit, 64)[:8]
+
+
+def integration_module_word(
+    integration: object,
+    integrations_flag: object,
+) -> str:
+    """One fixed-word module integration part (§3.11).
+
+    Empty when integrations are off, when the status is ``none``/missing,
+    or when the shape is bad. Counts and ids only: never a path.
+    """
+    if integrations_flag != 1:
+        return ""
+    if not isinstance(integration, dict):
+        return ""
+    status = integration.get("status")
+    if not isinstance(status, str) or status == "" or status == "none":
+        return ""
+    if status == "pending":
+        base = "排队集成"
+    elif status == "running":
+        base = "集成中"
+    elif status == "integrated":
+        base = "已集成"
+    elif status == "waiting":
+        base = "等待依赖集成"
+    elif status == "conflicted":
+        raw = integration.get("conflict_path_count")
+        count = raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
+        if isinstance(raw, float):
+            try:
+                count = max(0, int(raw))
+            except (TypeError, ValueError):
+                count = 0
+        count = max(0, int(count)) if isinstance(count, int) else 0
+        base = "集成冲突 " + str(count) + " 路径"
+    elif status == "gate_failed":
+        base = "门禁失败·嫌疑"
+    elif status == "error":
+        base = "集成异常·自动重试"
+    else:
+        return "?" + safe(status, 32)
+    verification_id = integration.get("verification_id")
+    old_id = integration.get("integrated_verification_id")
+    if (
+        isinstance(old_id, str)
+        and old_id != ""
+        and isinstance(verification_id, str)
+        and old_id != verification_id
+    ):
+        return base + "·分支为旧版本"
+    if (not isinstance(old_id, str) or old_id == "") and status in (
+        "conflicted",
+        "gate_failed",
+        "error",
+        "waiting",
+    ):
+        return base + "·未入分支"
+    return base

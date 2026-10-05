@@ -339,3 +339,49 @@ def test_grant_ts_suite_covers_contract() -> None:
         "grant_api",
     ):
         assert needle in text, f"tests/grant.test.ts missing coverage of {needle!r}"
+
+
+def test_never_fetch_integration_detail() -> None:
+    """Plugins, the CLI and the mod never call GET …/board/integrations/{id}."""
+    violations: list[str] = []
+    for path in _plugin_sources():
+        text = path.read_text(encoding="utf-8")
+        if "board/integrations" in text:
+            violations.append(str(path.relative_to(PLUGIN_ROOT)))
+    assert not violations, "§5.3 route referenced in mod source:\n" + "\n".join(violations)
+
+
+def test_integration_vocabulary_matches_contract() -> None:
+    labels = (PLUGIN_ROOT / "src" / "labels.ts").read_text(encoding="utf-8")
+    for needle in (
+        "排队集成",
+        "集成中",
+        "已集成",
+        "等待依赖集成",
+        "集成冲突 ",
+        "门禁失败·嫌疑",
+        "集成异常·自动重试",
+        "分支为旧版本",
+        "未入分支",
+        "集成冲突",
+        "集成门禁失败",
+        "集成异常",
+        "集成异常（宿主自动重试）",
+        "集成冲突待处理",
+        "集成门禁失败",
+        "集成门禁未通过",
+        "等待依赖集成",
+        "集成会丢失已验收代码，已停止",
+        "集成多次失败",
+    ):
+        assert needle in labels, f"src/labels.ts missing {needle!r}"
+    pane_text = (PLUGIN_ROOT / "src" / "pane.tsx").read_text(encoding="utf-8")
+    assert "集成分支" in pane_text
+    api_text = (PLUGIN_ROOT / "src" / "api.ts").read_text(encoding="utf-8")
+    for needle in ("integrations", "integrated_total", "integration_id", "conflict_path_count"):
+        assert needle in api_text, f"src/api.ts missing {needle!r}"
+    board_text = (PLUGIN_ROOT / "src" / "board_state.ts").read_text(encoding="utf-8")
+    assert "集成 " in board_text
+    pane_text = (PLUGIN_ROOT / "src" / "pane.tsx").read_text(encoding="utf-8")
+    assert "roomIntegrationLine" in pane_text
+    assert "integrationModuleWord" in pane_text

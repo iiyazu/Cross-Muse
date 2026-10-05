@@ -804,3 +804,165 @@ def test_ctl_readme_documents_hook() -> None:
         "SessionStart",
     ):
         assert needle in readme, f"xmuse-ctl README missing {needle!r}"
+
+
+INTEGRATION_SCENARIOS = [
+    "integration_conflicted",
+    "integration_dependency_upgrade",
+    "integration_error",
+    "integration_fallback_to_incumbent",
+    "integration_gate_failed",
+    "integration_integrated",
+    "integration_pending_running",
+    "review_endorsed_integrated",
+]
+
+
+def _integration_leak_strings(stem: str) -> tuple[list[str], list[str]]:
+    import test_integrations_xmuse_ctl as ctl_test
+
+    paths, tails, job_ids = ctl_test._integration_sidecar_texts(stem)
+    return paths + tails, job_ids
+
+
+def test_hook_integration_never_leaks_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hook_server: object,
+    tmp_path: Path,
+) -> None:
+    for stem in INTEGRATION_SCENARIOS:
+        work = tmp_path / ("proj-" + stem)
+        work.mkdir(exist_ok=True)
+        xdg = tmp_path / ("xdg-" + stem)
+        _bind(xdg, work, _room_id(stem))
+        leaks, job_ids = _integration_leak_strings(stem)
+        for host in ("agy", "dsh"):
+            event = ["--event", "SessionStart"] if host == "dsh" else []
+            code, out, err = _run_hook(
+                monkeypatch,
+                capsys,
+                hook_server,
+                ["hook", "--host", host, *event],
+                _payload(stem, host, work),
+                tmp_path,
+                xdg,
+            )
+            assert code == 0
+            assert err == ""
+            payload = json.loads(out)
+            if payload == {}:
+                continue
+            line = (
+                payload["injectSteps"][0]["ephemeralMessage"]
+                if host == "agy"
+                else payload["hookSpecificOutput"]["additionalContext"]
+            )
+            for secret in leaks:
+                assert secret not in line, f"hook leaked detail in {stem}"
+            for job_id in job_ids:
+                assert job_id not in line
+            assert "boardintegration_" not in line
+            assert "board/integrations" not in line
+
+
+def test_hook_integration_error_emits_label_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hook_server: object,
+    tmp_path: Path,
+) -> None:
+    for host in ("agy", "dsh"):
+        work = tmp_path / ("proj-" + host)
+        work.mkdir(exist_ok=True)
+        xdg = tmp_path / ("xdg-" + host)
+        _bind(xdg, work, _room_id("integration_error"))
+        event = ["--event", "SessionStart"] if host == "dsh" else []
+        code, out, err = _run_hook(
+            monkeypatch,
+            capsys,
+            hook_server,
+            ["hook", "--host", host, *event],
+            _payload("integration_error", host, work),
+            tmp_path,
+            xdg,
+        )
+        assert code == 0
+        payload = json.loads(out)
+        assert payload != {}
+        line = (
+            payload["injectSteps"][0]["ephemeralMessage"]
+            if host == "agy"
+            else payload["hookSpecificOutput"]["additionalContext"]
+        )
+        assert "集成异常（宿主自动重试）" in line
+        assert "集成异常" in line
+        # No target for room-level items: no job id, no "?" placeholder.
+        assert "boardintegration_" not in line
+        assert " ?" not in line
+        assert len(line) <= 300
+
+
+def test_hook_integration_lead_and_owner_stay_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hook_server: object,
+    tmp_path: Path,
+) -> None:
+    # gate_failed is lead-only, fallback/conflicted are owner-only: the hook
+    # only speaks for operator items, so all stay silent.
+    for stem in ("integration_gate_failed", "integration_fallback_to_incumbent"):
+        work = tmp_path / ("proj-" + stem)
+        work.mkdir(exist_ok=True)
+        xdg = tmp_path / ("xdg-" + stem)
+        _bind(xdg, work, _room_id(stem))
+        for host in ("agy", "dsh"):
+            event = ["--event", "SessionStart"] if host == "dsh" else []
+            code, out, err = _run_hook(
+                monkeypatch,
+                capsys,
+                hook_server,
+                ["hook", "--host", host, *event],
+                _payload(stem, host, work),
+                tmp_path,
+                xdg,
+            )
+            assert code == 0
+            assert json.loads(out) == {}, f"hook spoke for {stem}/{host}"
+
+
+def test_hook_never_fetch_integration_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    hook_server: object,
+    tmp_path: Path,
+) -> None:
+    assert isinstance(hook_server, dict)
+    state = hook_server["state"]
+    assert isinstance(state, dict)
+    log = state["log"]
+    assert isinstance(log, list)
+    log.clear()
+    work = tmp_path / "proj"
+    work.mkdir()
+    xdg = tmp_path / "xdg"
+    _bind(xdg, work, _room_id("integration_error"))
+    code, out, _ = _run_hook(
+        monkeypatch,
+        capsys,
+        hook_server,
+        ["hook", "--host", "agy"],
+        _payload("integration_error", "agy", work),
+        tmp_path,
+        xdg,
+    )
+    assert code == 0
+    assert json.loads(out) != {}
+    for entry in log:
+        assert "board/integrations" not in entry
+
+
+def test_hook_source_never_references_integration_detail() -> None:
+    for path in _package_sources():
+        text = path.read_text(encoding="utf-8")
+        assert "board/integrations" not in text, f"{path.name} references §5.3"
