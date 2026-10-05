@@ -30,6 +30,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -46,6 +47,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -62,6 +64,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -203,6 +206,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -219,6 +223,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -235,6 +240,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },

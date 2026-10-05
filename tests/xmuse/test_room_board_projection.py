@@ -668,6 +668,87 @@ def test_project_event_actor_mapping() -> None:
     assert infra["actor"] == {"kind": "infrastructure", "participant_id": None}
 
 
+def test_project_event_decision_grant_id() -> None:
+    base = {"seq": 1, "actor_kind": "operator", "created_at": CHARTER_TS}
+    rejected = project_event(
+        {
+            **base,
+            "activity_type": "board.split_rejected",
+            "payload": {
+                "split_id": "s1",
+                "decided_via": "plugin:claude-code",
+                "grant_id": "grant_1",
+            },
+        }
+    )
+    assert rejected is not None
+    assert rejected["data"] == {
+        "split_id": "s1",
+        "decided_via": "plugin:claude-code",
+        "grant_id": "grant_1",
+    }
+    assigned = project_event(
+        {
+            **base,
+            "seq": 2,
+            "activity_type": "board.charter_assigned",
+            "payload": {
+                "split_id": "s1",
+                "module_id": "alpha",
+                "version": 1,
+                "owner_participant_id": "p1",
+                "decided_via": "web",
+                "grant_id": None,
+            },
+        }
+    )
+    assert assigned is not None
+    assert assigned["module_id"] == "alpha"
+    assert assigned["data"] == {
+        "split_id": "s1",
+        "owner_participant_id": "p1",
+        "charter_version": 1,
+        "decided_via": "web",
+        "grant_id": None,
+    }
+
+
+def test_project_event_decision_grant_id_missing_projects_null() -> None:
+    # Rows written before grant_id existed carry no key; they project null.
+    base = {"seq": 1, "actor_kind": "operator", "created_at": CHARTER_TS}
+    rejected = project_event(
+        {
+            **base,
+            "activity_type": "board.split_rejected",
+            "payload": {"split_id": "s1", "decided_via": "web"},
+        }
+    )
+    assert rejected is not None
+    assert rejected["data"] == {"split_id": "s1", "decided_via": "web", "grant_id": None}
+    assigned = project_event(
+        {
+            **base,
+            "seq": 2,
+            "activity_type": "board.charter_assigned",
+            "payload": {
+                "split_id": "s1",
+                "module_id": "alpha",
+                "version": 1,
+                "owner_participant_id": "p1",
+                "decided_via": "cli",
+            },
+        }
+    )
+    assert assigned is not None
+    assert assigned["data"] == {
+        "split_id": "s1",
+        "owner_participant_id": "p1",
+        "charter_version": 1,
+        "decided_via": "cli",
+        "grant_id": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # fixtures: regeneration + schema validation
 # ---------------------------------------------------------------------------
@@ -1006,8 +1087,14 @@ DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 EVENT_DATA_KEYS = {
     "split_proposed": {"split_id", "module_ids"},
-    "split_rejected": {"split_id", "decided_via"},
-    "charter_assigned": {"split_id", "owner_participant_id", "charter_version", "decided_via"},
+    "split_rejected": {"split_id", "decided_via", "grant_id"},
+    "charter_assigned": {
+        "split_id",
+        "owner_participant_id",
+        "charter_version",
+        "decided_via",
+        "grant_id",
+    },
     "claimed": set(),
     "contract_published": {"contract_id", "version", "kind", "digest", "rationale"},
     "contract_revised": {"contract_id", "version", "kind", "digest", "rationale"},
