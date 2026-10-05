@@ -7,6 +7,7 @@ import type {
   XmuseAttentionItem,
   XmuseBoard,
   XmuseModule,
+  XmuseReviewInfo,
   XmuseSplitSummary,
   XmuseSummary,
 } from "../types/index";
@@ -117,6 +118,22 @@ export function normalizeSummary(json: unknown): XmuseSummary | null {
   const counts: { [state: string]: number } = {};
   for (const k of COUNT_KEYS) counts[k] = Math.max(0, Math.floor(num(countsRaw[k])));
   const attention = normalizeAttention(root["attention"]);
+  const caps = asRecord(root["capabilities"]);
+  const capReviews = caps !== null ? caps["reviews"] : undefined;
+  const reviews = typeof capReviews === "number" && capReviews >= 1 ? 1 : 0;
+  // accepted_total is the one completion count (§4.4). While reviews are
+  // off the frozen definition makes it equal counts.verified, so force
+  // that: old servers omit the field and inconsistent values must never
+  // show a completion mark the contract would not give. With reviews on,
+  // a missing value counts nothing rather than overstating completion.
+  const verifiedCount = counts["verified"] ?? 0;
+  const accRaw = root["accepted_total"];
+  const accepted_total =
+    reviews === 0
+      ? verifiedCount
+      : typeof accRaw === "number" && Number.isFinite(accRaw)
+        ? Math.max(0, Math.floor(accRaw))
+        : 0;
   return {
     conversation_id: cid,
     revision: rev,
@@ -125,6 +142,8 @@ export function normalizeSummary(json: unknown): XmuseSummary | null {
     counts,
     attention,
     attention_total: Math.max(attention.length, Math.floor(num(root["attention_total"]))),
+    accepted_total,
+    reviews,
   };
 }
 
@@ -152,6 +171,36 @@ export function collectSnippets(data: unknown, cap = 6): { field: string; text: 
   const claims = asArray(r["claims"]).slice(0, 8);
   for (let i = 0; i < claims.length; i += 1) push("claim#" + String(i), claims[i]);
   return out;
+}
+
+// Structured review state only. Missing review fields (old servers)
+// mean no review. An unknown status is kept verbatim so the pane can
+// show it as ?value instead of hiding it. Review summaries and finding
+// text are never read here: no AgentText from a review enters the mod.
+function normalizeReview(v: unknown): XmuseReviewInfo {
+  const none: XmuseReviewInfo = {
+    status: "none",
+    reviewer_kind: null,
+    escalated_from_present: false,
+    findings_count: { blocker: 0, major: 0, minor: 0 },
+  };
+  const r = asRecord(v);
+  if (r === null) return none;
+  const rawStatus = asString(r["status"]);
+  const status = rawStatus !== null && rawStatus !== "" ? rawStatus : "none";
+  const reviewer_kind = asString(r["reviewer_kind"]);
+  const esc = r["escalated_from"];
+  const fc = asRecord(r["findings_count"]);
+  return {
+    status,
+    reviewer_kind,
+    escalated_from_present: esc !== null && esc !== undefined,
+    findings_count: {
+      blocker: fc !== null ? Math.max(0, Math.floor(num(fc["blocker"]))) : 0,
+      major: fc !== null ? Math.max(0, Math.floor(num(fc["major"]))) : 0,
+      minor: fc !== null ? Math.max(0, Math.floor(num(fc["minor"]))) : 0,
+    },
+  };
 }
 
 export function normalizeBoard(json: unknown): XmuseBoard | null {
@@ -223,9 +272,21 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
       paths: strList(r["paths"], 16),
       provides: strList(r["provides"], 16).map((c) => safeId(c)),
       depends: strList(r["depends"], 16).map((c) => safeId(c)),
+      accepted: r["accepted"] === true,
+      review: normalizeReview(r["review"]),
     });
   }
   modules.sort((a, b) => (a.module_id < b.module_id ? -1 : a.module_id > b.module_id ? 1 : 0));
+
+  const caps = asRecord(root["capabilities"]);
+  const capReviews = caps !== null ? caps["reviews"] : undefined;
+  const reviews = typeof capReviews === "number" && capReviews >= 1 ? 1 : 0;
+  // Same frozen definition as the summary: while reviews are off every
+  // verified module counts as accepted.
+  const accepted_total =
+    reviews === 0
+      ? modules.filter((m) => m.state === "verified").length
+      : modules.filter((m) => m.accepted).length;
 
   const events = asArray(root["events"]).slice(-50);
   const byModule: { [id: string]: { field: string; text: string }[] } = {};
@@ -235,6 +296,10 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
     const mid = asString(r["module_id"]);
     if (mid === null) continue;
     const kind = asString(r["kind"]) ?? "?";
+    // Review verdicts stay out of the expanded detail: no review summary
+    // or finding text is ever collected, only progress/contract/question
+    // snippets from non-review events.
+    if (kind === "review" || kind === "review_requested") continue;
     const seq = Math.floor(num(r["seq"]));
     const prefix = safe(kind, 40) + "#" + String(seq);
     const list = byModule[mid] ?? [];
@@ -281,5 +346,7 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
     proposed_splits: proposed.slice(0, 10),
     splits: splits.slice(0, 10),
     operator_attention: normalizeAttention(root["attention"]).filter((a) => a.kind === "operator"),
+    reviews,
+    accepted_total,
   };
 }

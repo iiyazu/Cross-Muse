@@ -12,7 +12,7 @@ import {
   sortRoomsByUpdated,
   type GetResult,
 } from "../src/api";
-import { attentionKey, planStateToasts, planToast, statusBlock, statusText } from "../src/board_state";
+import { planStateToasts, planToast, statusBlock, statusText, toastableKeys } from "../src/board_state";
 import {
   decideSplit,
   detailCodeOf,
@@ -420,7 +420,7 @@ async function tick(caller: any): Promise<void> {
 
   const fresh = (await read(caller, cacheAtom)) as XmuseCache;
   const finalToast = planToast(fresh, summary, stateNotes);
-  const keys = summary.attention.filter((a) => a.kind === "operator").map(attentionKey);
+  const keys = toastableKeys(summary);
   await update(caller, cacheAtom, (c) => {
     const cur = c as XmuseCache;
     const nextStates: { [id: string]: string } = { ...cur.seenStates };

@@ -6,7 +6,7 @@
 import type { XmuseBoard, XmuseCache, XmuseModule } from "../types/index";
 import { statusText } from "./board_state";
 import { grantExpired, remainingMmSs } from "./grant_state";
-import { displayState } from "./labels";
+import { ACCEPTED_BADGE, displayState, findingsPart, reviewStatusWord } from "./labels";
 import { roomLink, safe, safeId, shortRev, shortRoom } from "./text";
 
 export type PaneEnv = {
@@ -15,15 +15,38 @@ export type PaneEnv = {
   };
 };
 
-function moduleLine(m: XmuseModule): string {
+function moduleLine(m: XmuseModule, reviewsOn: boolean): string {
+  // accepted is the only completion mark: an accepted module shows
+  // 已验收, a verified-but-not-accepted one keeps 已验证 and gains the
+  // review part below. While reviews are off the row is byte-identical
+  // to the pre-review form.
+  const statePart = reviewsOn && m.accepted ? ACCEPTED_BADGE : displayState(m.state);
   const parts = [
     safeId(m.module_id),
     m.owner_display,
     "[" + safe(m.provider_kind, 24) + "]",
-    displayState(m.state),
+    statePart,
     "报告" + String(m.done_reports) + "/通过" + String(m.passed) + "/失败" + String(m.failed) + "/返工" + String(m.rework_rounds),
   ];
-  return parts.join(" ");
+  let line = parts.join(" ");
+  if (reviewsOn) {
+    const rp = reviewPart(m);
+    if (rp !== "") line += " · " + rp;
+  }
+  return line;
+}
+
+// One fixed-word review part per module row, counts only. Empty when
+// there is no review. Never hidden for unknown statuses (?value).
+function reviewPart(m: XmuseModule): string {
+  const word = reviewStatusWord(m.review.status, m.review.reviewer_kind);
+  if (word === "") return "";
+  const segs = [word];
+  if (m.review.escalated_from_present) segs.push("已升级");
+  const fc = m.review.findings_count;
+  const fp = findingsPart(fc.blocker, fc.major, fc.minor);
+  if (fp !== "") segs.push(fp);
+  return segs.join(" · ");
 }
 
 export function headerLine(cache: XmuseCache): string {
@@ -97,7 +120,14 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
     return nodes;
   }
   for (const m of board.modules.slice(0, 100)) {
-    nodes.push({ type: "text", text: moduleLine(m) });
+    nodes.push({ type: "text", text: moduleLine(m, board.reviews === 1) });
+    // An operator-pending review links to the room page, same style as
+    // the proposed-split link. Room page only: no review id and no patch
+    // reference anywhere in the pane.
+    if (board.reviews === 1 && m.review.status === "pending" && m.review.reviewer_kind === "operator") {
+      const reviewHref = roomLink(webUrl, summary.conversation_id);
+      if (reviewHref !== "") nodes.push({ type: "link", key: "review-" + safeId(m.module_id), label: "在 Web 复核", href: reviewHref });
+    }
     if (m.failed > 0 && m.gate_ids.length > 0) {
       nodes.push({ type: "text", text: "门禁: " + m.gate_ids.slice(0, 6).join(" ") });
     }

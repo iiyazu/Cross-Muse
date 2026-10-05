@@ -383,3 +383,96 @@ test("unknown enum values and missing capabilities degrade gracefully", OPTIONS,
   expect(lastStatus(env.statuses)).toContain("看板");
   expect(env.toasts).toHaveLength(0);
 });
+
+test("status check mark counts accepted modules, not verified ones", OPTIONS, async ($, on) => {
+  const cid = String((fx.review_operator_pending.summary as { conversation_id: string }).conversation_id);
+  const env = await boot($, on, { "binding:/repo": cid }, (url) =>
+    url.endsWith("/board/summary")
+      ? { status: 200, ok: true, headers: {}, text: json(fx.review_operator_pending.summary) }
+      : NOT_FOUND,
+  );
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  // verified: 2 in counts, but only 1 accepted: the mark follows accepted.
+  expect(lastStatus(env.statuses)).toBe("看板 2 模块 · ✓1 · 待你处理 1");
+});
+
+test("verified-but-not-accepted shows no check mark", OPTIONS, async ($, on) => {
+  const cid = String((fx.review_escalated.summary as { conversation_id: string }).conversation_id);
+  const env = await boot($, on, { "binding:/repo": cid }, (url) =>
+    url.endsWith("/board/summary")
+      ? { status: 200, ok: true, headers: {}, text: json(fx.review_escalated.summary) }
+      : NOT_FOUND,
+  );
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(lastStatus(env.statuses)).toBe("看板 2 模块 · 待你处理 1");
+});
+
+test("missing accepted_total falls back to the verified count", OPTIONS, async ($, on) => {
+  const old = clone(fx.verified.summary) as unknown as Record<string, unknown>;
+  old["revision"] = "8:oldserver";
+  delete old["accepted_total"];
+  delete old["capabilities"];
+  const cid = String(old["conversation_id"]);
+  const env = await boot($, on, { "binding:/repo": cid }, () => ({
+    status: 200, ok: true, headers: {}, text: json(old),
+  }));
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(lastStatus(env.statuses)).toBe("看板 2 模块 · ✓1");
+});
+
+test("review operator-pending toast uses the fixed label", OPTIONS, async ($, on) => {
+  const first = clone(fx.lifecycle_mix.summary) as unknown as Record<string, unknown>;
+  const second = clone(fx.review_operator_pending.summary) as unknown as Record<string, unknown>;
+  second["revision"] = "102:reviewpending";
+  const cid = String(first["conversation_id"]);
+  let calls = 0;
+  const env = await boot($, on, { "binding:/repo": cid }, () => {
+    calls += 1;
+    return { status: 200, ok: true, headers: {}, text: json(calls === 1 ? first : second) };
+  });
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(0);
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(1);
+  expect(env.toasts[0]).toContain("待你复核");
+  expect(env.toasts[0]).toContain("beta");
+});
+
+test("review objected toast uses the fixed label", OPTIONS, async ($, on) => {
+  const first = clone(fx.lifecycle_mix.summary) as unknown as Record<string, unknown>;
+  const second = clone(fx.review_objected.summary) as unknown as Record<string, unknown>;
+  second["revision"] = "103:reviewobjected";
+  const cid = String(first["conversation_id"]);
+  let calls = 0;
+  const env = await boot($, on, { "binding:/repo": cid }, () => {
+    calls += 1;
+    return { status: 200, ok: true, headers: {}, text: json(calls === 1 ? first : second) };
+  });
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(0);
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(1);
+  expect(env.toasts[0]).toContain("复核被驳回待返工");
+  expect(env.toasts[0]).toContain("alpha");
+});
+
+test("status block shows the review attention label", OPTIONS, async ($, on) => {
+  const cid = String((fx.review_operator_pending.summary as { conversation_id: string }).conversation_id);
+  const env = await boot($, on, { "binding:/repo": cid }, (url) =>
+    url.endsWith("/board/summary")
+      ? { status: 200, ok: true, headers: {}, text: json(fx.review_operator_pending.summary) }
+      : NOT_FOUND,
+  );
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  const status = await $.command.run({ command: "xmuse", args: "status" });
+  expect(String(status.text)).toContain("待你复核");
+  expect(String(status.text)).toContain("beta");
+});
