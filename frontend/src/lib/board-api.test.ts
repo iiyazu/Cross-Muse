@@ -18,7 +18,8 @@ const FIXTURE_DIR = path.resolve(process.cwd(), "../docs/contracts/fixtures/boar
 function fixtures(): Array<{ name: string; payload: Record<string, unknown> }> {
   return fs
     .readdirSync(FIXTURE_DIR)
-    .filter((name) => name.endsWith(".json"))
+    // `<scenario>.review.json` and friends are detail goldens, not scenarios.
+    .filter((name) => name.endsWith(".json") && !name.slice(0, -".json".length).includes("."))
     .map((name) => ({
       name,
       payload: JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, name), "utf8")) as Record<
