@@ -2,8 +2,11 @@
 
 Covers the hard rules that are statically verifiable:
 - tools/sync_fixtures.py --check passes (generated fixtures are current);
-- hooks/ and src/ use no forbidden engine calls, only GET, no operator
-  token material, no write HTTP verbs;
+- hooks/ and src/ use no forbidden engine calls, only GET outside the
+  single pure grant writer, no operator token material, no write verbs
+  except POST in src/grant_api.ts;
+- the grant write paths, bearer header placement and ui-arg hygiene;
+- the backend plugin_grant_v1 golden files validate against the plugin_grant/v1 schema;
 - plugin.json / hooks.json / marketplace.json parse and agree on the name.
 """
 
@@ -17,6 +20,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ROOT = REPO_ROOT / "integrations" / "claude-code"
 
+GRANT_API = PLUGIN_ROOT / "src" / "grant_api.ts"
+REGISTER = PLUGIN_ROOT / "hooks" / "register.tsx"
+PANE = PLUGIN_ROOT / "src" / "pane.tsx"
+
 FORBIDDEN_SNIPPETS = [
     "$.process",
     "$.fs",
@@ -29,12 +36,32 @@ FORBIDDEN_SNIPPETS = [
     "$.config.set",
 ]
 
+# The full human-trigger ban: no model-, prompt-, session-, tool- or
+# host-mediated path may exist beside the existing command/tool below.
+FORBIDDEN_HUMAN_TRIGGER = [
+    "$.prompt.",
+    "$.session.",
+    "$.model.",
+    "$.process.",
+    "$.fs.",
+    "$.mcp.",
+]
+
 FORBIDDEN_TOKENS = [
     "X-XMuse-Operator-Token",
     "XMUSE_OPERATOR_TOKEN",
 ]
 
 WRITE_VERBS = ["POST", "PUT", "DELETE"]
+
+# The only write routes a plugin grant may touch (contract plugin_grant/v1
+# §4). The decision route carries a dynamic split id, checked by prefix.
+ALLOWED_GRANT_PATHS = {
+    "/api/chat/plugin/grants/exchange",
+    "/api/chat/plugin/grants/revoke",
+}
+DECISION_PREFIX = "/api/chat/plugin/board-splits/"
+DECISION_SUFFIX = "/decision"
 
 
 def _plugin_sources() -> list[Path]:
@@ -95,9 +122,98 @@ def test_only_get_and_no_operator_token() -> None:
             if token in text:
                 violations.append(f"{path.relative_to(PLUGIN_ROOT)}: {token}")
         for verb in WRITE_VERBS:
+            if path.name == "grant_api.ts" and verb == "POST":
+                continue  # the single pure grant writer; see below
             if f'"{verb}"' in text or f"'{verb}'" in text:
                 violations.append(f"{path.relative_to(PLUGIN_ROOT)}: {verb}")
     assert not violations, "write verbs or operator token material:\n" + "\n".join(violations)
+
+
+def test_writes_only_in_grant_api() -> None:
+    """POST and the bearer header live only in src/grant_api.ts, and the
+    header name is spelled in exactly one function there."""
+    grant_text = GRANT_API.read_text(encoding="utf-8")
+    assert '"POST"' in grant_text, "grant_api.ts must spell the write method"
+    assert "Authorization" in grant_text, "grant_api.ts must spell the bearer header"
+    assert grant_text.count("Authorization") == 1, "Authorization must appear exactly once"
+    holder = grant_text.rfind("function ", 0, grant_text.index("Authorization"))
+    assert holder != -1
+    assert "pluginPost" in grant_text[holder : holder + 80]
+    for path in _plugin_sources():
+        if path == GRANT_API:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for needle in ('"POST"', "'POST'", "Authorization"):
+            assert needle not in text, f"{path.relative_to(PLUGIN_ROOT)} must not spell {needle}"
+
+
+def test_grant_api_allowed_paths() -> None:
+    """The write paths allowed in grant_api.ts are exactly the exchange,
+    revoke and decision routes; no operator or read routes may be added."""
+    import re
+
+    text = GRANT_API.read_text(encoding="utf-8")
+    literals = set(re.findall(r'"/api/chat/[^"]*"', text))
+    for lit in literals:
+        inner = lit[1:-1]
+        ok = inner in ALLOWED_GRANT_PATHS or inner == DECISION_PREFIX or inner == DECISION_SUFFIX
+        assert ok, f"unexpected route literal in grant_api.ts: {lit}"
+    assert "/api/chat/plugin/grants/exchange" in text
+    assert "/api/chat/plugin/grants/revoke" in text
+    assert DECISION_PREFIX in text and DECISION_SUFFIX in text
+    for banned in ("/api/chat/operator", "/api/chat/rooms", "/board/summary"):
+        assert banned not in text, f"grant_api.ts must not touch {banned}"
+    for loopback in ("127", "localhost", "::1", "loopback"):
+        assert loopback in text, "grant_api.ts must keep the loopback-only base URL rule"
+
+
+def test_no_new_commands_tools_and_no_model_paths() -> None:
+    """Writes stay human-triggered: no new command/tool registrations and
+    no model/prompt/session/process/fs/mcp paths anywhere in the mod."""
+    text = REGISTER.read_text(encoding="utf-8")
+    assert text.count("$.command.register") == 1, "no new commands besides /xmuse"
+    assert text.count("$.tool.register") == 1, "no new tools besides mcp__xmuse__status"
+    assert "mcp__xmuse__status" in text
+    assert "return { result: statusBlock(cache) }" in text
+    assert '"xmuse 已解绑"' in text
+    violations: list[str] = []
+    for path in _plugin_sources():
+        body = path.read_text(encoding="utf-8")
+        for snippet in FORBIDDEN_HUMAN_TRIGGER:
+            if snippet in body:
+                violations.append(f"{path.relative_to(PLUGIN_ROOT)}: {snippet}")
+    assert not violations, "model-triggerable paths in mod source:\n" + "\n".join(violations)
+    for fn in ("exchangeGrant", "decideSplit", "revokeGrant"):
+        users = [
+            str(p.relative_to(PLUGIN_ROOT))
+            for p in _plugin_sources()
+            if p != GRANT_API and fn in p.read_text(encoding="utf-8")
+        ]
+        assert users == ["hooks/register.tsx"], f"{fn} must run only from the hooks module: {users}"
+    assert "onControl" in text and "onSubmit" in text
+    pane_text = PANE.read_text(encoding="utf-8")
+    assert "onPress" in pane_text and "onSubmit" in pane_text
+
+
+def test_secret_never_in_ui_args() -> None:
+    """The pairing code and the token never reach a toast, status line,
+    command/tool result or pane text: no such identifier may share the
+    line with the call that renders it."""
+    for path in (REGISTER, PANE):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            if "ui.toast" in line or "ui.status" in line or "text:" in line:
+                lowered = line.lower()
+                for needle in ("secret", "pairing", "granttoken", "token"):
+                    where = f"{path.relative_to(PLUGIN_ROOT)}:{lineno}"
+                    assert needle not in lowered, f"{where}: {needle} in UI arg: {line.strip()}"
+
+
+def test_grant_state_stays_pure() -> None:
+    state = PLUGIN_ROOT / "src" / "grant_state.ts"
+    text = state.read_text(encoding="utf-8")
+    assert "$." not in text, "grant_state.ts must not touch the engine"
+    assert "Authorization" not in text and '"POST"' not in text
 
 
 def test_manifests_agree() -> None:
@@ -128,3 +244,59 @@ def test_readme_documents_safety() -> None:
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
     for needle in ("mcp__xmuse__status", "/xmuse", "WSL", "Read-only"):
         assert needle in readme, f"README missing {needle!r}"
+
+
+def test_readme_documents_pairing_flow() -> None:
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    for needle in (
+        "配对码",
+        "已授权",
+        "撤销授权",
+        "批准",
+        "拒绝",
+        "board.split.decide",
+        "review verdicts",
+        "no operator token",
+        "memory only",
+    ):
+        assert needle in readme, f"README missing pairing detail {needle!r}"
+
+
+def test_grant_fixtures_match_schema() -> None:
+    import json
+
+    from jsonschema import Draft202012Validator
+
+    schema_path = REPO_ROOT / "docs" / "contracts" / "schemas" / "plugin_grant.v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    golden_dir = REPO_ROOT / "docs" / "contracts" / "fixtures" / "plugin_grant_v1"
+    fixtures = {
+        p.stem: json.loads(p.read_text(encoding="utf-8")) for p in golden_dir.glob("*.json")
+    }
+    for key in ("issue", "list", "exchange", "operator_revoke", "plugin_revoke"):
+        assert key in fixtures, f"plugin_grant_v1 golden missing {key}"
+        validator.validate(fixtures[key])
+    assert fixtures["issue"]["grant"]["status"] == "pending"
+    assert fixtures["exchange"]["grant"]["status"] == "active"
+    generated = (PLUGIN_ROOT / "tests" / "grant_golden.generated.ts").read_text(encoding="utf-8")
+    assert "GRANT_GOLDEN" in generated
+
+
+def test_grant_ts_suite_covers_contract() -> None:
+    suite = PLUGIN_ROOT / "tests" / "grant.test.ts"
+    assert suite.is_file(), "tests/grant.test.ts missing"
+    text = suite.read_text(encoding="utf-8")
+    for needle in (
+        "xmuse-pairing",
+        "Origin",
+        "401",
+        "409",
+        "detach",
+        "revoke",
+        "confirm",
+        "digest",
+        "grant_state",
+        "grant_api",
+    ):
+        assert needle in text, f"tests/grant.test.ts missing coverage of {needle!r}"
