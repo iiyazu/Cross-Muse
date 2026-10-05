@@ -108,6 +108,11 @@ print(
         "/api/chat/operator/board-splits/{split_id}/decision",
         "/api/chat/operator/board-reviews/{review_id}/material",
         "/api/chat/operator/board-reviews/{review_id}/decision",
+        "/api/chat/operator/plugin-grants",
+        "/api/chat/operator/plugin-grants/{grant_id}/revoke",
+        "/api/chat/plugin/grants/exchange",
+        "/api/chat/plugin/grants/revoke",
+        "/api/chat/plugin/board-splits/{split_id}/decision",
     }
 
 
