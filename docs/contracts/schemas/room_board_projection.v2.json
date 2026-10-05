@@ -22,6 +22,7 @@
       "additionalProperties": false
     },
     "review_policy": { "enum": ["off", "cross_family"] },
+    "integration": { "$ref": "#/$defs/roomIntegration" },
     "participants": {
       "type": "array",
       "items": { "$ref": "#/$defs/participant" }
@@ -60,6 +61,7 @@
     "revision",
     "capabilities",
     "review_policy",
+    "integration",
     "participants",
     "modules",
     "contracts",
@@ -160,7 +162,10 @@
         "errored": { "type": "integer", "minimum": 0 },
         "rework_rounds": { "type": "integer", "minimum": 0 },
         "reviews_endorsed": { "type": "integer", "minimum": 0 },
-        "reviews_objected": { "type": "integer", "minimum": 0 }
+        "reviews_objected": { "type": "integer", "minimum": 0 },
+        "integrations_conflicted": { "type": "integer", "minimum": 0 },
+        "integrations_gate_failed": { "type": "integer", "minimum": 0 },
+        "conflict_fix_rounds": { "type": "integer", "minimum": 0 }
       },
       "required": [
         "done_reports",
@@ -170,7 +175,10 @@
         "errored",
         "rework_rounds",
         "reviews_endorsed",
-        "reviews_objected"
+        "reviews_objected",
+        "integrations_conflicted",
+        "integrations_gate_failed",
+        "conflict_fix_rounds"
       ],
       "additionalProperties": false
     },
@@ -325,6 +333,7 @@
         },
         "review": { "$ref": "#/$defs/review" },
         "accepted": { "type": "boolean" },
+        "integration": { "$ref": "#/$defs/moduleIntegration" },
         "attention": { "$ref": "#/$defs/moduleAttention" }
       },
       "required": [
@@ -342,8 +351,71 @@
         "state",
         "review",
         "accepted",
+        "integration",
         "attention"
       ],
+      "additionalProperties": false
+    },
+    "moduleIntegration": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "none",
+            "waiting",
+            "pending",
+            "running",
+            "integrated",
+            "conflicted",
+            "gate_failed",
+            "error"
+          ]
+        },
+        "integration_id": { "type": ["string", "null"] },
+        "verification_id": { "type": ["string", "null"] },
+        "integrated_verification_id": { "type": ["string", "null"] },
+        "reason_code": { "type": ["string", "null"] },
+        "conflict_path_count": { "type": "integer", "minimum": 0 },
+        "gate_ids": { "type": "array", "items": { "type": "string" } },
+        "updated_at": { "type": ["string", "null"] }
+      },
+      "required": [
+        "status",
+        "integration_id",
+        "verification_id",
+        "integrated_verification_id",
+        "reason_code",
+        "conflict_path_count",
+        "gate_ids",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "roomIntegration": {
+      "type": "object",
+      "properties": {
+        "green_head_commit": { "type": ["string", "null"] },
+        "latest": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "properties": {
+                "integration_id": { "type": "string" },
+                "status": {
+                  "enum": ["pending", "running", "integrated", "conflicted", "gate_failed", "error"]
+                },
+                "reason_code": { "type": ["string", "null"] },
+                "module_count": { "type": "integer", "minimum": 0 },
+                "finished_at": { "type": ["string", "null"] }
+              },
+              "required": ["integration_id", "status", "reason_code", "module_count", "finished_at"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": ["green_head_commit", "latest"],
       "additionalProperties": false
     },
     "contractSummary": {
@@ -486,9 +558,10 @@
         "kind": { "enum": ["operator", "lead", "owner"] },
         "reason_code": { "type": "string" },
         "module_id": { "type": ["string", "null"] },
-        "split_id": { "type": ["string", "null"] }
+        "split_id": { "type": ["string", "null"] },
+        "integration_id": { "type": ["string", "null"] }
       },
-      "required": ["kind", "reason_code", "module_id", "split_id"],
+      "required": ["kind", "reason_code", "module_id", "split_id", "integration_id"],
       "additionalProperties": false
     },
     "event": {
@@ -507,7 +580,8 @@
             "question",
             "verification",
             "review_requested",
-            "review"
+            "review",
+            "integration"
           ]
         },
         "at": { "type": "string" },
@@ -671,6 +745,45 @@
                 "findings_total",
                 "summary",
                 "decided_via"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "integration_id": { "type": "string" },
+                "status": { "enum": ["integrated", "conflicted", "gate_failed", "error"] },
+                "reason_code": { "type": ["string", "null"] },
+                "green_head_commit": { "type": ["string", "null"] },
+                "integrated_module_ids": { "type": "array", "items": { "type": "string" } },
+                "suspect_module_ids": { "type": "array", "items": { "type": "string" } },
+                "conflicts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "module_id": { "type": "string" },
+                      "conflict_path_count": { "type": "integer", "minimum": 0 },
+                      "attributed_module_ids": { "type": "array", "items": { "type": "string" } },
+                      "fell_back": { "type": "boolean" }
+                    },
+                    "required": ["module_id", "conflict_path_count", "attributed_module_ids", "fell_back"],
+                    "additionalProperties": false
+                  }
+                },
+                "waiting_module_ids": { "type": "array", "items": { "type": "string" } },
+                "gate_ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": [
+                "integration_id",
+                "status",
+                "reason_code",
+                "green_head_commit",
+                "integrated_module_ids",
+                "suspect_module_ids",
+                "conflicts",
+                "waiting_module_ids",
+                "gate_ids"
               ],
               "additionalProperties": false
             }

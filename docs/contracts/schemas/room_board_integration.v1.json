@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_integration.v1.json",
+  "title": "room_board_integration/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_integration/v1" },
+    "conversation_id": { "type": "string" },
+    "integration_id": { "type": "string" },
+    "status": {
+      "enum": ["pending", "running", "integrated", "conflicted", "gate_failed", "error"]
+    },
+    "reason_code": { "type": ["string", "null"] },
+    "green_head_commit": { "type": ["string", "null"] },
+    "result_commit": { "type": ["string", "null"] },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "module_id": { "type": "string" },
+          "verification_id": { "type": "string" },
+          "order": { "type": "integer", "minimum": 1 },
+          "role": { "enum": ["incumbent", "newcomer"] },
+          "status": { "enum": ["applied", "fell_back", "conflicted", "waiting", "not_applied"] },
+          "applied_verification_id": { "type": ["string", "null"] },
+          "conflicts": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string", "maxLength": 512 },
+                "attributed_module_ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": ["path", "attributed_module_ids"],
+              "additionalProperties": false
+            }
+          },
+          "conflicts_total": { "type": "integer", "minimum": 0 }
+        },
+        "required": [
+          "module_id",
+          "verification_id",
+          "order",
+          "role",
+          "status",
+          "applied_verification_id",
+          "conflicts",
+          "conflicts_total"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "gate_id": { "type": "string" },
+          "status": { "type": "string" },
+          "exit_code": { "type": ["integer", "null"] },
+          "reason_code": { "type": ["string", "null"] },
+          "output_tail": { "$ref": "#/$defs/nullableAgentText" }
+        },
+        "required": ["gate_id", "status", "exit_code", "reason_code", "output_tail"],
+        "additionalProperties": false
+      }
+    },
+    "attempt_count": { "type": "integer", "minimum": 0 },
+    "created_at": { "type": "string" },
+    "finished_at": { "type": ["string", "null"] }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "integration_id",
+    "status",
+    "reason_code",
+    "green_head_commit",
+    "result_commit",
+    "items",
+    "gates",
+    "attempt_count",
+    "created_at",
+    "finished_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "maxLength": 2000 },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    }
+  }
+}
