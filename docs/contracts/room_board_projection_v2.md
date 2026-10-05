@@ -409,12 +409,12 @@ job that is not finished, and a set change during a running job enqueues the nex
    A patch is applied whatever base its owner clone started from: the mirror holds every
    owner's objects, so the three-way apply resolves against the patch's own pre-image, and a
    patch that cannot be placed is simply a conflict.
-2. **Incumbents first.** The *incumbents* are the modules of the previous green head whose
-   candidate did not change. They are applied first, in the order they had in the green head,
-   which reproduces it (the green head is closed under `depends`). Only then come the
-   *newcomers* (a new candidate, or a module never integrated), in dependency order (a module
-   after every module its charter `depends` on through `provides`), ties by `module_id`. So a
-   conflict always lands on the newcomer, never on code already integrated.
+2. **Order: dependencies first, then incumbents before newcomers.** The *incumbents* are the
+   modules of the previous green head whose candidate did not change; the *newcomers* have a new
+   candidate or were never integrated. Candidates are applied in dependency order (a module
+   after every module its charter `depends` on through `provides`); among the candidates whose
+   dependencies are all applied, incumbents go before newcomers, then by `module_id`. Between
+   modules without a dependency path, a conflict therefore lands on the newcomer.
 3. **Fallback, so the branch never loses accepted code and never freezes.** A newcomer whose
    patch does not apply is `conflicted` for that candidate. If the module has an
    `integrated_verification_id`, its old candidate (whose stored patch every verification row
@@ -424,18 +424,26 @@ job that is not finished, and a set change during a running job enqueues the nex
    `board_integration_waiting_for_dependency`), so the applied set is always closed under
    `depends` and no newcomer is built on a dependency version it was not verified with. The
    job continues with the others.
-4. Runs the server-owned gate profile once on the result, selected by the union of the applied
+4. **An incumbent that no longer applies blames the newcomers below it.** If an incumbent's
+   patch fails, the culprits are the newcomers applied before it that it depends on
+   (transitively) or that are attributed to one of its conflicting paths. Each culprit is pinned
+   to its fallback (its old candidate, or left out when it has none), recorded as `conflicted`
+   with the incumbent's conflicting paths, and the job restarts its apply phase from the base
+   with those pins. This repeats at most once per newcomer. **A newcomer never makes an
+   incumbent `conflicted`.**
+5. Runs the server-owned gate profile once on the result, selected by the union of the applied
    modules' changed paths, like verification (§4.2) and never with repository scripts. An
    applied set equal to the green head runs no gates and moves nothing.
-5. If every gate passes, the branch moves to the result: the job is `integrated` (it may still
+6. If every gate passes, the branch moves to the result: the job is `integrated` (it may still
    contain `conflicted` or `waiting` newcomers) and every applied candidate is integrated. If a
-   gate fails, the branch stays at the previous green head: the job is `gate_failed`; the
-   newcomers that were applied — the *suspects* — become `gate_failed`, and the incumbents stay
-   `integrated`. Moving the branch to a rebuilt result is not a fast-forward; consumers must
-   not assume one.
-6. Last resort: if an incumbent itself no longer applies (the result cannot reproduce the green
-   head), the job ends `conflicted` with `board_integration_would_drop_accepted`, no gate runs
-   and the branch stays.
+   gate fails, the branch stays at the previous green head: the job is `gate_failed`; **every**
+   newcomer that was applied becomes `gate_failed` — the *suspects*, the whole batch, not a
+   located culprit (this version does not bisect) — and the incumbents stay `integrated`.
+   Moving the branch to a rebuilt result is not a fast-forward; consumers must not assume one.
+7. Last resort: if an incumbent still does not apply after every newcomer is pinned to its
+   fallback or left out (the base itself can no longer carry the green head), the job ends
+   `conflicted` with `board_integration_would_drop_accepted`, no gate runs and the branch
+   stays.
 
 Infrastructure failures (busy repository, git errors, lost lease) retry the job up to 3
 attempts; then the job is `error` (`board_integration_attempts_exhausted`) and its newcomers
@@ -662,8 +670,9 @@ output reaches model context). `Cache-Control: no-store`; not part of `revision`
 ```
 
 `fell_back` is a newcomer whose candidate conflicted and whose older integrated candidate was
-applied instead (§3.11 rule 3); its `conflicts` describe the newer candidate. `not_applied` is an
-item of a job that ended before reaching it (`error`, or rule 6). `gates` and `output_tail`
+applied instead (§3.11 rules 3 and 4); its `conflicts` describe the newer candidate (for a
+culprit of rule 4, the incumbent's conflicting paths). `not_applied` is an item of a job that
+ended before reaching it (`error`, or rule 7). `gates` and `output_tail`
 follow §5.2 exactly (scrubbed at the source, at most 3 tails, plain text, never in status lines,
 toasts, summaries or events). `conflicts` holds at most 50 paths; `conflicts_total` is the real
 count, so the list can be shorter than it — also when a path breaks the `Finding.path` rule
@@ -843,7 +852,7 @@ Split: `room_board_split_dependency_cycle` and the other `room_board_*` validati
 Integration (`ModuleIntegration.reason_code`, `RoomIntegration.latest.reason_code`, event
 `reason_code`, §3.11): `board_integration_conflict`, `board_integration_gate_failed`,
 `board_integration_waiting_for_dependency`,
-`board_integration_would_drop_accepted` (the job reason when rule 6 stopped it),
+`board_integration_would_drop_accepted` (the job reason when rule 7 stopped it),
 `board_integration_attempts_exhausted`; staging and gate failures keep their `execution_*`
 code on the gate.
 
@@ -908,7 +917,9 @@ one with a newer candidate `pending`, so `integrated_verification_id` lags),
 the newcomer is `conflicted` with both attributed, its dependent is `waiting`, the incumbent
 stays `integrated`; owner attention), `integration_fallback_to_incumbent` (an integrated
 module's newer candidate conflicts: the module is `conflicted` with its older version still
-integrated, another newcomer integrates and the branch moves), `integration_gate_failed`
+integrated, another newcomer integrates and the branch moves), `integration_dependency_upgrade`
+(M2 depends on M1; M1's new candidate makes the unchanged M2 fail to apply: M1 is the culprit,
+pinned back to its old version and `conflicted`, M2 stays `integrated`), `integration_gate_failed`
 (suspects `gate_failed`, the incumbent stays `integrated`; one room-level lead item),
 `integration_error` (attempts exhausted; one room-level operator item),
 `review_endorsed_integrated` (`capabilities.reviews == 1`: an endorsed module integrated, so
@@ -919,7 +930,9 @@ everywhere no module is accepted), `AttentionItem.integration_id`, the three int
 counters and `integrated_total`/`integration` in the summary — and nothing else. The `integration`
 event has `module_id: null` (present, not missing). Required coverage, by tests: a conflict path
 holding a bidirectional control is counted in `conflicts_total` and never listed; incumbents
-are applied first, so a conflict never lands on an incumbent; rule 6 never moves the branch;
+are applied first among ready candidates, and a newcomer never makes an incumbent `conflicted`
+(including an incumbent that depends on an upgraded newcomer, rule 4); the applied set is
+closed under `depends`; rule 7 never moves the branch;
 the bounded `error` retries; the invariants above; and the user's checkout is never touched
 (its `HEAD`, index and working tree are byte-identical before and after a job).
 
