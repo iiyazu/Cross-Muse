@@ -37,7 +37,6 @@ const entry =
     ? [`${workspace}/node_modules/typescript/bin/tsc`, "--noEmit"]
     : [self, "test-one"];
 
-let ran = 0;
 let failed = 0;
 for (const name of packages) {
   if (!NAME.test(name)) {
@@ -64,7 +63,6 @@ for (const name of packages) {
     failed += 1;
     continue;
   }
-  ran += 1;
   console.log(`### ${mode} ${name}`);
   const result = spawnSync(process.execPath, entry, { cwd: dir, stdio: "inherit", env: process.env });
   const code = result.status === null ? 1 : result.status;

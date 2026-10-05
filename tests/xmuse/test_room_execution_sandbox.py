@@ -1225,3 +1225,62 @@ def test_remix_driver_runs_fixed_entrypoints_per_package_and_never_passes_unchec
     assert drive("test", "").returncode == 1
     assert drive("test", "../etc").returncode == 2
     assert drive("install", "ok").returncode == 2
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import { Headers } from '@remix-run/headers'\n",
+        "export * from '../../../headers/src/index.ts'\n",
+        "const cli = await import('remix/test/cli')\n",
+        "import 'remix'\n",
+    ],
+)
+def test_remix_runner_closure_rejects_imports_of_candidate_writable_code(
+    tmp_path: Path, source: str
+) -> None:
+    repo = _remix_repository(tmp_path)
+    (repo / "packages/test/src/lib/runner.ts").write_text(source, encoding="utf-8")
+    _git(repo, "commit", "-qam", "runner imports outside the frozen set")
+
+    with pytest.raises(RoomExecutionSandboxError) as raised:
+        sandbox._remix_runner_contract(repo)
+    assert raised.value.code == "execution_gate_profile_marker_invalid"
+
+
+def test_remix_runner_closure_allows_itself_installed_deps_comments_and_own_tests(
+    tmp_path: Path,
+) -> None:
+    repo = _remix_repository(tmp_path)
+    (repo / "packages/test/src/lib/runner.ts").write_text(
+        "import * as path from 'node:path'\n"
+        "import { assert } from '@remix-run/assert'\n"
+        "import { load } from '../../../node-tsx/src/load-module.ts'\n"
+        "import picomatch from 'picomatch'\n"
+        "/** import { runRemixTest } from 'remix/test/cli' */\n"
+        "// import { Headers } from '@remix-run/headers'\n",
+        encoding="utf-8",
+    )
+    # The runner's own tests and fixtures are never loaded for another package.
+    for name in ("packages/test/src/test/e2e.ts", "packages/test/src/lib/runner.test.ts"):
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text("import '@remix-run/node-fetch-server/test'\n", encoding="utf-8")
+    _git(repo, "add", "packages/test/src")
+    _git(repo, "commit", "-qm", "runner imports inside the frozen set")
+
+    assert sandbox._remix_runner_contract(repo)["runner_entry"] == "packages/test/src/cli.ts"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_remix_capability_reproves_the_runner_packages_own_dependency_links(
+    tmp_path: Path,
+) -> None:
+    repo = _remix_repository(tmp_path)
+    profile = get_execution_gate_profile("remix-monorepo/v1")
+    before = build_toolchain_capability_digest(repo, profile, bwrap_path="/usr/bin/true")
+
+    link = repo / "packages/test/node_modules/@remix-run/assert"
+    link.unlink()
+    link.symlink_to("../../../headers")
+
+    assert build_toolchain_capability_digest(repo, profile, bwrap_path="/usr/bin/true") != before

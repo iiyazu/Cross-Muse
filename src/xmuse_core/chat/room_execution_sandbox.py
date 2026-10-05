@@ -40,6 +40,15 @@ REMIX_GATE_DRIVER = Path(__file__).resolve().parent / "gate_drivers" / "remix_mo
 REMIX_GATE_DRIVER_MOUNT = "/xmuse-gate/remix_monorepo_gate.mjs"
 REMIX_GATE_IDS = frozenset({"node_pnpm_remix_typecheck", "node_pnpm_remix_test"})
 _REMIX_PACKAGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
+_REMIX_SOURCE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs")
+_REMIX_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_REMIX_LINE_COMMENT_RE = re.compile(r"(?m)(^|\s)//.*$")
+_REMIX_IMPORT_RE = re.compile(
+    r"""(?:^|[\s;}])(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]"""
+    r"""|(?:^|[\s;(=])import\s*\(\s*['"]([^'"]+)['"]\s*\)"""
+    r"""|(?:^|[\s;])import\s+['"]([^'"]+)['"]""",
+    re.M,
+)
 _MAX_REMIX_RUNNER_FILES = 2_000
 SANDBOX_ACTIVE_ENV = "XMUSE_EXECUTION_SANDBOX_ACTIVE"
 DEFAULT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
@@ -560,6 +569,19 @@ def _remix_runner_mounts(root: Path) -> tuple[tuple[Path, str], ...]:
     return tuple(mounts)
 
 
+def _remix_runner_node_modules(root: Path) -> tuple[tuple[Path, str], ...]:
+    """The runner packages' own installed links (mounted with the runner)."""
+
+    mounts: list[tuple[Path, str]] = []
+    for relative in REMIX_RUNNER_PATHS:
+        installed = root / relative / "node_modules"
+        if installed.is_symlink():
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        if installed.is_dir():
+            mounts.append((installed.resolve(strict=True), f"/workspace/{relative}node_modules"))
+    return tuple(mounts)
+
+
 def _remix_dependency_digest(mounts: tuple[tuple[Path, str], ...]) -> str:
     """Digest each package ``node_modules`` listing (pnpm links into the root store)."""
 
@@ -609,7 +631,39 @@ def _remix_runner_contract(root: Path) -> dict[str, object]:
     if not names or len(names) > _MAX_REMIX_RUNNER_FILES:
         raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
     files = [{"path": name, "digest": _trusted_file_digest(root / name)} for name in names]
+    _check_remix_runner_closure(root, names)
     return {"runner_entry": REMIX_RUNNER_ENTRY, "runner_files": _canonical_digest(files)}
+
+
+def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
+    """Prove the frozen runner only imports itself and installed dependencies.
+
+    Every static or dynamic import of a runner source (comments stripped; the
+    runner's own tests and fixtures are never loaded for another package) must
+    stay inside the frozen packages: a relative import may not leave them and a
+    workspace import (``@remix-run/<name>``, ``remix``) must name one of them.
+    Anything else would execute candidate-writable code inside the driver.
+    """
+
+    frozen = {relative.split("/")[1] for relative in REMIX_RUNNER_PATHS}
+    for name in names:
+        pure = PurePosixPath(name)
+        if pure.suffix not in _REMIX_SOURCE_SUFFIXES:
+            continue
+        if ".test." in pure.name or "test" in pure.parts[3:-1]:
+            continue
+        text = (root / name).read_text(encoding="utf-8", errors="replace")
+        text = _REMIX_LINE_COMMENT_RE.sub(r"\1", _REMIX_BLOCK_COMMENT_RE.sub("", text))
+        for match in _REMIX_IMPORT_RE.finditer(text):
+            spec = match.group(1) or match.group(2) or match.group(3) or ""
+            if spec.startswith("."):
+                target = os.path.normpath(str(pure.parent / spec))
+                if not target.startswith(REMIX_RUNNER_PATHS):
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            elif spec == "remix" or spec.startswith("remix/"):
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            elif spec.startswith("@remix-run/") and spec.split("/")[1] not in frozen:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
 
 
 def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGateProfile) -> str:
@@ -741,7 +795,7 @@ def build_toolchain_capability_digest(
             # bytes and the installed dependency links of every package.
             facts["remix_runner"] = _remix_runner_contract(root)
             facts["remix_package_dependencies"] = _remix_dependency_digest(
-                _remix_package_node_modules(root, root)
+                _remix_package_node_modules(root, root) + _remix_runner_node_modules(root)
             )
         facts["node"] = {
             "digest": _trusted_executable_digest(
