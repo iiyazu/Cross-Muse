@@ -528,6 +528,7 @@ def compute_verification_loop(evidence: Mapping[str, Any]) -> dict[str, Any]:
 def compute_verify_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
     """Checks for the ``verify`` scenario: every module ends host-verified and
     every verification wake-up stayed in the owner's session."""
+
     loop = compute_verification_loop(evidence)
     return {
         "all_modules_verified": bool(loop["all_verified"]),
