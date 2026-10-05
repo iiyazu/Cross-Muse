@@ -611,7 +611,7 @@ def test_rule4_pin_culprit_newcomer_never_breaks_incumbent(
     assert by_module["m2"]["status"] == "applied"
     assert by_module["m2"]["applied_verification_id"] == by_module["m2"]["verification_id"]
     assert by_module["m1"]["role"] == "newcomer"
-    assert by_module["m1"]["status"] == "conflicted"
+    assert by_module["m1"]["status"] == "fell_back"  # pinned back to its older version (rule 4)
     assert by_module["m1"]["applied_verification_id"] != by_module["m1"]["verification_id"]
     assert by_module["m1"]["conflicts"] == [
         {"path": "docs/shared.txt", "attributed_module_ids": ["m1", "m2"]}
@@ -725,7 +725,12 @@ def test_gate_failure_keeps_branch_and_marks_newcomers(
     job = _latest_job(ctx)
     assert job["status"] == "gate_failed"
     assert job["reason_code"] == "board_integration_gate_failed"
-    assert job["result_commit"] is None
+    # The gates ran on a rebuilt result: it is recorded and kept under an audit ref,
+    # while the branch itself does not move.
+    assert job["result_commit"] and len(job["result_commit"]) == 40
+    mirror = ctx["clones_root"] / ".mirror.git"
+    audit_ref = f"refs/xmuse/integration-results/{job['integration_id']}"
+    assert _git_mirror(mirror, "rev-parse", audit_ref).strip() == job["result_commit"]
     assert _mirror_ref(ctx) is None
     stored = ctx["store"].get_board_integration(job["integration_id"])
     assert stored is not None

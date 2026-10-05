@@ -66,6 +66,8 @@ MAX_EVIDENCE_TAIL_GATES = 3
 # repository-relative and validated like ``Finding.path``, at most 50 listed.
 MAX_CONFLICT_PATHS_LISTED = 50
 INTEGRATION_REF_PREFIX = "refs/heads/xmuse/integration/"
+# Results whose gates failed: kept for audit, never a branch.
+INTEGRATION_RESULT_REF_PREFIX = "refs/xmuse/integration-results/"
 # Bounded automatic re-runs of an ``error`` job: once after 10 minutes, once
 # after 30 minutes (plus once after a host restart, tracked in the store).
 AUTO_RETRY_DELAYS_S = (600.0, 1800.0)
@@ -752,7 +754,10 @@ class RoomBoardIntegrationEngine:
                     continue
                 current.conflicts = listed
                 current.conflicts_total = total
-                current.status = "conflicted"
+                # Its older version went back into the result when it has one.
+                current.status = (
+                    "fell_back" if current.applied_verification_id is not None else "conflicted"
+                )
                 current.reason_code = BOARD_INTEGRATION_CONFLICT
             if rule7 is not None:
                 # Rule 7 last resort: the base can no longer carry the green
@@ -845,11 +850,20 @@ class RoomBoardIntegrationEngine:
                 )
             if any(gate["status"] != "passed" for gate in gates):
                 # Rule 6: the branch stays; every applied newcomer is a
-                # suspect, incumbents stay integrated.
+                # suspect, incumbents stay integrated. The rejected result is kept
+                # under a non-branch audit ref so its `result_commit` resolves.
+                rejected_commit = _git(stage_dir, "rev-parse", "HEAD").strip()
+                _git(
+                    stage_dir,
+                    "push",
+                    "-q",
+                    "origin",
+                    f"HEAD:{INTEGRATION_RESULT_REF_PREFIX}{integration_id}",
+                )
                 return IntegrationRunOutcome(
                     status="gate_failed",
                     reason_code=BOARD_INTEGRATION_GATE_FAILED,
-                    result_commit=None,
+                    result_commit=rejected_commit,
                     gates=gates,
                     evidence=evidence,
                     items=tuple(
