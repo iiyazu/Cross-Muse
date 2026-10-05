@@ -1,0 +1,47 @@
+{
+  "attempt_count": 1,
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:40:10.000000Z",
+  "finished_at": "2026-01-01T00:42:10.000000Z",
+  "gates": [
+    {
+      "exit_code": 1,
+      "gate_id": "patch_diff_check",
+      "output_tail": {
+        "text": "E   AssertionError: expected Hello, Ada!",
+        "truncated": false,
+        "untrusted": true
+      },
+      "reason_code": "execution_gate_failed",
+      "status": "failed"
+    }
+  ],
+  "green_head_commit": "d50990d8dbe01ab8f4ad4dfa4b72bde2bfac1e01",
+  "integration_id": "boardintegration_0000000000000000000000000000002e",
+  "items": [
+    {
+      "applied_verification_id": "boardverify_00000000000000000000000000000021",
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m1",
+      "order": 1,
+      "role": "incumbent",
+      "status": "applied",
+      "verification_id": "boardverify_00000000000000000000000000000021"
+    },
+    {
+      "applied_verification_id": "boardverify_0000000000000000000000000000002a",
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m2",
+      "order": 2,
+      "role": "newcomer",
+      "status": "applied",
+      "verification_id": "boardverify_0000000000000000000000000000002a"
+    }
+  ],
+  "reason_code": "board_integration_gate_failed",
+  "result_commit": null,
+  "schema_version": "room_board_integration/v1",
+  "status": "gate_failed"
+}

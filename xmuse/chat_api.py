@@ -37,6 +37,7 @@ from xmuse.chat_api_runtime import (
 )
 from xmuse.operator_auth import resolve_operator_token
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
+from xmuse_core.chat.room_board_integration import RoomBoardIntegrationWorker
 from xmuse_core.chat.room_board_verification import RoomBoardVerificationWorker
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
@@ -87,6 +88,20 @@ def create_app(
         execution_root=resolved_execution_root,
         execution_profile_id=execution_profile_id,
     )
+    board_integration_worker = RoomBoardIntegrationWorker(
+        db_path=resolved_root / "chat.db",
+        clones_root=resolved_root / "runtime" / "owner-clones",
+        xmuse_root=resolved_root,
+        execution_root=resolved_execution_root,
+        execution_profile_id=execution_profile_id,
+    )
+
+    def _board_background_reconcile() -> dict[str, int]:
+        """Verification first, then integration: a separate step per tick."""
+
+        counts = dict(board_verification_worker.reconcile_once())
+        counts.update(board_integration_worker.reconcile_once())
+        return counts
 
     app, context = create_chat_api_foundation(
         resolved_root,
@@ -103,7 +118,7 @@ def create_app(
         execution_stopper=execution_runtime.stop_all,
         execution_reconcile_interval_s=execution_reconcile_interval_s,
         # One job per tick, run via asyncio.to_thread off the event loop.
-        board_verification_reconciler=board_verification_worker.reconcile_once,
+        board_verification_reconciler=_board_background_reconcile,
     )
     register_room_setup_routes(
         app,

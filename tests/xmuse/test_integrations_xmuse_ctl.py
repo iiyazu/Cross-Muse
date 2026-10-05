@@ -33,14 +33,23 @@ sys.path.insert(0, str(CTL_ROOT))
 
 from xmuse_ctl import cli as ctl_cli  # noqa: E402
 
-# 12 pre-review scenarios plus the 6 review scenarios. Sidecar goldens
-# (<scenario>.review.json etc.) are never scenarios and are never read.
+# 12 pre-review scenarios, the 6 review scenarios and the 8 integration
+# scenarios. Sidecar goldens (<scenario>.review.json, .integration.json
+# etc.) are never scenarios and are never read.
 EXPECTED_SCENARIOS = [
     "contract_revised_stale_dependent",
     "empty",
     "injection_text",
+    "integration_conflicted",
+    "integration_dependency_upgrade",
+    "integration_error",
+    "integration_fallback_to_incumbent",
+    "integration_gate_failed",
+    "integration_integrated",
+    "integration_pending_running",
     "lifecycle_mix",
     "review_endorsed",
+    "review_endorsed_integrated",
     "review_escalated",
     "review_objected",
     "review_operator_pending",
@@ -436,6 +445,12 @@ def test_all_scenarios_render_without_agent_text(
     forbidden = _agent_texts(fixture)
     if stem != "empty":
         assert forbidden, f"no agent text found in {stem}"
+    # A module title may equal its structured module id (the integration
+    # scenarios title "m1" as m1); the id itself is allowed in the output.
+    structured_ids = {
+        str(module["module_id"]) for module in fixture["projection"].get("modules", [])
+    }
+    forbidden = [text for text in forbidden if text not in structured_ids]
     for argv in (
         ["status", "--line", "--room", room_id],
         ["board", "--room", room_id],

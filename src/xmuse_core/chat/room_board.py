@@ -29,11 +29,14 @@ from xmuse_core.chat.room_board_projection import (
     agent_text,
     build_board_projection,
     build_contract_detail,
+    build_integration_detail,
     compute_counters,
     derive_lifecycle,
+    derive_module_integration,
     derive_state,
     derive_verification_axis,
     is_valid_finding_path,
+    load_integration_facts,
     review_digest,
     split_digest,
 )
@@ -73,6 +76,22 @@ BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
 MAX_CONTRACT_CONTENT_BYTES = 65536
 MAX_VERIFICATION_ATTEMPTS = 3
+MAX_INTEGRATION_ATTEMPTS = 3
+INTEGRATION_LEASE_TTL_S = 1800
+BOARD_INTEGRATION_STATUSES = (
+    "pending",
+    "running",
+    "integrated",
+    "conflicted",
+    "gate_failed",
+    "error",
+)
+BOARD_INTEGRATION_ITEM_STATUSES = ("applied", "fell_back", "conflicted", "waiting", "not_applied")
+BOARD_INTEGRATION_CONFLICT = "board_integration_conflict"
+BOARD_INTEGRATION_GATE_FAILED = "board_integration_gate_failed"
+BOARD_INTEGRATION_WAITING_FOR_DEPENDENCY = "board_integration_waiting_for_dependency"
+BOARD_INTEGRATION_WOULD_DROP_ACCEPTED = "board_integration_would_drop_accepted"
+BOARD_INTEGRATION_ATTEMPTS_EXHAUSTED = "board_integration_attempts_exhausted"
 # Room for a few bounded gate output tails plus JSON escaping.
 MAX_VERIFICATION_EVIDENCE_BYTES = 16384
 VERIFICATION_LEASE_TTL_S = 1800
@@ -182,6 +201,46 @@ def split_dependency_cycle(
             if found is not None:
                 return found
     return None
+
+
+def integration_apply_order(
+    module_ids: Sequence[str],
+    providers: Mapping[str, Sequence[str]],
+    roles: Mapping[str, str],
+) -> list[str]:
+    """Order integration candidates: dependencies first, incumbents, module id.
+
+    Among the candidates whose in-set dependencies are all placed, incumbents
+    (modules of the previous green head whose candidate did not change) go
+    before newcomers, then by ``module_id`` — so a conflict between modules
+    without a dependency path lands on the newcomer. A dependency cycle (which
+    splits reject, but later contract edits could still arrange) falls back to
+    the same role/id order instead of stalling.
+    """
+
+    in_set = set(module_ids)
+    ordered: list[str] = []
+    placed: set[str] = set()
+    remaining = set(module_ids)
+    while remaining:
+        ready = sorted(
+            (
+                module_id
+                for module_id in remaining
+                if all(item in placed for item in providers.get(module_id, []) if item in in_set)
+            ),
+            key=lambda item: (0 if roles.get(item) == "incumbent" else 1, item),
+        )
+        if not ready:
+            ready = sorted(
+                remaining,
+                key=lambda item: (0 if roles.get(item) == "incumbent" else 1, item),
+            )
+        module_id = ready[0]
+        ordered.append(module_id)
+        placed.add(module_id)
+        remaining.discard(module_id)
+    return ordered
 
 
 def normalize_charter(value: Any) -> dict[str, Any]:
@@ -680,6 +739,37 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
             f"{payload.get('reviewer_participant_id') or payload.get('reviewer_kind')}: "
             f"{payload.get('summary') or ''}"
         )
+    if activity_type == "board.integration":
+        status = payload.get("status")
+        integrated = payload.get("integrated_module_ids") or []
+        waiting = payload.get("waiting_module_ids") or []
+        conflicts = payload.get("conflicts") or []
+        conflicted = [item.get("module_id") for item in conflicts if isinstance(item, dict)]
+        if status == "integrated":
+            detail = f"integrated {len(integrated)} module(s)"
+            if conflicted:
+                detail += f"; conflicted: {', '.join(str(item) for item in conflicted)}"
+            if waiting:
+                detail += f"; waiting: {', '.join(str(item) for item in waiting)}"
+            return f"Integration {payload.get('integration_id')} {detail}."
+        if status == "gate_failed":
+            suspects = payload.get("suspect_module_ids") or []
+            return (
+                f"Integration {payload.get('integration_id')} failed its gates "
+                f"(suspects: {', '.join(str(item) for item in suspects)}). "
+                "The branch stays at the previous green head."
+            )
+        if status == "conflicted":
+            return (
+                f"Integration {payload.get('integration_id')} is conflicted "
+                f"({payload.get('reason_code')}); the branch stays at the previous "
+                "green head. Rework the conflicted modules inside their charter "
+                "paths, commit, and report done again."
+            )
+        return (
+            f"Integration {payload.get('integration_id')} ended "
+            f"{status} ({payload.get('reason_code')})."
+        )
     return activity_type
 
 
@@ -1030,6 +1120,12 @@ class RoomBoardStore:
                         (conversation_id,),
                     ).fetchall()
                 }
+                integration_facts = load_integration_facts(
+                    conn,
+                    conversation_id,
+                    reviews_on=review_policy_for_conversation(conn, conversation_id)
+                    == "cross_family",
+                )
                 charters = []
                 for module_id, info in sorted(charter_map.items()):
                     charter_row = charter_rows.get(module_id)
@@ -1051,6 +1147,7 @@ class RoomBoardStore:
                             "charter": info["charter"],
                             "lifecycle": lifecycle,
                             "state": state,
+                            "integration": derive_module_integration(module_id, integration_facts),
                         }
                     )
                 contract_rows = conn.execute(
@@ -4229,6 +4326,14 @@ class RoomBoardStore:
         with self._connect() as conn:
             return review_policy_for_conversation(conn, conversation_id)
 
+    def integration_detail(self, conversation_id: str, integration_id: str) -> dict[str, Any]:
+        """Fetch integration detail for one job (§5.3, read-only)."""
+        with self._connect() as conn:
+            detail = build_integration_detail(conn, conversation_id, integration_id)
+        if detail is None:
+            raise ValueError("room_board_integration_unknown")
+        return detail
+
     def owner_view(self, conversation_id: str, participant_id: str) -> dict[str, Any]:
         """Pure read of one owner's board slice (no lease, no writes)."""
 
@@ -4238,6 +4343,11 @@ class RoomBoardStore:
                 conn, conversation_id=conversation_id
             )
             review_stats = self._module_review_stats_conn(conn, conversation_id=conversation_id)
+            integration_facts = load_integration_facts(
+                conn,
+                conversation_id,
+                reviews_on=review_policy_for_conversation(conn, conversation_id) == "cross_family",
+            )
             my_modules: list[dict[str, Any]] = []
             other_modules: list[dict[str, Any]] = []
             for module_id in sorted(charter_map):
@@ -4296,6 +4406,7 @@ class RoomBoardStore:
                                 "rework_rounds": 0,
                             },
                             "review": review_entry,
+                            "integration": derive_module_integration(module_id, integration_facts),
                         }
                     )
                 else:
@@ -4377,3 +4488,1023 @@ class RoomBoardStore:
 
         with self._connect() as conn:
             return build_contract_detail(conn, conversation_id, contract_id, version)
+
+    # -- integration jobs (M2b): durable job, lease, retries, green head ----
+
+    @staticmethod
+    def _integration_candidates_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> list[dict[str, str]]:
+        """Return the frozen input set: latest accepted verification per module.
+
+        The candidate is the module's latest ``passed`` verification at or after
+        the current charter's ``created_at`` (never a newer unverified ``done``),
+        endorsed when the room reviews (``capabilities.reviews == 1``).
+        """
+
+        rows = conn.execute(
+            "select * from room_board_charters where conversation_id = ? "
+            "order by module_id, version",
+            (conversation_id,),
+        ).fetchall()
+        latest: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            latest[str(row["module_id"])] = row
+        reviews_on = review_policy_for_conversation(conn, conversation_id) == "cross_family"
+        endorsed: set[str] = set()
+        if reviews_on:
+            try:
+                endorsed = {
+                    str(item["verification_id"])
+                    for item in conn.execute(
+                        "select verification_id from room_board_reviews "
+                        "where conversation_id = ? and status = 'endorsed'",
+                        (conversation_id,),
+                    ).fetchall()
+                }
+            except sqlite3.OperationalError:
+                endorsed = set()
+        candidates: list[dict[str, str]] = []
+        for module_id in sorted(latest):
+            charter = latest[module_id]
+            if str(charter["status"]) != "active":
+                continue
+            charter_created = str(charter["created_at"])
+            picked: str | None = None
+            for verification in conn.execute(
+                "select verification_id, status, created_at from room_board_verifications "
+                "where conversation_id = ? and module_id = ? order by created_at, rowid",
+                (conversation_id, module_id),
+            ).fetchall():
+                if str(verification["status"]) != "passed":
+                    continue
+                if str(verification["created_at"]) < charter_created:
+                    continue
+                if reviews_on and str(verification["verification_id"]) not in endorsed:
+                    continue
+                picked = str(verification["verification_id"])
+            if picked is not None:
+                candidates.append({"module_id": module_id, "verification_id": picked})
+        return candidates
+
+    @staticmethod
+    def _integration_candidate_set_key(candidates: Sequence[Mapping[str, str]]) -> str:
+        return _json(
+            [
+                {
+                    "module_id": str(item["module_id"]),
+                    "verification_id": str(item["verification_id"]),
+                }
+                for item in sorted(candidates, key=lambda item: str(item["module_id"]))
+            ]
+        )
+
+    @staticmethod
+    def _latest_integration_job_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> sqlite3.Row | None:
+        try:
+            return conn.execute(
+                "select *, rowid as rowid from room_board_integrations "
+                "where conversation_id = ? order by created_at desc, rowid desc limit 1",
+                (conversation_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+
+    @staticmethod
+    def _green_head_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> dict[str, Any] | None:
+        """Return the current green head: latest ``integrated`` job and its set."""
+
+        try:
+            row = conn.execute(
+                "select *, rowid as rowid from room_board_integrations "
+                "where conversation_id = ? and status = 'integrated' "
+                "order by created_at desc, rowid desc limit 1",
+                (conversation_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None:
+            return None
+        applied = {
+            str(item["module_id"]): str(item["applied_verification_id"])
+            for item in conn.execute(
+                "select module_id, applied_verification_id from room_board_integration_items "
+                "where integration_id = ? and applied_verification_id is not null",
+                (str(row["integration_id"]),),
+            ).fetchall()
+        }
+        return {
+            "integration_id": str(row["integration_id"]),
+            "green_head_commit": row["green_after"],
+            "applied": applied,
+            "input_set": _decode(str(row["input_set_json"] or "[]")) or [],
+        }
+
+    @staticmethod
+    def _integration_items_conn(
+        conn: sqlite3.Connection, *, integration_id: str
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "module_id": str(row["module_id"]),
+                "verification_id": str(row["verification_id"]),
+                "item_order": int(row["item_order"]),
+                "role": str(row["role"]),
+                "status": str(row["status"]),
+                "applied_verification_id": (
+                    str(row["applied_verification_id"])
+                    if row["applied_verification_id"] is not None
+                    else None
+                ),
+                "conflicts": _decode(str(row["conflicts_json"] or "[]")) or [],
+                "conflicts_total": int(row["conflicts_total"]),
+                "reason_code": row["reason_code"],
+            }
+            for row in conn.execute(
+                "select * from room_board_integration_items where integration_id = ? "
+                "order by item_order, module_id",
+                (integration_id,),
+            ).fetchall()
+        ]
+
+    @staticmethod
+    def _integration_order_conn(
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        module_ids: list[str],
+        roles: Mapping[str, str],
+    ) -> list[str]:
+        """Dependency-first order; incumbents before newcomers, then module id."""
+
+        in_set = set(module_ids)
+        providers = {
+            module_id: [
+                item
+                for item in RoomBoardStore._provider_modules_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                if item in in_set
+            ]
+            for module_id in module_ids
+        }
+        return integration_apply_order(module_ids, providers, roles)
+
+    def ensure_board_integration_enqueued(
+        self, conversation_id: str, *, now: datetime | None = None
+    ) -> str | None:
+        """Enqueue one job when the accepted input set changed (worker loop).
+
+        At most one ``pending`` job waits behind a ``running`` one; a set change
+        during a running job enqueues the next, otherwise nothing is enqueued.
+        """
+
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                candidates = self._integration_candidates_conn(
+                    conn, conversation_id=conversation_id
+                )
+                if not candidates:
+                    conn.commit()
+                    return None
+                waiting = conn.execute(
+                    "select 1 from room_board_integrations where conversation_id = ? "
+                    "and status = 'pending' limit 1",
+                    (conversation_id,),
+                ).fetchone()
+                if waiting is not None:
+                    conn.commit()
+                    return None
+                latest = self._latest_integration_job_conn(conn, conversation_id=conversation_id)
+                wanted = self._integration_candidate_set_key(candidates)
+                if latest is not None and str(latest["input_set_json"]) == wanted:
+                    conn.commit()
+                    return None
+                green = self._green_head_conn(conn, conversation_id=conversation_id)
+                green_applied = green["applied"] if green is not None else {}
+                roles = {
+                    item["module_id"]: (
+                        "incumbent"
+                        if green_applied.get(item["module_id"]) == item["verification_id"]
+                        else "newcomer"
+                    )
+                    for item in candidates
+                }
+                ordered = self._integration_order_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    module_ids=[item["module_id"] for item in candidates],
+                    roles=roles,
+                )
+                by_module = {item["module_id"]: item["verification_id"] for item in candidates}
+                integration_id = _id("boardintegration")
+                conn.execute(
+                    """insert into room_board_integrations
+                        (integration_id, conversation_id, status, reason_code,
+                         input_set_json, attempt_count, not_before, auto_retry_count,
+                         restart_retry_done, green_before, green_after, result_commit,
+                         gates_json, activity_id, created_at, updated_at, finished_at)
+                        values (?, ?, 'pending', null, ?, 0, null, 0, 0, ?, null, null,
+                                null, null, ?, ?, null)""",
+                    (
+                        integration_id,
+                        conversation_id,
+                        wanted,
+                        green["green_head_commit"] if green is not None else None,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                for order, module_id in enumerate(ordered):
+                    conn.execute(
+                        """insert into room_board_integration_items
+                            (integration_id, conversation_id, module_id, verification_id,
+                             item_order, role, status, applied_verification_id,
+                             conflicts_json, conflicts_total, reason_code, created_at)
+                            values (?, ?, ?, ?, ?, ?, 'not_applied', null, '[]', 0, null, ?)""",
+                        (
+                            integration_id,
+                            conversation_id,
+                            module_id,
+                            by_module[module_id],
+                            order,
+                            roles[module_id],
+                            stamp,
+                        ),
+                    )
+                conn.commit()
+                return integration_id
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _integration_view(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "integration_id": str(row["integration_id"]),
+            "conversation_id": str(row["conversation_id"]),
+            "status": str(row["status"]),
+            "reason_code": row["reason_code"],
+            "input_set": _decode(str(row["input_set_json"] or "[]")) or [],
+            "attempt_count": int(row["attempt_count"]),
+            "lease_token": row["lease_token"],
+            "lease_expires_at": row["lease_expires_at"],
+            "not_before": row["not_before"],
+            "auto_retry_count": int(row["auto_retry_count"] or 0),
+            "restart_retry_done": int(row["restart_retry_done"] or 0),
+            "green_before": row["green_before"],
+            "green_after": row["green_after"],
+            "result_commit": row["result_commit"],
+            "gates": _decode(str(row["gates_json"])) if row["gates_json"] else None,
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+            "finished_at": row["finished_at"],
+        }
+
+    def _write_integration_error_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        row: sqlite3.Row,
+        stamp: str,
+    ) -> dict[str, Any]:
+        """Mark an attempts-exhausted job ``error`` with its activity."""
+
+        conversation_id = str(row["conversation_id"])
+        green = self._green_head_conn(conn, conversation_id=conversation_id)
+        causation, depth = self._integration_causation_conn(conn, conversation_id=conversation_id)
+        activity = self._insert_board_activity_conn(
+            conn,
+            conversation_id=conversation_id,
+            activity_type="board.integration",
+            actor_kind="infrastructure",
+            actor_identity="infrastructure:board-integration",
+            actor_participant_id=None,
+            causation_id=causation,
+            causal_depth=depth,
+            audience_participant_ids=[],
+            payload={
+                "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                "integration_id": str(row["integration_id"]),
+                "status": "error",
+                "reason_code": BOARD_INTEGRATION_ATTEMPTS_EXHAUSTED,
+                "green_head_commit": green["green_head_commit"] if green is not None else None,
+                "integrated_module_ids": sorted(green["applied"] if green is not None else {}),
+                "suspect_module_ids": [],
+                "conflicts": [],
+                "waiting_module_ids": [],
+                "gate_ids": [],
+            },
+            stamp=stamp,
+        )
+        conn.execute(
+            "update room_board_integrations set status = 'error', "
+            "reason_code = ?, lease_owner = null, lease_token = null, "
+            "lease_expires_at = null, not_before = ?, activity_id = ?, "
+            "finished_at = ?, updated_at = ? "
+            "where integration_id = ? and status = 'pending'",
+            (
+                BOARD_INTEGRATION_ATTEMPTS_EXHAUSTED,
+                stamp,
+                str(activity["activity_id"]),
+                stamp,
+                stamp,
+                str(row["integration_id"]),
+            ),
+        )
+        return {
+            "integration_id": str(row["integration_id"]),
+            "status": "error",
+            "activity_id": str(activity["activity_id"]),
+        }
+
+    def claim_next_board_integration(
+        self,
+        *,
+        worker_id: str,
+        lease_ttl_s: int = INTEGRATION_LEASE_TTL_S,
+        max_attempts: int = MAX_INTEGRATION_ATTEMPTS,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Claim one pending integration job with a lease (``pending→running``).
+
+        Expired ``running`` rows return to ``pending`` on the next claim; rows
+        that exhausted ``max_attempts`` become ``error`` with an activity.
+        """
+
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("room_board_worker_id_required")
+        if (
+            isinstance(lease_ttl_s, bool)
+            or not isinstance(lease_ttl_s, int)
+            or not 5 <= lease_ttl_s <= 7200
+        ):
+            raise ValueError("room_board_lease_ttl_invalid")
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
+            raise ValueError("room_board_max_attempts_invalid")
+        if max_attempts < 1:
+            raise ValueError("room_board_max_attempts_invalid")
+        current, stamp = _current_stamp(now)
+        expires = _timestamp(current + timedelta(seconds=lease_ttl_s))
+        lease_token = uuid.uuid4().hex
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                conn.execute(
+                    "update room_board_integrations set status = 'pending', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "updated_at = ? where status = 'running' and lease_expires_at is not null "
+                    "and lease_expires_at <= ?",
+                    (stamp, stamp),
+                )
+                exhausted = conn.execute(
+                    "select * from room_board_integrations "
+                    "where status = 'pending' and attempt_count >= ? "
+                    "order by created_at, rowid",
+                    (max_attempts,),
+                ).fetchall()
+                for expired in exhausted:
+                    self._write_integration_error_conn(conn, row=expired, stamp=stamp)
+                row = conn.execute(
+                    "select * from room_board_integrations where status = 'pending' "
+                    "and (not_before is null or not_before <= ?) "
+                    "order by created_at, rowid limit 1",
+                    (stamp,),
+                ).fetchone()
+                if row is None:
+                    conn.commit()
+                    return None
+                changed = conn.execute(
+                    "update room_board_integrations set status = 'running', "
+                    "attempt_count = attempt_count + 1, lease_owner = ?, lease_token = ?, "
+                    "lease_expires_at = ?, updated_at = ? "
+                    "where integration_id = ? and status = 'pending'",
+                    (
+                        worker_id,
+                        lease_token,
+                        expires,
+                        stamp,
+                        str(row["integration_id"]),
+                    ),
+                ).rowcount
+                if changed != 1:
+                    conn.commit()
+                    return None
+                claimed = conn.execute(
+                    "select * from room_board_integrations where integration_id = ?",
+                    (str(row["integration_id"]),),
+                ).fetchone()
+                assert claimed is not None
+                result = self._integration_view(claimed)
+                result["items"] = self._integration_items_conn(
+                    conn, integration_id=str(row["integration_id"])
+                )
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    def abandon_board_integration(
+        self,
+        *,
+        integration_id: str,
+        lease_token: str,
+        reason_code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Release a claimed job back to ``pending`` after a transient failure."""
+
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise ValueError("room_board_integration_reason_required")
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_integration_lease_lost")
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_integrations where integration_id = ?",
+                    (integration_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_integration_unknown")
+                if str(row["status"]) in ("integrated", "conflicted", "gate_failed", "error"):
+                    conn.commit()
+                    return {"integration_id": integration_id, "status": str(row["status"])}
+                if str(row["status"]) != "running" or row["lease_token"] != lease_token:
+                    raise ValueError("room_board_integration_lease_lost")
+                conn.execute(
+                    "update room_board_integrations set status = 'pending', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "reason_code = ?, updated_at = ? where integration_id = ?",
+                    (reason_code, stamp, integration_id),
+                )
+                conn.commit()
+                return {"integration_id": integration_id, "status": "pending"}
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _integration_causation_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> tuple[str, int]:
+        """Causation for a ``board.integration`` activity: newest board activity."""
+
+        row = conn.execute(
+            "select activity_id, causal_depth from room_activities "
+            "where conversation_id = ? and activity_type like 'board.%' "
+            "order by seq desc limit 1",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "select activity_id, causal_depth from room_activities "
+                "where conversation_id = ? order by seq desc limit 1",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("room_board_integration_causation_unknown")
+        return str(row["activity_id"]), int(row["causal_depth"]) + 1
+
+    def complete_board_integration(
+        self,
+        *,
+        integration_id: str,
+        lease_token: str,
+        status: str,
+        reason_code: str | None,
+        green_after: str | None,
+        result_commit: str | None,
+        gates: list[dict[str, Any]],
+        evidence: dict[str, Any] | None,
+        items: list[dict[str, Any]],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Record a terminal integration result with its ``board.integration``.
+
+        The activity (actor ``infrastructure``) and the terminal state commit
+        atomically; wakes follow §3.11 conflict attribution (conflict: owners
+        plus lead/report_to; gate_failed: lead; integrated/error: nobody).
+        """
+
+        if status not in ("integrated", "conflicted", "gate_failed", "error"):
+            raise ValueError("room_board_integration_status_invalid")
+        if status != "integrated" and (not isinstance(reason_code, str) or not reason_code.strip()):
+            raise ValueError("room_board_integration_reason_required")
+        if not isinstance(items, list) or not items:
+            raise ValueError("room_board_integration_items_invalid")
+        clean_gates: list[dict[str, Any]] = []
+        for entry in gates:
+            if not isinstance(entry, dict) or not isinstance(entry.get("gate_id"), str):
+                raise ValueError("room_board_integration_gates_invalid")
+            exit_code = entry.get("exit_code")
+            if exit_code is not None and (
+                isinstance(exit_code, bool) or not isinstance(exit_code, int)
+            ):
+                raise ValueError("room_board_integration_gates_invalid")
+            gate_status = entry.get("status")
+            if gate_status not in ("passed", "failed", "cancelled"):
+                raise ValueError("room_board_integration_gates_invalid")
+            clean_gates.append(
+                {
+                    "gate_id": str(entry["gate_id"]),
+                    "status": str(gate_status),
+                    "exit_code": exit_code,
+                    "reason_code": entry.get("reason_code"),
+                }
+            )
+        clean_items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in items:
+            if not isinstance(entry, dict):
+                raise ValueError("room_board_integration_items_invalid")
+            module_id = entry.get("module_id")
+            item_status = entry.get("status")
+            if (
+                not isinstance(module_id, str)
+                or not module_id
+                or item_status not in BOARD_INTEGRATION_ITEM_STATUSES
+                or module_id in seen
+            ):
+                raise ValueError("room_board_integration_items_invalid")
+            seen.add(module_id)
+            conflicts = entry.get("conflicts") or []
+            if not isinstance(conflicts, list):
+                raise ValueError("room_board_integration_items_invalid")
+            clean_conflicts: list[dict[str, Any]] = []
+            for conflict in conflicts:
+                if not isinstance(conflict, dict) or not isinstance(conflict.get("path"), str):
+                    raise ValueError("room_board_integration_items_invalid")
+                attributed = conflict.get("attributed_module_ids") or []
+                if not isinstance(attributed, list) or any(
+                    not isinstance(item, str) for item in attributed
+                ):
+                    raise ValueError("room_board_integration_items_invalid")
+                clean_conflicts.append(
+                    {"path": str(conflict["path"]), "attributed_module_ids": list(attributed)}
+                )
+            conflicts_total = entry.get("conflicts_total", len(clean_conflicts))
+            if (
+                isinstance(conflicts_total, bool)
+                or not isinstance(conflicts_total, int)
+                or conflicts_total < len(clean_conflicts)
+            ):
+                raise ValueError("room_board_integration_items_invalid")
+            applied = entry.get("applied_verification_id")
+            if applied is not None and (not isinstance(applied, str) or not applied):
+                raise ValueError("room_board_integration_items_invalid")
+            item_reason = entry.get("reason_code")
+            if item_reason is not None and (
+                not isinstance(item_reason, str) or not item_reason.strip()
+            ):
+                raise ValueError("room_board_integration_items_invalid")
+            clean_items.append(
+                {
+                    "module_id": module_id,
+                    "status": str(item_status),
+                    "applied_verification_id": applied,
+                    "conflicts": clean_conflicts,
+                    "conflicts_total": conflicts_total,
+                    "reason_code": item_reason,
+                }
+            )
+        if not isinstance(lease_token, str) or not lease_token:
+            raise ValueError("room_board_integration_lease_lost")
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                row = conn.execute(
+                    "select * from room_board_integrations where integration_id = ?",
+                    (integration_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_integration_unknown")
+                if str(row["status"]) in ("integrated", "conflicted", "gate_failed", "error"):
+                    conn.commit()
+                    return {"integration_id": integration_id, "status": str(row["status"])}
+                if (
+                    str(row["status"]) != "running"
+                    or row["lease_token"] != lease_token
+                    or (
+                        row["lease_expires_at"] is not None
+                        and str(row["lease_expires_at"]) <= stamp
+                    )
+                ):
+                    raise ValueError("room_board_integration_lease_lost")
+                conversation_id = str(row["conversation_id"])
+                stored = {
+                    item["module_id"]: item
+                    for item in self._integration_items_conn(conn, integration_id=integration_id)
+                }
+                if set(stored) != {item["module_id"] for item in clean_items}:
+                    raise ValueError("room_board_integration_items_invalid")
+                candidate_of = {
+                    item["module_id"]: item["verification_id"] for item in stored.values()
+                }
+                for item in clean_items:
+                    conn.execute(
+                        "update room_board_integration_items set status = ?, "
+                        "applied_verification_id = ?, conflicts_json = ?, "
+                        "conflicts_total = ?, reason_code = ? "
+                        "where integration_id = ? and module_id = ?",
+                        (
+                            item["status"],
+                            item["applied_verification_id"],
+                            _json(item["conflicts"]),
+                            item["conflicts_total"],
+                            item["reason_code"],
+                            integration_id,
+                            item["module_id"],
+                        ),
+                    )
+                if status == "integrated":
+                    green_head = green_after
+                    integrated_ids = sorted(
+                        item["module_id"]
+                        for item in clean_items
+                        if item["applied_verification_id"] is not None
+                    )
+                else:
+                    green_head = row["green_before"]
+                    previous = self._green_head_conn(conn, conversation_id=conversation_id)
+                    integrated_ids = sorted(previous["applied"]) if previous is not None else []
+                suspect_ids = (
+                    sorted(
+                        item["module_id"]
+                        for item in clean_items
+                        if item["status"] in ("applied", "fell_back")
+                        and stored[item["module_id"]]["role"] == "newcomer"
+                    )
+                    if status == "gate_failed"
+                    else []
+                )
+                conflict_entries: list[dict[str, Any]] = []
+                for item in sorted(clean_items, key=lambda entry: entry["module_id"]):
+                    if item["status"] not in ("conflicted", "fell_back"):
+                        continue
+                    attributed_union = sorted(
+                        {
+                            attributed
+                            for conflict in item["conflicts"]
+                            for attributed in conflict["attributed_module_ids"]
+                        }
+                    )
+                    conflict_entries.append(
+                        {
+                            "module_id": item["module_id"],
+                            "conflict_path_count": item["conflicts_total"],
+                            "attributed_module_ids": attributed_union,
+                            "fell_back": (
+                                item["applied_verification_id"] is not None
+                                and item["applied_verification_id"]
+                                != candidate_of[item["module_id"]]
+                            ),
+                        }
+                    )
+                waiting_ids = sorted(
+                    item["module_id"] for item in clean_items if item["status"] == "waiting"
+                )
+                failed_gate_ids = sorted(
+                    {entry["gate_id"] for entry in clean_gates if entry["status"] != "passed"}
+                )
+                charter_map = self._active_charter_owner_map(conn, conversation_id=conversation_id)
+                lead = self._lead_participant_id(conn, conversation_id)
+                wake: list[str] = []
+                if status == "gate_failed":
+                    if lead:
+                        wake = [lead]
+                elif status == "conflicted":
+                    woken: set[str] = set()
+                    for item in clean_items:
+                        if item["status"] not in ("conflicted", "fell_back", "waiting"):
+                            continue
+                        info = charter_map.get(item["module_id"])
+                        if info is not None and info["status"] == "active":
+                            woken.add(str(info["owner_participant_id"]))
+                            charter = info["charter"]
+                            report_to = (
+                                charter.get("report_to") if isinstance(charter, dict) else None
+                            )
+                            if isinstance(report_to, str) and report_to:
+                                woken.add(report_to)
+                            elif lead:
+                                woken.add(lead)
+                    for entry in conflict_entries:
+                        for attributed in entry["attributed_module_ids"]:
+                            info = charter_map.get(attributed)
+                            if info is not None and info["status"] == "active":
+                                woken.add(str(info["owner_participant_id"]))
+                    wake = sorted(woken)
+                causation, depth = self._integration_causation_conn(
+                    conn, conversation_id=conversation_id
+                )
+                activity = self._insert_board_activity_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_type="board.integration",
+                    actor_kind="infrastructure",
+                    actor_identity="infrastructure:board-integration",
+                    actor_participant_id=None,
+                    causation_id=causation,
+                    causal_depth=depth,
+                    audience_participant_ids=list(wake),
+                    payload={
+                        "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                        "integration_id": integration_id,
+                        "status": status,
+                        "reason_code": reason_code,
+                        "green_head_commit": green_head,
+                        "integrated_module_ids": integrated_ids,
+                        "suspect_module_ids": suspect_ids,
+                        "conflicts": conflict_entries,
+                        "waiting_module_ids": waiting_ids,
+                        "gate_ids": failed_gate_ids,
+                    },
+                    stamp=stamp,
+                )
+                gates_json = _json({"gates": clean_gates, "evidence": evidence or {}})
+                if len(gates_json.encode("utf-8")) > MAX_VERIFICATION_EVIDENCE_BYTES:
+                    raise ValueError("room_board_integration_evidence_too_large")
+                conn.execute(
+                    "update room_board_integrations set status = ?, reason_code = ?, "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "not_before = null, green_after = ?, result_commit = ?, "
+                    "gates_json = ?, activity_id = ?, finished_at = ?, updated_at = ? "
+                    "where integration_id = ?",
+                    (
+                        status,
+                        reason_code,
+                        green_head,
+                        result_commit,
+                        gates_json,
+                        str(activity["activity_id"]),
+                        stamp,
+                        stamp,
+                        integration_id,
+                    ),
+                )
+                woken_rows: list[dict[str, Any]] = []
+                if wake:
+                    woken_rows = self._wake_participants_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        activity_id=str(activity["activity_id"]),
+                        participant_ids=wake,
+                        stamp=stamp,
+                    )
+                conn.commit()
+                return {
+                    "integration_id": integration_id,
+                    "status": status,
+                    "activity_id": str(activity["activity_id"]),
+                    "activity_seq": int(activity["seq"]),
+                    "woken_participant_ids": [item["participant_id"] for item in woken_rows],
+                }
+            except Exception:
+                conn.rollback()
+                raise
+
+    def revive_due_board_integrations(
+        self,
+        *,
+        now: datetime | None = None,
+        delays_s: Sequence[float] = (600.0, 1800.0),
+    ) -> list[str]:
+        """Requeue ``error`` jobs whose automatic retry delay elapsed (bounded).
+
+        Only the room's latest job is revived, with the same frozen set; each
+        delay is consumed once, so an ``error`` job re-runs at most
+        ``len(delays_s)`` times before staying ``error`` until the set changes.
+        """
+
+        if not isinstance(delays_s, Sequence) or any(
+            not isinstance(item, (int, float)) or isinstance(item, bool) or item <= 0
+            for item in delays_s
+        ):
+            raise ValueError("room_board_integration_delays_invalid")
+        current, stamp = _current_stamp(now)
+        revived: list[str] = []
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                rooms = conn.execute(
+                    "select distinct conversation_id from room_board_integrations"
+                ).fetchall()
+                for entry in rooms:
+                    conversation_id = str(entry["conversation_id"])
+                    latest = self._latest_integration_job_conn(
+                        conn, conversation_id=conversation_id
+                    )
+                    if latest is None or str(latest["status"]) != "error":
+                        continue
+                    used = int(latest["auto_retry_count"] or 0)
+                    if used >= len(delays_s) or latest["finished_at"] is None:
+                        continue
+                    due_at = _parse_timestamp(str(latest["finished_at"])) + timedelta(
+                        seconds=float(delays_s[used])
+                    )
+                    if due_at.tzinfo is None:
+                        due_at = due_at.replace(tzinfo=UTC)
+                    if current < due_at:
+                        continue
+                    conn.execute(
+                        "update room_board_integrations set status = 'pending', "
+                        "reason_code = null, attempt_count = 0, not_before = null, "
+                        "auto_retry_count = auto_retry_count + 1, finished_at = null, "
+                        "updated_at = ? where integration_id = ? and status = 'error'",
+                        (stamp, str(latest["integration_id"])),
+                    )
+                    revived.append(str(latest["integration_id"]))
+                conn.commit()
+                return revived
+            except Exception:
+                conn.rollback()
+                raise
+
+    def revive_board_integrations_after_restart(
+        self,
+        *,
+        delays_s: Sequence[float] = (600.0, 1800.0),
+    ) -> list[str]:
+        """Requeue each room's latest ``error`` job once after a host restart.
+
+        Only jobs whose timed retries are exhausted are eligible, so restarts
+        never multiply the bounded automatic re-runs.
+        """
+
+        _, stamp = _current_stamp(None)
+        revived: list[str] = []
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                rooms = conn.execute(
+                    "select distinct conversation_id from room_board_integrations"
+                ).fetchall()
+                for entry in rooms:
+                    conversation_id = str(entry["conversation_id"])
+                    latest = self._latest_integration_job_conn(
+                        conn, conversation_id=conversation_id
+                    )
+                    if latest is None or str(latest["status"]) != "error":
+                        continue
+                    if int(latest["restart_retry_done"] or 0) != 0:
+                        continue
+                    if int(latest["auto_retry_count"] or 0) < len(tuple(delays_s)):
+                        continue
+                    conn.execute(
+                        "update room_board_integrations set status = 'pending', "
+                        "reason_code = null, attempt_count = 0, not_before = null, "
+                        "restart_retry_done = 1, finished_at = null, updated_at = ? "
+                        "where integration_id = ? and status = 'error'",
+                        (stamp, str(latest["integration_id"])),
+                    )
+                    revived.append(str(latest["integration_id"]))
+                conn.commit()
+                return revived
+            except Exception:
+                conn.rollback()
+                raise
+
+    def board_integration_inputs(self, conversation_id: str) -> dict[str, Any]:
+        """Read everything the integration engine needs (no writes, no clock)."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from room_board_charters where conversation_id = ? "
+                "order by module_id, version",
+                (conversation_id,),
+            ).fetchall()
+            latest: dict[str, sqlite3.Row] = {}
+            for row in rows:
+                latest[str(row["module_id"])] = row
+            charters: dict[str, dict[str, Any]] = {}
+            for module_id, row in sorted(latest.items()):
+                if str(row["status"]) != "active":
+                    continue
+                body = _decode(str(row["charter_json"]))
+                charters[module_id] = {
+                    "owner_participant_id": str(row["owner_participant_id"]),
+                    "version": int(row["version"]),
+                    "created_at": str(row["created_at"]),
+                    "charter": body if isinstance(body, dict) else {},
+                }
+            candidates = self._integration_candidates_conn(conn, conversation_id=conversation_id)
+            wanted = {item["module_id"] for item in candidates}
+            verifications: dict[str, dict[str, Any]] = {}
+            for item in candidates:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (item["verification_id"],),
+                ).fetchone()
+                if row is None:
+                    continue
+                result = _decode(row["result_json"]) if row["result_json"] else {}
+                base_commit = None
+                if isinstance(result, dict):
+                    raw_base = result.get("base_commit")
+                    if isinstance(raw_base, str) and raw_base:
+                        base_commit = raw_base
+                changed = _decode(str(row["changed_paths_json"] or "[]"))
+                verifications[item["module_id"]] = {
+                    "verification_id": item["verification_id"],
+                    "patch_text": row["patch_text"],
+                    "changed_paths": list(changed) if isinstance(changed, list) else [],
+                    "base_commit": base_commit,
+                    "head_commit": row["head_commit"],
+                    "created_at": str(row["created_at"]),
+                }
+            missing = [module_id for module_id in wanted if module_id not in verifications]
+            if missing:
+                raise ValueError("room_board_integration_candidate_unknown")
+            providers = {
+                module_id: self._provider_modules_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                for module_id in charters
+            }
+            green = self._green_head_conn(conn, conversation_id=conversation_id)
+            latest_job = self._latest_integration_job_conn(conn, conversation_id=conversation_id)
+            return {
+                "conversation_id": conversation_id,
+                "charters": charters,
+                "candidates": candidates,
+                "verifications": verifications,
+                "providers": providers,
+                "green": green,
+                "latest_job": (
+                    self._integration_view(latest_job) if latest_job is not None else None
+                ),
+                "reviews_on": review_policy_for_conversation(conn, conversation_id)
+                == "cross_family",
+            }
+
+    def rooms_with_board_charters(self) -> list[str]:
+        """Return every conversation holding board charters (enqueue sweep)."""
+
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(
+                    "select distinct conversation_id from room_board_charters order by "
+                    "conversation_id"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return []
+            return [str(row["conversation_id"]) for row in rows]
+
+    def board_integration_patches(
+        self, verification_ids: Sequence[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Return stored patch bytes for candidate and fallback verifications."""
+
+        with self._connect() as conn:
+            patches: dict[str, dict[str, Any]] = {}
+            for verification_id in verification_ids:
+                row = conn.execute(
+                    "select * from room_board_verifications where verification_id = ?",
+                    (verification_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_integration_candidate_unknown")
+                result = _decode(row["result_json"]) if row["result_json"] else {}
+                base_commit = None
+                if isinstance(result, dict):
+                    raw_base = result.get("base_commit")
+                    if isinstance(raw_base, str) and raw_base:
+                        base_commit = raw_base
+                changed = _decode(str(row["changed_paths_json"] or "[]"))
+                patch_text = row["patch_text"]
+                if not isinstance(patch_text, str) or not patch_text.strip():
+                    raise ValueError("room_board_integration_candidate_unknown")
+                patches[verification_id] = {
+                    "patch_text": patch_text,
+                    "changed_paths": list(changed) if isinstance(changed, list) else [],
+                    "base_commit": base_commit,
+                    "head_commit": row["head_commit"],
+                }
+            return patches
+
+    def get_board_integration(self, integration_id: str) -> dict[str, Any] | None:
+        """Return one job with its items, or None when unknown."""
+
+        with self._connect() as conn:
+            try:
+                row = conn.execute(
+                    "select * from room_board_integrations where integration_id = ?",
+                    (integration_id,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return None
+            if row is None:
+                return None
+            result = self._integration_view(row)
+            result["items"] = self._integration_items_conn(conn, integration_id=integration_id)
+            return result

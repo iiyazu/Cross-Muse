@@ -23,10 +23,21 @@ METRICS_VERSION = "board_metrics/v1"
 SUMMARY_SCHEMA_VERSION = "room_board_summary/v1"
 EVENTS_SCHEMA_VERSION = "room_board_events/v1"
 CONTRACT_SCHEMA_VERSION = "room_board_contract/v2"
+INTEGRATION_DETAIL_SCHEMA_VERSION = "room_board_integration/v1"
 
 MAX_CONSECUTIVE_FAILURES = 3
 
 BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
+
+# Integration reason codes (§3.11, §9). Duplicated from ``room_board`` (which
+# owns the store) so this read-only derivation module stays importable from it.
+BOARD_INTEGRATION_CONFLICT = "board_integration_conflict"
+BOARD_INTEGRATION_GATE_FAILED = "board_integration_gate_failed"
+BOARD_INTEGRATION_WAITING_FOR_DEPENDENCY = "board_integration_waiting_for_dependency"
+BOARD_INTEGRATION_WOULD_DROP_ACCEPTED = "board_integration_would_drop_accepted"
+BOARD_INTEGRATION_ATTEMPTS_EXHAUSTED = "board_integration_attempts_exhausted"
+
+INTEGRATION_FINISHED_STATUSES = ("integrated", "conflicted", "gate_failed", "error")
 
 LIFECYCLES = (
     "assigned",
@@ -235,6 +246,280 @@ class CharterDependency:
     depends: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class IntegrationItemFact:
+    """One row of a frozen integration input set, reduced to derivation inputs."""
+
+    module_id: str
+    verification_id: str
+    item_order: int
+    role: str
+    status: str
+    applied_verification_id: str | None
+    conflicts_total: int
+    reason_code: str | None
+
+
+@dataclass(frozen=True)
+class IntegrationJobFact:
+    """One integration job row, reduced to derivation inputs."""
+
+    integration_id: str
+    status: str
+    reason_code: str | None
+    created_at: str
+    updated_at: str
+    finished_at: str | None
+    activity_id: str | None
+    activity_seq: int | None
+    green_after: str | None
+    failed_gate_ids: list[str] = field(default_factory=list)
+    items: list[IntegrationItemFact] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class IntegrationFacts:
+    """Everything the integration read model derives from (one derivation)."""
+
+    candidates: dict[str, str] = field(default_factory=dict)
+    jobs: list[IntegrationJobFact] = field(default_factory=list)  # newest first
+    green_applied: dict[str, str] = field(default_factory=dict)
+    green_head_commit: str | None = None
+    verification_created: dict[str, str] = field(default_factory=dict)
+
+
+def _none_module_integration() -> dict[str, Any]:
+    return {
+        "status": "none",
+        "integration_id": None,
+        "verification_id": None,
+        "integrated_verification_id": None,
+        "reason_code": None,
+        "conflict_path_count": 0,
+        "gate_ids": [],
+        "updated_at": None,
+    }
+
+
+def _newest_including_job(
+    facts: IntegrationFacts, module_id: str, verification_id: str, *, statuses: Sequence[str]
+) -> IntegrationJobFact | None:
+    """Return the newest job with the given status set holding the candidate."""
+
+    wanted = set(statuses)
+    for job in facts.jobs:
+        if job.status not in wanted:
+            continue
+        for item in job.items:
+            if item.module_id == module_id and item.verification_id == verification_id:
+                return job
+    return None
+
+
+def derive_module_integration(module_id: str, facts: IntegrationFacts) -> dict[str, Any]:
+    """Derive ``Module.integration`` (§3.11) without touching other axes.
+
+    The candidate is the module's current accepted verification; the status
+    describes that candidate in the latest job that included it. A candidate
+    already inside the green head reads ``integrated`` even while a newer job
+    also queues it; ``pending``/``running`` win over older finished jobs.
+    """
+
+    candidate = facts.candidates.get(module_id)
+    integrated_vid = facts.green_applied.get(module_id)
+    if candidate is None:
+        return _none_module_integration()
+    if integrated_vid is not None and candidate == integrated_vid:
+        holder = _newest_including_job(
+            facts,
+            module_id,
+            candidate,
+            statuses=("pending", "running", *INTEGRATION_FINISHED_STATUSES),
+        )
+        return {
+            "status": "integrated",
+            "integration_id": holder.integration_id if holder is not None else None,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": None,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": (holder.finished_at or holder.updated_at) if holder is not None else None,
+        }
+    running = _newest_including_job(facts, module_id, candidate, statuses=("running",))
+    if running is not None:
+        return {
+            "status": "running",
+            "integration_id": running.integration_id,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": None,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": running.updated_at,
+        }
+    pending = _newest_including_job(facts, module_id, candidate, statuses=("pending",))
+    if pending is not None:
+        return {
+            "status": "pending",
+            "integration_id": pending.integration_id,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": None,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": pending.updated_at,
+        }
+    finished = _newest_including_job(
+        facts, module_id, candidate, statuses=INTEGRATION_FINISHED_STATUSES
+    )
+    if finished is None:
+        return {
+            "status": "none",
+            "integration_id": None,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": None,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": None,
+        }
+    stamp = finished.finished_at or finished.updated_at
+    item = next(item for item in finished.items if item.module_id == module_id)
+    if finished.status == "error":
+        return {
+            "status": "error",
+            "integration_id": finished.integration_id,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": finished.reason_code,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": stamp,
+        }
+    if (
+        finished.status == "gate_failed"
+        and item.role == "newcomer"
+        and item.status in ("applied", "fell_back")
+    ):
+        applied = item.applied_verification_id
+        return {
+            "status": "gate_failed",
+            "integration_id": finished.integration_id,
+            "verification_id": candidate,
+            "integrated_verification_id": (
+                applied if applied is not None and applied != candidate else integrated_vid
+            ),
+            "reason_code": finished.reason_code or BOARD_INTEGRATION_GATE_FAILED,
+            "conflict_path_count": 0,
+            "gate_ids": list(finished.failed_gate_ids),
+            "updated_at": stamp,
+        }
+    if item.status == "waiting":
+        return {
+            "status": "waiting",
+            "integration_id": finished.integration_id,
+            "verification_id": candidate,
+            "integrated_verification_id": integrated_vid,
+            "reason_code": item.reason_code or BOARD_INTEGRATION_WAITING_FOR_DEPENDENCY,
+            "conflict_path_count": 0,
+            "gate_ids": [],
+            "updated_at": stamp,
+        }
+    applied = item.applied_verification_id
+    return {
+        "status": "conflicted",
+        "integration_id": finished.integration_id,
+        "verification_id": candidate,
+        "integrated_verification_id": (
+            applied if applied is not None and applied != candidate else integrated_vid
+        ),
+        "reason_code": item.reason_code or finished.reason_code or BOARD_INTEGRATION_CONFLICT,
+        "conflict_path_count": item.conflicts_total,
+        "gate_ids": [],
+        "updated_at": stamp,
+    }
+
+
+def derive_room_integration(facts: IntegrationFacts) -> dict[str, Any]:
+    """Derive the top-level ``RoomIntegration`` (§3.11)."""
+
+    latest = facts.jobs[0] if facts.jobs else None
+    return {
+        "green_head_commit": facts.green_head_commit,
+        "latest": (
+            None
+            if latest is None
+            else {
+                "integration_id": latest.integration_id,
+                "status": latest.status,
+                "reason_code": latest.reason_code,
+                "module_count": len(latest.items),
+                "finished_at": latest.finished_at,
+            }
+        ),
+    }
+
+
+def newest_finished_integration_job(facts: IntegrationFacts) -> IntegrationJobFact | None:
+    """Return the newest finished job (pending/running jobs never count)."""
+
+    for job in facts.jobs:
+        if job.status in INTEGRATION_FINISHED_STATUSES:
+            return job
+    return None
+
+
+def derive_integration_counters(module_id: str, facts: IntegrationFacts) -> dict[str, int]:
+    """Derive the three integration counters for one module (§6)."""
+
+    finished = [job for job in facts.jobs if job.status in INTEGRATION_FINISHED_STATUSES]
+    conflicted = 0
+    gate_failed = 0
+    for job in finished:
+        item = next((entry for entry in job.items if entry.module_id == module_id), None)
+        if item is None:
+            continue
+        if item.status == "conflicted":
+            conflicted += 1
+        if (
+            job.status == "gate_failed"
+            and item.role == "newcomer"
+            and item.status in ("applied", "fell_back")
+        ):
+            gate_failed += 1
+    applied_vids = {
+        item.applied_verification_id
+        for job in finished
+        if job.status == "integrated"
+        for item in job.items
+        if item.module_id == module_id and item.applied_verification_id is not None
+    }
+    created = facts.verification_created
+    first_integrated = (
+        min(applied_vids, key=lambda vid: created.get(vid, vid)) if applied_vids else None
+    )
+    first_created = created.get(first_integrated, first_integrated) if first_integrated else None
+    rounds = 0
+    seen: set[str] = set()
+    for job in finished:
+        item = next((entry for entry in job.items if entry.module_id == module_id), None)
+        if item is None or item.status not in ("conflicted", "fell_back"):
+            continue
+        if item.verification_id in seen:
+            continue
+        seen.add(item.verification_id)
+        if first_created is None or created.get(item.verification_id, item.verification_id) < (
+            first_created
+        ):
+            rounds += 1
+    return {
+        "integrations_conflicted": conflicted,
+        "integrations_gate_failed": gate_failed,
+        "conflict_fix_rounds": rounds,
+    }
+
+
 def _parse_ts(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -371,6 +656,9 @@ def compute_counters(
     done_reports: int,
     reviews_endorsed: int = 0,
     reviews_objected: int = 0,
+    integrations_conflicted: int = 0,
+    integrations_gate_failed: int = 0,
+    conflict_fix_rounds: int = 0,
 ) -> dict[str, int]:
     """Per-module metrics over the module id's whole history (M1/M2 definitions)."""
 
@@ -400,6 +688,9 @@ def compute_counters(
         "rework_rounds": rework_rounds,
         "reviews_endorsed": reviews_endorsed,
         "reviews_objected": reviews_objected,
+        "integrations_conflicted": integrations_conflicted,
+        "integrations_gate_failed": integrations_gate_failed,
+        "conflict_fix_rounds": conflict_fix_rounds,
     }
 
 
@@ -411,6 +702,8 @@ def derive_module_attention(
     review_status: str = "none",
     review_reviewer_kind: str | None = None,
     is_stale: bool = False,
+    integration_status: str = "none",
+    integration_reported_after: bool = True,
 ) -> dict[str, Any]:
     """Per-module attention precedence (§3.8): the first matching row wins."""
 
@@ -424,6 +717,8 @@ def derive_module_attention(
         return {"kind": "operator", "reason_code": "board_attention_review_operator_pending"}
     if review_status == "objected" and lifecycle == "done_claimed":
         return {"kind": "owner", "reason_code": "board_attention_review_objected"}
+    if integration_status == "conflicted" and not integration_reported_after:
+        return {"kind": "owner", "reason_code": "board_attention_integration_conflict"}
     if lifecycle == "blocked":
         return {"kind": "lead", "reason_code": "board_attention_module_blocked"}
     if is_stale:
@@ -532,6 +827,7 @@ _EVENT_KINDS = (
     "verification",
     "review_requested",
     "review",
+    "integration",
 )
 
 _ACTIVITY_TO_EVENT = {
@@ -546,6 +842,7 @@ _ACTIVITY_TO_EVENT = {
     "board.verification": "verification",
     "board.review_requested": "review_requested",
     "board.review": "review",
+    "board.integration": "integration",
 }
 
 
@@ -555,6 +852,8 @@ def _actor(
     payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if kind == "review_requested":
+        return {"kind": "infrastructure", "participant_id": None}
+    if kind == "integration":
         return {"kind": "infrastructure", "participant_id": None}
     actor_kind = str(row.get("actor_kind", ""))
     if kind == "review":
@@ -756,6 +1055,54 @@ def project_event(activity_row: Mapping[str, Any]) -> dict[str, Any] | None:
             "summary": agent_text(payload.get("summary"), max_chars=400),
             "decided_via": str(decided_via),
         }
+    elif kind == "integration":
+        raw_conflicts = payload.get("conflicts", [])
+        clean_conflicts = []
+        for entry in raw_conflicts if isinstance(raw_conflicts, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            attributed = entry.get("attributed_module_ids", [])
+            clean_conflicts.append(
+                {
+                    "module_id": str(entry.get("module_id")),
+                    "conflict_path_count": int(entry.get("conflict_path_count", 0)),
+                    "attributed_module_ids": [
+                        str(item) for item in attributed if isinstance(item, str)
+                    ],
+                    "fell_back": bool(entry.get("fell_back", False)),
+                }
+            )
+        integrated_ids = payload.get("integrated_module_ids", [])
+        suspect_ids = payload.get("suspect_module_ids", [])
+        waiting_ids = payload.get("waiting_module_ids", [])
+        gate_ids = payload.get("gate_ids", [])
+        data = {
+            "integration_id": str(payload.get("integration_id")),
+            "status": str(payload.get("status")),
+            "reason_code": payload.get("reason_code"),
+            "green_head_commit": payload.get("green_head_commit"),
+            "integrated_module_ids": (
+                [str(item) for item in integrated_ids if isinstance(item, str)]
+                if isinstance(integrated_ids, list)
+                else []
+            ),
+            "suspect_module_ids": (
+                [str(item) for item in suspect_ids if isinstance(item, str)]
+                if isinstance(suspect_ids, list)
+                else []
+            ),
+            "conflicts": clean_conflicts,
+            "waiting_module_ids": (
+                [str(item) for item in waiting_ids if isinstance(item, str)]
+                if isinstance(waiting_ids, list)
+                else []
+            ),
+            "gate_ids": (
+                [str(item) for item in gate_ids if isinstance(item, str)]
+                if isinstance(gate_ids, list)
+                else []
+            ),
+        }
     return {
         "seq": int(activity_row.get("seq", 0)),
         "kind": kind,
@@ -927,6 +1274,275 @@ def _verification_fact(row: sqlite3.Row) -> VerificationFact:
     )
 
 
+def load_integration_facts(
+    conn: sqlite3.Connection, conversation_id: str, *, reviews_on: bool
+) -> IntegrationFacts:
+    """Load every durable input of the integration read model (read-only).
+
+    The candidate rule mirrors the job store: the latest ``passed``
+    verification at or after the current charter, endorsed when the room
+    reviews. Unknown tables (pre-integration databases) read as no jobs.
+    """
+
+    try:
+        charter_rows = conn.execute(
+            "select module_id, status, created_at from room_board_charters "
+            "where conversation_id = ? order by module_id, version",
+            (conversation_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return IntegrationFacts()
+    latest_status: dict[str, str] = {}
+    latest_created: dict[str, str] = {}
+    for row in charter_rows:
+        module_id = str(row["module_id"])
+        latest_status[module_id] = str(row["status"])
+        latest_created[module_id] = str(row["created_at"])
+    active_created = {
+        module_id: created
+        for module_id, created in latest_created.items()
+        if latest_status.get(module_id) == "active"
+    }
+    try:
+        verification_rows = conn.execute(
+            "select module_id, verification_id, status, created_at "
+            "from room_board_verifications where conversation_id = ? "
+            "order by created_at, rowid",
+            (conversation_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        verification_rows = []
+    endorsed: set[str] = set()
+    if reviews_on:
+        try:
+            endorsed = {
+                str(row["verification_id"])
+                for row in conn.execute(
+                    "select verification_id from room_board_reviews "
+                    "where conversation_id = ? and status = 'endorsed'",
+                    (conversation_id,),
+                ).fetchall()
+            }
+        except sqlite3.OperationalError:
+            endorsed = set()
+    verification_created: dict[str, str] = {}
+    candidates: dict[str, str] = {}
+    for row in verification_rows:
+        vid = str(row["verification_id"])
+        verification_created[vid] = str(row["created_at"])
+        module_id = str(row["module_id"])
+        if module_id not in active_created:
+            continue
+        if str(row["status"]) != "passed":
+            continue
+        if str(row["created_at"]) < active_created[module_id]:
+            continue
+        if reviews_on and vid not in endorsed:
+            continue
+        candidates[module_id] = vid
+    try:
+        job_rows = conn.execute(
+            "select *, rowid as rowid from room_board_integrations "
+            "where conversation_id = ? order by created_at desc, rowid desc",
+            (conversation_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return IntegrationFacts(candidates=candidates, verification_created=verification_created)
+    try:
+        activity_seqs = {
+            str(row["activity_id"]): int(row["seq"])
+            for row in conn.execute(
+                "select activity_id, seq from room_activities "
+                "where conversation_id = ? and activity_type = 'board.integration'",
+                (conversation_id,),
+            ).fetchall()
+        }
+    except sqlite3.OperationalError:
+        activity_seqs = {}
+    jobs: list[IntegrationJobFact] = []
+    for row in job_rows:
+        integration_id = str(row["integration_id"])
+        try:
+            item_rows = conn.execute(
+                "select * from room_board_integration_items where integration_id = ? "
+                "order by item_order, module_id",
+                (integration_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            item_rows = []
+        gates_blob = _decode(row["gates_json"]) if row["gates_json"] else None
+        raw_gates = gates_blob.get("gates") if isinstance(gates_blob, dict) else None
+        failed_gate_ids = sorted(
+            {
+                str(entry.get("gate_id"))
+                for entry in raw_gates
+                if isinstance(entry, dict) and entry.get("status") != "passed"
+            }
+            if isinstance(raw_gates, list)
+            else set()
+        )
+        activity_id = row["activity_id"] if row["activity_id"] is not None else None
+        jobs.append(
+            IntegrationJobFact(
+                integration_id=integration_id,
+                status=str(row["status"]),
+                reason_code=(str(row["reason_code"]) if row["reason_code"] is not None else None),
+                created_at=str(row["created_at"]),
+                updated_at=str(row["updated_at"]),
+                finished_at=(str(row["finished_at"]) if row["finished_at"] is not None else None),
+                activity_id=str(activity_id) if activity_id is not None else None,
+                activity_seq=(
+                    activity_seqs.get(str(activity_id)) if activity_id is not None else None
+                ),
+                green_after=(str(row["green_after"]) if row["green_after"] is not None else None),
+                failed_gate_ids=failed_gate_ids,
+                items=[
+                    IntegrationItemFact(
+                        module_id=str(item["module_id"]),
+                        verification_id=str(item["verification_id"]),
+                        item_order=int(item["item_order"]),
+                        role=str(item["role"]),
+                        status=str(item["status"]),
+                        applied_verification_id=(
+                            str(item["applied_verification_id"])
+                            if item["applied_verification_id"] is not None
+                            else None
+                        ),
+                        conflicts_total=int(item["conflicts_total"]),
+                        reason_code=(
+                            str(item["reason_code"]) if item["reason_code"] is not None else None
+                        ),
+                    )
+                    for item in item_rows
+                ],
+            )
+        )
+    green_applied: dict[str, str] = {}
+    green_head_commit: str | None = None
+    for job in jobs:
+        if job.status != "integrated":
+            continue
+        green_head_commit = job.green_after
+        green_applied = {
+            item.module_id: item.applied_verification_id
+            for item in job.items
+            if item.applied_verification_id is not None
+        }
+        break
+    return IntegrationFacts(
+        candidates=candidates,
+        jobs=jobs,
+        green_applied=green_applied,
+        green_head_commit=green_head_commit,
+        verification_created=verification_created,
+    )
+
+
+def build_integration_detail(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    integration_id: str,
+) -> dict[str, Any] | None:
+    """Build the ``room_board_integration/v1`` dict, or None when unknown.
+
+    Also None when the job belongs to another conversation: detail routes
+    never reveal whether an id exists elsewhere. Conflict paths are the only
+    repository paths that ever leave through this route (§2): at most 50
+    listed entries, each validated like ``Finding.path``; ``conflicts_total``
+    keeps the real count.
+    """
+
+    try:
+        row = conn.execute(
+            "select * from room_board_integrations where integration_id = ?",
+            (integration_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None or str(row["conversation_id"]) != conversation_id:
+        return None
+    try:
+        item_rows = conn.execute(
+            "select * from room_board_integration_items where integration_id = ? "
+            "order by item_order, module_id",
+            (integration_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    gates_blob = _decode(row["gates_json"]) if row["gates_json"] else None
+    raw_gates = gates_blob.get("gates") if isinstance(gates_blob, dict) else []
+    evidence = gates_blob.get("evidence") if isinstance(gates_blob, dict) else {}
+    output_tails = evidence.get("output_tails") if isinstance(evidence, dict) else {}
+    clean_gates: list[dict[str, Any]] = []
+    if isinstance(raw_gates, list):
+        for entry in raw_gates:
+            if not isinstance(entry, dict):
+                continue
+            gate_id = str(entry.get("gate_id"))
+            raw_tail = output_tails.get(gate_id) if isinstance(output_tails, dict) else None
+            tail = (
+                agent_text(raw_tail, max_chars=2000)
+                if raw_tail is not None and entry.get("status") != "passed"
+                else None
+            )
+            clean_gates.append(
+                {
+                    "gate_id": gate_id,
+                    "status": str(entry.get("status")),
+                    "exit_code": entry.get("exit_code"),
+                    "reason_code": entry.get("reason_code"),
+                    "output_tail": tail,
+                }
+            )
+    items: list[dict[str, Any]] = []
+    for position, item in enumerate(item_rows):
+        stored_conflicts = _decode(str(item["conflicts_json"] or "[]")) or []
+        listed: list[dict[str, Any]] = []
+        for conflict in stored_conflicts if isinstance(stored_conflicts, list) else []:
+            if not isinstance(conflict, dict) or len(listed) >= 50:
+                continue
+            path = conflict.get("path")
+            if not is_valid_finding_path(path):
+                continue
+            attributed = conflict.get("attributed_module_ids") or []
+            listed.append(
+                {
+                    "path": str(path),
+                    "attributed_module_ids": [
+                        str(entry) for entry in attributed if isinstance(entry, str)
+                    ],
+                }
+            )
+        applied = item["applied_verification_id"]
+        items.append(
+            {
+                "module_id": str(item["module_id"]),
+                "verification_id": str(item["verification_id"]),
+                "order": position + 1,
+                "role": str(item["role"]),
+                "status": str(item["status"]),
+                "applied_verification_id": str(applied) if applied is not None else None,
+                "conflicts": listed,
+                "conflicts_total": int(item["conflicts_total"]),
+            }
+        )
+    status = str(row["status"])
+    return {
+        "schema_version": INTEGRATION_DETAIL_SCHEMA_VERSION,
+        "conversation_id": conversation_id,
+        "integration_id": integration_id,
+        "status": status,
+        "reason_code": row["reason_code"],
+        "green_head_commit": row["green_after"] if status == "integrated" else row["green_before"],
+        "result_commit": row["result_commit"],
+        "items": items,
+        "gates": clean_gates,
+        "attempt_count": int(row["attempt_count"]),
+        "created_at": str(row["created_at"]),
+        "finished_at": row["finished_at"],
+    }
+
+
 def build_board_projection(
     conn: sqlite3.Connection, conversation_id: str, *, now: datetime
 ) -> dict[str, Any]:
@@ -944,7 +1560,7 @@ def build_board_projection(
     capabilities = {
         "verification": 1,
         "reviews": 1 if review_policy == "cross_family" else 0,
-        "integrations": 0,
+        "integrations": 1,
         "lessons": 0,
     }
     participant_rows = conn.execute(
@@ -1060,6 +1676,9 @@ def build_board_projection(
 
     modules: list[dict[str, Any]] = []
     charter_deps: list[CharterDependency] = []
+    integration_facts = load_integration_facts(
+        conn, conversation_id, reviews_on=review_policy == "cross_family"
+    )
     for module_id in sorted(latest_charters):
         row = latest_charters[module_id]
         if str(row["status"]) != "active":
@@ -1182,11 +1801,14 @@ def build_board_projection(
         mod_reviews = reviews_by_module.get(module_id, [])
         reviews_endorsed = sum(1 for r in mod_reviews if str(r["status"]) == "endorsed")
         reviews_objected = sum(1 for r in mod_reviews if str(r["status"]) == "objected")
+        module_integration = derive_module_integration(module_id, integration_facts)
+        integration_counters = derive_integration_counters(module_id, integration_facts)
         counters = compute_counters(
             verification_statuses.get(module_id, []),
             done_reports=done_counts.get(module_id, 0),
             reviews_endorsed=reviews_endorsed,
             reviews_objected=reviews_objected,
+            **integration_counters,
         )
         state = derive_state(lifecycle, str(axis["status"]))
         accepted = derive_module_accepted(
@@ -1214,6 +1836,7 @@ def build_board_projection(
                 "state": state,
                 "review": module_review,
                 "accepted": accepted,
+                "integration": module_integration,
                 "attention": {"kind": "none", "reason_code": None},
             }
         )
@@ -1226,13 +1849,34 @@ def build_board_projection(
     stale_module_ids = {item["module_id"] for item in stale}
     attention: list[dict[str, Any]] = []
     for module in modules:
+        module_id = str(module["module_id"])
+        integration_status = str(module["integration"]["status"])
+        reported_after = True
+        if integration_status == "conflicted":
+            holder_id = module["integration"]["integration_id"]
+            holder = (
+                next(
+                    (job for job in integration_facts.jobs if job.integration_id == holder_id),
+                    None,
+                )
+                if isinstance(holder_id, str)
+                else None
+            )
+            if holder is None or holder.activity_seq is None:
+                reported_after = False
+            else:
+                reported_after = (
+                    progress_seq_by_module_owner.get(module_id, -1) > holder.activity_seq
+                )
         item = derive_module_attention(
             lifecycle=str(module["lifecycle"]),
             verification_status=str(module["verification"]["status"]),
             escalated=bool(module["verification"]["escalated"]),
             review_status=str(module["review"]["status"]),
             review_reviewer_kind=module["review"]["reviewer_kind"],
-            is_stale=module["module_id"] in stale_module_ids,
+            is_stale=module_id in stale_module_ids,
+            integration_status=integration_status,
+            integration_reported_after=reported_after,
         )
         module["attention"] = item
         if item["kind"] != "none":
@@ -1240,8 +1884,9 @@ def build_board_projection(
                 {
                     "kind": item["kind"],
                     "reason_code": item["reason_code"],
-                    "module_id": module["module_id"],
+                    "module_id": module_id,
                     "split_id": None,
+                    "integration_id": None,
                 }
             )
 
@@ -1254,14 +1899,37 @@ def build_board_projection(
                     "reason_code": "board_attention_split_pending",
                     "module_id": None,
                     "split_id": split["split_id"],
+                    "integration_id": None,
                 }
             )
+    newest_finished = newest_finished_integration_job(integration_facts)
+    if newest_finished is not None and newest_finished.status == "error":
+        attention.append(
+            {
+                "kind": "operator",
+                "reason_code": "board_attention_integration_error",
+                "module_id": None,
+                "split_id": None,
+                "integration_id": newest_finished.integration_id,
+            }
+        )
+    elif newest_finished is not None and newest_finished.status == "gate_failed":
+        attention.append(
+            {
+                "kind": "lead",
+                "reason_code": "board_attention_integration_gate_failed",
+                "module_id": None,
+                "split_id": None,
+                "integration_id": newest_finished.integration_id,
+            }
+        )
     _KIND_ORDER = {"operator": 0, "lead": 1, "owner": 2}
     attention.sort(
         key=lambda item: (
             _KIND_ORDER[str(item["kind"])],
             str(item["module_id"] or ""),
             str(item["split_id"] or ""),
+            str(item["integration_id"] or ""),
         )
     )
 
@@ -1288,6 +1956,7 @@ def build_board_projection(
         "revision": "",
         "capabilities": capabilities,
         "review_policy": review_policy,
+        "integration": derive_room_integration(integration_facts),
         "participants": participants,
         "modules": modules,
         "contracts": contracts,
@@ -1312,6 +1981,22 @@ def build_board_summary(projection: Mapping[str, Any]) -> dict[str, Any]:
     accepted_total = sum(
         1 for module in projection.get("modules", []) if module.get("accepted") is True
     )
+    integrated_total = sum(
+        1
+        for module in projection.get("modules", [])
+        if module.get("accepted") is True
+        and isinstance(module.get("integration"), dict)
+        and isinstance(module.get("verification"), dict)
+        and module["integration"].get("integrated_verification_id") is not None
+        and module["integration"].get("integrated_verification_id")
+        == module["verification"].get("verification_id")
+    )
+    room_integration = projection.get("integration", {})
+    if not isinstance(room_integration, dict):
+        room_integration = {}
+    room_latest = room_integration.get("latest")
+    if not isinstance(room_latest, dict):
+        room_latest = None
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "conversation_id": projection.get("conversation_id"),
@@ -1322,6 +2007,11 @@ def build_board_summary(projection: Mapping[str, Any]) -> dict[str, Any]:
         "modules_total": len(list(projection.get("modules", []))),
         "counts": counts,
         "accepted_total": accepted_total,
+        "integrated_total": integrated_total,
+        "integration": {
+            "status": room_latest.get("status") if room_latest is not None else None,
+            "green_head_commit": room_integration.get("green_head_commit"),
+        },
         "attention_total": len(attention),
         "attention": attention[:5],
     }

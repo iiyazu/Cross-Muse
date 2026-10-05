@@ -107,6 +107,16 @@ def _render_charter_md(
         state = entry.get("state")
         if isinstance(state, str) and state:
             lines.append(f"- State: {state}")
+        integration = entry.get("integration")
+        if isinstance(integration, dict) and integration.get("status"):
+            integration_reason = integration.get("reason_code")
+            lines.append(
+                "- Integration: "
+                + str(integration.get("status"))
+                + (f" ({integration_reason})" if integration_reason else "")
+            )
+        else:
+            lines.append("- Integration: none yet")
         review = entry.get("review")
         if isinstance(review, dict) and review.get("status"):
             reviewer = review.get("reviewer_participant_id") or review.get("reviewer_kind")

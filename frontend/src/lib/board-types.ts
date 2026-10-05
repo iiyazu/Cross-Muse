@@ -52,6 +52,7 @@ export type BoardEventKind =
   | "verification"
   | "review_requested"
   | "review"
+  | "integration"
   | "unknown";
 
 export type BoardSplitStatus =

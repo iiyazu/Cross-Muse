@@ -38,6 +38,8 @@ _SCHEMA_SCENARIOS = [
     "verified",
     "contract_revised_stale_dependent",
     "injection_text",
+    "integration_conflicted",
+    "integration_gate_failed",
 ]
 
 FORBIDDEN_KEYS = frozenset(
@@ -569,6 +571,7 @@ def test_board_unknown_conversation_on_every_get_route(
         f"{base}/board/summary",
         f"{base}/board/events",
         f"{base}/board/contracts/api.backend",
+        f"{base}/board/integrations/boardintegration_unknown",
     ):
         response = client.get(url)
         assert response.status_code == 404
@@ -934,6 +937,131 @@ def test_board_verifications_detail_and_cache_control(tmp_path: Path) -> None:
     )
     assert unknown.status_code == 404
     assert unknown.json()["detail"]["code"] == "room_board_verification_unknown"
+
+
+def _latest_integration_id(root: Path, conversation_id: str) -> str:
+    with RoomDatabase(root / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            "select integration_id from room_board_integrations where conversation_id = ? "
+            "order by created_at desc, rowid desc limit 1",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    return str(row["integration_id"])
+
+
+def test_board_integrations_detail_and_cache_control(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("integration_conflicted", tmp_path)
+    integration_id = _latest_integration_id(tmp_path, conversation_id)
+
+    url = f"/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.json()
+    jsonschema.validate(body, _load_schema("room_board_integration.v1.json"))
+    _walk_privacy(body, "$")
+    assert body["schema_version"] == "room_board_integration/v1"
+    assert body["status"] == "integrated"
+    assert body["green_head_commit"] is not None
+    assert [item["order"] for item in body["items"]] == [1, 2, 3]
+    by_module = {item["module_id"]: item for item in body["items"]}
+    assert by_module["mb"]["conflicts"] == [
+        {"path": "docs/shared.txt", "attributed_module_ids": ["ma", "mb"]}
+    ]
+    assert by_module["mb"]["conflicts_total"] == 1
+    assert by_module["mc"]["status"] == "waiting"
+
+    # Cross-conversation 404 (never reveals whether the id exists elsewhere).
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+    other_conv = client.get(
+        f"/api/chat/conversations/conv_other_123/board/integrations/{integration_id}"
+    )
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_integration_unknown"
+
+    unknown_conv = client.get(
+        "/api/chat/conversations/conv_nonexistent/board/integrations/boardintegration_unknown"
+    )
+    assert unknown_conv.status_code == 404
+    assert unknown_conv.json()["detail"]["code"] == "room_conversation_unknown"
+
+    # Unknown integration in conversation.
+    unknown = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/integrations/boardintegration_unknown"
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "room_board_integration_unknown"
+
+
+def test_board_integrations_gate_tails(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("integration_gate_failed", tmp_path)
+    integration_id = _latest_integration_id(tmp_path, conversation_id)
+
+    body = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}"
+    ).json()
+    assert body["status"] == "gate_failed"
+    assert body["result_commit"] is None
+    assert len(body["gates"]) == 1
+    tail = body["gates"][0]["output_tail"]
+    assert tail["untrusted"] is True
+    assert "AssertionError" in tail["text"]
+    assert len(tail["text"]) <= 2000
+
+
+def test_board_integrations_pending_detail(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("integration_pending_running", tmp_path)
+    integration_id = _latest_integration_id(tmp_path, conversation_id)
+
+    body = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}"
+    ).json()
+    assert body["status"] == "pending"
+    assert body["finished_at"] is None
+    assert body["gates"] == []
+    assert all(item["status"] == "not_applied" for item in body["items"])
+
+
+def test_board_integrations_route_is_read_only(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("integration_dependency_upgrade", tmp_path)
+    integration_id = _latest_integration_id(tmp_path, conversation_id)
+
+    def snapshot() -> dict[str, Any]:
+        with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+            return {
+                "board_seq": int(
+                    conn.execute(
+                        "select coalesce(max(seq), 0) from room_activities "
+                        "where conversation_id = ? and activity_type like 'board.%'",
+                        (conversation_id,),
+                    ).fetchone()[0]
+                ),
+                "jobs": [
+                    dict(row)
+                    for row in conn.execute("select * from room_board_integrations").fetchall()
+                ],
+                "items": [
+                    dict(row)
+                    for row in conn.execute("select * from room_board_integration_items").fetchall()
+                ],
+                "activities": conn.execute(
+                    "select count(*) from room_activities where conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()[0],
+            }
+
+    before = snapshot()
+    response = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}"
+    )
+    assert response.status_code == 200
+    assert snapshot() == before
 
 
 def test_board_reviews_material_route_and_exclusion(tmp_path: Path) -> None:

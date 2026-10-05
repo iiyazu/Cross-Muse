@@ -52,6 +52,18 @@
       "additionalProperties": false
     },
     "accepted_total": { "type": "integer", "minimum": 0 },
+    "integrated_total": { "type": "integer", "minimum": 0 },
+    "integration": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [null, "pending", "running", "integrated", "conflicted", "gate_failed", "error"]
+        },
+        "green_head_commit": { "type": ["string", "null"] }
+      },
+      "required": ["status", "green_head_commit"],
+      "additionalProperties": false
+    },
     "attention_total": { "type": "integer", "minimum": 0 },
     "attention": {
       "type": "array",
@@ -69,6 +81,8 @@
     "modules_total",
     "counts",
     "accepted_total",
+    "integrated_total",
+    "integration",
     "attention_total",
     "attention"
   ],
@@ -80,9 +94,10 @@
         "kind": { "enum": ["operator", "lead", "owner"] },
         "reason_code": { "type": "string" },
         "module_id": { "type": ["string", "null"] },
-        "split_id": { "type": ["string", "null"] }
+        "split_id": { "type": ["string", "null"] },
+        "integration_id": { "type": ["string", "null"] }
       },
-      "required": ["kind", "reason_code", "module_id", "split_id"],
+      "required": ["kind", "reason_code", "module_id", "split_id", "integration_id"],
       "additionalProperties": false
     }
   }
