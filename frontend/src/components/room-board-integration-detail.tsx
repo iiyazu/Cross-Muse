@@ -95,7 +95,7 @@ function IntegrationItemRow({
 function IntegrationGateRow({ gate, showTail }: { gate: BoardIntegrationGate; showTail: boolean }) {
   return (
     <li className="room-board-integration-gate">
-      <p>
+      <p className="room-board-integration-gate-line">
         <code>{gate.gate_id}</code>
         <span>{boardIntegrationGateStatusLabel(gate.status, gate.statusRaw)}</span>
         {gate.exit_code !== null ? <span>退出码 {gate.exit_code}</span> : null}
@@ -129,7 +129,7 @@ function IntegrationDetailBody({
   const tails = tailIndexes(detail);
   return (
     <div>
-      <p>
+      <p className="room-board-integration-job">
         <span>{boardIntegrationJobStatusLabel(detail.status, detail.statusRaw)}</span>
         {detail.reason_code ? <span>{boardReasonLabel(detail.reason_code)}</span> : null}
       </p>

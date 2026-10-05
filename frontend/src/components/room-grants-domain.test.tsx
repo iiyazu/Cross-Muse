@@ -97,6 +97,13 @@ afterEach(() => {
   useRoomStore.getState().stopGrantsSync();
 });
 
+// The fixtures carry absolute times (the pairing code expires at 12:02Z). A test that shows
+// the code must freeze the clock at the issue time instead of reading the real one, or it
+// fails as soon as that time has passed. Without fake timers this mocks Date only.
+function freezeClockAtIssueTime() {
+  vi.setSystemTime(new Date("2026-10-05T12:00:00Z"));
+}
+
 describe("RoomGrantsDomain", () => {
   it("stays collapsed until opened, then shows the form and refreshes the list", async () => {
     const { container } = render(<RoomGrantsDomain conversationId="room-a" />);
@@ -118,6 +125,7 @@ describe("RoomGrantsDomain", () => {
   });
 
   it("shows the pairing code without leaking it into shared state or attributes", async () => {
+    freezeClockAtIssueTime();
     grantApiMocks.issuePluginGrant.mockResolvedValueOnce(issueResult());
     grantApiMocks.listPluginGrants.mockResolvedValue({
       conversationId: "room-a",
@@ -169,6 +177,7 @@ describe("RoomGrantsDomain", () => {
   });
 
   it("clears the code when the grant becomes active and shows the authorized chip", async () => {
+    freezeClockAtIssueTime();
     grantApiMocks.issuePluginGrant.mockResolvedValueOnce(issueResult());
     grantApiMocks.listPluginGrants.mockResolvedValue({
       conversationId: "room-a",
@@ -238,6 +247,7 @@ describe("RoomGrantsDomain", () => {
   });
 
   it("revokes a grant, clears its code and shows the revoked chip", async () => {
+    freezeClockAtIssueTime();
     grantApiMocks.issuePluginGrant.mockResolvedValueOnce(issueResult());
     grantApiMocks.listPluginGrants.mockResolvedValue({
       conversationId: "room-a",
@@ -267,6 +277,7 @@ describe("RoomGrantsDomain", () => {
   });
 
   it("clears the code when the room changes", async () => {
+    freezeClockAtIssueTime();
     grantApiMocks.issuePluginGrant.mockResolvedValueOnce(issueResult());
     const { container, rerender } = render(<RoomGrantsDomain conversationId="room-a" />);
     openSection(container);

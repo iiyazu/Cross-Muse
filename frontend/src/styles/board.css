@@ -666,6 +666,16 @@
   gap: var(--space-2);
 }
 
+.room-board-integration-job,
+.room-board-integration-gate-line,
+.room-board-integration-conflicts li {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+}
+
 .room-board-integration-item-head code,
 .room-board-integration-gate code,
 .room-board-integration-conflicts code {
