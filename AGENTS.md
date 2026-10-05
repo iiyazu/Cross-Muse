@@ -64,8 +64,9 @@ uv run python scripts/room_soak_chaos.py ci-sim \
 ```
 
 Public commands: `xmuse-chat-api`, `xmuse-mcp-server`, `xmuse-room-runner`,
-`xmuse-workroom`, and `xmuse-data`. Entrypoints read exported environment variables and
-do not load `.env`.
+`xmuse-workroom`, `xmuse-data`, and `xmuse-ctl` (the read-only board command line under
+`integrations/xmuse-ctl`: loopback HTTP only, no operator token, no agent text in its
+output). Entrypoints read exported environment variables and do not load `.env`.
 
 ## Runtime boundaries
 

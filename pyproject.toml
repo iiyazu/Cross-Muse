@@ -20,6 +20,7 @@ xmuse-workroom = "xmuse.workroom_cli:main"
 xmuse-data = "xmuse.data_cli:main"
 xmuse-setup = "xmuse.setup_cli:main"
 xmuse-room-mcp-stdio = "xmuse.room_mcp_stdio:main"
+xmuse-ctl = "xmuse_ctl.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.28.0"]
@@ -37,7 +38,7 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["xmuse", "src/xmuse_core"]
+packages = ["xmuse", "src/xmuse_core", "integrations/xmuse-ctl/xmuse_ctl"]
 
 [dependency-groups]
 dev = [
