@@ -73,6 +73,9 @@ const ATTENTION_REASON_LABELS: Record<string, string> = {
   board_attention_verification_failed: "验证失败待返工",
   board_attention_review_operator_pending: "待你复核",
   board_attention_review_objected: "复核被驳回待返工",
+  board_attention_integration_error: "集成异常，宿主会自动重试",
+  board_attention_integration_conflict: "集成冲突待处理",
+  board_attention_integration_gate_failed: "集成门禁失败",
   board_attention_module_blocked: "模块已阻塞",
   board_attention_contract_stale: "契约已修订待跟进"
 };
@@ -101,6 +104,11 @@ const REASON_CODE_LABELS: Record<string, string> = {
   room_board_contract_unknown: "契约未知",
   room_board_version_invalid: "契约版本无效",
   room_board_split_digest_mismatch: "拆分摘要不一致",
+  board_integration_conflict: "集成冲突",
+  board_integration_gate_failed: "集成门禁未通过",
+  board_integration_waiting_for_dependency: "等待依赖集成",
+  board_integration_would_drop_accepted: "集成会丢失已验收代码，已停止",
+  board_integration_attempts_exhausted: "集成多次失败",
   board_review_reviewer_unavailable: "复核人不可用",
   board_review_reviewer_no_verdict: "复核人未给出结论",
   board_review_reviewer_unresponsive: "复核人无响应",
@@ -131,6 +139,7 @@ export const BOARD_EVENT_KIND_LABELS: Record<BoardEventKind, string> = {
   verification: "验证结果",
   review_requested: "请求复核",
   review: "复核结论",
+  integration: "集成结果",
   unknown: "未知事件"
 };
 
