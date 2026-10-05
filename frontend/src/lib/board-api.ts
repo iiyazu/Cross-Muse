@@ -122,7 +122,8 @@ const EVENT_KINDS = new Set<string>([
   "question",
   "verification",
   "review_requested",
-  "review"
+  "review",
+  "integration"
 ]);
 
 function normalizeState(value: unknown): BoardState {

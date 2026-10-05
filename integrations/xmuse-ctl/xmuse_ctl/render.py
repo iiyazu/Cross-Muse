@@ -70,8 +70,9 @@ def status_line(summary: dict[str, object]) -> str:
     pending = _operator_count(summary)
     if pending > 0:
         line += " · 待你处理 " + str(pending)
-    if summary["integrations"] == 1 and summary["integrated_total"] is not None:
-        line += " · 已集成 " + str(summary["integrated_total"])
+    integrated = summary["integrated_total"]
+    if summary["integrations"] == 1 and isinstance(integrated, int) and integrated > 0:
+        line += " · 已集成 " + str(integrated)
     return line
 
 
@@ -104,8 +105,9 @@ def status_block(summary: dict[str, object]) -> str:
     modules_line = "模块 " + str(summary["modules_total"])
     if parts:
         modules_line += " " + " ".join(parts)
-    if summary["integrations"] == 1 and summary["integrated_total"] is not None:
-        modules_line += " 已集成 " + str(summary["integrated_total"])
+    integrated_count = summary["integrated_total"]
+    if summary["integrations"] == 1 and isinstance(integrated_count, int) and integrated_count > 0:
+        modules_line += " 已集成 " + str(integrated_count)
     lines.append(modules_line)
     lines.append("待你处理 " + str(_operator_count(summary)))
     attention = summary["attention"]
