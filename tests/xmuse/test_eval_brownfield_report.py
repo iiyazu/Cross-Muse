@@ -97,6 +97,18 @@ def test_malformed_first_score_line_is_no_score(tmp_path: Path) -> None:
     assert row["resolved"] == "no score"
 
 
+def test_log_with_invalid_utf8_still_scores(tmp_path: Path) -> None:
+    # Single-agent logs embed raw agent output, which need not be valid UTF-8.
+    (tmp_path / "v2-A-r1.log").write_bytes(
+        b"agent said \xff\xfe\n" + _score(resolved="7/13").encode() + b"\nwall_s=1320\n"
+    )
+
+    row = _by_run(brownfield_report.collect_runs(tmp_path, []))["v2-A-r1"]
+
+    assert row["resolved"] == "7/13"
+    assert row["wall"] == "1320"
+
+
 def test_run_without_score_line_is_listed(tmp_path: Path) -> None:
     _write(tmp_path / "v2-C-r1.log", "nothing here\nwall_s=42\n")
 

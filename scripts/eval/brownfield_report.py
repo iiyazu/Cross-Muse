@@ -235,7 +235,8 @@ def collect_runs(logs_dir: Path, excludes: Sequence[str]) -> list[dict[str, Any]
             path = files.get(key)
             if path is not None:
                 try:
-                    text = path.read_text(encoding="utf-8")
+                    # Logs carry raw agent output, which need not be valid UTF-8.
+                    text = path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     text = None
                 break
