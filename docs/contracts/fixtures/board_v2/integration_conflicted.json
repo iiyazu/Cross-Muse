@@ -1,0 +1,958 @@
+{
+  "events_page": {
+    "board_seq": 13,
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "ma",
+            "mb",
+            "mc"
+          ],
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "ma",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "mb",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000005",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "mc",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:10:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "ma",
+        "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:10:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000029"
+        },
+        "kind": "verification",
+        "module_id": "ma",
+        "seq": 7
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:22:10.000000Z",
+        "data": {
+          "conflicts": [],
+          "gate_ids": [],
+          "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
+          "integrated_module_ids": [
+            "ma"
+          ],
+          "integration_id": "boardintegration_0000000000000000000000000000002d",
+          "reason_code": null,
+          "status": "integrated",
+          "suspect_module_ids": [],
+          "waiting_module_ids": []
+        },
+        "kind": "integration",
+        "module_id": null,
+        "seq": 8
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:30:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "mb",
+        "seq": 9
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:30:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000032"
+        },
+        "kind": "verification",
+        "module_id": "mb",
+        "seq": 10
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000005"
+        },
+        "at": "2026-01-01T00:40:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "mc",
+        "seq": 11
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:40:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000038"
+        },
+        "kind": "verification",
+        "module_id": "mc",
+        "seq": 12
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:52:10.000000Z",
+        "data": {
+          "conflicts": [
+            {
+              "attributed_module_ids": [
+                "ma",
+                "mb"
+              ],
+              "conflict_path_count": 1,
+              "fell_back": false,
+              "module_id": "mb"
+            }
+          ],
+          "gate_ids": [],
+          "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+          "integrated_module_ids": [
+            "ma"
+          ],
+          "integration_id": "boardintegration_0000000000000000000000000000003c",
+          "reason_code": null,
+          "status": "integrated",
+          "suspect_module_ids": [],
+          "waiting_module_ids": [
+            "mc"
+          ]
+        },
+        "kind": "integration",
+        "module_id": null,
+        "seq": 13
+      }
+    ],
+    "has_more": false,
+    "reset": false,
+    "revision": "13:d721cb50729c",
+    "schema_version": "room_board_events/v1"
+  },
+  "projection": {
+    "attention": [
+      {
+        "integration_id": null,
+        "kind": "owner",
+        "module_id": "mb",
+        "reason_code": "board_attention_integration_conflict",
+        "split_id": null
+      }
+    ],
+    "board_seq": 13,
+    "capabilities": {
+      "integrations": 1,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "contracts": [
+      {
+        "author_participant_id": "part_00000000000000000000000000000003",
+        "contract_id": "api.ma",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "ma",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000004",
+        "contract_id": "api.mb",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "mb",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
+      }
+    ],
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "events": [
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000002"
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "module_ids": [
+            "ma",
+            "mb",
+            "mc"
+          ],
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "split_proposed",
+        "module_id": null,
+        "seq": 2
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000003",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "ma",
+        "seq": 3
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000004",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "mb",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000005",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "mc",
+        "seq": 5
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000003"
+        },
+        "at": "2026-01-01T00:10:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "ma",
+        "seq": 6
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:10:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000029"
+        },
+        "kind": "verification",
+        "module_id": "ma",
+        "seq": 7
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:22:10.000000Z",
+        "data": {
+          "conflicts": [],
+          "gate_ids": [],
+          "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
+          "integrated_module_ids": [
+            "ma"
+          ],
+          "integration_id": "boardintegration_0000000000000000000000000000002d",
+          "reason_code": null,
+          "status": "integrated",
+          "suspect_module_ids": [],
+          "waiting_module_ids": []
+        },
+        "kind": "integration",
+        "module_id": null,
+        "seq": 8
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000004"
+        },
+        "at": "2026-01-01T00:30:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "mb",
+        "seq": 9
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:30:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000032"
+        },
+        "kind": "verification",
+        "module_id": "mb",
+        "seq": 10
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000005"
+        },
+        "at": "2026-01-01T00:40:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "mc",
+        "seq": 11
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:40:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000038"
+        },
+        "kind": "verification",
+        "module_id": "mc",
+        "seq": 12
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:52:10.000000Z",
+        "data": {
+          "conflicts": [
+            {
+              "attributed_module_ids": [
+                "ma",
+                "mb"
+              ],
+              "conflict_path_count": 1,
+              "fell_back": false,
+              "module_id": "mb"
+            }
+          ],
+          "gate_ids": [],
+          "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+          "integrated_module_ids": [
+            "ma"
+          ],
+          "integration_id": "boardintegration_0000000000000000000000000000003c",
+          "reason_code": null,
+          "status": "integrated",
+          "suspect_module_ids": [],
+          "waiting_module_ids": [
+            "mc"
+          ]
+        },
+        "kind": "integration",
+        "module_id": null,
+        "seq": 13
+      }
+    ],
+    "integration": {
+      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "latest": {
+        "finished_at": "2026-01-01T00:52:10.000000Z",
+        "integration_id": "boardintegration_0000000000000000000000000000003c",
+        "module_count": 3,
+        "reason_code": null,
+        "status": "integrated"
+      }
+    },
+    "metrics_version": "board_metrics/v1",
+    "modules": [
+      {
+        "accepted": true,
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "conflict_fix_rounds": 0,
+          "done_reports": 1,
+          "errored": 0,
+          "failed": 0,
+          "integrations_conflicted": 0,
+          "integrations_gate_failed": 0,
+          "passed": 1,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "integration": {
+          "conflict_path_count": 0,
+          "gate_ids": [],
+          "integrated_verification_id": "boardverify_00000000000000000000000000000029",
+          "integration_id": "boardintegration_0000000000000000000000000000003c",
+          "reason_code": null,
+          "status": "integrated",
+          "updated_at": "2026-01-01T00:52:10.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000029"
+        },
+        "lifecycle": "done_claimed",
+        "module_id": "ma",
+        "owner_participant_id": "part_00000000000000000000000000000003",
+        "paths": [
+          "docs/shared.txt"
+        ],
+        "provides": [
+          "api.ma"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
+        "state": "verified",
+        "title": {
+          "text": "ma",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 1,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": "db0c06d859e068a308cd009a7e2a260874d08a85",
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "updated_at": "2026-01-01T00:10:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000029"
+        }
+      },
+      {
+        "accepted": true,
+        "attention": {
+          "kind": "owner",
+          "reason_code": "board_attention_integration_conflict"
+        },
+        "charter_version": 1,
+        "counters": {
+          "conflict_fix_rounds": 1,
+          "done_reports": 1,
+          "errored": 0,
+          "failed": 0,
+          "integrations_conflicted": 1,
+          "integrations_gate_failed": 0,
+          "passed": 1,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "integration": {
+          "conflict_path_count": 1,
+          "gate_ids": [],
+          "integrated_verification_id": null,
+          "integration_id": "boardintegration_0000000000000000000000000000003c",
+          "reason_code": "board_integration_conflict",
+          "status": "conflicted",
+          "updated_at": "2026-01-01T00:52:10.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000032"
+        },
+        "lifecycle": "done_claimed",
+        "module_id": "mb",
+        "owner_participant_id": "part_00000000000000000000000000000004",
+        "paths": [
+          "docs/shared.txt",
+          "docs/b.txt"
+        ],
+        "provides": [
+          "api.mb"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
+        "state": "verified",
+        "title": {
+          "text": "mb",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 2,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": "c3150da17963bf7dbec7f965a7656438c3c0fe16",
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "updated_at": "2026-01-01T00:30:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000032"
+        }
+      },
+      {
+        "accepted": true,
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "conflict_fix_rounds": 0,
+          "done_reports": 1,
+          "errored": 0,
+          "failed": 0,
+          "integrations_conflicted": 0,
+          "integrations_gate_failed": 0,
+          "passed": 1,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [
+          "api.mb"
+        ],
+        "integration": {
+          "conflict_path_count": 0,
+          "gate_ids": [],
+          "integrated_verification_id": null,
+          "integration_id": "boardintegration_0000000000000000000000000000003c",
+          "reason_code": "board_integration_waiting_for_dependency",
+          "status": "waiting",
+          "updated_at": "2026-01-01T00:52:10.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000038"
+        },
+        "lifecycle": "done_claimed",
+        "module_id": "mc",
+        "owner_participant_id": "part_00000000000000000000000000000005",
+        "paths": [
+          "docs/c.txt"
+        ],
+        "provides": [],
+        "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
+        "state": "verified",
+        "title": {
+          "text": "mc",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 1,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": "b96a48e24c914b6af16d4717bb9910a6423e3809",
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "updated_at": "2026-01-01T00:40:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000038"
+        }
+      }
+    ],
+    "participants": [
+      {
+        "display_name": "Agent 0",
+        "is_lead": true,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000002",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 1",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000003",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 2",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000004",
+        "provider_kind": "codex",
+        "role_preset": null
+      },
+      {
+        "display_name": "Agent 3",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000005",
+        "provider_kind": "codex",
+        "role_preset": null
+      }
+    ],
+    "review_policy": "off",
+    "revision": "13:d721cb50729c",
+    "schema_version": "room_board_projection/v2",
+    "server_time": "2026-10-04T12:00:00.000000Z",
+    "splits": [
+      {
+        "actions": {
+          "decide": {
+            "allowed_decisions": [
+              "approve",
+              "reject"
+            ],
+            "available": false,
+            "expected_digest": "sha256:9b4aa3672eb417899688fbb05c038058744ceb630cdffdb3af9cd74f9c29e8a8",
+            "href": "/api/chat/operator/board-splits/split_0000000000000000000000000000001e/decision",
+            "method": "POST"
+          }
+        },
+        "contracts": [
+          {
+            "contract_id": "api.ma",
+            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "kind": "api_schema",
+            "provider_module_id": "ma"
+          },
+          {
+            "contract_id": "api.mb",
+            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "kind": "api_schema",
+            "provider_module_id": "mb"
+          }
+        ],
+        "created_at": "2026-01-01T00:00:10.000000Z",
+        "decided_at": "2026-01-01T00:00:10.000000Z",
+        "decided_via": "web",
+        "digest": "sha256:9b4aa3672eb417899688fbb05c038058744ceb630cdffdb3af9cd74f9c29e8a8",
+        "modules": [
+          {
+            "depends": [],
+            "module_id": "ma",
+            "owner_participant_id": "part_00000000000000000000000000000003",
+            "paths": [
+              "docs/shared.txt"
+            ],
+            "provides": [
+              "api.ma"
+            ],
+            "title": {
+              "text": "ma",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [],
+            "module_id": "mb",
+            "owner_participant_id": "part_00000000000000000000000000000004",
+            "paths": [
+              "docs/shared.txt",
+              "docs/b.txt"
+            ],
+            "provides": [
+              "api.mb"
+            ],
+            "title": {
+              "text": "mb",
+              "truncated": false,
+              "untrusted": true
+            }
+          },
+          {
+            "depends": [
+              "api.mb"
+            ],
+            "module_id": "mc",
+            "owner_participant_id": "part_00000000000000000000000000000005",
+            "paths": [
+              "docs/c.txt"
+            ],
+            "provides": [],
+            "title": {
+              "text": "mc",
+              "truncated": false,
+              "untrusted": true
+            }
+          }
+        ],
+        "proposed_by_participant_id": "part_00000000000000000000000000000002",
+        "split_id": "split_0000000000000000000000000000001e",
+        "status": "approved"
+      }
+    ],
+    "stale_dependents": []
+  },
+  "summary": {
+    "accepted_total": 3,
+    "attention": [
+      {
+        "integration_id": null,
+        "kind": "owner",
+        "module_id": "mb",
+        "reason_code": "board_attention_integration_conflict",
+        "split_id": null
+      }
+    ],
+    "attention_total": 1,
+    "board_seq": 13,
+    "capabilities": {
+      "integrations": 1,
+      "lessons": 0,
+      "reviews": 0,
+      "verification": 1
+    },
+    "conversation_id": "conv_00000000000000000000000000000001",
+    "counts": {
+      "assigned": 0,
+      "blocked": 0,
+      "claimed": 0,
+      "done_claimed": 0,
+      "ready_for_review": 0,
+      "verification_error": 0,
+      "verification_failed": 0,
+      "verified": 3,
+      "verifying": 0,
+      "waiting_for_provider": 0,
+      "working": 0
+    },
+    "integrated_total": 1,
+    "integration": {
+      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "status": "integrated"
+    },
+    "modules_total": 3,
+    "revision": "13:d721cb50729c",
+    "schema_version": "room_board_summary/v1",
+    "server_time": "2026-10-04T12:00:00.000000Z"
+  }
+}

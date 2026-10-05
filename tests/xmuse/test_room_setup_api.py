@@ -706,6 +706,10 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}", "GET"),
         ("/api/chat/conversations/{conversation_id}/board/reviews/{review_id}", "GET"),
         ("/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}", "GET"),
+        (
+            "/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}",
+            "GET",
+        ),
         ("/api/chat/operator/board-splits/{split_id}/decision", "POST"),
         ("/api/chat/operator/board-reviews/{review_id}/material", "GET"),
         ("/api/chat/operator/board-reviews/{review_id}/decision", "POST"),

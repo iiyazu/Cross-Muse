@@ -157,12 +157,13 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "7:0da78b549daa",
+    "revision": "7:f03fc785a8fa",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
     "attention": [
       {
+        "integration_id": null,
         "kind": "owner",
         "module_id": "beta",
         "reason_code": "board_attention_contract_stale",
@@ -171,7 +172,7 @@
     ],
     "board_seq": 7,
     "capabilities": {
-      "integrations": 0,
+      "integrations": 1,
       "lessons": 0,
       "reviews": 0,
       "verification": 1
@@ -352,6 +353,10 @@
         "seq": 7
       }
     ],
+    "integration": {
+      "green_head_commit": null,
+      "latest": null
+    },
     "metrics_version": "board_metrics/v1",
     "modules": [
       {
@@ -362,9 +367,12 @@
         },
         "charter_version": 1,
         "counters": {
+          "conflict_fix_rounds": 0,
           "done_reports": 0,
           "errored": 0,
           "failed": 0,
+          "integrations_conflicted": 0,
+          "integrations_gate_failed": 0,
           "passed": 0,
           "reviews_endorsed": 0,
           "reviews_objected": 0,
@@ -372,6 +380,16 @@
           "superseded": 0
         },
         "depends": [],
+        "integration": {
+          "conflict_path_count": 0,
+          "gate_ids": [],
+          "integrated_verification_id": null,
+          "integration_id": null,
+          "reason_code": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "lifecycle": "working",
         "module_id": "alpha",
         "owner_participant_id": "part_00000000000000000000000000000003",
@@ -428,9 +446,12 @@
         },
         "charter_version": 1,
         "counters": {
+          "conflict_fix_rounds": 0,
           "done_reports": 0,
           "errored": 0,
           "failed": 0,
+          "integrations_conflicted": 0,
+          "integrations_gate_failed": 0,
           "passed": 0,
           "reviews_endorsed": 0,
           "reviews_objected": 0,
@@ -440,6 +461,16 @@
         "depends": [
           "api.alpha"
         ],
+        "integration": {
+          "conflict_path_count": 0,
+          "gate_ids": [],
+          "integrated_verification_id": null,
+          "integration_id": null,
+          "reason_code": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "lifecycle": "assigned",
         "module_id": "beta",
         "owner_participant_id": "part_00000000000000000000000000000004",
@@ -516,7 +547,7 @@
       }
     ],
     "review_policy": "off",
-    "revision": "7:0da78b549daa",
+    "revision": "7:f03fc785a8fa",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -606,6 +637,7 @@
     "accepted_total": 0,
     "attention": [
       {
+        "integration_id": null,
         "kind": "owner",
         "module_id": "beta",
         "reason_code": "board_attention_contract_stale",
@@ -615,7 +647,7 @@
     "attention_total": 1,
     "board_seq": 7,
     "capabilities": {
-      "integrations": 0,
+      "integrations": 1,
       "lessons": 0,
       "reviews": 0,
       "verification": 1
@@ -634,8 +666,13 @@
       "waiting_for_provider": 0,
       "working": 1
     },
+    "integrated_total": 0,
+    "integration": {
+      "green_head_commit": null,
+      "status": null
+    },
     "modules_total": 2,
-    "revision": "7:0da78b549daa",
+    "revision": "7:f03fc785a8fa",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

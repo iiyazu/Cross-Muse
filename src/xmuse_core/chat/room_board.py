@@ -29,11 +29,14 @@ from xmuse_core.chat.room_board_projection import (
     agent_text,
     build_board_projection,
     build_contract_detail,
+    build_integration_detail,
     compute_counters,
     derive_lifecycle,
+    derive_module_integration,
     derive_state,
     derive_verification_axis,
     is_valid_finding_path,
+    load_integration_facts,
     review_digest,
     split_digest,
 )
@@ -1117,6 +1120,12 @@ class RoomBoardStore:
                         (conversation_id,),
                     ).fetchall()
                 }
+                integration_facts = load_integration_facts(
+                    conn,
+                    conversation_id,
+                    reviews_on=review_policy_for_conversation(conn, conversation_id)
+                    == "cross_family",
+                )
                 charters = []
                 for module_id, info in sorted(charter_map.items()):
                     charter_row = charter_rows.get(module_id)
@@ -1138,6 +1147,7 @@ class RoomBoardStore:
                             "charter": info["charter"],
                             "lifecycle": lifecycle,
                             "state": state,
+                            "integration": derive_module_integration(module_id, integration_facts),
                         }
                     )
                 contract_rows = conn.execute(
@@ -4316,6 +4326,14 @@ class RoomBoardStore:
         with self._connect() as conn:
             return review_policy_for_conversation(conn, conversation_id)
 
+    def integration_detail(self, conversation_id: str, integration_id: str) -> dict[str, Any]:
+        """Fetch integration detail for one job (§5.3, read-only)."""
+        with self._connect() as conn:
+            detail = build_integration_detail(conn, conversation_id, integration_id)
+        if detail is None:
+            raise ValueError("room_board_integration_unknown")
+        return detail
+
     def owner_view(self, conversation_id: str, participant_id: str) -> dict[str, Any]:
         """Pure read of one owner's board slice (no lease, no writes)."""
 
@@ -4325,6 +4343,11 @@ class RoomBoardStore:
                 conn, conversation_id=conversation_id
             )
             review_stats = self._module_review_stats_conn(conn, conversation_id=conversation_id)
+            integration_facts = load_integration_facts(
+                conn,
+                conversation_id,
+                reviews_on=review_policy_for_conversation(conn, conversation_id) == "cross_family",
+            )
             my_modules: list[dict[str, Any]] = []
             other_modules: list[dict[str, Any]] = []
             for module_id in sorted(charter_map):
@@ -4383,6 +4406,7 @@ class RoomBoardStore:
                                 "rework_rounds": 0,
                             },
                             "review": review_entry,
+                            "integration": derive_module_integration(module_id, integration_facts),
                         }
                     )
                 else:

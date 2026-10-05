@@ -15,11 +15,13 @@ import pytest
 
 from tests.xmuse.board_scenarios import (
     INJECTION_PROMPT,
+    INTEGRATION_SCENARIOS,
     NOW,
     REVIEW_SCENARIOS,
     SCENARIOS,
     SERVER_TIME,
     _approved_board,
+    _itime,
     _report_done,
     _round,
     _round_time,
@@ -27,6 +29,9 @@ from tests.xmuse.board_scenarios import (
 )
 from xmuse_core.chat.room_board_projection import (
     CharterDependency,
+    IntegrationFacts,
+    IntegrationItemFact,
+    IntegrationJobFact,
     ProgressFact,
     RevisedContract,
     StackedRef,
@@ -36,6 +41,7 @@ from xmuse_core.chat.room_board_projection import (
     build_board_projection,
     build_board_summary,
     build_contract_detail,
+    build_integration_detail,
     compute_counters,
     compute_escalated,
     compute_revision,
@@ -43,8 +49,11 @@ from xmuse_core.chat.room_board_projection import (
     derive_lifecycle,
     derive_module_accepted,
     derive_module_attention,
+    derive_module_integration,
     derive_state,
     derive_verification_axis,
+    load_integration_facts,
+    newest_finished_integration_job,
     project_event,
     sanitize_text,
 )
@@ -316,6 +325,31 @@ def test_compute_counters_table(
         "rework_rounds": expected[5],
         "reviews_endorsed": 0,
         "reviews_objected": 0,
+        "integrations_conflicted": 0,
+        "integrations_gate_failed": 0,
+        "conflict_fix_rounds": 0,
+    }
+
+
+def test_compute_counters_integration_kwargs() -> None:
+    assert compute_counters(
+        ["passed"],
+        done_reports=1,
+        integrations_conflicted=2,
+        integrations_gate_failed=1,
+        conflict_fix_rounds=3,
+    ) == {
+        "done_reports": 1,
+        "passed": 1,
+        "failed": 0,
+        "superseded": 0,
+        "errored": 0,
+        "rework_rounds": 0,
+        "reviews_endorsed": 0,
+        "reviews_objected": 0,
+        "integrations_conflicted": 2,
+        "integrations_gate_failed": 1,
+        "conflict_fix_rounds": 3,
     }
 
 
@@ -839,6 +873,27 @@ def test_board_fixture_reproduces_and_validates(tmp_path: Path, name: str) -> No
         ver_schema = _load_schema("room_board_verification.v1.json")
         jsonschema.validate(ver_data, ver_schema)
 
+    if name in INTEGRATION_SCENARIOS:
+        with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+            job_row = conn.execute(
+                "select integration_id from room_board_integrations "
+                "where conversation_id = ? order by created_at desc, rowid desc limit 1",
+                (ctx["conversation_id"],),
+            ).fetchone()
+        assert job_row is not None, f"integration scenario {name} has no job"
+        job_id = str(job_row["integration_id"])
+        with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+            int_data = build_integration_detail(conn, ctx["conversation_id"], job_id)
+        assert int_data is not None
+        int_target = FIXTURE_DIR / f"{name}.integration.json"
+        int_text = _dump(int_data)
+        if os.environ.get("UPDATE_BOARD_FIXTURES") == "1":
+            int_target.write_text(int_text, encoding="utf-8")
+        assert int_target.exists(), f"missing integration fixture {int_target}"
+        assert int_target.read_text(encoding="utf-8") == int_text
+        int_schema = _load_schema("room_board_integration.v1.json")
+        jsonschema.validate(int_data, int_schema)
+
 
 def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURE_DIR / f"{name}.json").read_text(encoding="utf-8"))
@@ -880,6 +935,7 @@ def test_fixture_split_pending_attention() -> None:
             "reason_code": "board_attention_split_pending",
             "module_id": None,
             "split_id": fixture["projection"]["splits"][0]["split_id"],
+            "integration_id": None,
         }
     ]
 
@@ -929,6 +985,9 @@ def test_fixture_failed_rework() -> None:
         "rework_rounds": 2,
         "reviews_endorsed": 0,
         "reviews_objected": 0,
+        "integrations_conflicted": 0,
+        "integrations_gate_failed": 0,
+        "conflict_fix_rounds": 0,
     }
     assert module["verification"]["gate_ids"] == ["patch_diff_check"]
     assert module["attention"] == {
@@ -986,6 +1045,772 @@ def test_fixture_contract_revised_stale_dependent() -> None:
         "reason_code": "board_attention_contract_stale",
     }
     assert _module(fixture, "sidecar")["attention"] == {"kind": "none", "reason_code": None}
+
+
+# ---------------------------------------------------------------------------
+# integration (§3.11): derivation units, fixtures, invariants
+# ---------------------------------------------------------------------------
+
+
+def _integration_fixture(name: str) -> dict[str, Any]:
+    return json.loads((FIXTURE_DIR / f"{name}.integration.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "v_status", "stale", "integration_status", "reported_after", "kind", "reason"),
+    [
+        (
+            "working",
+            "passed",
+            False,
+            "conflicted",
+            False,
+            "owner",
+            "board_attention_integration_conflict",
+        ),
+        ("working", "passed", False, "conflicted", True, "none", None),
+        ("working", "passed", False, "integrated", False, "none", None),
+        ("working", "passed", False, "pending", False, "none", None),
+        ("working", "passed", False, "running", False, "none", None),
+        ("working", "passed", False, "gate_failed", False, "none", None),
+        ("working", "passed", False, "error", False, "none", None),
+        ("working", "passed", False, "waiting", False, "none", None),
+        ("working", "passed", False, "none", False, "none", None),
+        # A failed verification still beats an integration conflict.
+        (
+            "done_claimed",
+            "failed",
+            False,
+            "conflicted",
+            False,
+            "owner",
+            "board_attention_verification_failed",
+        ),
+        # The conflict row sits above blocked and stale rows.
+        (
+            "blocked",
+            "passed",
+            False,
+            "conflicted",
+            False,
+            "owner",
+            "board_attention_integration_conflict",
+        ),
+        (
+            "working",
+            "passed",
+            True,
+            "conflicted",
+            False,
+            "owner",
+            "board_attention_integration_conflict",
+        ),
+        ("working", "passed", True, "conflicted", True, "owner", "board_attention_contract_stale"),
+    ],
+)
+def test_attention_integration_conflict_table(
+    lifecycle: str,
+    v_status: str,
+    stale: bool,
+    integration_status: str,
+    reported_after: bool,
+    kind: str,
+    reason: str | None,
+) -> None:
+    assert derive_module_attention(
+        lifecycle=lifecycle,
+        verification_status=v_status,
+        escalated=False,
+        is_stale=stale,
+        integration_status=integration_status,
+        integration_reported_after=reported_after,
+    ) == {"kind": kind, "reason_code": reason}
+
+
+def test_integration_conflict_attention_clears_after_owner_progress(tmp_path: Path) -> None:
+    ctx = build_scenario("integration_conflicted", tmp_path)
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        before = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    assert _module({"projection": before}, "mb")["attention"] == {
+        "kind": "owner",
+        "reason_code": "board_attention_integration_conflict",
+    }
+    owner = next(
+        member
+        for member in ctx["members"]
+        if member.participant_id == _module({"projection": before}, "mb")["owner_participant_id"]
+    )
+    ctx["store"].report_progress(
+        **ctx["lease_kwargs"](owner, "rep-after-conflict", now=_itime(120)),
+        module_id="mb",
+        status="working",
+        summary="realigning after the conflict",
+        claims=[],
+    )
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        after = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    assert _module({"projection": after}, "mb")["attention"] == {
+        "kind": "none",
+        "reason_code": None,
+    }
+    assert all(
+        item.get("module_id") != "mb"
+        for item in after["attention"]
+        if item.get("reason_code") == "board_attention_integration_conflict"
+    )
+
+
+def _synthetic_job(
+    integration_id: str,
+    status: str,
+    items: list[IntegrationItemFact],
+    *,
+    reason: str | None = None,
+    finished_at: str | None = "2026-01-02T00:00:00.000000Z",
+    activity_seq: int | None = 9,
+    failed_gate_ids: list[str] | None = None,
+) -> IntegrationJobFact:
+    return IntegrationJobFact(
+        integration_id=integration_id,
+        status=status,
+        reason_code=reason,
+        created_at="2026-01-01T00:00:00.000000Z",
+        updated_at="2026-01-02T00:00:00.000000Z",
+        finished_at=finished_at if status not in ("pending", "running") else None,
+        activity_id=None,
+        activity_seq=activity_seq,
+        green_after=None,
+        failed_gate_ids=failed_gate_ids or [],
+        items=items,
+    )
+
+
+def _synthetic_item(
+    module_id: str,
+    verification_id: str,
+    status: str,
+    *,
+    role: str = "newcomer",
+    applied: str | None = None,
+    total: int = 0,
+    reason: str | None = None,
+) -> IntegrationItemFact:
+    return IntegrationItemFact(
+        module_id=module_id,
+        verification_id=verification_id,
+        item_order=0,
+        role=role,
+        status=status,
+        applied_verification_id=applied,
+        conflicts_total=total,
+        reason_code=reason,
+    )
+
+
+def test_derive_module_integration_table() -> None:
+    empty = IntegrationFacts()
+    assert derive_module_integration("m", empty) == {
+        "status": "none",
+        "integration_id": None,
+        "verification_id": None,
+        "integrated_verification_id": None,
+        "reason_code": None,
+        "conflict_path_count": 0,
+        "gate_ids": [],
+        "updated_at": None,
+    }
+    # A candidate with no job yet: known, but nothing queued.
+    no_job = IntegrationFacts(candidates={"m": "v1"})
+    assert derive_module_integration("m", no_job)["status"] == "none"
+    assert derive_module_integration("m", no_job)["verification_id"] == "v1"
+    # Running wins over an older pending job holding the same candidate.
+    active = IntegrationFacts(
+        candidates={"m": "v1"},
+        jobs=[
+            _synthetic_job("j-pending", "pending", [_synthetic_item("m", "v1", "not_applied")]),
+            _synthetic_job("j-run", "running", [_synthetic_item("m", "v1", "not_applied")]),
+        ],
+    )
+    assert derive_module_integration("m", active)["status"] == "running"
+    assert derive_module_integration("m", active)["integration_id"] == "j-run"
+    # A candidate inside the green head reads integrated even while queued.
+    green = IntegrationFacts(
+        candidates={"m": "v1"},
+        green_applied={"m": "v1"},
+        green_head_commit="c" * 40,
+        jobs=[
+            _synthetic_job("j-pending", "pending", [_synthetic_item("m", "v1", "not_applied")]),
+            _synthetic_job(
+                "j-green",
+                "integrated",
+                [_synthetic_item("m", "v1", "applied", role="newcomer", applied="v1")],
+            ),
+        ],
+    )
+    assert derive_module_integration("m", green)["status"] == "integrated"
+    assert derive_module_integration("m", green)["integrated_verification_id"] == "v1"
+    # A gate_failed suspect carries the job's failed gates.
+    gate_failed = IntegrationFacts(
+        candidates={"m": "v2"},
+        jobs=[
+            _synthetic_job(
+                "j-gate",
+                "gate_failed",
+                [_synthetic_item("m", "v2", "applied", applied="v2")],
+                reason="board_integration_gate_failed",
+                failed_gate_ids=["patch_diff_check"],
+            ),
+        ],
+    )
+    derived = derive_module_integration("m", gate_failed)
+    assert derived["status"] == "gate_failed"
+    assert derived["gate_ids"] == ["patch_diff_check"]
+    # An error job marks its newcomers error.
+    error = IntegrationFacts(
+        candidates={"m": "v1"},
+        jobs=[
+            _synthetic_job(
+                "j-err",
+                "error",
+                [_synthetic_item("m", "v1", "not_applied")],
+                reason="board_integration_attempts_exhausted",
+            ),
+        ],
+    )
+    assert derive_module_integration("m", error)["status"] == "error"
+    # A fell-back candidate is conflicted with the older version integrated.
+    fell_back = IntegrationFacts(
+        candidates={"m": "v2"},
+        green_applied={"m": "v1"},
+        green_head_commit="c" * 40,
+        verification_created={"v1": "2026-01-01T00:00:00.000000Z"},
+        jobs=[
+            _synthetic_job(
+                "j-ok",
+                "integrated",
+                [_synthetic_item("m", "v2", "fell_back", applied="v1", total=2)],
+            ),
+        ],
+    )
+    derived = derive_module_integration("m", fell_back)
+    assert derived["status"] == "conflicted"
+    assert derived["integrated_verification_id"] == "v1"
+    assert derived["conflict_path_count"] == 2
+    # Newest finished job rules: pending/running never count.
+    assert newest_finished_integration_job(active) is None
+    assert newest_finished_integration_job(green) is not None
+    assert newest_finished_integration_job(green).integration_id == "j-green"
+
+
+def test_project_event_integration_whitelist() -> None:
+    event = project_event(
+        {
+            "seq": 9,
+            "activity_type": "board.integration",
+            "actor_kind": "infrastructure",
+            "created_at": CHARTER_TS,
+            "payload": {
+                "integration_id": "j1",
+                "status": "conflicted",
+                "reason_code": "board_integration_conflict",
+                "green_head_commit": "c" * 40,
+                "integrated_module_ids": ["ma"],
+                "suspect_module_ids": [],
+                "conflicts": [
+                    {
+                        "module_id": "mb",
+                        "conflict_path_count": 3,
+                        "attributed_module_ids": ["ma", "mb"],
+                        "fell_back": False,
+                        "path": "docs/secret.txt",
+                    }
+                ],
+                "waiting_module_ids": ["mc"],
+                "gate_ids": [],
+                "schema_version": "room_board_activity/v1",
+                "evidence": {"output_tails": {"g": "x"}},
+            },
+        }
+    )
+    assert event is not None
+    assert event["kind"] == "integration"
+    assert event["module_id"] is None
+    assert event["actor"] == {"kind": "infrastructure", "participant_id": None}
+    assert set(event["data"]) == {
+        "integration_id",
+        "status",
+        "reason_code",
+        "green_head_commit",
+        "integrated_module_ids",
+        "suspect_module_ids",
+        "conflicts",
+        "waiting_module_ids",
+        "gate_ids",
+    }
+    assert event["data"]["conflicts"] == [
+        {
+            "module_id": "mb",
+            "conflict_path_count": 3,
+            "attributed_module_ids": ["ma", "mb"],
+            "fell_back": False,
+        }
+    ]
+
+
+def test_integration_fixtures_invariants() -> None:
+    for name in SCENARIOS:
+        fixture = _fixture(name)
+        projection, summary = fixture["projection"], fixture["summary"]
+        assert summary["integrated_total"] <= summary["accepted_total"], name
+        assert summary["integration"] == {
+            "status": projection["integration"]["latest"]["status"]
+            if projection["integration"]["latest"] is not None
+            else None,
+            "green_head_commit": projection["integration"]["green_head_commit"],
+        }, name
+        assert summary["integrated_total"] == sum(
+            1
+            for module in projection["modules"]
+            if module["accepted"] is True
+            and module["integration"]["integrated_verification_id"] is not None
+            and module["integration"]["integrated_verification_id"]
+            == module["verification"]["verification_id"]
+        ), name
+        for module in projection["modules"]:
+            integration = module["integration"]
+            if integration["status"] == "integrated":
+                assert integration["integrated_verification_id"] is not None, name
+                assert (
+                    integration["integrated_verification_id"] == integration["verification_id"]
+                ), name
+        if name in INTEGRATION_SCENARIOS:
+            sidecar = _integration_fixture(name)
+            assert (
+                sidecar["integration_id"] == projection["integration"]["latest"]["integration_id"]
+            )
+            for module in projection["modules"]:
+                integration = module["integration"]
+                if (
+                    integration["status"] == "conflicted"
+                    and integration["integration_id"] == sidecar["integration_id"]
+                ):
+                    item = next(
+                        entry
+                        for entry in sidecar["items"]
+                        if entry["module_id"] == module["module_id"]
+                    )
+                    assert integration["conflict_path_count"] == item["conflicts_total"], name
+
+
+def test_integration_green_head_accepted(tmp_path: Path) -> None:
+    for name in INTEGRATION_SCENARIOS:
+        ctx = build_scenario(name, tmp_path)
+        with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+            facts = load_integration_facts(
+                conn,
+                ctx["conversation_id"],
+                reviews_on=ctx["store"].review_policy(ctx["conversation_id"]) == "cross_family",
+            )
+            ver_rows = {
+                str(row["verification_id"]): row
+                for row in conn.execute(
+                    "select verification_id, status from room_board_verifications "
+                    "where conversation_id = ?",
+                    (ctx["conversation_id"],),
+                ).fetchall()
+            }
+            endorsed = {
+                str(row["verification_id"])
+                for row in conn.execute(
+                    "select verification_id from room_board_reviews "
+                    "where conversation_id = ? and status = 'endorsed'",
+                    (ctx["conversation_id"],),
+                ).fetchall()
+            }
+        reviews_on = ctx["store"].review_policy(ctx["conversation_id"]) == "cross_family"
+        for module_id, vid in facts.green_applied.items():
+            assert vid in ver_rows, (name, module_id)
+            assert ver_rows[vid]["status"] == "passed", (name, module_id)
+            if reviews_on:
+                assert vid in endorsed, (name, module_id)
+
+
+def test_conflict_paths_only_in_integration_sidecars() -> None:
+    for name in SCENARIOS:
+        fixture = _fixture(name)
+        for module in fixture["projection"]["modules"]:
+            assert "conflicts" not in module["integration"], name
+            assert "path" not in module["integration"], name
+        for event in fixture["projection"]["events"]:
+            if event["kind"] != "integration":
+                continue
+            for conflict in event["data"]["conflicts"]:
+                assert "path" not in conflict, name
+        for event in fixture["events_page"]["events"]:
+            if event["kind"] != "integration":
+                continue
+            for conflict in event["data"]["conflicts"]:
+                assert "path" not in conflict, name
+        dumped_summary = json.dumps(fixture["summary"])
+        assert '"conflicts"' not in dumped_summary, name
+    for name in INTEGRATION_SCENARIOS:
+        sidecar = _integration_fixture(name)
+
+        def listed_paths(value: Any) -> list[str]:
+            found: list[str] = []
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key == "path" and isinstance(item, str):
+                        found.append(item)
+                    else:
+                        found.extend(listed_paths(item))
+            elif isinstance(value, list):
+                for item in value:
+                    found.extend(listed_paths(item))
+            return found
+
+        for path in listed_paths(sidecar):
+            assert not path.startswith("/"), (name, path)
+            assert not DRIVE_RE.match(path), (name, path)
+
+
+def test_existing_scenarios_change_only_by_section_10_fields() -> None:
+    """Pin the compatible-additions list: old scenarios gain exactly the keys
+    §10 names (capabilities.integrations, top-level integration,
+    Module.integration, AttentionItem.integration_id, the three counters, the
+    summary's integrated_total/integration, and revision) and nothing else."""
+
+    others = [name for name in SCENARIOS if name not in INTEGRATION_SCENARIOS]
+    assert others, "expected pre-integration scenarios"
+    for name in others:
+        fixture = _fixture(name)
+        projection, summary = fixture["projection"], fixture["summary"]
+        assert set(projection) == {
+            "attention",
+            "board_seq",
+            "capabilities",
+            "contracts",
+            "conversation_id",
+            "events",
+            "integration",
+            "metrics_version",
+            "modules",
+            "participants",
+            "review_policy",
+            "revision",
+            "schema_version",
+            "server_time",
+            "splits",
+            "stale_dependents",
+        }, name
+        assert set(projection["capabilities"]) == {
+            "verification",
+            "reviews",
+            "integrations",
+            "lessons",
+        }, name
+        assert projection["capabilities"]["integrations"] == 1, name
+        assert set(summary) == {
+            "accepted_total",
+            "attention",
+            "attention_total",
+            "board_seq",
+            "capabilities",
+            "conversation_id",
+            "counts",
+            "integrated_total",
+            "integration",
+            "modules_total",
+            "revision",
+            "schema_version",
+            "server_time",
+        }, name
+        for module in projection["modules"]:
+            assert set(module) == {
+                "accepted",
+                "attention",
+                "charter_version",
+                "counters",
+                "depends",
+                "integration",
+                "lifecycle",
+                "module_id",
+                "owner_participant_id",
+                "paths",
+                "provides",
+                "report_to",
+                "review",
+                "state",
+                "title",
+                "verification",
+            }, name
+            assert set(module["counters"]) == {
+                "done_reports",
+                "errored",
+                "failed",
+                "passed",
+                "reviews_endorsed",
+                "reviews_objected",
+                "rework_rounds",
+                "superseded",
+                "integrations_conflicted",
+                "integrations_gate_failed",
+                "conflict_fix_rounds",
+            }, name
+        for item in projection["attention"] + summary["attention"]:
+            assert set(item) == {
+                "kind",
+                "reason_code",
+                "module_id",
+                "split_id",
+                "integration_id",
+            }, name
+    fixture = _fixture("integration_integrated")
+    assert fixture["projection"]["integration"]["latest"]["status"] == "pending"
+    assert fixture["summary"]["integration"]["status"] == "pending"
+    assert fixture["summary"]["accepted_total"] == 2
+    # Only the newer candidate lags: m2 is already integrated at its current
+    # verification, m1 waits with its older version in the branch.
+    m1, m2 = _module(fixture, "m1"), _module(fixture, "m2")
+    assert m1["integration"]["status"] == "pending"
+    assert m1["integration"]["integrated_verification_id"] != m1["integration"]["verification_id"]
+    assert m2["integration"]["status"] == "integrated"
+    assert m2["integration"]["integrated_verification_id"] == m2["integration"]["verification_id"]
+    assert fixture["summary"]["integrated_total"] == 1
+    assert fixture["projection"]["attention"] == []
+
+
+def test_fixture_integration_pending_running() -> None:
+    fixture = _fixture("integration_pending_running")
+    assert _module(fixture, "m1")["integration"]["status"] == "running"
+    assert _module(fixture, "m2")["integration"]["status"] == "pending"
+    assert fixture["summary"]["integrated_total"] == 0
+    assert fixture["projection"]["attention"] == []
+
+
+def test_fixture_integration_conflicted() -> None:
+    fixture = _fixture("integration_conflicted")
+    assert _module(fixture, "ma")["integration"]["status"] == "integrated"
+    mb = _module(fixture, "mb")
+    assert mb["integration"]["status"] == "conflicted"
+    assert mb["integration"]["reason_code"] == "board_integration_conflict"
+    assert mb["integration"]["conflict_path_count"] == 1
+    assert mb["integration"]["integrated_verification_id"] is None
+    assert mb["counters"]["integrations_conflicted"] == 1
+    assert mb["counters"]["conflict_fix_rounds"] == 1
+    mc = _module(fixture, "mc")
+    assert mc["integration"]["status"] == "waiting"
+    assert mc["integration"]["reason_code"] == "board_integration_waiting_for_dependency"
+    assert mb["attention"] == {
+        "kind": "owner",
+        "reason_code": "board_attention_integration_conflict",
+    }
+    sidecar = _integration_fixture("integration_conflicted")
+    assert sidecar["status"] == "integrated"
+    conflicts = next(entry for entry in sidecar["items"] if entry["module_id"] == "mb")["conflicts"]
+    assert conflicts == [{"path": "docs/shared.txt", "attributed_module_ids": ["ma", "mb"]}]
+    event = next(
+        event
+        for event in fixture["projection"]["events"]
+        if event["kind"] == "integration"
+        and event["data"]["integration_id"] == sidecar["integration_id"]
+    )
+    assert event["module_id"] is None
+    assert event["actor"] == {"kind": "infrastructure", "participant_id": None}
+    assert event["data"]["conflicts"] == [
+        {
+            "module_id": "mb",
+            "conflict_path_count": 1,
+            "attributed_module_ids": ["ma", "mb"],
+            "fell_back": False,
+        }
+    ]
+    assert event["data"]["waiting_module_ids"] == ["mc"]
+
+
+def test_fixture_integration_fallback_to_incumbent() -> None:
+    fixture = _fixture("integration_fallback_to_incumbent")
+    m1 = _module(fixture, "m1")
+    assert m1["integration"]["status"] == "conflicted"
+    assert m1["integration"]["integrated_verification_id"] is not None
+    assert m1["integration"]["integrated_verification_id"] != m1["integration"]["verification_id"]
+    assert _module(fixture, "m2")["integration"]["status"] == "integrated"
+    assert fixture["summary"]["integrated_total"] == 1
+    sidecar = _integration_fixture("integration_fallback_to_incumbent")
+    assert sidecar["status"] == "integrated"
+    assert sidecar["green_head_commit"] == fixture["projection"]["integration"]["green_head_commit"]
+
+
+def test_fixture_integration_dependency_upgrade() -> None:
+    fixture = _fixture("integration_dependency_upgrade")
+    # The upgraded newcomer is the pinned culprit; the incumbent it depends
+    # on stays integrated: a newcomer never makes an incumbent conflicted.
+    assert _module(fixture, "m1")["integration"]["status"] == "conflicted"
+    assert _module(fixture, "m2")["integration"]["status"] == "integrated"
+    assert _module(fixture, "m1")["counters"]["integrations_conflicted"] == 1
+
+
+def test_fixture_integration_gate_failed() -> None:
+    fixture = _fixture("integration_gate_failed")
+    m2 = _module(fixture, "m2")
+    assert m2["integration"]["status"] == "gate_failed"
+    assert m2["integration"]["reason_code"] == "board_integration_gate_failed"
+    assert m2["integration"]["gate_ids"] == ["patch_diff_check"]
+    assert m2["counters"]["integrations_gate_failed"] == 1
+    assert _module(fixture, "m1")["integration"]["status"] == "integrated"
+    room_items = [item for item in fixture["projection"]["attention"] if item["integration_id"]]
+    assert room_items == [
+        {
+            "kind": "lead",
+            "reason_code": "board_attention_integration_gate_failed",
+            "module_id": None,
+            "split_id": None,
+            "integration_id": fixture["projection"]["integration"]["latest"]["integration_id"],
+        }
+    ]
+    sidecar = _integration_fixture("integration_gate_failed")
+    assert sidecar["status"] == "gate_failed"
+    assert sidecar["result_commit"] is None
+    assert sidecar["gates"][0]["status"] == "failed"
+    assert sidecar["gates"][0]["output_tail"]["untrusted"] is True
+
+
+def test_fixture_integration_error() -> None:
+    fixture = _fixture("integration_error")
+    assert _module(fixture, "m1")["integration"]["status"] == "error"
+    assert (
+        _module(fixture, "m1")["integration"]["reason_code"]
+        == "board_integration_attempts_exhausted"
+    )
+    room_items = [item for item in fixture["projection"]["attention"] if item["integration_id"]]
+    assert room_items == [
+        {
+            "kind": "operator",
+            "reason_code": "board_attention_integration_error",
+            "module_id": None,
+            "split_id": None,
+            "integration_id": fixture["projection"]["integration"]["latest"]["integration_id"],
+        }
+    ]
+
+
+def test_fixture_review_endorsed_integrated() -> None:
+    fixture = _fixture("review_endorsed_integrated")
+    assert fixture["projection"]["capabilities"]["reviews"] == 1
+    module = _module(fixture, "m1")
+    assert module["review"]["status"] == "endorsed"
+    assert module["accepted"] is True
+    assert module["integration"]["status"] == "integrated"
+    assert fixture["summary"]["integrated_total"] == 1
+
+
+def test_mcp_read_charters_carry_integration(tmp_path: Path) -> None:
+    ctx = build_scenario("integration_fallback_to_incumbent", tmp_path)
+    store = ctx["store"]
+    owner = ctx["members"][1]
+    view = store.read(
+        conversation_id=ctx["conversation_id"],
+        participant_id=owner.participant_id,
+        caller_identity=f"god:testsess:{owner.participant_id}",
+        observation_id=ctx["leases"][owner.participant_id]["observation_id"],
+        lease_token=ctx["leases"][owner.participant_id]["lease_token"],
+        client_request_id="read-integration-1",
+        now=NOW,
+    )
+    charters = {item["module_id"]: item for item in view["charters"]}
+    assert charters["m1"]["integration"]["status"] == "conflicted"
+    assert charters["m1"]["integration"]["conflict_path_count"] == 1
+    assert charters["m2"]["integration"]["status"] == "integrated"
+    dumped = json.dumps(view)
+    assert '"conflicts"' not in dumped
+
+
+def test_owner_view_carries_integration_and_markdown(tmp_path: Path) -> None:
+    ctx = build_scenario("integration_gate_failed", tmp_path)
+    owner = ctx["members"][2]
+    view = ctx["store"].owner_view(
+        conversation_id=ctx["conversation_id"], participant_id=owner.participant_id
+    )
+    mine = next(item for item in view["my_modules"] if item["module_id"] == "m2")
+    assert mine["integration"]["status"] == "gate_failed"
+    assert "conflicts" not in mine["integration"]
+    assert "path" not in mine["integration"]
+    target = tmp_path / "board-view"
+    target.mkdir()
+    materialize_owner_board_view(ctx["db"], ctx["conversation_id"], owner.participant_id, target)
+    charter_md = (target / "charter.md").read_text(encoding="utf-8")
+    assert "- Integration: gate_failed" in charter_md
+    assert "docs/" not in charter_md.split("- Integration:")[1].split("\n")[0]
+
+
+def test_revision_changes_when_integration_claimed_without_new_activity(
+    tmp_path: Path,
+) -> None:
+    ctx = build_scenario("verified", tmp_path)
+    store = ctx["store"]
+    assert store.ensure_board_integration_enqueued(ctx["conversation_id"], now=NOW) is not None
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        before = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    # Claiming pending -> running writes no activity, but flips the revision.
+    claimed = store.claim_next_board_integration(worker_id="w1", now=NOW)
+    assert claimed is not None
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        after = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    assert after["board_seq"] == before["board_seq"]
+    assert after["revision"] != before["revision"]
+    assert after["revision"].startswith(f"{after['board_seq']}:")
+    running = next(item for item in after["modules"] if item["module_id"] == "alpha")
+    assert running["integration"]["status"] == "running"
+
+
+def test_integration_detail_counts_invalid_paths_without_listing(tmp_path: Path) -> None:
+    ctx = build_scenario("verified", tmp_path)
+    store = ctx["store"]
+    assert store.ensure_board_integration_enqueued(ctx["conversation_id"], now=NOW) is not None
+    claimed = store.claim_next_board_integration(worker_id="w1", now=NOW)
+    assert claimed is not None
+    assert any(item["module_id"] == "alpha" for item in claimed["items"])
+    store.complete_board_integration(
+        integration_id=str(claimed["integration_id"]),
+        lease_token=str(claimed["lease_token"]),
+        status="conflicted",
+        reason_code="board_integration_conflict",
+        green_after=claimed["green_before"],
+        result_commit=None,
+        gates=[],
+        evidence={},
+        items=[
+            {
+                "module_id": "alpha",
+                "status": "conflicted",
+                "applied_verification_id": None,
+                "conflicts": [
+                    {"path": "src/alpha/a.py", "attributed_module_ids": ["alpha"]},
+                    {"path": "src/\u202ereversed.py", "attributed_module_ids": []},
+                ],
+                "conflicts_total": 2,
+                "reason_code": "board_integration_conflict",
+            }
+        ],
+        now=NOW,
+    )
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        detail = build_integration_detail(
+            conn, ctx["conversation_id"], str(claimed["integration_id"])
+        )
+    assert detail is not None
+    item = detail["items"][0]
+    # The bidirectional-control path is counted in conflicts_total but never
+    # listed, exactly like an invalid Finding.path.
+    assert item["conflicts_total"] == 2
+    assert item["conflicts"] == [{"path": "src/alpha/a.py", "attributed_module_ids": ["alpha"]}]
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        projection = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    module = next(item for item in projection["modules"] if item["module_id"] == "alpha")
+    assert module["integration"]["conflict_path_count"] == 2
+    event = next(event for event in projection["events"] if event["kind"] == "integration")
+    assert event["data"]["conflicts"][0]["conflict_path_count"] == 2
+    assert "path" not in event["data"]["conflicts"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -1127,6 +1952,17 @@ EVENT_DATA_KEYS = {
         "summary",
         "decided_via",
     },
+    "integration": {
+        "integration_id",
+        "status",
+        "reason_code",
+        "green_head_commit",
+        "integrated_module_ids",
+        "suspect_module_ids",
+        "conflicts",
+        "waiting_module_ids",
+        "gate_ids",
+    },
 }
 
 
@@ -1168,6 +2004,9 @@ def test_route_fixtures_privacy() -> None:
         doc = json.loads(path.read_text(encoding="utf-8"))
         _walk_privacy(doc, "$")
     for path in sorted(FIXTURE_DIR.glob("*.verification.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        _walk_privacy(doc, "$")
+    for path in sorted(FIXTURE_DIR.glob("*.integration.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
         _walk_privacy(doc, "$")
 

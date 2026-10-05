@@ -1,0 +1,41 @@
+{
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:10:40.000000Z",
+  "decided_at": "2026-01-01T00:15:10.000000Z",
+  "findings": [],
+  "head_commit": "26b45c2b40e2a9bdeac0d1344364fe7db251e866",
+  "module_id": "m1",
+  "review": {
+    "author_family": "codex",
+    "decided_via": "web",
+    "digest": "sha256:3426cb9b8f42e27644f67255b93b32c5ce760a47294ffc5e3a370d674350efb9",
+    "escalated_from": null,
+    "findings_count": {
+      "blocker": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "review_id": "boardreview_0000000000000000000000000000001d",
+    "reviewer_family": null,
+    "reviewer_kind": "operator",
+    "reviewer_participant_id": null,
+    "rule_id": "cross_family/v1",
+    "status": "endorsed",
+    "updated_at": "2026-01-01T00:15:10.000000Z",
+    "verification_id": "boardverify_00000000000000000000000000000019"
+  },
+  "rule_inputs": {
+    "author_family": "codex",
+    "author_participant_id": "part_00000000000000000000000000000003",
+    "eligible": [],
+    "last_reviewer_participant_id": null,
+    "picked_participant_id": null,
+    "rule_id": "cross_family/v1"
+  },
+  "schema_version": "room_board_review/v1",
+  "summary": {
+    "text": "looks good",
+    "truncated": false,
+    "untrusted": true
+  }
+}

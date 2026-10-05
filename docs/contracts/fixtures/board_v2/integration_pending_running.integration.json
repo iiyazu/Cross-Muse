@@ -1,0 +1,35 @@
+{
+  "attempt_count": 0,
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:40:10.000000Z",
+  "finished_at": null,
+  "gates": [],
+  "green_head_commit": null,
+  "integration_id": "boardintegration_0000000000000000000000000000002d",
+  "items": [
+    {
+      "applied_verification_id": null,
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m1",
+      "order": 1,
+      "role": "newcomer",
+      "status": "not_applied",
+      "verification_id": "boardverify_00000000000000000000000000000021"
+    },
+    {
+      "applied_verification_id": null,
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m2",
+      "order": 2,
+      "role": "newcomer",
+      "status": "not_applied",
+      "verification_id": "boardverify_00000000000000000000000000000029"
+    }
+  ],
+  "reason_code": null,
+  "result_commit": null,
+  "schema_version": "room_board_integration/v1",
+  "status": "pending"
+}
