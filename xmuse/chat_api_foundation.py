@@ -39,6 +39,10 @@ from xmuse_core.runtime.frontend_api import (
 
 DEFAULT_RUNTIME_RECONCILE_INTERVAL_S = 5.0
 DEFAULT_EXECUTION_RECONCILE_INTERVAL_S = 1.0
+# Plugin routes authenticate with scoped grant bearer tokens, never with the
+# operator token (contract plugin_grant_v1 section 4), so the write-auth
+# middleware below must let them through to their own checks.
+PLUGIN_WRITE_PATH_PREFIX = "/api/chat/plugin/"
 logger = logging.getLogger(__name__)
 
 
@@ -251,12 +255,11 @@ def create_chat_api_foundation(
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        write_with_auth = auth_token and request.method in {
-            "POST",
-            "PUT",
-            "PATCH",
-            "DELETE",
-        }
+        write_with_auth = (
+            auth_token
+            and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and not request.url.path.startswith(PLUGIN_WRITE_PATH_PREFIX)
+        )
         if auth_mode == "operator":
             authenticated = bool(auth_token and operator_token_matches(request, auth_token))
             detail: object = {
