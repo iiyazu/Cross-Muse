@@ -1,0 +1,11 @@
+{
+  "name": "xmuse",
+  "displayName": "xmuse board",
+  "description": "Read-only view of the xmuse collaboration board from the terminal.",
+  "version": "0.1.0",
+  "suggestedPrompts": [
+    "查看当前协作看板状态",
+    "看板上有哪些模块待我处理",
+    "列出看板模块表和待审批事项"
+  ]
+}
