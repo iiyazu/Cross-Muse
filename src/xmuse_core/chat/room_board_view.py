@@ -107,6 +107,23 @@ def _render_charter_md(
         state = entry.get("state")
         if isinstance(state, str) and state:
             lines.append(f"- State: {state}")
+        review = entry.get("review")
+        if isinstance(review, dict) and review.get("status"):
+            reviewer = review.get("reviewer_participant_id") or review.get("reviewer_kind")
+            lines.append(f"- Review: {review.get('status')} by {reviewer or 'unknown'}")
+            verdict = review.get("verdict")
+            if isinstance(verdict, dict) and verdict.get("summary"):
+                lines.append(f"  - Summary: {verdict.get('summary')}")
+                findings = verdict.get("findings")
+                if isinstance(findings, list) and findings:
+                    for finding in findings[:8]:
+                        if not isinstance(finding, dict):
+                            continue
+                        lines.append(
+                            f"  - Finding [{finding.get('severity')}]: {finding.get('text')}"
+                        )
+        else:
+            lines.append("- Review: none yet")
         lines.append("")
     lines.append("## Other modules")
     lines.append("")

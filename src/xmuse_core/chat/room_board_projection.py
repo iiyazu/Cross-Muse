@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -104,6 +105,83 @@ def _maybe_agent_text(value: Any, *, max_chars: int) -> dict[str, Any] | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return agent_text(value, max_chars=max_chars)
+
+
+_FINDING_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+MAX_REVIEW_FINDING_PATH_CHARS = 512
+
+
+def is_valid_finding_path(path: Any) -> bool:
+    """Return True when path satisfies the repository-relative finding path rule.
+
+    §3.10: path is null or a repository-relative path of at most 512 characters
+    with / separators — no leading /, no drive letter, no backslash, no . or ..
+    segment, no control characters and no Unicode format characters (category Cf,
+    which includes the bidirectional controls: a path must not be able to
+    display as a different file name).
+    """
+
+    if path is None:
+        return False
+    if not isinstance(path, str):
+        return False
+    if not path or not path.strip() or len(path) > MAX_REVIEW_FINDING_PATH_CHARS:
+        return False
+    if path.startswith("/") or "\\" in path or _FINDING_DRIVE_RE.match(path) is not None:
+        return False
+    if any(part in {"", ".", ".."} for part in path.split("/")):
+        return False
+    if any(
+        ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or unicodedata.category(char) == "Cf"
+        for char in path
+    ):
+        return False
+    return True
+
+
+def review_digest(
+    *,
+    review_id: str,
+    verification_id: str,
+    head_commit: str | None,
+    patch_text: str | None,
+) -> str:
+    """Return the ``Review.digest`` decision guard for one review."""
+
+    head = head_commit if isinstance(head_commit, str) else None
+    patch = patch_text if isinstance(patch_text, str) else ""
+    patch_sha256 = sha256(patch.encode("utf-8")).hexdigest()
+    canonical = json.dumps(
+        {
+            "head_commit": head,
+            "patch_sha256": patch_sha256,
+            "review_id": review_id,
+            "verification_id": verification_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _none_review() -> dict[str, Any]:
+    return {
+        "status": "none",
+        "review_id": None,
+        "verification_id": None,
+        "digest": None,
+        "rule_id": None,
+        "author_family": None,
+        "reviewer_kind": None,
+        "reviewer_participant_id": None,
+        "reviewer_family": None,
+        "escalated_from": None,
+        "findings_count": {"blocker": 0, "major": 0, "minor": 0},
+        "decided_via": None,
+        "updated_at": None,
+        "actions": {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +354,25 @@ def derive_state(lifecycle: str, verification_status: str) -> str:
     }[verification_status]
 
 
-def compute_counters(verification_statuses: Sequence[str], *, done_reports: int) -> dict[str, int]:
-    """Per-module metrics over the module id's whole history (M1 definitions)."""
+def derive_module_accepted(
+    *,
+    state: str,
+    reviews_capability: int,
+    review_status: str,
+) -> bool:
+    """Derive Module.accepted (§4.4): verified AND (reviews == 0 OR review == endorsed)."""
+
+    return (state == "verified") and (reviews_capability == 0 or review_status == "endorsed")
+
+
+def compute_counters(
+    verification_statuses: Sequence[str],
+    *,
+    done_reports: int,
+    reviews_endorsed: int = 0,
+    reviews_objected: int = 0,
+) -> dict[str, int]:
+    """Per-module metrics over the module id's whole history (M1/M2 definitions)."""
 
     counts = {"passed": 0, "failed": 0, "superseded": 0, "errored": 0}
     first_pass: int | None = None
@@ -303,6 +398,8 @@ def compute_counters(verification_statuses: Sequence[str], *, done_reports: int)
         "superseded": counts["superseded"],
         "errored": counts["errored"],
         "rework_rounds": rework_rounds,
+        "reviews_endorsed": reviews_endorsed,
+        "reviews_objected": reviews_objected,
     }
 
 
@@ -311,9 +408,11 @@ def derive_module_attention(
     lifecycle: str,
     verification_status: str,
     escalated: bool,
-    is_stale: bool,
+    review_status: str = "none",
+    review_reviewer_kind: str | None = None,
+    is_stale: bool = False,
 ) -> dict[str, Any]:
-    """Per-module attention precedence: the first matching row wins."""
+    """Per-module attention precedence (§3.8): the first matching row wins."""
 
     if verification_status == "error":
         return {"kind": "operator", "reason_code": "board_attention_verification_error"}
@@ -321,6 +420,10 @@ def derive_module_attention(
         return {"kind": "lead", "reason_code": "board_attention_verification_escalated"}
     if verification_status == "failed" and lifecycle == "done_claimed":
         return {"kind": "owner", "reason_code": "board_attention_verification_failed"}
+    if review_status == "pending" and review_reviewer_kind == "operator":
+        return {"kind": "operator", "reason_code": "board_attention_review_operator_pending"}
+    if review_status == "objected" and lifecycle == "done_claimed":
+        return {"kind": "owner", "reason_code": "board_attention_review_objected"}
     if lifecycle == "blocked":
         return {"kind": "lead", "reason_code": "board_attention_module_blocked"}
     if is_stale:
@@ -427,6 +530,8 @@ _EVENT_KINDS = (
     "progress",
     "question",
     "verification",
+    "review_requested",
+    "review",
 )
 
 _ACTIVITY_TO_EVENT = {
@@ -439,17 +544,34 @@ _ACTIVITY_TO_EVENT = {
     "board.progress": "progress",
     "board.question": "question",
     "board.verification": "verification",
+    "board.review_requested": "review_requested",
+    "board.review": "review",
 }
 
 
-def _actor(row: Mapping[str, Any]) -> dict[str, Any]:
-    kind = str(row.get("actor_kind", ""))
-    if kind not in ("participant", "operator", "infrastructure"):
-        kind = "infrastructure"
+def _actor(
+    row: Mapping[str, Any],
+    kind: str | None = None,
+    payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if kind == "review_requested":
+        return {"kind": "infrastructure", "participant_id": None}
+    actor_kind = str(row.get("actor_kind", ""))
+    if kind == "review":
+        if actor_kind == "participant":
+            pid = row.get("actor_participant_id") or (
+                payload.get("reviewer_participant_id") if payload else None
+            )
+            return {"kind": "participant", "participant_id": str(pid) if pid else None}
+        return {"kind": "operator", "participant_id": None}
+    if actor_kind not in ("participant", "operator", "infrastructure"):
+        actor_kind = "infrastructure"
     participant_id = row.get("actor_participant_id")
     return {
-        "kind": kind,
-        "participant_id": str(participant_id) if kind == "participant" and participant_id else None,
+        "kind": actor_kind,
+        "participant_id": str(participant_id)
+        if actor_kind == "participant" and participant_id
+        else None,
     }
 
 
@@ -559,12 +681,83 @@ def project_event(activity_row: Mapping[str, Any]) -> dict[str, Any] | None:
             "escalated": bool(escalated) if isinstance(escalated, bool) else False,
             "stacked": clean_stacked,
         }
+    elif kind == "review_requested":
+        module_id = str(payload.get("module_id")) if payload.get("module_id") is not None else None
+        esc = payload.get("escalated_from")
+        clean_esc = (
+            {
+                "participant_id": str(esc["participant_id"]),
+                "family": str(esc["family"]),
+                "reason_code": str(esc["reason_code"]),
+                "at": str(esc["at"]),
+            }
+            if isinstance(esc, dict)
+            else None
+        )
+        data = {
+            "review_id": str(payload.get("review_id")),
+            "verification_id": str(payload.get("verification_id")),
+            "rule_id": str(payload.get("rule_id")),
+            "author_family": str(payload.get("author_family")),
+            "reviewer_kind": str(payload.get("reviewer_kind")),
+            "reviewer_participant_id": (
+                str(payload.get("reviewer_participant_id"))
+                if payload.get("reviewer_participant_id") is not None
+                else None
+            ),
+            "reviewer_family": (
+                str(payload.get("reviewer_family"))
+                if payload.get("reviewer_family") is not None
+                else None
+            ),
+            "escalated_from": clean_esc,
+        }
+    elif kind == "review":
+        module_id = str(payload.get("module_id")) if payload.get("module_id") is not None else None
+        raw_findings = payload.get("findings", [])
+        findings_list = raw_findings if isinstance(raw_findings, list) else []
+        clean_findings = []
+        for f in findings_list[:8]:
+            if not isinstance(f, dict):
+                continue
+            p = f.get("path")
+            clean_path = p if is_valid_finding_path(p) else None
+            clean_findings.append(
+                {
+                    "severity": str(f.get("severity")),
+                    "path": clean_path,
+                    "text": agent_text(f.get("text"), max_chars=200),
+                }
+            )
+        findings_count = {
+            "blocker": sum(
+                1 for f in findings_list if isinstance(f, dict) and f.get("severity") == "blocker"
+            ),
+            "major": sum(
+                1 for f in findings_list if isinstance(f, dict) and f.get("severity") == "major"
+            ),
+            "minor": sum(
+                1 for f in findings_list if isinstance(f, dict) and f.get("severity") == "minor"
+            ),
+        }
+        decided_via = payload.get("decided_via")
+        if not decided_via:
+            decided_via = "board_tool" if activity_row.get("actor_kind") == "participant" else "web"
+        data = {
+            "review_id": str(payload.get("review_id")),
+            "verdict": str(payload.get("verdict")),
+            "findings_count": findings_count,
+            "findings": clean_findings,
+            "findings_total": len(findings_list),
+            "summary": agent_text(payload.get("summary"), max_chars=400),
+            "decided_via": str(decided_via),
+        }
     return {
         "seq": int(activity_row.get("seq", 0)),
         "kind": kind,
         "at": str(activity_row.get("created_at")),
         "module_id": module_id,
-        "actor": _actor(activity_row),
+        "actor": _actor(activity_row, kind, payload),
         "data": data,
     }
 
@@ -739,6 +932,17 @@ def build_board_projection(
 
     policy = collaboration_policy_row(conn, conversation_id)
     lead = str(policy["lead_participant_id"]) if policy and policy["lead_participant_id"] else None
+    review_policy = (
+        str(policy["review_policy"])
+        if policy and "review_policy" in policy.keys() and policy["review_policy"]
+        else "off"
+    )
+    capabilities = {
+        "verification": 1,
+        "reviews": 1 if review_policy == "cross_family" else 0,
+        "integrations": 0,
+        "lessons": 0,
+    }
     participant_rows = conn.execute(
         "select * from participants where conversation_id = ? order by participant_id",
         (conversation_id,),
@@ -795,10 +999,24 @@ def build_board_projection(
     ).fetchall()
     verifications_by_module: dict[str, list[VerificationFact]] = {}
     verification_statuses: dict[str, list[str]] = {}
+    patch_by_verification: dict[str, str] = {}
     for row in verification_rows:
         module_id = str(row["module_id"])
         verifications_by_module.setdefault(module_id, []).append(_verification_fact(row))
         verification_statuses.setdefault(module_id, []).append(str(row["status"]))
+        patch_by_verification[str(row["verification_id"])] = (
+            str(row["patch_text"]) if row["patch_text"] else ""
+        )
+
+    review_rows = conn.execute(
+        "select * from room_board_reviews where conversation_id = ? order by created_at, rowid",
+        (conversation_id,),
+    ).fetchall()
+    reviews_by_verification: dict[str, sqlite3.Row] = {}
+    reviews_by_module: dict[str, list[sqlite3.Row]] = {}
+    for r_row in review_rows:
+        reviews_by_verification[str(r_row["verification_id"])] = r_row
+        reviews_by_module.setdefault(str(r_row["module_id"]), []).append(r_row)
 
     contract_rows = conn.execute(
         "select * from room_board_contracts where conversation_id = ? "
@@ -871,11 +1089,107 @@ def build_board_projection(
             charter_created_at=str(row["created_at"]),
             jobs=verifications_by_module.get(module_id, []),
         )
+        curr_v_id = axis["verification_id"]
+        r_row = reviews_by_verification.get(curr_v_id) if curr_v_id else None
+        if (
+            r_row is not None
+            and str(r_row["status"]) in ("pending", "endorsed", "objected")
+            and axis["status"] != "none"
+        ):
+            review_id = str(r_row["review_id"])
+            r_status = str(r_row["status"])
+            r_kind = str(r_row["reviewer_kind"])
+            r_pid = (
+                str(r_row["reviewer_participant_id"]) if r_row["reviewer_participant_id"] else None
+            )
+            r_fam = str(r_row["reviewer_family"]) if r_row["reviewer_family"] else None
+            r_rule = str(r_row["rule_id"])
+            r_author_fam = str(r_row["author_family"])
+            raw_esc = _decode(str(r_row["escalation_json"])) if r_row["escalation_json"] else None
+            r_esc = (
+                {
+                    "participant_id": str(raw_esc["participant_id"]),
+                    "family": str(raw_esc["family"]),
+                    "reason_code": str(raw_esc["reason_code"]),
+                    "at": str(raw_esc["at"]),
+                }
+                if isinstance(raw_esc, dict)
+                else None
+            )
+            r_decided_via = str(r_row["decided_via"]) if r_row["decided_via"] else None
+            r_updated_at = str(r_row["updated_at"])
+            verdict_data = _decode(str(r_row["verdict_json"])) if r_row["verdict_json"] else None
+            findings = verdict_data.get("findings", []) if isinstance(verdict_data, dict) else []
+            r_findings_count = {
+                "blocker": sum(
+                    1
+                    for item in findings
+                    if isinstance(item, dict) and item.get("severity") == "blocker"
+                ),
+                "major": sum(
+                    1
+                    for item in findings
+                    if isinstance(item, dict) and item.get("severity") == "major"
+                ),
+                "minor": sum(
+                    1
+                    for item in findings
+                    if isinstance(item, dict) and item.get("severity") == "minor"
+                ),
+            }
+            raw_patch = patch_by_verification.get(curr_v_id, "")
+            r_digest = review_digest(
+                review_id=review_id,
+                verification_id=curr_v_id,
+                head_commit=axis["head_commit"],
+                patch_text=raw_patch,
+            )
+            actions: dict[str, Any] = {}
+            if r_status == "pending" and r_kind == "operator":
+                actions = {
+                    "decide": {
+                        "available": True,
+                        "method": "POST",
+                        "href": f"/api/chat/operator/board-reviews/{review_id}/decision",
+                        "expected_digest": r_digest,
+                        "allowed_verdicts": ["endorse", "object"],
+                    },
+                    "material": {"available": True},
+                }
+            module_review = {
+                "status": r_status,
+                "review_id": review_id,
+                "verification_id": curr_v_id,
+                "digest": r_digest,
+                "rule_id": r_rule,
+                "author_family": r_author_fam,
+                "reviewer_kind": r_kind,
+                "reviewer_participant_id": r_pid,
+                "reviewer_family": r_fam,
+                "escalated_from": r_esc,
+                "findings_count": r_findings_count,
+                "decided_via": r_decided_via,
+                "updated_at": r_updated_at,
+                "actions": actions,
+            }
+        else:
+            module_review = _none_review()
+
+        mod_reviews = reviews_by_module.get(module_id, [])
+        reviews_endorsed = sum(1 for r in mod_reviews if str(r["status"]) == "endorsed")
+        reviews_objected = sum(1 for r in mod_reviews if str(r["status"]) == "objected")
         counters = compute_counters(
             verification_statuses.get(module_id, []),
             done_reports=done_counts.get(module_id, 0),
+            reviews_endorsed=reviews_endorsed,
+            reviews_objected=reviews_objected,
         )
         state = derive_state(lifecycle, str(axis["status"]))
+        accepted = derive_module_accepted(
+            state=state,
+            reviews_capability=int(capabilities["reviews"]),
+            review_status=str(module_review["status"]),
+        )
         modules.append(
             {
                 "module_id": module_id,
@@ -894,6 +1208,8 @@ def build_board_projection(
                 "verification": axis,
                 "counters": counters,
                 "state": state,
+                "review": module_review,
+                "accepted": accepted,
                 "attention": {"kind": "none", "reason_code": None},
             }
         )
@@ -910,6 +1226,8 @@ def build_board_projection(
             lifecycle=str(module["lifecycle"]),
             verification_status=str(module["verification"]["status"]),
             escalated=bool(module["verification"]["escalated"]),
+            review_status=str(module["review"]["status"]),
+            review_reviewer_kind=module["review"]["reviewer_kind"],
             is_stale=module["module_id"] in stale_module_ids,
         )
         module["attention"] = item
@@ -964,7 +1282,8 @@ def build_board_projection(
         "server_time": _stamp(now),
         "board_seq": board_seq,
         "revision": "",
-        "capabilities": {"verification": 1, "reviews": 0, "integrations": 0, "lessons": 0},
+        "capabilities": capabilities,
+        "review_policy": review_policy,
         "participants": participants,
         "modules": modules,
         "contracts": contracts,
@@ -986,6 +1305,9 @@ def build_board_summary(projection: Mapping[str, Any]) -> dict[str, Any]:
         if state in counts:
             counts[state] += 1
     attention = list(projection.get("attention", []))
+    accepted_total = sum(
+        1 for module in projection.get("modules", []) if module.get("accepted") is True
+    )
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "conversation_id": projection.get("conversation_id"),
@@ -995,6 +1317,7 @@ def build_board_summary(projection: Mapping[str, Any]) -> dict[str, Any]:
         "capabilities": dict(projection.get("capabilities", {})),
         "modules_total": len(list(projection.get("modules", []))),
         "counts": counts,
+        "accepted_total": accepted_total,
         "attention_total": len(attention),
         "attention": attention[:5],
     }

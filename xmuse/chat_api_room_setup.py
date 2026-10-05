@@ -166,6 +166,7 @@ def _room_setup_options(
         "schema_version": "room_setup_options/v1",
         "default_roster_template_id": DEFAULT_ROOM_ROSTER_TEMPLATE_ID,
         "roster_templates": projected,
+        "review_policies": ["off", "cross_family"],
     }
 
 
