@@ -11,6 +11,7 @@ import sys
 import time
 
 from . import api, binding
+from . import hook as hook_module
 from .render import (
     board_json,
     board_text,
@@ -211,6 +212,12 @@ def _cmd_board(base: str, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_hook(base: str, args: argparse.Namespace) -> int:
+    host = args.host if isinstance(args.host, str) else ""
+    event = args.event if isinstance(args.event, str) else ""
+    return hook_module.main_hook(host, event, base)
+
+
 def _fetch_events(
     base: str, conversation_id: str, after_seq: int, wait: int, revision: str | None
 ) -> dict[str, object]:
@@ -314,6 +321,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch_p = sub.add_parser("watch", parents=[common], help="long-poll board events")
     watch_p.add_argument("--once", action="store_true", help="print new events once and exit")
     watch_p.set_defaults(func=_cmd_watch)
+    hook_p = sub.add_parser("hook", help="opt-in status line for agy/dsh hooks")
+    hook_p.add_argument("--host", default="", help="host the line is injected into: agy or dsh")
+    hook_p.add_argument("--event", default="UserPromptSubmit", help="dsh hook event name")
+    hook_p.add_argument("--api-base", default=None, help="xmuse chat API base URL (loopback only)")
+    hook_p.set_defaults(func=_cmd_hook)
     return parser
 
 
@@ -334,6 +346,14 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(exc.code, int):
             return exc.code
         return 2
+    if getattr(args, "command", None) == "hook":
+        # The hook is the only command that always exits 0 and stays
+        # silent on stderr: even a refused base URL yields "{}".
+        try:
+            return _cmd_hook(_api_base(args), args)
+        except Exception:
+            print("{}")
+            return 0
     base = _api_base(args)
     if not api.is_loopback_base(base):
         print("base URL must be loopback", file=sys.stderr)
