@@ -1244,6 +1244,12 @@ def test_remix_driver_runs_fixed_entrypoints_per_package_and_never_passes_unchec
         "await import('@remix-run/headers', { with: { type: 'json' } })\n",
         # Production code pulling in the runner's own (unscanned) tests.
         "import { fixture } from '../test/e2e.ts'\n",
+        # Comment markers inside strings never hide code.
+        'const a = "/*"; const e = require("@remix-run/headers"); const b = "*/"\n',
+        'const a = " // "; const e = require("@remix-run/headers")\n',
+        # Template literals are specifiers too.
+        "const x = require(`../../../headers/src/index.ts`)\n",
+        "const x = await import(`@remix-run/headers`)\n",
     ],
 )
 def test_remix_runner_closure_rejects_imports_of_candidate_writable_code(
@@ -1268,7 +1274,9 @@ def test_remix_runner_closure_allows_itself_installed_deps_comments_and_own_test
         "import { load } from '../../../node-tsx/src/load-module.ts'\n"
         "import picomatch from 'picomatch'\n"
         "/** import { runRemixTest } from 'remix/test/cli' */\n"
-        "// import { Headers } from '@remix-run/headers'\n",
+        "// import { Headers } from '@remix-run/headers'\n"
+        "const re = /['\"`]remix\\/x['\"`]/g; const n = 4 / 2 / 1\n"
+        "const t = `${'@remix-run/assert'} ok`\n",
         encoding="utf-8",
     )
     # The runner's own tests and fixtures are never loaded for another package.

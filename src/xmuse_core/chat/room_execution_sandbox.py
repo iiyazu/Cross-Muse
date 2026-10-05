@@ -41,22 +41,19 @@ REMIX_GATE_DRIVER_MOUNT = "/xmuse-gate/remix_monorepo_gate.mjs"
 REMIX_GATE_IDS = frozenset({"node_pnpm_remix_typecheck", "node_pnpm_remix_test"})
 _REMIX_PACKAGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 _REMIX_SOURCE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs")
-_REMIX_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
-_REMIX_LINE_COMMENT_RE = re.compile(r"(?m)(^|\s)//.*$")
-# Every module-loading form Node executes with a literal specifier: static
-# import/export-from (any spacing), side-effect imports, dynamic import() (with
-# optional attributes) and CommonJS require()/createRequire()(...)'s require.
-_REMIX_IMPORT_RE = re.compile(
-    r"""(?<![\w$.])(?:import|export)\b[^'";]*?\bfrom\s*['"]([^'"]+)['"]"""
-    r"""|(?<![\w$.])import\s*['"]([^'"]+)['"]"""
-    r"""|(?<![\w$.])import\s*\(\s*['"]([^'"]+)['"]\s*[,)]"""
-    r"""|(?<![\w$.])require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+# Literal module loads in lexed code (strings replaced by placeholders, see
+# _lex_js): static import/export-from, side-effect imports, import() with
+# optional attributes, require() and createRequire(...)(...).
+_REMIX_LOAD_RE = re.compile(
+    r"(?<![\w$.])(?:import|export)\b[^;]*?\bfrom\s*\x00(\d+)\x00"
+    r"|(?<![\w$.])import\s*\x00(\d+)\x00"
+    r"|(?<![\w$.])import\s*\(\s*\x00(\d+)\x00\s*[,)]"
+    r"|(?<![\w$.])require\s*\(\s*\x00(\d+)\x00\s*\)"
+    r"|\)\s*\(\s*\x00(\d+)\x00\s*\)"
 )
-# Any workspace specifier written as a string literal, whatever loads it
-# (createRequire()(...), a variable, a helper): it must name a frozen package.
-_REMIX_WORKSPACE_LITERAL_RE = re.compile(
-    r"""['"`](@remix-run/[^'"`\s]*|remix(?:/[^'"`\s]*)?)['"`]"""
-)
+_REMIX_WORKSPACE_SPECIFIER_RE = re.compile(r"@remix-run/[^\s]*|remix(?:/[^\s]*)?")
+_JS_REGEX_PRECEDERS = frozenset("(,=:[!&|?{};+-*%<>~^")
+_JS_REGEX_KEYWORDS = frozenset({"return", "typeof", "case", "do", "else", "in", "of", "void"})
 _MAX_REMIX_RUNNER_FILES = 2_000
 SANDBOX_ACTIVE_ENV = "XMUSE_EXECUTION_SANDBOX_ACTIVE"
 DEFAULT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
@@ -643,6 +640,128 @@ def _remix_runner_contract(root: Path) -> dict[str, object]:
     return {"runner_entry": REMIX_RUNNER_ENTRY, "runner_files": _canonical_digest(files)}
 
 
+def _lex_js(text: str) -> tuple[str, list[str]]:
+    """Strip comments and lift string literals out of JavaScript/TypeScript.
+
+    Returns the code with every comment removed and every string or template
+    literal replaced by ``\x00<index>\x00``, plus the literal values (template
+    ``${...}`` parts are lexed as code).  A ``/`` starts a regex literal only
+    where an expression may begin, so quotes or comment markers inside strings,
+    templates and regexes never hide or invent code.
+    """
+
+    out: list[str] = []
+    literals: list[str] = []
+    i, n = 0, len(text)
+    template_depth: list[int] = []  # brace depth at each open ${
+
+    def previous_significant() -> str:
+        joined = "".join(out[-40:]).rstrip()
+        return joined[-1:] if joined else ""
+
+    def previous_word() -> str:
+        match = re.search(r"([A-Za-z_$][\w$]*)\s*$", "".join(out[-40:]))
+        return match.group(1) if match else ""
+
+    def read_template(start: int) -> int:
+        # Reads from just after a backtick (or a closing brace of ${}) to the
+        # next ${ or the closing backtick; returns the index after it.
+        j = start
+        chunk: list[str] = []
+        while j < n:
+            ch = text[j]
+            if ch == "\\":
+                chunk.append(text[j : j + 2])
+                j += 2
+                continue
+            if ch == "`":
+                literals.append("".join(chunk))
+                out.append(f"\x00{len(literals) - 1}\x00")
+                return j + 1
+            if ch == "$" and text[j + 1 : j + 2] == "{":
+                literals.append("".join(chunk))
+                out.append(f"\x00{len(literals) - 1}\x00(")
+                template_depth.append(0)
+                return j + 2
+            chunk.append(ch)
+            j += 1
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1 : i + 2]
+        if ch == "/" and nxt == "/":
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if ch == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            if end < 0:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            out.append(" ")
+            i = end + 2
+            continue
+        if ch in "'\"":
+            j = i + 1
+            chunk: list[str] = []
+            while j < n and text[j] != ch:
+                if text[j] == "\\":
+                    chunk.append(text[j + 1 : j + 2])
+                    j += 2
+                    continue
+                if text[j] == "\n":
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+                chunk.append(text[j])
+                j += 1
+            if j >= n:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            literals.append("".join(chunk))
+            out.append(f"\x00{len(literals) - 1}\x00")
+            i = j + 1
+            continue
+        if ch == "`":
+            i = read_template(i + 1)
+            continue
+        if template_depth and ch == "{":
+            template_depth[-1] += 1
+        elif template_depth and ch == "}":
+            if template_depth[-1] == 0:
+                template_depth.pop()
+                out.append(")")
+                i = read_template(i + 1)
+                continue
+            template_depth[-1] -= 1
+        if ch == "/" and (
+            previous_significant() in _JS_REGEX_PRECEDERS
+            or previous_significant() == ""
+            or previous_word() in _JS_REGEX_KEYWORDS
+        ):
+            j, in_class = i + 1, False
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "\n":
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+                if text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                elif text[j] == "/" and not in_class:
+                    break
+                j += 1
+            out.append(" /regex/ ")
+            i = j + 1
+            while i < n and (text[i].isalnum() or text[i] == "_"):
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    if template_depth:
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    return "".join(out), literals
+
+
 def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
     """Prove the frozen runner only imports itself and installed dependencies.
 
@@ -662,10 +781,9 @@ def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
             continue
         if ".test." in pure.name or "test" in pure.parts[3:-1]:
             continue
-        text = (root / name).read_text(encoding="utf-8", errors="replace")
-        text = _REMIX_LINE_COMMENT_RE.sub(r"\1", _REMIX_BLOCK_COMMENT_RE.sub(" ", text))
-        for match in _REMIX_IMPORT_RE.finditer(text):
-            spec = next((group for group in match.groups() if group), "")
+        code, literals = _lex_js((root / name).read_text(encoding="utf-8", errors="replace"))
+        for match in _REMIX_LOAD_RE.finditer(code):
+            spec = literals[int(next(group for group in match.groups() if group))]
             if spec.startswith("."):
                 target = PurePosixPath(os.path.normpath(str(pure.parent / spec)))
                 # Inside the frozen packages, and never into the skipped runner
@@ -680,8 +798,9 @@ def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
                 raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
             elif spec.startswith("@remix-run/") and spec.split("/")[1] not in frozen:
                 raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
-        for match in _REMIX_WORKSPACE_LITERAL_RE.finditer(text):
-            literal = match.group(1)
+        for literal in literals:
+            if _REMIX_WORKSPACE_SPECIFIER_RE.fullmatch(literal) is None:
+                continue
             if literal == "remix" or literal.startswith("remix/"):
                 raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
             if literal.split("/")[1] not in frozen:
