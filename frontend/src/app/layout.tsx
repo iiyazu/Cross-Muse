@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 
-import { ChatWorkspace } from "@/components/chat-workspace";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,10 +13,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" data-theme="dark">
-      <body>
-        <ChatWorkspace />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,11 +1,13 @@
-@import "../styles/tokens.css";
-@import "../styles/base.css";
-@import "../styles/tailwind.css";
-@import "../styles/agent-console.css";
-@import "../styles/workbench.css";
-@import "../styles/shell.css";
-@import "../styles/conversation.css";
-@import "../styles/domain-panels.css";
-@import "../styles/board.css";
-@import "../styles/grants.css";
-@import "../styles/responsive.css";
+/*
+ * The presentation layer was removed on purpose; the new one starts from here.
+ * Kept as a file because backend tooling (the execution profile acceptance script) names
+ * frontend/src/app/globals.css as the frontend's canonical stylesheet path.
+ */
+:root {
+  color-scheme: dark light;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
