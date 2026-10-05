@@ -24,10 +24,25 @@ async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, headers: corsHeaders, body: JSON.stringify(body) });
 }
 
-async function installBoardFixture(page: Page, scenario: "verified" | "verification_failed_rework" | "split_pending") {
-  const { projection, summary } = boardFixture(
-    scenario === "verified" ? "verified.json" : scenario === "split_pending" ? "split_pending.json" : "verification_failed_rework.json"
-  );
+async function installBoardFixture(page: Page, scenario: "verified" | "verification_failed_rework" | "split_pending" | "integration_fallback_to_incumbent") {
+  const fixtureFile =
+    scenario === "verified"
+      ? "verified.json"
+      : scenario === "split_pending"
+        ? "split_pending.json"
+        : scenario === "integration_fallback_to_incumbent"
+          ? "integration_fallback_to_incumbent.json"
+          : "verification_failed_rework.json";
+  const { projection, summary } = boardFixture(fixtureFile);
+  let integrationDetail: unknown = null;
+  if (scenario === "integration_fallback_to_incumbent") {
+    integrationDetail = JSON.parse(
+      fs.readFileSync(
+        path.join(FIXTURE_DIR, "integration_fallback_to_incumbent.integration.json"),
+        "utf8"
+      )
+    );
+  }
   const boardProjection =
     scenario === "verified"
       ? withSyntheticDoneClaimed(structuredClone(projection) as Record<string, unknown>)
@@ -185,6 +200,14 @@ async function installBoardFixture(page: Page, scenario: "verified" | "verificat
       await json(route, summary);
       return;
     }
+    if (url.pathname.includes("/board/integrations/")) {
+      if (integrationDetail) {
+        await json(route, integrationDetail);
+        return;
+      }
+      await json(route, { detail: { code: "fixture_route_missing", message: url.pathname } }, 404);
+      return;
+    }
     if (url.pathname === "/api/chat/conversations/conv-1/board") {
       await json(route, boardProjection);
       return;
@@ -275,6 +298,25 @@ test("board panel surfaces failed gates and rework rounds", async ({ page }) => 
   ).toHaveAttribute("data-state", "verification_failed");
   await expect(board).toContainText("patch_diff_check");
   await expect(board).toContainText("返工");
+});
+
+test("board panel shows integration chip, totals and conflict detail", async ({ page }) => {
+  await installBoardFixture(page, "integration_fallback_to_incumbent");
+  await page.goto("/rooms/conv-1");
+  await page.getByRole("button", { name: /工作台/ }).click();
+  const inspector = page.locator(".room-inspector");
+  await inspector.getByRole("tab", { name: "Room" }).click();
+  const board = inspector.getByRole("region", { name: "协作看板" });
+  await expect(board).toBeVisible();
+  // m1 conflicted at an older integrated version: honest chip text, never 已集成.
+  const m1 = board.getByRole("article", { name: "模块 m1" });
+  await expect(m1).toContainText("集成冲突 · 1 个路径");
+  await expect(m1).toContainText("分支中是旧版本");
+  // Reviews are off here, so the summary line counts verified alongside integrated.
+  await expect(board).toContainText("已验证 3");
+  await expect(board).toContainText("已集成 2");
+  await m1.getByText("集成详情").click();
+  await expect(m1).toContainText("docs/b.txt");
 });
 
 test("board panel approves a proposed split through the fixed decision route", async ({ page }) => {
