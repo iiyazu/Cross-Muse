@@ -83,6 +83,7 @@ const ATTENTION_REASON_LABELS: Record<string, string> = {
 const REASON_CODE_LABELS: Record<string, string> = {
   ...ATTENTION_REASON_LABELS,
   board_verification_gate_failed: "门禁未通过",
+  execution_gate_failed: "门禁未通过",
   board_verification_outside_charter: "超出章程范围",
   board_verification_waiting_for_provider: "等待上游模块",
   board_verification_dependency_overlap: "依赖重叠",

@@ -83,6 +83,10 @@ describe("board labels", () => {
     }
   });
 
+  it("labels the execution gate code that integration gate results carry", () => {
+    expect(boardReasonLabel("execution_gate_failed")).toBe("门禁未通过");
+  });
+
   it("renders unknown codes through the explicit unknown path", () => {
     expect(boardReasonLabel("some_future_code")).toBe("未知原因（some_future_code）");
     expect(boardAttentionReasonLabel("future_attention")).toBe("未知原因（future_attention）");
