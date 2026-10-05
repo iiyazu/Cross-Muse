@@ -69,9 +69,45 @@ object instead (same structured fields, same filtering).
   only from structured fields, never from agent text. Errors back off
   (1, 2, 4 … 30 s); Ctrl-C stops cleanly with exit 0. `--once` prints
   events after the current `board_seq` once and exits (for tests).
+- `hook --host agy|dsh [--event EVENT]` — one structured status line
+  for opt-in command hooks (see `hook` below). Reads one JSON object
+  from stdin, prints exactly one JSON object on stdout, always exits 0.
 
 Common options: `--room ID|PREFIX` (overrides the binding), `--json`,
 `--api-base`.
+
+## `hook` (opt-in status line for agy/dsh)
+
+`xmuse-ctl hook --host agy|dsh [--event EVENT]` feeds the agy
+`PreInvocation` hook and the dsh bridge (`UserPromptSubmit` /
+`SessionStart`). It is off unless the host enables it; there is no
+band or pane. It resolves the room from the binding of the working
+directory the payload names (dsh: the payload's `cwd`; agy: the first
+of `workspacePaths`; otherwise the process cwd). Unbound means `{}`.
+
+What it can say: exactly the `status` one-line text prefixed `[xmuse] `,
+plus up to 3 operator attention entries (`label target` with fixed
+reason-code words and sanitized ids), total length ≤ 300 characters.
+That is the only content it can emit: counts, state codes, labels and
+ids only. Module titles, review summaries, finding text, event snippets
+and gate output stay on the server — the hook never injects agent text.
+
+When it speaks: only when the operator attention set changed since the
+last emission for this room, only when at least one operator item
+exists, and at most once per 30 seconds. Otherwise it prints `{}`.
+Emission state lives in
+`${XDG_STATE_HOME:-~/.local/state}/xmuse-ctl/hook-state.json`
+(`{conversation_id: {"signature": ..., "at": epoch}}`, written
+atomically, file 0600, directory 0700).
+
+Output shapes: `--host agy` prints
+`{"injectSteps":[{"ephemeralMessage":"<line>"}]}`; `--host dsh` prints
+`{"hookSpecificOutput":{"hookEventName":"<EVENT>","additionalContext":"<line>"}}`
+(`--event` accepts `UserPromptSubmit` and `SessionStart` only, default
+`UserPromptSubmit`). stdin is capped at 64 KiB and its content is
+ignored except for the directory hints; malformed or oversized input
+counts as `{}`. Every failure (offline, unbound, bad shape, refused
+base URL, unwritable state) prints `{}` with exit 0 and empty stderr.
 
 ## Exit codes
 
@@ -109,6 +145,7 @@ xmuse_ctl/
   labels.py        fixed state/review/reason/event words
   binding.py       cwd <-> room bindings file
   render.py        structured text + JSON builders
+  hook.py          opt-in status line for agy/dsh hooks (always exit 0)
   cli.py           argument parsing + commands (main)
 README.md          this file
 ```

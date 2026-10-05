@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "xmuse-ctl hook --host dsh --event UserPromptSubmit",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "xmuse-ctl hook --host dsh --event SessionStart",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
