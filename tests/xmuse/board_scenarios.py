@@ -1662,6 +1662,63 @@ def _scenario_integration_error(tmp_path: Path) -> dict[str, Any]:
         return ctx
 
 
+def _scenario_integration_demo(tmp_path: Path) -> dict[str, Any]:
+    """One room that shows every finished per-module integration state at once.
+
+    For demos and UI acceptance (``build_scenario("integration_demo", ...)``),
+    not a golden fixture.  Three real jobs: m1 and m2 integrate; m1's new
+    candidate rewrites m2's shared file (falls back to its integrated
+    version) while the newcomer m3 rewrites the same lines (conflicted, no
+    older version), so the applied set equals the green head and nothing
+    moves; then the newcomer m4 applies cleanly but the gate fails, so the
+    latest job is ``gate_failed`` with m2 still integrated at the green head.
+    """
+
+    with _integration_stubs(_stub_passing_gate):
+        ctx = _integration_room(
+            tmp_path,
+            "integration_demo",
+            specs=[
+                {"id": "m1", "paths": ["docs/a.txt", "docs/shared.txt"]},
+                {"id": "m2", "paths": ["docs/shared.txt"]},
+                {"id": "m3", "paths": ["docs/shared.txt", "docs/c.txt"]},
+                {"id": "m4", "paths": ["docs/d.txt"]},
+            ],
+            files={
+                "docs/a.txt": "a0\n",
+                "docs/shared.txt": "s0\n",
+                "docs/c.txt": "c0\n",
+                "docs/d.txt": "d0\n",
+            },
+        )
+        _iwrite(ctx, "m1", "docs/a.txt", "a1\n", "m1 v1")
+        _iwrite(ctx, "m2", "docs/shared.txt", "m2s\n", "m2 v1")
+        _ipass(ctx, 1, "m1", "done-m1v1", now=_itime(10))
+        _ipass(ctx, 2, "m2", "done-m2v1", now=_itime(20))
+        assert _ienqueue(ctx, now=_itime(30)) is not None
+        claimed = _iclaim(ctx, now=_itime(31))
+        assert claimed is not None
+        _irun(ctx, claimed, now=_itime(32))
+        _iwrite(ctx, "m1", "docs/a.txt", "a2\n", "m1 v2a")
+        _iwrite(ctx, "m1", "docs/shared.txt", "m1s\n", "m1 v2b")
+        _iwrite(ctx, "m3", "docs/shared.txt", "m3s\n", "m3 v1a")
+        _iwrite(ctx, "m3", "docs/c.txt", "c1\n", "m3 v1b")
+        _ipass(ctx, 1, "m1", "done-m1v2", now=_itime(40))
+        _ipass(ctx, 3, "m3", "done-m3v1", now=_itime(45))
+        assert _ienqueue(ctx, now=_itime(50)) is not None
+        claimed = _iclaim(ctx, now=_itime(51))
+        assert claimed is not None
+        _irun(ctx, claimed, now=_itime(52))
+        _iwrite(ctx, "m4", "docs/d.txt", "d1\n", "m4 v1")
+        _ipass(ctx, 4, "m4", "done-m4v1", now=_itime(60))
+        assert _ienqueue(ctx, now=_itime(70)) is not None
+        claimed = _iclaim(ctx, now=_itime(71))
+        assert claimed is not None
+        with _integration_stubs(_stub_failing_gate):
+            _irun(ctx, claimed, now=_itime(72))
+        return ctx
+
+
 def _scenario_review_endorsed_integrated(tmp_path: Path) -> dict[str, Any]:
     with _integration_stubs(_stub_passing_gate):
         ctx = _integration_room(
@@ -1708,6 +1765,8 @@ _BUILDERS = {
     "integration_dependency_upgrade": _scenario_integration_dependency_upgrade,
     "integration_gate_failed": _scenario_integration_gate_failed,
     "integration_error": _scenario_integration_error,
+    # Demo/UI acceptance only: deliberately not in SCENARIOS (no golden fixture).
+    "integration_demo": _scenario_integration_demo,
     "review_endorsed_integrated": _scenario_review_endorsed_integrated,
 }
 
