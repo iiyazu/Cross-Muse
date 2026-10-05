@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.xmuse.sandbox_support import bwrap_usable
 from xmuse_core.chat.room_opencode_sandbox import (
     OPENCODE_WRITABLE_HOME_PATHS,
     windows_drive_mounts,
@@ -301,23 +302,7 @@ def test_readonly_bind_rejects_unsafe_destinations(tmp_path: Path, kind: str) ->
         )
 
 
-def _bwrap_works() -> bool:
-    bwrap = shutil.which("bwrap")
-    if bwrap is None:
-        return False
-    try:
-        result = subprocess.run(
-            [bwrap, "--ro-bind", "/", "/", "true"],
-            capture_output=True,
-            timeout=15,
-            check=False,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0
-
-
-@pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is not usable here")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 def test_bwrap_workspace_writable_home_not_writable_masked_empty(tmp_path: Path) -> None:
     bwrap = Path(str(shutil.which("bwrap")))
     home = tmp_path / "home"
@@ -362,7 +347,7 @@ def test_bwrap_workspace_writable_home_not_writable_masked_empty(tmp_path: Path)
     assert (masked / "secret").read_text() == "token"
 
 
-@pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is not usable here")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 def test_bwrap_board_view_is_read_only_inside_writable_workspace(tmp_path: Path) -> None:
     import os
 
@@ -398,7 +383,7 @@ def test_bwrap_board_view_is_read_only_inside_writable_workspace(tmp_path: Path)
     assert (board / "charter.md").read_text() == "module: api\n"
 
 
-@pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is not usable here")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 @pytest.mark.skipif(not windows_drive_mounts(), reason="no Windows drives mounted (not WSL)")
 def test_bwrap_hides_windows_drives_but_keeps_a_workspace_on_one(tmp_path: Path) -> None:
     import tempfile
