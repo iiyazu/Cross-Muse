@@ -107,8 +107,25 @@ class AgyTransportConfig:
     turn_idle_timeout_s: float = 300.0
     initialize_timeout_s: float = 60.0
     shutdown_grace_s: float = 5.0
+    # agy can exit before its ``init`` event on a transient startup failure (for example
+    # its account eligibility check losing a network request); such a start is retried.
+    start_attempts: int = 3
+    start_retry_delay_s: float = 2.0
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.start_attempts, bool)
+            or not isinstance(self.start_attempts, int)
+            or not 1 <= self.start_attempts <= 5
+        ):
+            raise ValueError("room_agy_start_attempts_invalid")
+        if (
+            isinstance(self.start_retry_delay_s, bool)
+            or not isinstance(self.start_retry_delay_s, (int, float))
+            or not math.isfinite(float(self.start_retry_delay_s))
+            or float(self.start_retry_delay_s) < 0
+        ):
+            raise ValueError("room_agy_start_retry_delay_s_invalid")
         if not callable(self.command_builder):
             raise ValueError("room_agy_command_builder_invalid")
         if not normalized_text(self.default_model):
@@ -781,11 +798,29 @@ class AgyRoomObservationTransport:
                 and normalized_text(record.provider_session_id) is not None
             ):
                 resume = str(record.provider_session_id)
-            session = await self._spawn_session(
-                delivery, record=record, resume_conversation_id=resume
-            )
-            self._sessions[key] = session
-            return session
+            attempts = self._config.start_attempts
+            for start in range(1, attempts + 1):
+                try:
+                    session = await self._spawn_session(
+                        delivery, record=record, resume_conversation_id=resume
+                    )
+                except RoomAgyTransportError as exc:
+                    # Only a process that died before ``init`` is a startup flake; a
+                    # timeout, a bad command or a binding failure is not retried.
+                    if exc.code != "room_agy_process_exited" or start == attempts:
+                        raise
+                    logger.warning(
+                        "room_agy_start_retry conversation=%s participant=%s start=%d/%d",
+                        delivery.conversation_id,
+                        delivery.participant.participant_id,
+                        start,
+                        attempts,
+                    )
+                    await asyncio.sleep(float(self._config.start_retry_delay_s) * start)
+                    continue
+                self._sessions[key] = session
+                return session
+            raise AssertionError("unreachable")
 
     def _ensure_god_session_record(self, delivery: RoomObservationDelivery) -> GodSessionRecord:
         participant = delivery.participant

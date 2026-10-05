@@ -138,7 +138,10 @@ def _agy_transport(
     decisions: RoomAttemptSkillDecisionStore,
     projector: RoomAgentStreamProjector | None = None,
     owner: bool = False,
+    start_failures: int = 0,
 ) -> AgyRoomObservationTransport:
+    environ = _agent_environment(tmp_path, mode, mcp_url=mcp_url, content=content)
+    environ["XMUSE_TEST_AGY_START_FAILURES"] = str(start_failures)
     return AgyRoomObservationTransport(
         config=AgyTransportConfig(
             workspace=tmp_path,
@@ -146,12 +149,13 @@ def _agy_transport(
             default_model="gemini-3.8-flash-high",
             confinement="os_read_only_sandbox",
             owner=owner,
+            start_retry_delay_s=0.01,
         ),
         registry_path=tmp_path / "god_sessions.json",
         control_store=controls,
         skill_decision_store=decisions,
         stream_projector=projector,
-        environ=_agent_environment(tmp_path, mode, mcp_url=mcp_url, content=content),
+        environ=environ,
     )
 
 
@@ -244,6 +248,60 @@ def test_agy_config_rejects_invalid_settings(tmp_path: Path) -> None:
             confinement="os_read_only_sandbox",
             turn_idle_timeout_s=0,
         )
+    with pytest.raises(ValueError, match="room_agy_start_attempts_invalid"):
+        AgyTransportConfig(
+            workspace=tmp_path,
+            command_builder=_command_builder(),
+            default_model="gemini-3.8-flash-high",
+            confinement="os_read_only_sandbox",
+            start_attempts=0,
+        )
+
+
+@pytest.mark.parametrize("start_failures,completed", [(2, True), (3, False)])
+def test_start_that_exits_before_init_is_retried_within_the_attempt(
+    tmp_path: Path, start_failures: int, completed: bool
+) -> None:
+    with _serve_room_mcp(tmp_path) as mcp_url:
+        asyncio.run(_flaky_start_scenario(tmp_path, mcp_url, start_failures, completed))
+
+
+async def _flaky_start_scenario(
+    tmp_path: Path, mcp_url: str, start_failures: int, completed: bool
+) -> None:
+    db = tmp_path / "chat.db"
+    conversation_id, antigravity, _kernel = _agy_only_room(db)
+    controls = RoomObservationControlStore(db)
+    decisions = RoomAttemptSkillDecisionStore(db)
+    transport = _agy_transport(
+        tmp_path,
+        mcp_url,
+        mode="normal",
+        controls=controls,
+        decisions=decisions,
+        start_failures=start_failures,
+    )
+    host = _host(db, transport, controls=controls, decisions=decisions)
+    try:
+        result = await host.pump_once(conversation_id=conversation_id)
+    finally:
+        await transport.aclose()
+
+    state = next(
+        item for item in result.deliveries if item.participant_id == antigravity.participant_id
+    )
+    # Three starts in one delivery attempt at most, never a fourth.
+    assert len(_argv_entries(tmp_path)) == 3
+    if completed:
+        assert state.state == "completed"
+        assert state.attempt_count == 1
+        messages = RoomTestStore(db).list_messages(conversation_id)
+        assert [m.content for m in messages if m.author == antigravity.participant_id] == [
+            "agy durable answer"
+        ]
+    else:
+        assert state.state == "failed"
+        assert state.reason == "room_agy_process_exited"
 
 
 def test_agy_outcome_lands_durably_with_identity_and_preview(tmp_path: Path) -> None:
