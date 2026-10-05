@@ -459,8 +459,10 @@ the conflicted module's owner, the owners of the attributed modules and the room
 (`report_to` for the conflicted module when set). A `gate_failed` job wakes the lead only; its
 event names the suspects. `integrated` wakes nobody.
 
-`ModuleIntegration` (`Module.integration`, always present; the `none` values when the module
-has no candidate):
+`ModuleIntegration` (`Module.integration`, always present). `status: "none"` means the module
+has no candidate **or** its candidate is not part of any job yet (the worker enqueues on its
+next tick); then every field except `verification_id` and `integrated_verification_id` has its
+`none` value, and a client shows nothing for it, also for an `accepted` module:
 
 ```jsonc
 {
@@ -654,7 +656,8 @@ output reaches model context). `Cache-Control: no-store`; not part of `revision`
   "status": "conflicted",            // pending|running|integrated|conflicted|gate_failed|error
   "reason_code": "board_integration_conflict",
   "green_head_commit": "…",          // the branch after this job (unchanged unless integrated)
-  "result_commit": null,             // the rebuilt result when gates ran, else null
+  "result_commit": null,             // the rebuilt result when gates ran (passed or failed), else null;
+                                     // a failed one is kept under a host audit ref, never a branch
   "items": [ {                       // the frozen input set, in apply order
     "module_id": "frontend", "verification_id": "…", "order": 2,
     "role": "newcomer",              // incumbent | newcomer
@@ -929,7 +932,8 @@ pinned back to its old version and `conflicted`, M2 stays `integrated`), `integr
 review and integration fields appear together). The §5.3 golden responses are
 `<scenario>.integration.json`. Every existing scenario gains `capabilities.integrations: 1`, the
 top-level `integration`, `Module.integration` with its values for that scenario (`none`
-everywhere no module is accepted), `AttentionItem.integration_id`, the three integration
+everywhere: these scenarios run no integration worker, so even an accepted module's candidate
+is not enqueued and `integration.latest` is `null`), `AttentionItem.integration_id`, the three integration
 counters and `integrated_total`/`integration` in the summary — and nothing else. The `integration`
 event has `module_id: null` (present, not missing). Required coverage, by tests: a conflict path
 holding a bidirectional control is counted in `conflicts_total` and never listed; incumbents

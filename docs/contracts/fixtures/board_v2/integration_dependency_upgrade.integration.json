@@ -22,7 +22,7 @@
       "module_id": "m1",
       "order": 1,
       "role": "newcomer",
-      "status": "conflicted",
+      "status": "fell_back",
       "verification_id": "boardverify_00000000000000000000000000000030"
     },
     {
