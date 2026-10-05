@@ -24,6 +24,10 @@ import type {
 import type { RoomBoardCache } from "@/store/domain/board";
 import { Check, Hourglass, TriangleAlert } from "lucide-react";
 
+import { boardReviewPolicyLabel } from "@/lib/board-review-labels";
+import { AcceptedMark, ReviewChip } from "./room-board-review-chip";
+import { ReviewDetailDisclosure } from "./room-board-review-detail";
+import { OperatorReviewPanel } from "./room-board-review-panel";
 import { RoomGrantsDomain } from "./room-grants-domain";
 
 export function AgentTextView({
@@ -238,10 +242,14 @@ function CountersLine({ boardModule }: { boardModule: BoardModule }) {
 
 function ModuleCard({
   boardModule,
-  projection
+  projection,
+  reviewsEnabled,
+  conversationId
 }: {
   boardModule: BoardModule;
   projection: RoomBoardProjection;
+  reviewsEnabled: boolean;
+  conversationId: string;
 }) {
   const ownerName = participantName(projection, boardModule.owner_participant_id);
   const providerKind = providerKindOf(projection, boardModule.owner_participant_id);
@@ -249,6 +257,7 @@ function ModuleCard({
   const stale = projection.stale_dependents.filter((item) => item.module_id === boardModule.module_id);
   const moduleEvents = projection.events.filter((event) => event.module_id === boardModule.module_id).slice(-5);
   const verified = boardModule.state === "verified";
+  const reviewId = boardModule.review?.review_id ?? null;
   return (
     <article aria-label={`模块 ${boardModule.module_id}`} className="room-board-module">
       <header className="room-board-module-head">
@@ -256,8 +265,15 @@ function ModuleCard({
           <code>{boardModule.module_id}</code>
           <span className="room-board-provider">{providerKind}</span>
         </div>
-        <StateBadge state={boardModule.state} />
+        <span className="room-board-badges">
+          <StateBadge state={boardModule.state} />
+          <ReviewChip review={boardModule.review} reviewsEnabled={reviewsEnabled} />
+          <AcceptedMark accepted={reviewsEnabled && boardModule.accepted === true} />
+        </span>
       </header>
+      {verified && !boardModule.accepted && reviewsEnabled ? (
+        <p className="room-board-pending-review">已验证 · 待复核</p>
+      ) : null}
       <div className="room-board-module-title">
         <AgentTextView value={boardModule.title} />
       </div>
@@ -294,6 +310,21 @@ function ModuleCard({
           契约 {item.contract_id} 已修订为 v{item.revised_version}，尚未跟进
         </p>
       ))}
+      {reviewsEnabled && reviewId ? (
+        <ReviewDetailDisclosure
+          conversationId={conversationId}
+          key={`detail:${conversationId}:${reviewId}`}
+          reviewId={reviewId}
+        />
+      ) : null}
+      {reviewsEnabled && boardModule.review?.actions?.decide?.available === true && reviewId ? (
+        <OperatorReviewPanel
+          conversationId={conversationId}
+          key={`${conversationId}:${reviewId}`}
+          review={boardModule.review}
+          reviewId={reviewId}
+        />
+      ) : null}
       <details className="room-board-details">
         <summary>章程与近期事件</summary>
         <dl>
@@ -572,6 +603,26 @@ function EventSummary({ event }: { event: BoardEvent }) {
       </span>
     ) : null;
   }
+  if (event.kind === "review_requested") {
+    const reviewId = typeof data.review_id === "string" ? data.review_id : "";
+    const reviewerKind = typeof data.reviewer_kind === "string" ? data.reviewer_kind : "";
+    return (
+      <span>
+        {reviewId ? <code>{reviewId.slice(0, 12)}…</code> : null}
+        {reviewerKind === "operator" ? <span>待你复核</span> : null}
+      </span>
+    );
+  }
+  if (event.kind === "review") {
+    const verdict = typeof data.verdict === "string" ? data.verdict : "";
+    const summary = isRecord(data.summary) ? (data.summary as AgentText) : null;
+    return (
+      <span>
+        <span>{verdict === "endorse" ? "已背书" : verdict === "object" ? "已驳回" : verdict}</span>
+        <AgentTextView value={summary} />
+      </span>
+    );
+  }
   return null;
 }
 
@@ -615,6 +666,13 @@ export function RoomBoardDomain({
   const summary = cache?.summary ?? null;
   const lastSynced = cache?.lastSyncedAt ? new Date(cache.lastSyncedAt).toLocaleString() : "未同步";
   const attention = projection?.attention ?? summary?.attention ?? [];
+  const reviewsEnabled = projection?.capabilities.reviews === 1;
+  const reviewPolicy = (projection as { review_policy?: string } | null)?.review_policy ?? null;
+  const acceptedTotal =
+    typeof summary?.accepted_total === "number"
+      ? summary.accepted_total
+      : (projection?.modules.filter((item) => item.accepted === true).length ?? 0);
+  const conversationId = roomId ?? projection?.conversation_id ?? "";
   const isEmpty =
     projection !== null &&
     projection.modules.length === 0 &&
@@ -656,12 +714,20 @@ export function RoomBoardDomain({
     <section aria-label="协作看板" className="room-board">
       <div className="room-board-heading">
         <h3>协作看板</h3>
-        {cache?.loading ? (
-          <small>正在同步…</small>
-        ) : (
-          <small>上次同步 {lastSynced}</small>
-        )}
+        <span className="room-board-heading-meta">
+          {reviewPolicy ? <small>{boardReviewPolicyLabel(reviewPolicy)}</small> : null}
+          {cache?.loading ? (
+            <small>正在同步…</small>
+          ) : (
+            <small>上次同步 {lastSynced}</small>
+          )}
+        </span>
       </div>
+      {projection && reviewsEnabled ? (
+        <p className="room-board-accepted-total" role="status">
+          已验收 {acceptedTotal}
+        </p>
+      ) : null}
       {cache?.error ? <p className="room-operations-warning" role="status">看板暂不可刷新</p> : null}
       {projection === null ? (
         <p className="room-operations-empty">尚未建立协作看板</p>
@@ -675,7 +741,13 @@ export function RoomBoardDomain({
             <>
               <div aria-label="模块列表" className="room-board-modules">
                 {projection.modules.map((boardModule) => (
-                  <ModuleCard key={boardModule.module_id} boardModule={boardModule} projection={projection} />
+                  <ModuleCard
+                    boardModule={boardModule}
+                    conversationId={conversationId}
+                    key={boardModule.module_id}
+                    projection={projection}
+                    reviewsEnabled={reviewsEnabled}
+                  />
                 ))}
               </div>
               {projection.splits.length ? (

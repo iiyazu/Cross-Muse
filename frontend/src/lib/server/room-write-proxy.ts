@@ -51,16 +51,25 @@ function normalizeParticipant(value: unknown) {
   };
 }
 
+const REVIEW_POLICIES = ["off", "cross_family"];
+
 function normalizeCollaboration(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
-  if (Object.keys(source).some((key) => key !== "mode" && key !== "lead_role")) return null;
+  if (Object.keys(source).some((key) => key !== "mode" && key !== "lead_role" && key !== "review_policy")) return null;
   const mode = boundedText(source.mode, 16);
   const leadRole = optionalText(source.lead_role, 64);
+  const reviewPolicy =
+    source.review_policy === undefined || source.review_policy === null
+      ? undefined
+      : boundedText(source.review_policy, 16);
   if (!mode || !COLLABORATION_MODES.includes(mode) || leadRole === null) return null;
+  if (reviewPolicy === null) return null;
+  if (reviewPolicy !== undefined && !REVIEW_POLICIES.includes(reviewPolicy)) return null;
   return {
     mode,
-    ...(leadRole ? { lead_role: leadRole } : {})
+    ...(leadRole ? { lead_role: leadRole } : {}),
+    ...(reviewPolicy ? { review_policy: reviewPolicy } : {})
   };
 }
 

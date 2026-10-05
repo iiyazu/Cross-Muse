@@ -4,6 +4,7 @@ import {
   XmuseApiError,
   type ApiClientOptions
 } from "./api";
+import { normalizeBoardReview } from "./board-review-api";
 import type {
   AgentText,
   BoardAttentionItem,
@@ -119,7 +120,9 @@ const EVENT_KINDS = new Set<string>([
   "contract_revised",
   "progress",
   "question",
-  "verification"
+  "verification",
+  "review_requested",
+  "review"
 ]);
 
 function normalizeState(value: unknown): BoardState {
@@ -211,7 +214,9 @@ function normalizeCounters(value: unknown): BoardCounters {
     failed: asNonNegativeInt(source.failed),
     superseded: asNonNegativeInt(source.superseded),
     errored: asNonNegativeInt(source.errored),
-    rework_rounds: asNonNegativeInt(source.rework_rounds)
+    rework_rounds: asNonNegativeInt(source.rework_rounds),
+    reviews_endorsed: asNonNegativeInt(source.reviews_endorsed),
+    reviews_objected: asNonNegativeInt(source.reviews_objected)
   };
 }
 
@@ -270,6 +275,8 @@ function normalizeModule(value: unknown): BoardModule | null {
     verification: normalizeVerification(value.verification),
     counters: normalizeCounters(value.counters),
     state: normalizeState(value.state),
+    review: normalizeBoardReview(value.review),
+    accepted: typeof value.accepted === "boolean" ? value.accepted : false,
     attention: normalizeModuleAttention(value.attention)
   };
 }
@@ -469,6 +476,7 @@ export function normalizeRoomBoardProjection(payload: unknown): RoomBoardProject
     board_seq: asNonNegativeInt(payload.board_seq),
     revision: asString(payload.revision, ""),
     capabilities: normalizeCapabilities(payload.capabilities),
+    review_policy: typeof payload.review_policy === "string" ? payload.review_policy : "off",
     participants,
     modules,
     contracts,
@@ -523,6 +531,9 @@ export function normalizeBoardSummary(payload: unknown): RoomBoardSummary {
     capabilities: normalizeCapabilities(payload.capabilities),
     modules_total: asNonNegativeInt(payload.modules_total),
     counts,
+    accepted_total: asNonNegativeInt(
+      (payload as Record<string, unknown>).accepted_total
+    ),
     attention_total: asNonNegativeInt(payload.attention_total),
     attention
   };

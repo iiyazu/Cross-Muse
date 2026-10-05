@@ -160,7 +160,9 @@ describe("board store sync", () => {
             consecutiveFailures: 0,
             lastSyncedAt: 0,
             error: null,
-            contractDetails: {}
+            contractDetails: {},
+    reviewDetails: {},
+    reviewDetailErrors: {}
           }),
           requestGeneration: generation + 1
         }

@@ -1,3 +1,5 @@
+import type { BoardReview } from "./board-review-types";
+
 export type BoardState =
   | "assigned"
   | "claimed"
@@ -48,6 +50,8 @@ export type BoardEventKind =
   | "progress"
   | "question"
   | "verification"
+  | "review_requested"
+  | "review"
   | "unknown";
 
 export type BoardSplitStatus =
@@ -110,6 +114,8 @@ export type BoardCounters = {
   superseded: number;
   errored: number;
   rework_rounds: number;
+  reviews_endorsed: number;
+  reviews_objected: number;
 };
 
 export type BoardModuleAttention = {
@@ -130,6 +136,8 @@ export type BoardModule = {
   verification: BoardVerification;
   counters: BoardCounters;
   state: BoardState;
+  review: BoardReview;
+  accepted: boolean;
   attention: BoardModuleAttention;
 };
 
@@ -221,6 +229,7 @@ export type RoomBoardProjection = {
   board_seq: number;
   revision: string;
   capabilities: BoardCapabilities;
+  review_policy: string;
   participants: BoardParticipant[];
   modules: BoardModule[];
   contracts: BoardContractSummary[];
@@ -253,6 +262,7 @@ export type RoomBoardSummary = {
   capabilities: BoardCapabilities;
   modules_total: number;
   counts: RoomBoardCounts;
+  accepted_total: number;
   attention_total: number;
   attention: BoardAttentionItem[];
 };
