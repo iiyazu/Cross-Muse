@@ -724,7 +724,11 @@ def test_heartbeat_write_failure_stops_runner_and_publishes_failed(
 
 def test_missing_codex_executable_publishes_failed_not_ready_receipt(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # The runner reads the ambient Codex home before resolving the executable; keep the
+    # host's own ~/.codex (whatever state it is in) out of this test.
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "no-codex-home"))
     root = tmp_path / "runtime"
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -753,6 +757,7 @@ def test_runner_reaches_ready_with_claude_only_and_no_codex_executable(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv("XMUSE_CLAUDE_ACP_COMMAND", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "no-codex-home"))
     root = tmp_path / "runtime"
     worktree = tmp_path / "worktree"
     worktree.mkdir()
