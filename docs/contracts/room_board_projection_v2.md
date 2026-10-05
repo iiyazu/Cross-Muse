@@ -37,7 +37,7 @@ shown.
 Tests assert this by scanning every fixture and every route response for these keys and for
 absolute-path-looking strings.
 
-Exactly two values leave the server in a narrower form, each through one route only:
+Exactly three values leave the server in a narrower form, each through one route only:
 
 1. **Gate output tails** (from `evidence.output_tails`) leave as `AgentText` through the
    verification detail route (§5.2), never through the projection, summary, events or stream.
@@ -53,7 +53,12 @@ Exactly two values leave the server in a narrower form, each through one route o
    and not the patches of stacked modules. Plugins, the CLI and the Claude Code mod never call
    it, and no plugin grant covers it.
 
-The path scan whitelists the material route's `patch.text` field and nothing else.
+3. **Conflicting paths of an integration** (a subset of a module's changed paths) leave through
+   the integration detail route (§5.3) only, repository-relative and validated like
+   `Finding.path`, at most 50 per module; the projection and events carry only counts.
+
+The path scan whitelists the material route's `patch.text` field and nothing else (conflict
+paths are repository-relative and pass it).
 
 ## 3. `room_board_projection/v2`
 
@@ -67,8 +72,9 @@ The path scan whitelists the material route's `patch.text` field and nothing els
   "server_time": "2026-10-04T10:00:00Z",
   "board_seq": 41,              // §3.9
   "revision": "41:9f2c0a7d41be",// §3.9, doubles as the ETag value
-  "capabilities": { "verification": 1, "reviews": 0, "integrations": 0, "lessons": 0 },
+  "capabilities": { "verification": 1, "reviews": 0, "integrations": 1, "lessons": 0 },
   "review_policy": "off",       // off | cross_family (§3.10)
+  "integration": RoomIntegration, // §3.11
   "participants": [ Participant ],
   "modules": [ Module ],
   "contracts": [ ContractSummary ],
@@ -81,8 +87,9 @@ The path scan whitelists the material route's `patch.text` field and nothing els
 
 `capabilities`: `verification: 1` means the host verifies `done` reports (M1). `reviews: 1`
 means the room's `review_policy` is `cross_family`: every passed verification opens a review
-(§3.10). `integrations` and `lessons` are `0` until M2b/M3 define and ship their shapes; the
-keys exist so clients can already feature-detect. No placeholder arrays exist for them.
+(§3.10). `integrations: 1` means the host integrates accepted modules into its integration
+branch (§3.11); it is `1` exactly when `verification` is. `lessons` is `0` until M3 defines and
+ships its shape; the key exists so clients can already feature-detect.
 
 ### 3.1 `AgentText`
 
@@ -133,6 +140,7 @@ One row per module whose **latest charter is `active`**.
   "state": "verifying",         // §4.3, derived single value for compact UI
   "review": Review,             // §3.10, always present
   "accepted": false,            // §4.4, always present
+  "integration": ModuleIntegration, // §3.11, always present
   "attention": { "kind": "none", "reason_code": null } // §3.8
 }
 ```
@@ -221,6 +229,11 @@ that module's owner files a progress report whose activity `seq` is greater than
 | `verification` | verified module | `{verification_id, status: passed\|failed\|error, reason_code, gate_ids[], escalated, stacked[]}` |
 | `review_requested` | reviewed module | `{review_id, verification_id, rule_id, author_family, reviewer_kind, reviewer_participant_id, reviewer_family, escalated_from: Escalation\|null}` |
 | `review` | reviewed module | `{review_id, verdict: endorse\|object, findings_count, findings: [Finding], findings_total, summary: AgentText, decided_via: board_tool\|web}` |
+| `integration` | — | `{integration_id, status: integrated\|conflicted\|gate_failed\|error, reason_code, green_head_commit, integrated_module_ids[], suspect_module_ids[], conflicts: [{module_id, conflict_path_count, attributed_module_ids[]}], waiting_module_ids[], gate_ids[]}` |
+
+`integration` is `infrastructure` and is written once per finished job (§3.11); `pending` and
+`running` are visible only through `revision`. `green_head_commit` is where the branch points
+after the job.
 
 `review_requested` is always `infrastructure`; a request re-issued to the operator after the
 assigned reviewer did not answer carries `escalated_from` (§3.10). `review` is `participant`
@@ -253,6 +266,10 @@ Per-module precedence (the first matching row wins):
 | `verification.status == failed` and `lifecycle == done_claimed` | `owner` | `board_attention_verification_failed` |
 | `review.status == pending` and `review.reviewer_kind == operator` | `operator` | `board_attention_review_operator_pending` |
 | `review.status == objected` and `lifecycle == done_claimed` | `owner` | `board_attention_review_objected` |
+| `integration.status == error` | `operator` | `board_attention_integration_error` |
+| `integration.status == conflicted` and the owner filed no progress report after that job's `integration` activity | `owner` | `board_attention_integration_conflict` |
+| `integration.status == gate_failed` | `lead` | `board_attention_integration_gate_failed` |
+| `integration.status == base_mismatch` | `lead` | `board_attention_integration_base_mismatch` |
 | `lifecycle == blocked` | `lead` | `board_attention_module_blocked` |
 | module is a stale dependent | `owner` | `board_attention_contract_stale` |
 | otherwise | `none` | `null` |
@@ -364,6 +381,99 @@ backslash, no `.` or `..` segment, no control characters and no Unicode format c
 as a different file name). A violation is rejected whole
 (`room_board_review_summary_invalid` or `room_board_review_findings_invalid`); nothing is
 truncated on input. On output `path` is guaranteed to satisfy the same rule.
+
+### 3.11 Integration
+
+The host integrates accepted work into a **host-owned integration branch**, one per room:
+`refs/heads/xmuse/integration/<conversation_id>` in the host's bare mirror. It never touches
+the user's working checkout, never pushes anywhere and never promotes; owners cannot fetch it
+(their clones have no remote). The branch only ever points at a result whose gates passed (the
+*green head*); host paths never leave the server, `head_commit` may be shown (§2).
+
+**Input set.** For every module whose latest charter is active, its *integration candidate* is
+the module's latest verification that is accepted under §4.4 (status `passed`, and, with
+`capabilities.reviews == 1`, its review `endorsed`) — even when a newer `done` is being verified
+or reviewed, so new work never removes already accepted code from the branch. The candidate's
+patch is the module's own stored patch of that verification: exactly the bytes a review covered
+(§3.10), never a re-read of the owner branch and never stacked modules' patches.
+
+**Job.** Whenever the input set changes (a candidate appears or is replaced by a newer one), the
+host enqueues one integration job for the room with that set frozen; a room has at most one
+job that is not finished, and a set change during a running job enqueues the next one. A job:
+
+1. Starts from the room's owner base commit and rebuilds the result from scratch: candidates are
+   applied one commit per module, in dependency order (a module after every module its charter
+   `depends` on through `provides`), ties by `module_id`. A candidate whose verification base
+   differs from the room base is `base_mismatch`; a candidate that depends on a module that is
+   not in the set, or that was excluded in this job, is `waiting`. Neither is applied.
+2. Applies each patch with a three-way apply. A patch that does not apply is `conflicted`; it
+   and every module depending on it are left out, and the job **continues** with the others,
+   so the applied set is always closed under `depends`.
+3. Runs the server-owned gate profile once on the result, selected by the union of the applied
+   modules' changed paths, like verification (§4.2) and never with repository scripts.
+4. **The branch never loses accepted code.** If a module that is in the previous green head
+   (and whose charter is still active) is missing from the result — its newer candidate
+   conflicted, or it became `waiting` — the job ends `conflicted`, no gate runs and the branch
+   stays. The module that was left out is `conflicted` (or `waiting`); the modules of the green
+   head keep `integrated`.
+5. Otherwise, if every gate passes, the branch moves to the result: the job is `integrated` and
+   every applied module is `integrated` (a job may integrate some modules while others are
+   `conflicted` or `waiting`, as long as rule 4 holds). If a gate fails, the branch stays at the
+   previous green head: the job is `gate_failed`; the applied modules already in the previous
+   green head with the same verification stay `integrated`, and the others — the *suspects* —
+   become `gate_failed`. Moving the branch to a rebuilt result is not a fast-forward; consumers
+   must not assume one. An applied set that is empty runs no gates and moves nothing.
+
+Infrastructure failures (busy repository, git errors, lost lease) retry the job up to 3
+attempts; then the job is `error` (`board_integration_attempts_exhausted`) and every module of
+its set that is not `integrated` becomes `error`. The next set change starts a new job; there is
+no write route in this version.
+
+**Conflict attribution.** For a `conflicted` module the host records the conflicting paths
+(repository-relative, at most 50, same output rule as `Finding.path`) and, for each, the
+modules whose charter `paths` match it (`attributed_module_ids`, possibly several: a conflict
+means two charters cover the same file and both changed overlapping lines). The activity wakes
+the conflicted module's owner, the owners of the attributed modules and the room lead
+(`report_to` for the conflicted module when set). A `gate_failed` job wakes the lead only; its
+event names the suspects. `integrated` wakes nobody.
+
+`ModuleIntegration` (`Module.integration`, always present; the `none` values when the module
+has no candidate):
+
+```jsonc
+{
+  "status": "none",                 // none | waiting | pending | running | integrated |
+                                    // conflicted | gate_failed | base_mismatch | error
+  "integration_id": null,           // the latest job that included this module's candidate
+  "verification_id": null,          // the candidate that job used
+  "integrated_verification_id": null, // the candidate inside the current green head, or null
+  "reason_code": null,              // §9, for waiting | conflicted | gate_failed | base_mismatch | error
+  "conflict_path_count": 0,         // conflicted only; the paths are in §5.3
+  "gate_ids": [],                   // gate_failed only: the gates that did not pass
+  "updated_at": null
+}
+```
+
+`status` describes the latest job that included the module's current candidate: `pending` and
+`running` while it is queued or running. A module whose candidate is in the green head and is
+not part of a newer job shows `integrated`. `integrated_verification_id` lags behind
+`verification_id` while a newer candidate is being integrated; a client shows "integrated
+(older version)" for that case. Integration never changes `lifecycle`, `verification`, `state`,
+`review` or `accepted`.
+
+`RoomIntegration` (top-level `integration`):
+
+```jsonc
+{
+  "green_head_commit": null,        // where the branch points; null before the first green job
+  "latest": null                    // { integration_id, status: pending|running|integrated|conflicted|gate_failed|error,
+                                    //   reason_code, module_count, finished_at } of the newest job
+}
+```
+
+`capabilities.integrations` is `1` whenever `capabilities.verification` is `1` (the host that
+verifies also integrates) and then `integration` and `Module.integration` are populated; with
+`0` both carry their `none` values.
 
 ## 4. State model
 
@@ -501,6 +611,37 @@ sanitized like `AgentText`, rendered as plain text, and never shown in a status 
 summary or event. The Claude Code mod and other host plugins never fetch this route (their
 output reaches model context). `Cache-Control: no-store`; not part of `revision`.
 
+### 5.3 Integration detail
+
+`GET /api/chat/conversations/{conversation_id}/board/integrations/{integration_id}`
+(404 `room_board_integration_unknown`, also for a job of another conversation)
+
+```jsonc
+{
+  "schema_version": "room_board_integration/v1",
+  "conversation_id": "…", "integration_id": "…",
+  "status": "conflicted",            // pending|running|integrated|conflicted|gate_failed|error
+  "reason_code": "board_integration_conflict",
+  "green_head_commit": "…",          // the branch after this job (unchanged unless integrated)
+  "result_commit": null,             // the rebuilt result when gates ran, else null
+  "items": [ {                       // the frozen input set, in apply order
+    "module_id": "frontend", "verification_id": "…", "order": 2,
+    "status": "conflicted",          // applied|conflicted|waiting|base_mismatch|not_applied
+    "conflicts": [ { "path": "src/shared/config.ts", "attributed_module_ids": ["backend", "frontend"] } ],
+    "conflicts_total": 1
+  } ],
+  "gates": [ { "gate_id": "…", "status": "failed", "exit_code": 1, "reason_code": "…",
+               "output_tail": AgentText /* ≤ 2000, or null */ } ],
+  "attempt_count": 1, "created_at": "…", "finished_at": "…"
+}
+```
+
+`not_applied` is an item of a job that ended before reaching it (`error`). `gates` and
+`output_tail` follow §5.2 exactly (scrubbed at the source, at most 3 tails, plain text, never in
+status lines, toasts, summaries or events, never fetched by host plugins). `conflicts` holds at
+most 50 paths, `conflicts_total` the real count. `Cache-Control: no-store`; not part of
+`revision`.
+
 ## 6. Metrics — `board_metrics/v1`
 
 Per module, over all history of the module id:
@@ -511,6 +652,8 @@ Per module, over all history of the module id:
 | `passed`, `failed`, `superseded`, `errored` | verification jobs in that terminal status; deferred `pending` jobs are not counted |
 | `rework_rounds` | `failed` jobs **before the first `passed`**; all `failed` jobs if it never passed |
 | `reviews_endorsed`, `reviews_objected` | reviews of the module that ended in that verdict (superseded and pending ones are not counted) |
+| `integrations_conflicted`, `integrations_gate_failed` | finished integration jobs in which the module ended in that status |
+| `conflict_fix_rounds` | candidates of the module that conflicted **before its first integrated candidate**; all of them if none was integrated (the plan's "rounds to fix a returned conflict") |
 
 Adding a counter does not change the others, so `metrics_version` stays `board_metrics/v1`;
 changing any definition bumps it. The M4 evaluation and every UI read the same
@@ -533,6 +676,9 @@ boundary.
               "done_claimed": 0, "verifying": 1, "waiting_for_provider": 0, "verified": 1,
               "verification_failed": 0, "verification_error": 0 },
   "accepted_total": 1,
+  "integrated_total": 1,              // modules whose Module.integration.status == integrated
+  "integration": { "status": "integrated" /* latest job status, or null */,
+                   "green_head_commit": "…" /* or null */ },
   "attention_total": 2, "attention": [ AttentionItem ] /* first 5 */ }
 ```
 
@@ -663,12 +809,21 @@ Staging and gates (from `room_execution`): `execution_*` (for example
 
 Split: `room_board_split_dependency_cycle` and the other `room_board_*` validation codes.
 
+Integration (`ModuleIntegration.reason_code`, `RoomIntegration.latest.reason_code`, event
+`reason_code`, §3.11): `board_integration_conflict`, `board_integration_gate_failed`,
+`board_integration_waiting_for_dependency`, `board_integration_base_mismatch`,
+`board_integration_would_drop_accepted` (the job reason when rule 4 stopped it),
+`board_integration_attempts_exhausted`; staging and gate failures keep their `execution_*`
+code on the gate.
+
 Review escalation (`Escalation.reason_code`, §3.10): `board_review_reviewer_unavailable`,
 `board_review_reviewer_no_verdict`, `board_review_reviewer_unresponsive`.
 
 Attention (§3.8): `board_attention_split_pending`, `board_attention_verification_error`,
 `board_attention_verification_escalated`, `board_attention_verification_failed`,
 `board_attention_review_operator_pending`, `board_attention_review_objected`,
+`board_attention_integration_error`, `board_attention_integration_conflict`,
+`board_attention_integration_gate_failed`, `board_attention_integration_base_mismatch`,
 `board_attention_module_blocked`, `board_attention_contract_stale`.
 
 Route errors: `room_host_invalid`, `room_conversation_unknown`, `room_board_contract_unknown`,
@@ -678,7 +833,7 @@ Route errors: `room_host_invalid`, `room_conversation_unknown`, `room_board_cont
 `room_board_review_not_pending`, `room_board_review_not_operator`,
 `room_board_review_material_incomplete`, `room_board_review_findings_invalid`,
 `room_board_review_summary_invalid`, `room_board_review_request_invalid`,
-`room_board_review_request_too_large`.
+`room_board_review_request_too_large`, `room_board_integration_unknown`.
 
 Routes that take an id under a `conversation_id` answer 404 for an id of another
 conversation, and each such route has a test for it.
@@ -715,6 +870,23 @@ stage path, `/usr/lib/…`, `/home/…` and a Windows drive path (all scrubbed).
 row are additionally covered by a table-driven test over the pure derivation functions with
 synthetic facts, because the store cannot produce `done_claimed` without a verification row.
 
+Integration (§3.11) scenarios: `integration_integrated` (two independent modules integrated,
+one with a newer candidate `pending`, so `integrated_verification_id` lags),
+`integration_conflicted` (two charters cover one file, both modules change the same lines: the
+second in order is `conflicted` with both attributed, its dependent is `waiting`, the first is
+`integrated`; owner attention), `integration_would_drop` (an integrated module's newer candidate
+conflicts: job `conflicted` with `board_integration_would_drop_accepted`, the branch unchanged),
+`integration_gate_failed` (suspects `gate_failed`, an earlier module stays `integrated`; lead
+attention), `integration_error` (attempts exhausted; operator attention). The §5.3 golden
+responses are `<scenario>.integration.json`. Every existing scenario gains `capabilities.
+integrations: 1`, the top-level `integration` and `Module.integration` with their values for
+that scenario (`none` everywhere no module is accepted), the three integration counters and
+`integrated_total`/`integration` in the summary — and nothing else. Required coverage: a
+conflict path holding a bidirectional control is rejected at the source and counted in
+`conflicts_total` without being listed (its file still conflicts); tests prove that rule 4
+never moves the branch and that the user's checkout is never touched (its `HEAD`, index and
+working tree are byte-identical before and after a job).
+
 ## 11. P0 checklist (non-contract items to verify while implementing)
 
 - `Host`-header validation on read routes: **verified absent** before this change (a request
@@ -725,6 +897,12 @@ synthetic facts, because the store cannot produce `done_claimed` without a verif
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 
 ## 12. Changelog
+
+- 2026-10-05 — integration (M2b), compatible additions: `capabilities.integrations: 1`, the
+  host-owned integration branch rebuilt from accepted candidates with a never-lose-accepted-code
+  rule, `RoomIntegration`, `Module.integration`, the `integration` event, four attention rows,
+  three counters, `integrated_total` and `integration` in the summary, the integration detail
+  route, and the third §2 exception (conflict paths). `accepted` is unchanged.
 
 - 2026-10-04 — reviews (M2a), compatible additions: `review_policy`, `capabilities.reviews`,
   `Module.review` with escalation and the Web-only operator decision, frozen `Module.accepted`,
