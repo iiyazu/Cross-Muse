@@ -1007,7 +1007,7 @@ def test_board_integrations_gate_tails(tmp_path: Path) -> None:
         f"/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}"
     ).json()
     assert body["status"] == "gate_failed"
-    assert body["result_commit"] is None
+    assert isinstance(body["result_commit"], str) and len(body["result_commit"]) == 40
     assert len(body["gates"]) == 1
     tail = body["gates"][0]["output_tail"]
     assert tail["untrusted"] is True
