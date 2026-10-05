@@ -284,6 +284,9 @@ def test_review_digest_pure_function() -> None:
     )
     assert d1.startswith("sha256:")
     assert len(d1) == 7 + 64
+    # Pinned to the contract formula: sha256 of the compact sorted-key JSON of
+    # {review_id, verification_id, head_commit, patch_sha256}.
+    assert d1 == "sha256:969d607a6c79c65af65031e6611a7430b11c21d41d0910a031a68c8e284a73b2"
 
     # Different patch byte gives different digest
     d2 = review_digest(
