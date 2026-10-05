@@ -43,11 +43,19 @@ _REMIX_PACKAGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
 _REMIX_SOURCE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs")
 _REMIX_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
 _REMIX_LINE_COMMENT_RE = re.compile(r"(?m)(^|\s)//.*$")
+# Every module-loading form Node executes with a literal specifier: static
+# import/export-from (any spacing), side-effect imports, dynamic import() (with
+# optional attributes) and CommonJS require()/createRequire()(...)'s require.
 _REMIX_IMPORT_RE = re.compile(
-    r"""(?:^|[\s;}])(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]"""
-    r"""|(?:^|[\s;(=])import\s*\(\s*['"]([^'"]+)['"]\s*\)"""
-    r"""|(?:^|[\s;])import\s+['"]([^'"]+)['"]""",
-    re.M,
+    r"""(?<![\w$.])(?:import|export)\b[^'";]*?\bfrom\s*['"]([^'"]+)['"]"""
+    r"""|(?<![\w$.])import\s*['"]([^'"]+)['"]"""
+    r"""|(?<![\w$.])import\s*\(\s*['"]([^'"]+)['"]\s*[,)]"""
+    r"""|(?<![\w$.])require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+)
+# Any workspace specifier written as a string literal, whatever loads it
+# (createRequire()(...), a variable, a helper): it must name a frozen package.
+_REMIX_WORKSPACE_LITERAL_RE = re.compile(
+    r"""['"`](@remix-run/[^'"`\s]*|remix(?:/[^'"`\s]*)?)['"`]"""
 )
 _MAX_REMIX_RUNNER_FILES = 2_000
 SANDBOX_ACTIVE_ENV = "XMUSE_EXECUTION_SANDBOX_ACTIVE"
@@ -638,8 +646,10 @@ def _remix_runner_contract(root: Path) -> dict[str, object]:
 def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
     """Prove the frozen runner only imports itself and installed dependencies.
 
-    Every static or dynamic import of a runner source (comments stripped; the
-    runner's own tests and fixtures are never loaded for another package) must
+    Every literal module load of a runner source (static and side-effect
+    imports, ``export ... from``, ``import()`` and ``require()``; comments
+    stripped; the runner's own tests and fixtures are never loaded for another
+    package, and production code may not import them) must
     stay inside the frozen packages: a relative import may not leave them and a
     workspace import (``@remix-run/<name>``, ``remix``) must name one of them.
     Anything else would execute candidate-writable code inside the driver.
@@ -653,16 +663,28 @@ def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
         if ".test." in pure.name or "test" in pure.parts[3:-1]:
             continue
         text = (root / name).read_text(encoding="utf-8", errors="replace")
-        text = _REMIX_LINE_COMMENT_RE.sub(r"\1", _REMIX_BLOCK_COMMENT_RE.sub("", text))
+        text = _REMIX_LINE_COMMENT_RE.sub(r"\1", _REMIX_BLOCK_COMMENT_RE.sub(" ", text))
         for match in _REMIX_IMPORT_RE.finditer(text):
-            spec = match.group(1) or match.group(2) or match.group(3) or ""
+            spec = next((group for group in match.groups() if group), "")
             if spec.startswith("."):
-                target = os.path.normpath(str(pure.parent / spec))
-                if not target.startswith(REMIX_RUNNER_PATHS):
+                target = PurePosixPath(os.path.normpath(str(pure.parent / spec)))
+                # Inside the frozen packages, and never into the skipped runner
+                # tests (that would load unscanned code at runtime).
+                if (
+                    not str(target).startswith(REMIX_RUNNER_PATHS)
+                    or ".test." in target.name
+                    or "test" in target.parts[3:-1]
+                ):
                     raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
             elif spec == "remix" or spec.startswith("remix/"):
                 raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
             elif spec.startswith("@remix-run/") and spec.split("/")[1] not in frozen:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+        for match in _REMIX_WORKSPACE_LITERAL_RE.finditer(text):
+            literal = match.group(1)
+            if literal == "remix" or literal.startswith("remix/"):
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            if literal.split("/")[1] not in frozen:
                 raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
 
 

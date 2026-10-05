@@ -1234,6 +1234,16 @@ def test_remix_driver_runs_fixed_entrypoints_per_package_and_never_passes_unchec
         "export * from '../../../headers/src/index.ts'\n",
         "const cli = await import('remix/test/cli')\n",
         "import 'remix'\n",
+        # CommonJS and createRequire forms.
+        "const h = require('@remix-run/headers')\n",
+        "const h = createRequire(import.meta.url)('@remix-run/headers')\n",
+        # Spacing and placement variants Node still executes.
+        "import{Headers}from'@remix-run/headers'\n",
+        "import/*c*/{Headers}from '@remix-run/headers'\n",
+        "await Promise.all([import('@remix-run/headers')])\n",
+        "await import('@remix-run/headers', { with: { type: 'json' } })\n",
+        # Production code pulling in the runner's own (unscanned) tests.
+        "import { fixture } from '../test/e2e.ts'\n",
     ],
 )
 def test_remix_runner_closure_rejects_imports_of_candidate_writable_code(
