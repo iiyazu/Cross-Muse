@@ -1,3 +1,8 @@
+import type {
+  BoardModuleIntegration,
+  RoomBoardSummaryIntegration,
+  RoomIntegration
+} from "./board-integration-types";
 import type { BoardReview } from "./board-review-types";
 
 export type BoardState =
@@ -117,6 +122,9 @@ export type BoardCounters = {
   rework_rounds: number;
   reviews_endorsed: number;
   reviews_objected: number;
+  integrations_conflicted: number;
+  integrations_gate_failed: number;
+  conflict_fix_rounds: number;
 };
 
 export type BoardModuleAttention = {
@@ -139,6 +147,7 @@ export type BoardModule = {
   state: BoardState;
   review: BoardReview;
   accepted: boolean;
+  integration: BoardModuleIntegration;
   attention: BoardModuleAttention;
 };
 
@@ -205,6 +214,7 @@ export type BoardAttentionItem = {
   reason_code: string;
   module_id: string | null;
   split_id: string | null;
+  integration_id: string | null;
 };
 
 export type BoardEventActor = {
@@ -231,6 +241,7 @@ export type RoomBoardProjection = {
   revision: string;
   capabilities: BoardCapabilities;
   review_policy: string;
+  integration: RoomIntegration;
   participants: BoardParticipant[];
   modules: BoardModule[];
   contracts: BoardContractSummary[];
@@ -264,6 +275,8 @@ export type RoomBoardSummary = {
   modules_total: number;
   counts: RoomBoardCounts;
   accepted_total: number;
+  integrated_total: number;
+  integration: RoomBoardSummaryIntegration;
   attention_total: number;
   attention: BoardAttentionItem[];
 };

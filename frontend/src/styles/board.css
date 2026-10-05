@@ -553,3 +553,145 @@
   color: var(--success);
   font-size: 11px;
 }
+
+/* Integration chips take the page background as text colour on solid tones, like board badges. */
+.room-board-integration-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.room-board-integration-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.room-board-integration-chip.is-integrated {
+  background: var(--success);
+  color: var(--bg);
+}
+
+.room-board-integration-chip.is-neutral {
+  border: 1px solid var(--border);
+  color: var(--muted-strong);
+}
+
+.room-board-integration-chip.is-waiting {
+  border: 1px dashed var(--warn);
+  color: var(--warn);
+  background: transparent;
+}
+
+.room-board-integration-chip.is-bad {
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.room-board-integration-chip.is-muted {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.room-board-integration-glyph {
+  font-style: normal;
+}
+
+.room-board-integration-sub {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-board-integration-gates {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.room-board-integration-gates code {
+  border: 1px solid color-mix(in oklab, var(--danger), var(--border) 50%);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--danger);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.room-board-integration-detail {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-size: 11px;
+}
+
+.room-board-integration-detail > summary {
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-weight: 650;
+}
+
+.room-board-integration-items,
+.room-board-integration-gates-list,
+.room-board-integration-conflicts {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.room-board-integration-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  display: grid;
+  gap: 4px;
+}
+
+.room-board-integration-item.is-self {
+  border-left: 3px solid var(--accent);
+}
+
+.room-board-integration-item-head {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.room-board-integration-item-head code,
+.room-board-integration-gate code,
+.room-board-integration-conflicts code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.room-board-integration-applied {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-board-integration-self {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.room-board-integration-flag {
+  margin-left: 6px;
+  color: var(--warn);
+  font-size: 10px;
+}
+
+.room-board-integration-tail {
+  max-height: 240px;
+  overflow: auto;
+}

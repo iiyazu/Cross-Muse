@@ -21,10 +21,13 @@ import type {
   BoardSplit,
   RoomBoardProjection
 } from "@/lib/board-types";
+import { boardIntegrationJobStatusLabel } from "@/lib/board-integration-labels";
 import type { RoomBoardCache } from "@/store/domain/board";
 import { Check, Hourglass, TriangleAlert } from "lucide-react";
 
 import { boardReviewPolicyLabel } from "@/lib/board-review-labels";
+import { IntegrationChip } from "./room-board-integration-chip";
+import { IntegrationDetailDisclosure } from "./room-board-integration-detail";
 import { AcceptedMark, ReviewChip } from "./room-board-review-chip";
 import { ReviewDetailDisclosure } from "./room-board-review-detail";
 import { OperatorReviewPanel } from "./room-board-review-panel";
@@ -258,6 +261,16 @@ function ModuleCard({
   const moduleEvents = projection.events.filter((event) => event.module_id === boardModule.module_id).slice(-5);
   const verified = boardModule.state === "verified";
   const reviewId = boardModule.review?.review_id ?? null;
+  const integrationsEnabled = projection.capabilities.integrations === 1;
+  const integrationStatus = boardModule.integration?.status ?? "none";
+  const showIntegrationDetail =
+    integrationsEnabled &&
+    (integrationStatus === "conflicted" ||
+      integrationStatus === "gate_failed" ||
+      integrationStatus === "error" ||
+      integrationStatus === "waiting") &&
+    boardModule.integration?.integration_id !== null &&
+    boardModule.integration?.integration_id !== undefined;
   return (
     <article aria-label={`模块 ${boardModule.module_id}`} className="room-board-module">
       <header className="room-board-module-head">
@@ -269,6 +282,10 @@ function ModuleCard({
           <StateBadge state={boardModule.state} />
           <ReviewChip review={boardModule.review} reviewsEnabled={reviewsEnabled} />
           <AcceptedMark accepted={reviewsEnabled && boardModule.accepted === true} />
+          <IntegrationChip
+            integration={boardModule.integration}
+            integrationsEnabled={integrationsEnabled}
+          />
         </span>
       </header>
       {verified && !boardModule.accepted && reviewsEnabled ? (
@@ -315,6 +332,14 @@ function ModuleCard({
           conversationId={conversationId}
           key={`detail:${conversationId}:${reviewId}`}
           reviewId={reviewId}
+        />
+      ) : null}
+      {showIntegrationDetail ? (
+        <IntegrationDetailDisclosure
+          conversationId={conversationId}
+          highlightModuleId={boardModule.module_id}
+          integrationId={boardModule.integration.integration_id as string}
+          key={`integration:${conversationId}:${boardModule.integration.integration_id as string}`}
         />
       ) : null}
       {reviewsEnabled && boardModule.review?.actions?.decide?.available === true && reviewId ? (
@@ -623,6 +648,52 @@ function EventSummary({ event }: { event: BoardEvent }) {
       </span>
     );
   }
+  if (event.typedKind === "integration") {
+    const status = typeof data.status === "string" ? data.status : "unknown";
+    const greenHead = typeof data.green_head_commit === "string" ? data.green_head_commit : null;
+    const integratedIds = Array.isArray(data.integrated_module_ids)
+      ? data.integrated_module_ids.filter((item): item is string => typeof item === "string")
+      : [];
+    const suspectIds = Array.isArray(data.suspect_module_ids)
+      ? data.suspect_module_ids.filter((item): item is string => typeof item === "string")
+      : [];
+    const conflicts = Array.isArray(data.conflicts)
+      ? data.conflicts.flatMap((item) => {
+          if (!isRecord(item)) return [];
+          const moduleId = typeof item.module_id === "string" ? item.module_id : null;
+          const count =
+            typeof item.conflict_path_count === "number" &&
+            Number.isSafeInteger(item.conflict_path_count) &&
+            item.conflict_path_count >= 0
+              ? item.conflict_path_count
+              : 0;
+          if (!moduleId) return [];
+          return [
+            {
+              module_id: moduleId,
+              conflict_path_count: count,
+              fell_back: item.fell_back === true
+            }
+          ];
+        })
+      : [];
+    return (
+      <span>
+        <span>{boardIntegrationJobStatusLabel(status)}</span>
+        {greenHead ? (
+          <code title={greenHead}>{greenHead.slice(0, 8)}</code>
+        ) : null}
+        <span>已集成 {integratedIds.length} 个模块</span>
+        {suspectIds.length ? <span>嫌疑 {suspectIds.join("、")}</span> : null}
+        {conflicts.map((conflict) => (
+          <span key={conflict.module_id}>
+            {conflict.module_id} 冲突 {conflict.conflict_path_count} 个路径
+            {conflict.fell_back ? "（已回退）" : ""}
+          </span>
+        ))}
+      </span>
+    );
+  }
   return null;
 }
 
@@ -672,6 +743,29 @@ export function RoomBoardDomain({
     typeof summary?.accepted_total === "number"
       ? summary.accepted_total
       : (projection?.modules.filter((item) => item.accepted === true).length ?? 0);
+  const integrationsEnabled = projection?.capabilities.integrations === 1;
+  const integratedTotal =
+    typeof summary?.integrated_total === "number"
+      ? summary.integrated_total
+      : (projection?.modules.filter(
+          (item) =>
+            item.accepted === true &&
+            item.integration.integrated_verification_id !== null &&
+            item.integration.integrated_verification_id === item.verification.verification_id
+        ).length ?? 0);
+  const greenHeadCommit =
+    projection?.integration?.green_head_commit ?? summary?.integration?.green_head_commit ?? null;
+  const latestJob = projection?.integration?.latest ?? null;
+  const latestJobStatus = latestJob?.status ?? summary?.integration?.status ?? null;
+  const showIntegrationSummary =
+    integrationsEnabled === true &&
+    (latestJob !== null || integratedTotal > 0 || greenHeadCommit !== null);
+  const showLatestJobDetail =
+    showIntegrationSummary &&
+    latestJob !== null &&
+    (latestJob.status === "conflicted" ||
+      latestJob.status === "gate_failed" ||
+      latestJob.status === "error");
   const conversationId = roomId ?? projection?.conversation_id ?? "";
   const isEmpty =
     projection !== null &&
@@ -723,10 +817,31 @@ export function RoomBoardDomain({
           )}
         </span>
       </div>
-      {projection && reviewsEnabled ? (
+      {projection && (reviewsEnabled || showIntegrationSummary) ? (
         <p className="room-board-accepted-total" role="status">
-          已验收 {acceptedTotal}
+          <span>{reviewsEnabled ? `已验收 ${acceptedTotal}` : `已验证 ${acceptedTotal}`}</span>
+          {showIntegrationSummary ? (
+            <>
+              <span> · 已集成 {integratedTotal}</span>
+              {greenHeadCommit ? (
+                <span>
+                  {" · "}集成分支 <code title={greenHeadCommit}>{greenHeadCommit.slice(0, 8)}</code>
+                </span>
+              ) : null}
+              {latestJobStatus && latestJobStatus !== "integrated" ? (
+                <span> · {boardIntegrationJobStatusLabel(latestJobStatus, latestJob?.statusRaw)}</span>
+              ) : null}
+            </>
+          ) : null}
         </p>
+      ) : null}
+      {projection && showLatestJobDetail && latestJob ? (
+        <IntegrationDetailDisclosure
+          conversationId={conversationId}
+          integrationId={latestJob.integration_id}
+          key={`integration:latest:${conversationId}:${latestJob.integration_id}`}
+          summaryLabel="最近一次集成详情"
+        />
       ) : null}
       {cache?.error ? <p className="room-operations-warning" role="status">看板暂不可刷新</p> : null}
       {projection === null ? (
