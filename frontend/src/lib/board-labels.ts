@@ -83,7 +83,20 @@ const ATTENTION_REASON_LABELS: Record<string, string> = {
 const REASON_CODE_LABELS: Record<string, string> = {
   ...ATTENTION_REASON_LABELS,
   board_verification_gate_failed: "门禁未通过",
+  // Gate rows (§5.2/§5.3 gates[].reason_code): the only codes a single gate carries.
   execution_gate_failed: "门禁未通过",
+  execution_gate_timeout: "门禁超时",
+  execution_gate_memory_limit: "门禁超出内存上限",
+  execution_gate_process_limit: "门禁超出进程数上限",
+  execution_gate_scratch_limit: "门禁超出临时空间上限",
+  execution_gate_resource_probe_failed: "门禁资源采样失败",
+  execution_cancelled: "任务已取消",
+  // Job-level reasons: the job failed before any gate ran.
+  execution_git_metadata_invalid: "仓库元数据无效",
+  execution_sandbox_unavailable: "沙箱不可用",
+  execution_gate_profile_marker_invalid: "门禁配置标记无效",
+  execution_toolchain_capability_drift: "工具链能力已变化",
+  execution_repo_busy: "仓库繁忙",
   board_verification_outside_charter: "超出章程范围",
   board_verification_waiting_for_provider: "等待上游模块",
   board_verification_dependency_overlap: "依赖重叠",
@@ -195,6 +208,8 @@ export function boardReasonLabel(reasonCode: string | null | undefined): string 
   if (!reasonCode) return "暂无原因";
   const label = REASON_CODE_LABELS[reasonCode];
   if (label) return label;
+  // Job-level execution codes may grow; a code of this family is still an execution problem.
+  if (reasonCode.startsWith("execution_")) return `执行环境问题（${reasonCode}）`;
   return `未知原因（${reasonCode}）`;
 }
 
