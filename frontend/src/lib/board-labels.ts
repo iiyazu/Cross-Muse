@@ -101,6 +101,18 @@ const REASON_CODE_LABELS: Record<string, string> = {
   room_board_contract_unknown: "契约未知",
   room_board_version_invalid: "契约版本无效",
   room_board_split_digest_mismatch: "拆分摘要不一致",
+  board_review_reviewer_unavailable: "复核人不可用",
+  board_review_reviewer_no_verdict: "复核人未给出结论",
+  board_review_reviewer_unresponsive: "复核人无响应",
+  room_board_review_digest_mismatch: "材料已变化",
+  room_board_review_not_pending: "复核已不在待处理状态",
+  room_board_review_material_incomplete: "材料被截断",
+  room_board_review_findings_invalid: "复核内容不合法",
+  room_board_review_summary_invalid: "复核内容不合法",
+  room_board_review_request_invalid: "复核内容不合法",
+  room_board_review_request_too_large: "内容过大",
+  room_board_review_unknown: "复核记录不存在",
+  room_board_review_not_operator: "该复核不在待你处理状态",
   room_board_split_decided: "拆分已经决策",
   room_board_split_not_proposed: "拆分不在待审批状态",
   room_board_query_invalid: "查询无效",
@@ -117,6 +129,8 @@ export const BOARD_EVENT_KIND_LABELS: Record<BoardEventKind, string> = {
   progress: "进展报告",
   question: "提问",
   verification: "验证结果",
+  review_requested: "请求复核",
+  review: "复核结论",
   unknown: "未知事件"
 };
 
