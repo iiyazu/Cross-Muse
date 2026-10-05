@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.xmuse.sandbox_support import bwrap_usable
 from xmuse_core.chat import room_execution_sandbox as sandbox
 from xmuse_core.chat.room_execution_profiles import get_execution_gate_profile
 from xmuse_core.chat.room_execution_sandbox import (
@@ -1350,7 +1351,7 @@ def test_layout_uses_the_stage_git_metadata_for_worktrees_and_clones(tmp_path: P
         assert command[env + 1] == git_dir_env
 
 
-@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 def test_patch_diff_check_runs_for_real_on_an_independent_clone_stage(tmp_path: Path) -> None:
     root = _seed_repo(tmp_path / "root")
     clone = tmp_path / "clone-stage"

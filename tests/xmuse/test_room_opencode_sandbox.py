@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.xmuse.sandbox_support import bwrap_usable
 from xmuse_core.chat.room_opencode_sandbox import (
     OPENCODE_WRITABLE_HOME_PATHS,
     build_opencode_sandbox_command,
@@ -176,7 +177,7 @@ def test_sandbox_orders_masks_around_the_workspace(tmp_path: Path) -> None:
     assert position[str(inner_root.resolve())] > workspace_bind
 
 
-@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 def test_sandbox_refuses_workspace_and_masked_writes(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
