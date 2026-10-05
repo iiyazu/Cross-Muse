@@ -1083,6 +1083,30 @@ def test_t15_global_pairing_limiter(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert recovered.status_code == 200, recovered.text
 
 
+def test_t15_lock_lasts_a_full_minute_from_the_limit(tmp_path: Path) -> None:
+    _room(tmp_path)
+    store = PluginGrantStore(tmp_path / "chat.db")
+    start = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+
+    def attempt(seconds: float) -> str:
+        try:
+            store.exchange("ZZZZ-2222", "claude-code", now=start + timedelta(seconds=seconds))
+        except grants_mod.PluginGrantError as exc:
+            return exc.code
+        return "ok"
+
+    assert attempt(0) == "plugin_pairing_invalid"
+    for _ in range(9):
+        assert attempt(50) == "plugin_pairing_invalid"
+    # The limit was reached at +50 s; the first failure leaving the window does not end the lock.
+    with pytest.raises(grants_mod.PluginGrantError) as locked:
+        store.exchange("ZZZZ-2222", "claude-code", now=start + timedelta(seconds=65))
+    assert locked.value.code == "plugin_pairing_locked"
+    assert locked.value.retry_after == 45
+    assert attempt(109) == "plugin_pairing_locked"
+    assert attempt(111) == "plugin_pairing_invalid"
+
+
 # ---------------------------------------------------------------------------
 # Operator route validation, idempotency, list order
 # ---------------------------------------------------------------------------

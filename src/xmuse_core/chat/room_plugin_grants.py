@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import re
 import secrets
 import sqlite3
@@ -356,20 +357,21 @@ class PluginGrantStore:
                     "delete from plugin_grant_exchange_failures where failed_at <= ?",
                     (_stamp(current - timedelta(seconds=5 * EXCHANGE_FAIL_WINDOW_S)),),
                 )
-                window_start = _stamp(current - timedelta(seconds=EXCHANGE_FAIL_WINDOW_S))
+                # The lock lasts a full window from the failure that reached the limit.
+                # Nothing is recorded while locked, so that failure is the newest one.
+                window = timedelta(seconds=EXCHANGE_FAIL_WINDOW_S)
                 failures = conn.execute(
                     "select failed_at from plugin_grant_exchange_failures "
-                    "where failed_at > ? order by failed_at asc",
-                    (window_start,),
+                    "where failed_at > ? order by failed_at desc limit ?",
+                    (_stamp(current - 2 * window), EXCHANGE_FAIL_LIMIT),
                 ).fetchall()
                 if len(failures) >= EXCHANGE_FAIL_LIMIT:
-                    oldest = _parse_time(str(failures[0]["failed_at"]))
-                    retry_after = max(
-                        1,
-                        EXCHANGE_FAIL_WINDOW_S - int((current - oldest).total_seconds()),
-                    )
-                    conn.commit()
-                    raise PluginGrantError("plugin_pairing_locked", retry_after=retry_after)
+                    newest = _parse_time(str(failures[0]["failed_at"]))
+                    limit_start = _parse_time(str(failures[-1]["failed_at"]))
+                    if newest - limit_start < window and current < newest + window:
+                        retry_after = max(1, math.ceil((newest + window - current).total_seconds()))
+                        conn.commit()
+                        raise PluginGrantError("plugin_pairing_locked", retry_after=retry_after)
                 presented = _digest(candidate)
                 match: sqlite3.Row | None = None
                 for row in conn.execute(
