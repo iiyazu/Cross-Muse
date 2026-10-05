@@ -1,0 +1,12 @@
+{
+  "xmuse-status": {
+    "enabled": false,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "xmuse-ctl hook --host agy",
+        "timeout": 5
+      }
+    ]
+  }
+}

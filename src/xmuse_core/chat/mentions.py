@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from xmuse_core.chat.participant_store import Participant, ParticipantStore
 from xmuse_core.chat.room_agent_kinds import ROOM_AGENT_CLI_KINDS
 
-DEFAULT_INTAKE_ROLE = "architect"
 MENTION_RE = re.compile(
     r"@(?:participant:[A-Za-z0-9_:-]+|[A-Za-z0-9][A-Za-z0-9_-]*(?:\s+[A-Z][A-Za-z0-9_-]*)*)"
 )
@@ -45,61 +44,6 @@ def normalize_address(value: str) -> str:
         text = text[1:]
     text = re.sub(r"[\s_]+", "-", text.lower())
     return f"@{text}"
-
-
-def default_intake_address() -> str:
-    return normalize_address(DEFAULT_INTAKE_ROLE)
-
-
-def extract_mentions(content: str) -> list[str]:
-    seen: set[str] = set()
-    mentions: list[str] = []
-    for candidate in _iter_mention_candidates(content):
-        if not candidate.active:
-            continue
-        match = MENTION_RE.match(content, candidate.start)
-        if match is None:
-            continue
-        raw = match.group(0).strip()
-        normalized = normalize_address(raw)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        mentions.append(raw)
-    return mentions
-
-
-def extract_leading_mentions(content: str) -> list[str]:
-    seen: set[str] = set()
-    mentions: list[str] = []
-    index = 0
-    length = len(content)
-    while index < length:
-        start = _leading_mention_start(content, index)
-        if start is None:
-            break
-        if _is_escaped(content, start):
-            break
-        match = MENTION_RE.match(content, start)
-        if match is None:
-            break
-        raw = match.group(0).strip()
-        normalized = normalize_address(raw)
-        if normalized not in seen:
-            seen.add(normalized)
-            mentions.append(raw)
-        index = match.end()
-        while index < length and content[index].isspace():
-            index += 1
-        if index < length and content[index] in {",", ";"}:
-            index += 1
-            while index < length and content[index].isspace():
-                index += 1
-    return mentions
-
-
-def has_inactive_mention_candidates(content: str) -> bool:
-    return any(not candidate.active for candidate in _iter_mention_candidates(content))
 
 
 def _iter_mention_candidates(content: str) -> Iterator[_MentionCandidate]:

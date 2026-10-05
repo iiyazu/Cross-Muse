@@ -309,7 +309,7 @@ def test_surviving_local_imports_resolve() -> None:
     for root in roots:
         for path in _python_files(root):
             for module_name in _imports(path):
-                if module_name.startswith(LOCAL_IMPORT_ROOTS) and not _local_module_exists(
+                if module_name.split(".")[0] in LOCAL_IMPORT_ROOTS and not _local_module_exists(
                     module_name
                 ):
                     missing.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {module_name}")
@@ -357,9 +357,13 @@ def test_runtime_namespace_boundary_stays_explicit() -> None:
     pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert not (APP_ROOT / "__init__.py").exists()
+    # `xmuse_ctl` is the separately packaged, read-only command line under
+    # integrations/: it speaks only the loopback HTTP contract and imports
+    # neither `xmuse` nor `xmuse_core` (tests/xmuse/test_integrations_xmuse_ctl.py).
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "xmuse",
         "src/xmuse_core",
+        "integrations/xmuse-ctl/xmuse_ctl",
     ]
 
 
