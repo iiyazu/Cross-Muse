@@ -577,11 +577,14 @@ comment every 15 seconds. Same template as `/agent-streams`.
 - Writes originate from a human action (button or command). Plugins must not register them as
   model-callable tools.
 - Every operator decision records `decided_via` ∈ `web`, `plugin:<host>`, `cli` in the event
-  `data` (`split_rejected`, and every `charter_assigned` of the approved split).
+  `data` (`split_rejected`, and every `charter_assigned` of the approved split). Those events also
+  carry `grant_id: string | null` (the grant id for plugin decisions, `null` for `web` and `cli`;
+  see `plugin_grant_v1.md` §6).
   `POST /api/chat/operator/board-splits/{split_id}/decision` accepts
   `{conversation_id, decision, expected_digest?, decided_via?}`: `decided_via` defaults to
-  `web` and must match `^(web|cli|plugin:[a-z0-9][a-z0-9_-]{0,31})$` (else `422
-  room_board_decided_via_invalid`); `expected_digest`, when present, must equal
+  `web` and must be `web` or `cli` (else `422 room_board_decided_via_invalid`); `plugin:<host>`
+  is recorded only by the plugin grant route (`plugin_grant_v1.md` §4.2), which takes it from
+  the grant; `expected_digest`, when present, must equal
   `Split.digest` of the stored split (else `409 room_board_split_digest_mismatch`, nothing
   decided). Clients take `href`, `expected_digest` and the allowed decisions from
   `Split.actions.decide` rather than building them. The Next.js proxy fixes

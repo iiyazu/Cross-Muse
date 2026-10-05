@@ -491,6 +491,47 @@ def test_t3_superseded_split_answers_not_proposed(tmp_path: Path) -> None:
     assert stale.json()["detail"]["code"] == "room_board_split_not_proposed"
 
 
+def test_plugin_decision_records_grant_id_in_events(tmp_path: Path) -> None:
+    client, conversation_id, split, _ctx = _room(tmp_path)
+    grant, secret, _code = _activate(client, conversation_id)
+
+    approved = _decide(
+        client,
+        split["split_id"],
+        secret=secret,
+        conversation_id=conversation_id,
+        digest=split["digest"],
+    )
+    assert approved.status_code == 200
+    board = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
+    assigned = [event for event in board["events"] if event["kind"] == "charter_assigned"]
+    assert assigned
+    assert all(event["data"]["decided_via"] == "plugin:claude-code" for event in assigned)
+    assert all(event["data"]["grant_id"] == grant["grant_id"] for event in assigned)
+
+    other_split_id = _second_room_with_split(tmp_path, conversation_id)
+    pending = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
+    other = next(item for item in pending["splits"] if item["split_id"] == other_split_id)
+    rejected = _decide(
+        client,
+        other_split_id,
+        secret=secret,
+        conversation_id=conversation_id,
+        digest=other["digest"],
+        decision="reject",
+    )
+    assert rejected.status_code == 200
+    decided = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
+    refused = [
+        event
+        for event in decided["events"]
+        if event["kind"] == "split_rejected" and event["data"]["split_id"] == other_split_id
+    ]
+    assert len(refused) == 1
+    assert refused[0]["data"]["decided_via"] == "plugin:claude-code"
+    assert refused[0]["data"]["grant_id"] == grant["grant_id"]
+
+
 # ---------------------------------------------------------------------------
 # T4: clock moved backwards
 # ---------------------------------------------------------------------------
@@ -1481,10 +1522,8 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
     jsonschema.validate(responses["issue"], SCHEMA)
     jsonschema.validate(responses["list"], SCHEMA)
     jsonschema.validate(responses["exchange"], SCHEMA)
-    grant_schema = {"$defs": SCHEMA["$defs"], "$ref": "#/$defs/grant"}
-    for name in ("plugin_revoke", "operator_revoke"):
-        jsonschema.validate(responses[name]["grant"], grant_schema)
-        assert set(responses[name]) == {"schema_version", "grant"}
+    jsonschema.validate(responses["plugin_revoke"], SCHEMA)
+    jsonschema.validate(responses["operator_revoke"], SCHEMA)
     assert responses["decision"]["status"] == "approved"
     for name in (
         "plugin_grant_invalid",
