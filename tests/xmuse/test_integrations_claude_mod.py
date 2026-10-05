@@ -195,6 +195,45 @@ def test_no_new_commands_tools_and_no_model_paths() -> None:
     assert "onPress" in pane_text and "onSubmit" in pane_text
 
 
+def test_reviews_read_only_no_verdict_channel() -> None:
+    """Reviews stay read-only in the mod: no review write route, no patch
+    material route and no digest guard may be spelled outside the P3 split
+    grant files (the split guard from P3 lives in grant_api.ts)."""
+    allowed = {"src/grant_api.ts", "src/grant_state.ts"}
+    violations: list[str] = []
+    for path in _plugin_sources():
+        rel = str(path.relative_to(PLUGIN_ROOT))
+        if rel in allowed:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for needle in ("board-reviews", "/material", "expected_digest"):
+            if needle in text:
+                violations.append(f"{rel}: {needle}")
+    assert not violations, "review write/material/digest material:\n" + "\n".join(violations)
+
+
+def test_readme_documents_reviews_read_only() -> None:
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    assert (
+        "Reviews are read-only here; verdicts belong to Room agents and the human in the Web"
+        in readme
+    ), "README missing the review read-only statement"
+    for needle in (
+        "待复核",
+        "待你复核",
+        "已背书",
+        "已驳回",
+        "已升级",
+        "已验收",
+        "已验证 · 待复核",
+        "在 Web 复核",
+        "阻塞",
+        "复核被驳回待返工",
+        "accepted_total",
+    ):
+        assert needle in readme, f"README missing review detail {needle!r}"
+
+
 def test_secret_never_in_ui_args() -> None:
     """The pairing code and the token never reach a toast, status line,
     command/tool result or pane text: no such identifier may share the

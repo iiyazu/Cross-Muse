@@ -47,14 +47,55 @@ Options (`userConfig`, see `.claude-plugin/plugin.json`):
   omitted). Offline: `xmuse 离线`. Unbound: `xmuse 未绑定房间`.
 - Toasts (at most one per tick, never on the first poll) when operator
   attention gains an item or a module becomes verified / fails verification.
+  Review attention uses fixed labels: `待你复核`
+  (`board_attention_review_operator_pending`) and `复核被驳回待返工`
+  (`board_attention_review_objected`).
 - State badges: `verified` = `✓ 已验证`, `done_claimed` = `◌ 自称完成·未验证`,
   `verification_failed` = `✗`, `verifying` = `…`,
   `waiting_for_provider` = `⧗`, `verification_error` = `‼`.
+  The `✓` count in the status line counts accepted modules (`accepted_total`),
+  never merely verified ones.
 - The pane shows structured fields only. Agent-authored text appears solely in
   the expanded module detail as plain `Text` labelled `agent 自述 · 未验证`,
   never as Markdown or links. Split approvals happen in the pane once the
   human pairs a grant (see 授权), otherwise the pane links
   to the room page (`在 Web 审批`).
+
+## 复核 (reviews, read-only)
+
+Reviews are read-only here; verdicts belong to Room agents and the human in the Web.
+
+When the room runs cross-family reviews (`capabilities.reviews == 1`), each
+pane module row gains one fixed-word review part, counts only:
+
+- `待复核` — review pending with a participant reviewer.
+- `待你复核` — review pending with the operator (you). The row also gains a
+  `在 Web 复核` link to the room page, same style as the `在 Web 审批` link.
+  The link carries no review id and no patch reference.
+- `已背书` — review endorsed. The module is accepted and its state badge
+  reads `✓ 已验收`.
+- `已驳回` — review objected; the owner reworks.
+- ` · 已升级` is appended when the review was escalated to the operator
+  (the assigned reviewer did not answer).
+- `阻塞 N 主要 N 次要 N` finding counts appear only when any of them is
+  non-zero.
+- An unknown review status renders as `?value`, never hidden.
+
+`已验收` appears only when the module is accepted. A module with
+`state == verified` that is not accepted shows `已验证 · 待复核`, never
+`已验收`. While reviews are off (`capabilities.reviews == 0`) rows render
+exactly as before, with no review part.
+
+What the mod never does with reviews:
+
+- No review summary or finding text is ever read, shown, toasted, or handed
+  to the model — only the structured state (`status`, `reviewer_kind`,
+  escalation presence, finding counts) and the attention reason codes.
+- No review verdict channel exists here: no command, no tool, no extra
+  Button or Input, no new HTTP method or URL. The mod only reads the board
+  summary and projection it already reads.
+- The short-lived plugin grant (`board.split.decide`) covers proposed splits
+  only and can never record a review verdict.
 
 ## 授权 (pairing flow)
 
