@@ -75,7 +75,8 @@ newest first, at most 50 (older ones are dropped, not paged). The Web panel show
 
 ### 3.3 Revoke — `POST /api/chat/operator/plugin-grants/{grant_id}/revoke`
 
-Body `{conversation_id}`. Returns the Grant (`status: "revoked"`). Idempotent. `404
+Body `{conversation_id}`. Returns `{ "schema_version": "plugin_grant_revoke/v1", "grant": Grant }`
+with `status: "revoked"`. Idempotent. `404
 plugin_grant_unknown` for an unknown id **or an id of another conversation** (T2).
 
 ## 4. Plugin routes (no operator token)
@@ -150,7 +151,7 @@ decision response.
 
 ### 4.3 Self-revoke — `POST /api/chat/plugin/grants/revoke`
 
-`Authorization: Bearer <secret>`, empty body `{}`. Revokes that grant; `200` Grant. A bad bearer is
+`Authorization: Bearer <secret>`, empty body `{}`. Revokes that grant; `200` with the same `plugin_grant_revoke/v1` body as §3.3. A bad bearer is
 `401 plugin_grant_invalid`. A second call also answers `401`, because a revoked grant no longer
 authenticates.
 
