@@ -34,7 +34,9 @@ function cacheFor(name: string): RoomBoardCache {
     consecutiveFailures: 0,
     lastSyncedAt: Date.now(),
     error: null,
-    contractDetails: {}
+    contractDetails: {},
+    reviewDetails: {},
+    reviewDetailErrors: {}
   };
 }
 
@@ -241,7 +243,9 @@ describe("RoomBoardDomain", () => {
   it("surfaces the stale notice on 409 and a labeled error otherwise", () => {
     const stale: RoomBoardCache = {
       ...cacheFor("split_pending.json"),
-      contractDetails: {}
+      contractDetails: {},
+    reviewDetails: {},
+    reviewDetailErrors: {}
     };
     const staleError = {
       code: "room_board_split_digest_mismatch",

@@ -26,6 +26,7 @@ export type RoomCollaboration = {
 export type RoomCollaborationInit = {
   mode: RoomCollaborationMode;
   lead_role?: string | null;
+  review_policy?: RoomReviewPolicy | null;
 };
 
 export type RoomSetupOptionParticipant = {
@@ -54,7 +55,10 @@ export type RoomSetupOptions = {
   schema_version: "room_setup_options/v1";
   default_roster_template_id: string;
   roster_templates: RoomSetupOption[];
+  review_policies?: string[] | null;
 };
+
+export type RoomReviewPolicy = "off" | "cross_family";
 
 export type XmuseBootstrapProjection = {
   schema_version: "xmuse_bootstrap_projection/v1";
