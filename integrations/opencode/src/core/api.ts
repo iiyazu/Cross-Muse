@@ -103,9 +103,68 @@ export function normalizeAttention(v: unknown): XmuseAttentionItem[] {
     const reason = asString(r["reason_code"]) ?? "?";
     const mid = asString(r["module_id"]);
     const sid = asString(r["split_id"]);
-    out.push({ kind, reason_code: reason, module_id: mid, split_id: sid });
+    const iid = asString(r["integration_id"]);
+    out.push({ kind, reason_code: reason, module_id: mid, split_id: sid, integration_id: iid });
   }
   return out;
+}
+
+function normalizeIntegrationState(v: unknown): { status: string | null; green_head_commit: string | null } {
+  const none = { status: null as string | null, green_head_commit: null as string | null };
+  const r = asRecord(v);
+  if (r === null) return none;
+  const status = asString(r["status"]);
+  const head = asString(r["green_head_commit"]);
+  return {
+    status: status !== null && status !== "" ? status : null,
+    green_head_commit: head !== null && head !== "" ? head : null,
+  };
+}
+
+function normalizeRoomIntegration(v: unknown): { status: string | null; green_head_commit: string | null } {
+  const none = { status: null as string | null, green_head_commit: null as string | null };
+  const r = asRecord(v);
+  if (r === null) return none;
+  const head = asString(r["green_head_commit"]);
+  const latest = asRecord(r["latest"]);
+  const status = latest !== null ? asString(latest["status"]) : null;
+  return {
+    status: status !== null && status !== "" ? status : null,
+    green_head_commit: head !== null && head !== "" ? head : null,
+  };
+}
+
+function normalizeModuleIntegration(v: unknown): {
+  status: string;
+  verification_id: string | null;
+  integrated_verification_id: string | null;
+  conflict_path_count: number;
+  reason_code: string | null;
+} {
+  const none = {
+    status: "none",
+    verification_id: null as string | null,
+    integrated_verification_id: null as string | null,
+    conflict_path_count: 0,
+    reason_code: null as string | null,
+  };
+  const r = asRecord(v);
+  if (r === null) return none;
+  const rawStatus = asString(r["status"]);
+  const status = rawStatus !== null && rawStatus !== "" ? rawStatus : "none";
+  const ver = asString(r["verification_id"]);
+  const old = asString(r["integrated_verification_id"]);
+  const reason = asString(r["reason_code"]);
+  const rawCount = r["conflict_path_count"];
+  const count =
+    typeof rawCount === "number" && Number.isFinite(rawCount) ? Math.max(0, Math.floor(rawCount)) : 0;
+  return {
+    status,
+    verification_id: ver,
+    integrated_verification_id: old,
+    conflict_path_count: count,
+    reason_code: reason,
+  };
 }
 
 export function normalizeSummary(json: unknown): XmuseSummary | null {
@@ -134,6 +193,11 @@ export function normalizeSummary(json: unknown): XmuseSummary | null {
       : typeof accRaw === "number" && Number.isFinite(accRaw)
         ? Math.max(0, Math.floor(accRaw))
         : 0;
+  const capIntegrations = caps !== null ? caps["integrations"] : undefined;
+  const integrations = typeof capIntegrations === "number" && capIntegrations >= 1 ? 1 : 0;
+  const intRaw = root["integrated_total"];
+  const integrated_total =
+    typeof intRaw === "number" && Number.isFinite(intRaw) ? Math.max(0, Math.floor(intRaw)) : 0;
   return {
     conversation_id: cid,
     revision: rev,
@@ -144,6 +208,9 @@ export function normalizeSummary(json: unknown): XmuseSummary | null {
     attention_total: Math.max(attention.length, Math.floor(num(root["attention_total"]))),
     accepted_total,
     reviews,
+    integrations,
+    integrated_total,
+    integration: normalizeIntegrationState(root["integration"]),
   };
 }
 
@@ -274,6 +341,7 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
       depends: strList(r["depends"], 16).map((c) => safeId(c)),
       accepted: r["accepted"] === true,
       review: normalizeReview(r["review"]),
+      integration: normalizeModuleIntegration(r["integration"]),
     });
   }
   modules.sort((a, b) => (a.module_id < b.module_id ? -1 : a.module_id > b.module_id ? 1 : 0));
@@ -281,12 +349,22 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
   const caps = asRecord(root["capabilities"]);
   const capReviews = caps !== null ? caps["reviews"] : undefined;
   const reviews = typeof capReviews === "number" && capReviews >= 1 ? 1 : 0;
+  const capIntegrations = caps !== null ? caps["integrations"] : undefined;
+  const integrations = typeof capIntegrations === "number" && capIntegrations >= 1 ? 1 : 0;
   // Same frozen definition as the summary: while reviews are off every
   // verified module counts as accepted.
   const accepted_total =
     reviews === 0
       ? modules.filter((m) => m.state === "verified").length
       : modules.filter((m) => m.accepted).length;
+  // §3.11: accepted modules whose integrated version is their current candidate.
+  const integrated_total = modules.filter(
+    (m) =>
+      m.accepted &&
+      m.integration.integrated_verification_id !== null &&
+      m.integration.integrated_verification_id === m.integration.verification_id,
+  ).length;
+  const integration = normalizeRoomIntegration(root["integration"]);
 
   const events = asArray(root["events"]).slice(-50);
   const byModule: { [id: string]: { field: string; text: string }[] } = {};
@@ -348,5 +426,8 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
     operator_attention: normalizeAttention(root["attention"]).filter((a) => a.kind === "operator"),
     reviews,
     accepted_total,
+    integrations,
+    integrated_total,
+    integration,
   };
 }

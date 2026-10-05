@@ -173,10 +173,80 @@ def normalize_attention(value: object) -> list[dict[str, str | None]]:
         reason = _as_str(record.get("reason_code")) or "?"
         module_id = _as_str(record.get("module_id"))
         split_id = _as_str(record.get("split_id"))
+        integration_id = _as_str(record.get("integration_id"))
         out.append(
-            {"kind": kind, "reason_code": reason, "module_id": module_id, "split_id": split_id}
+            {
+                "kind": kind,
+                "reason_code": reason,
+                "module_id": module_id,
+                "split_id": split_id,
+                "integration_id": integration_id,
+            }
         )
     return out
+
+
+def _normalize_integration_state(value: object) -> dict[str, str | None]:
+    """Summary room integration {status, green_head_commit}; none when missing."""
+    record = _as_record(value)
+    if record is None:
+        return {"status": None, "green_head_commit": None}
+    status = _as_str(record.get("status"))
+    head = _as_str(record.get("green_head_commit"))
+    return {
+        "status": status if status not in (None, "") else None,
+        "green_head_commit": head if head not in (None, "") else None,
+    }
+
+
+def _normalize_room_integration(value: object) -> dict[str, str | None]:
+    """Projection room integration: latest status plus the green head."""
+    record = _as_record(value)
+    if record is None:
+        return {"status": None, "green_head_commit": None}
+    head = _as_str(record.get("green_head_commit"))
+    latest = _as_record(record.get("latest"))
+    status = _as_str(latest.get("status")) if latest is not None else None
+    return {
+        "status": status if status not in (None, "") else None,
+        "green_head_commit": head if head not in (None, "") else None,
+    }
+
+
+def _normalize_module_integration(value: object) -> dict[str, object]:
+    """Per-module integration fields; the none values on bad shapes."""
+    none: dict[str, object] = {
+        "status": "none",
+        "verification_id": None,
+        "integrated_verification_id": None,
+        "conflict_path_count": 0,
+        "reason_code": None,
+    }
+    record = _as_record(value)
+    if record is None:
+        return none
+    raw_status = _as_str(record.get("status"))
+    status = raw_status if raw_status not in (None, "") else "none"
+    verification_id = _as_str(record.get("verification_id"))
+    old_id = _as_str(record.get("integrated_verification_id"))
+    reason = _as_str(record.get("reason_code"))
+    raw_count = record.get("conflict_path_count")
+    if isinstance(raw_count, bool):
+        count = 0
+    elif isinstance(raw_count, (int, float)):
+        try:
+            count = max(0, int(raw_count))
+        except (TypeError, ValueError):
+            count = 0
+    else:
+        count = 0
+    return {
+        "status": status,
+        "verification_id": verification_id,
+        "integrated_verification_id": old_id,
+        "conflict_path_count": count,
+        "reason_code": reason,
+    }
 
 
 def _accepted_from_summary(reviews: int, counts: dict[str, int], accepted_raw: object) -> int:
@@ -208,11 +278,15 @@ def normalize_summary(payload: object) -> dict[str, object] | None:
     integrations = _flag(caps.get("integrations"))
     accepted_total = _accepted_from_summary(reviews, counts, root.get("accepted_total"))
     integrated_raw = root.get("integrated_total")
-    integrated_total: int | None = None
     if isinstance(integrated_raw, bool):
-        integrated_total = None
+        integrated_total = 0
     elif isinstance(integrated_raw, (int, float)):
-        integrated_total = max(0, int(integrated_raw))
+        try:
+            integrated_total = max(0, int(integrated_raw))
+        except (TypeError, ValueError):
+            integrated_total = 0
+    else:
+        integrated_total = 0
     return {
         "conversation_id": room_id,
         "revision": revision,
@@ -225,6 +299,7 @@ def normalize_summary(payload: object) -> dict[str, object] | None:
         "reviews": reviews,
         "integrations": integrations,
         "integrated_total": integrated_total,
+        "integration": _normalize_integration_state(root.get("integration")),
     }
 
 
@@ -305,11 +380,13 @@ def normalize_board(payload: object) -> dict[str, object] | None:
                 "attention_reason": _as_str(attention.get("reason_code")) if attention else None,
                 "accepted": record.get("accepted") is True,
                 "review": review,
+                "integration": _normalize_module_integration(record.get("integration")),
             }
         )
     modules.sort(key=lambda module: str(module["module_id"]))
     caps = _as_record(root.get("capabilities")) or {}
     reviews = _flag(caps.get("reviews"))
+    integrations = _flag(caps.get("integrations"))
     # Same frozen definition as the summary.
     if reviews == 0:
         accepted_total = len([m for m in modules if m["state"] == "verified"])
@@ -328,12 +405,24 @@ def normalize_board(payload: object) -> dict[str, object] | None:
         splits.append({"split_id": split_id, "status": status})
         if status == "proposed":
             proposed.append(split_id)
+    # §3.11: accepted modules whose integrated version is their current candidate.
+    integrated_total = 0
+    for m in modules:
+        integration = m.get("integration")
+        if not (m["accepted"] is True and isinstance(integration, dict)):
+            continue
+        integrated_id = integration.get("integrated_verification_id")
+        if integrated_id is not None and integrated_id == integration.get("verification_id"):
+            integrated_total += 1
     return {
         "conversation_id": room_id,
         "revision": revision,
         "board_seq": _count(root.get("board_seq")),
         "reviews": reviews,
+        "integrations": integrations,
         "accepted_total": accepted_total,
+        "integrated_total": integrated_total,
+        "integration": _normalize_room_integration(root.get("integration")),
         "modules": modules,
         "splits": splits[:10],
         "proposed_splits": proposed[:10],

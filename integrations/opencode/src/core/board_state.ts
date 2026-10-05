@@ -4,11 +4,19 @@
 
 import type { XmuseAttentionItem, XmuseCache, XmuseSummary } from "./types";
 import { COUNT_KEYS } from "./api";
-import { STATUS_GROUPS, reviewAttentionLabel } from "./labels";
+import { STATUS_GROUPS, integrationJobWord, reviewAttentionLabel, shortGreenHead } from "./labels";
 import { safe, safeId, shortRev, shortRoom } from "./text";
 
 export function attentionKey(a: XmuseAttentionItem): string {
   return safe(a.reason_code, 64) + "|" + safe(a.module_id ?? "", 64) + "|" + safe(a.split_id ?? "", 64);
+}
+
+// Room-level integration items carry module_id null and an
+// integration_id: they are shown with the label only, never the job id.
+export function attentionTarget(a: XmuseAttentionItem): string {
+  if (a.module_id !== null && a.module_id !== "") return safeId(a.module_id);
+  if (a.split_id !== null && a.split_id !== "") return safe(a.split_id, 32);
+  return "";
 }
 
 // Attention the mod toasts about when it is gained: every operator item
@@ -32,7 +40,11 @@ function operatorCount(summary: XmuseSummary): number {
 // One status line. Examples:
 //   "xmuse 离线"  "xmuse 未绑定房间"
 //   "看板 3 模块 · ✓1 …1 ✗1 · 待你处理 1"
+//   "看板 3 模块 · ✓3 · 集成 2 · 集成冲突"
 // The ✓ part counts accepted modules (§4.4), never merely verified ones.
+// The 集成 part appears only while capabilities.integrations == 1 and
+// either integrated_total > 0 or a job word is present; old payloads and
+// quiet rooms keep the pre-integration line byte-identical.
 export function statusText(cache: XmuseCache): string {
   if (cache.offline) return "xmuse 离线";
   if (cache.binding === null) return "xmuse 未绑定房间";
@@ -47,7 +59,26 @@ export function statusText(cache: XmuseCache): string {
   if (parts.length > 0) line += " · " + parts.join(" ");
   const op = operatorCount(s);
   if (op > 0) line += " · 待你处理 " + String(op);
+  const job = integrationJobWord(s.integration.status);
+  if (s.integrations === 1 && (s.integrated_total > 0 || job !== "")) {
+    line += " · 集成 " + String(s.integrated_total);
+    if (job !== "") line += " · " + job;
+  }
   return line;
+}
+
+// One integration line for the compact block: "集成 M · <job> · <head8>".
+// Empty parts are skipped; the whole line is skipped when empty and when
+// integrations are off. Counts and short commit only.
+export function integrationBlockLine(summary: XmuseSummary): string {
+  if (summary.integrations !== 1) return "";
+  const job = integrationJobWord(summary.integration.status);
+  const head = shortGreenHead(summary.integration.green_head_commit);
+  const segs: string[] = [];
+  if (summary.integrated_total > 0) segs.push("集成 " + String(summary.integrated_total));
+  if (job !== "") segs.push(job);
+  if (head !== "") segs.push(head);
+  return segs.join(" · ");
 }
 
 // Compact structured block (<= 8 lines) for /xmuse status and the tool.
@@ -64,12 +95,14 @@ export function statusBlock(cache: XmuseCache): string {
     if (n > 0) parts.push(g.glyph + String(n));
   }
   lines.push("模块 " + String(s.modules_total) + (parts.length > 0 ? " " + parts.join(" ") : ""));
+  const integrationLine = integrationBlockLine(s);
+  if (integrationLine !== "") lines.push(integrationLine);
   const op = s.attention.filter((a) => a.kind === "operator").slice(0, 5);
   lines.push("待你处理 " + String(operatorCount(s)));
   for (const a of op) {
-    const target = a.module_id !== null ? safeId(a.module_id) : safe(a.split_id ?? "?", 32);
+    const target = attentionTarget(a);
     const label = reviewAttentionLabel(a.reason_code) ?? safe(a.reason_code, 64);
-    lines.push("! " + label + " " + target);
+    lines.push(target !== "" ? "! " + label + " " + target : "! " + label);
   }
   return lines.slice(0, 8).join("\n");
 }
@@ -77,16 +110,20 @@ export function statusBlock(cache: XmuseCache): string {
 export type ToastPlan = { text: string } | null;
 
 // At most one toast per tick (coalesced). No toast on the first successful
-// poll (baseline). Fixed labels plus module/split ids only.
+// poll (baseline). Fixed labels plus module/split ids only. Room-level
+// integration items (module and split both absent) toast with the label
+// only: the job id is noise and never printed. Per-module conflicted /
+// gate_failed moves are the owner's and the lead's business: they are not
+// toastable (only operator items and the objected review toast).
 export function planToast(prev: XmuseCache, next: XmuseSummary, stateNotes: string[]): ToastPlan {
   if (!prev.baselined || prev.summary === null) return null;
   const items: string[] = [];
   const before = new Set(prev.seenAttention);
   for (const a of toastableAttention(next)) {
     if (!before.has(attentionKey(a))) {
-      const target = a.module_id !== null ? safeId(a.module_id) : safe(a.split_id ?? "?", 32);
+      const target = attentionTarget(a);
       const label = reviewAttentionLabel(a.reason_code) ?? "待处理 " + safe(a.reason_code, 64);
-      items.push(label + " " + target);
+      items.push(target !== "" ? label + " " + target : label);
     }
   }
   for (const note of stateNotes.slice(0, 3)) items.push(note);

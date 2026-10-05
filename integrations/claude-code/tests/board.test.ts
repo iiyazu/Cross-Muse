@@ -476,3 +476,139 @@ test("status block shows the review attention label", OPTIONS, async ($, on) => 
   expect(String(status.text)).toContain("待你复核");
   expect(String(status.text)).toContain("beta");
 });
+
+// ------------------------------------------------------- integration (M2b)
+
+const INTEGRATION_SCENARIOS = [
+  "integration_conflicted",
+  "integration_dependency_upgrade",
+  "integration_error",
+  "integration_fallback_to_incumbent",
+  "integration_gate_failed",
+  "integration_integrated",
+  "integration_pending_running",
+  "review_endorsed_integrated",
+] as const;
+
+const OLD_SCENARIO_NAMES = (Object.keys(fx) as string[]).filter(
+  (n) => n !== "SCENARIO_NAMES" && !(INTEGRATION_SCENARIOS as readonly string[]).includes(n),
+);
+
+// The harness lets a module register its hooks once per test, so one test per scenario.
+for (const name of INTEGRATION_SCENARIOS) {
+  test(`integration scenario ${name} carries no paths, tails or job ids`, OPTIONS, async ($, on) => {
+    const mod = (fx as unknown as Record<string, { summary: unknown; projection: unknown }>)[name];
+    const cid = String((mod.summary as { conversation_id: string }).conversation_id);
+    const env = await boot($, on, { "binding:/repo": cid }, (url) => {
+      if (url.endsWith("/board/summary")) {
+        return { status: 200, ok: true, headers: {}, text: json(mod.summary) };
+      }
+      if (url.endsWith("/board")) {
+        return { status: 200, ok: true, headers: {}, text: json(mod.projection) };
+      }
+      return NOT_FOUND;
+    });
+    // The fake server must never see the §5.3 detail route.
+    for (const entry of env.log) expect(entry.url).not.toContain("board/integrations");
+    await env.clock.advance(1000);
+    await env.clock.settle();
+    const line = lastStatus(env.statuses);
+    expect(line).not.toContain("boardintegration_");
+    expect(line).not.toContain("docs/");
+    expect(line).not.toContain(".txt");
+    expect(line).not.toContain("expected Hello, Ada!");
+    const status = await $.command.run({ command: "xmuse", args: "status" });
+    const called = await $.tool.call({ tool: "mcp__xmuse__status" });
+    const result = String((called as unknown as { result?: unknown }).result ?? "");
+    for (const text of [String(status.text), result]) {
+      expect(text).not.toContain("boardintegration_");
+      expect(text).not.toContain("docs/");
+      expect(text).not.toContain("expected Hello, Ada!");
+    }
+    for (const entry of env.log) expect(entry.url).not.toContain("board/integrations");
+  });
+}
+
+test("fallback: conflicted word with old-branch suffix and integrated count", OPTIONS, async ($, on) => {
+  const mod = fx.integration_fallback_to_incumbent;
+  const cid = String((mod.summary as { conversation_id: string }).conversation_id);
+  const env = await boot($, on, { "binding:/repo": cid }, (url) => {
+    if (url.endsWith("/board/summary")) return { status: 200, ok: true, headers: {}, text: json(mod.summary) };
+    if (url.endsWith("/board")) return { status: 200, ok: true, headers: {}, text: json(mod.projection) };
+    return NOT_FOUND;
+  });
+  await $.command.run({ command: "xmuse", args: "" });
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(lastStatus(env.statuses)).toContain("· 集成 2");
+  const status = await $.command.run({ command: "xmuse", args: "status" });
+  expect(String(status.text)).toContain("集成 2");
+  expect(String(status.text)).toContain("8d191a5e");
+  void env;
+});
+
+test("gate_failed: lead label and suspect word", OPTIONS, async ($, on) => {
+  const mod = fx.integration_gate_failed;
+  const cid = String((mod.summary as { conversation_id: string }).conversation_id);
+  const env = await boot($, on, { "binding:/repo": cid }, (url) => {
+    if (url.endsWith("/board/summary")) return { status: 200, ok: true, headers: {}, text: json(mod.summary) };
+    if (url.endsWith("/board")) return { status: 200, ok: true, headers: {}, text: json(mod.projection) };
+    return NOT_FOUND;
+  });
+  await $.command.run({ command: "xmuse", args: "" });
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(lastStatus(env.statuses)).toContain("· 集成 1 · 集成门禁失败");
+  const status = await $.command.run({ command: "xmuse", args: "status" });
+  expect(String(status.text)).toContain("集成门禁失败");
+  void env;
+});
+
+test("error: operator label toasts with no job id", OPTIONS, async ($, on) => {
+  const first = clone(fx.lifecycle_mix.summary) as unknown as Record<string, unknown>;
+  const second = clone(fx.integration_error.summary) as unknown as Record<string, unknown>;
+  second["revision"] = "104:integrationerror";
+  const cid = String(first["conversation_id"]);
+  let calls = 0;
+  const env = await boot($, on, { "binding:/repo": cid }, () => {
+    calls += 1;
+    return { status: 200, ok: true, headers: {}, text: json(calls === 1 ? first : second) };
+  });
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(0);
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(env.toasts).toHaveLength(1);
+  expect(env.toasts[0]).toContain("集成异常（宿主自动重试）");
+  expect(env.toasts[0]).not.toContain("boardintegration_");
+});
+
+test("integrations==0 shows no integration word", OPTIONS, async ($, on) => {
+  const raw = clone(fx.integration_fallback_to_incumbent.summary) as unknown as Record<string, unknown>;
+  (raw["capabilities"] as Record<string, unknown>)["integrations"] = 0;
+  raw["revision"] = "105:nointegrations";
+  const cid = String(raw["conversation_id"]);
+  const env = await boot($, on, { "binding:/repo": cid }, () => ({
+    status: 200, ok: true, headers: {}, text: json(raw),
+  }));
+  await env.clock.advance(1000);
+  await env.clock.settle();
+  expect(lastStatus(env.statuses)).not.toContain("集成");
+});
+
+for (const name of ["verified", "verification_error", "review_operator_pending"] as const) {
+  test(`old scenario ${name} keeps its status line free of integration words`, OPTIONS, async ($, on) => {
+    const mod = (fx as unknown as Record<string, { summary: unknown }>)[name];
+    const cid = String((mod.summary as { conversation_id: string }).conversation_id);
+    const env = await boot($, on, { "binding:/repo": cid }, (url) =>
+      url.endsWith("/board/summary")
+        ? { status: 200, ok: true, headers: {}, text: json(mod.summary) }
+        : NOT_FOUND,
+    );
+    await env.clock.advance(1000);
+    await env.clock.settle();
+    expect(lastStatus(env.statuses)).not.toContain("集成");
+  });
+}
+void OLD_SCENARIO_NAMES;
