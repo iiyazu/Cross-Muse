@@ -106,7 +106,16 @@ def drive_masks(drive_mounts: Iterable[Path] | None) -> list[Path]:
         path = Path(item)
         if path.is_dir() and path.resolve() not in masks:
             masks.append(path.resolve())
-    return masks
+    # A mount nested under another masked drive is already hidden by the outer
+    # mask. Emitting it as well would make bubblewrap re-create its parent
+    # directories inside the outer tmpfs when creating the nested mount point,
+    # leaving phantom entries the agent can see.
+    masks.sort(key=lambda path: len(path.parts))
+    outer: list[Path] = []
+    for path in masks:
+        if not any(path.is_relative_to(kept) for kept in outer):
+            outer.append(path)
+    return outer
 
 
 def resolve_opencode_executable(

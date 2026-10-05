@@ -93,7 +93,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "6:405b4de25527",
+    "revision": "6:211c16714bae",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -227,6 +227,7 @@
     "metrics_version": "board_metrics/v1",
     "modules": [
       {
+        "accepted": false,
         "attention": {
           "kind": "operator",
           "reason_code": "board_attention_verification_error"
@@ -237,6 +238,8 @@
           "errored": 1,
           "failed": 0,
           "passed": 0,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
@@ -251,6 +254,26 @@
           "api.alpha"
         ],
         "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "state": "verification_error",
         "title": {
           "text": "Alpha module",
@@ -270,6 +293,7 @@
         }
       },
       {
+        "accepted": false,
         "attention": {
           "kind": "none",
           "reason_code": null
@@ -280,6 +304,8 @@
           "errored": 0,
           "failed": 0,
           "passed": 0,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
           "rework_rounds": 0,
           "superseded": 0
         },
@@ -296,6 +322,26 @@
           "api.beta"
         ],
         "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
         "state": "assigned",
         "title": {
           "text": "Beta module",
@@ -341,7 +387,8 @@
         "role_preset": null
       }
     ],
-    "revision": "6:405b4de25527",
+    "review_policy": "off",
+    "revision": "6:211c16714bae",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -420,6 +467,7 @@
     "stale_dependents": []
   },
   "summary": {
+    "accepted_total": 0,
     "attention": [
       {
         "kind": "operator",
@@ -451,7 +499,7 @@
       "working": 0
     },
     "modules_total": 2,
-    "revision": "6:405b4de25527",
+    "revision": "6:211c16714bae",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

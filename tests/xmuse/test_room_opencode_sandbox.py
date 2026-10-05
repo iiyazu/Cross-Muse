@@ -11,6 +11,7 @@ import pytest
 from xmuse_core.chat.room_opencode_sandbox import (
     OPENCODE_WRITABLE_HOME_PATHS,
     build_opencode_sandbox_command,
+    drive_masks,
     windows_drive_mounts,
 )
 
@@ -134,6 +135,18 @@ def test_sandbox_masks_credentials_and_keeps_only_opencode_state_writable(
     # Absent credential stores are not mounted at all.
     assert str(home / ".aws") not in argv
     assert argv[argv.index("--chdir") + 1] == str(workspace.resolve())
+
+
+def test_drive_masks_drops_mounts_nested_under_another_drive(tmp_path: Path) -> None:
+    drive = tmp_path / "mnt" / "d"
+    nested = drive / "Dev" / "repo"
+    nested.mkdir(parents=True)
+    other = tmp_path / "mnt" / "c"
+    other.mkdir(parents=True)
+
+    assert drive_masks((drive, nested, other)) == [drive.resolve(), other.resolve()]
+    # Order-independent: the nested mount is dropped either way.
+    assert drive_masks((nested, drive)) == [drive.resolve()]
 
 
 def test_sandbox_orders_masks_around_the_workspace(tmp_path: Path) -> None:

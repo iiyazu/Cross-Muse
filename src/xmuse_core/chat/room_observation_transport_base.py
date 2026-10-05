@@ -547,8 +547,12 @@ _PROMPT_OWNER_CLAUSE = (
     "chat_room_board_report_progress (with only claims you verified this turn; "
     'reporting "done" asks the host to verify your committed branch against the '
     "server gates, so commit before reporting done, and a failed verification "
-    "will come back to you with evidence), and "
-    "chat_room_board_ask. Stay inside your charter's paths; when a dependency's contract "
+    "will come back to you with evidence), "
+    "chat_room_board_ask, and chat_room_board_review (only when the board assigns "
+    "you a review: judge the verified work against its charter and contracts, cite "
+    "concrete findings, and endorse only work you would accept; an objection needs "
+    "a blocker or major finding and wakes the author to fix and report done again). "
+    "Stay inside your charter's paths; when a dependency's contract "
     "changes, realign your module to the new version. "
 )
 _PROMPT_OWNER_TAIL = (

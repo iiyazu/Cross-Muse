@@ -72,6 +72,7 @@ def test_app_server_room_mcp_command_uses_only_room_capability(
                 "chat_room_board_publish_contract",
                 "chat_room_board_report_progress",
                 "chat_room_board_ask",
+                "chat_room_board_review",
             )
             for item in ("-c", f'mcp_servers.xmuse-room.tools.{name}.approval_mode="approve"')
         ],

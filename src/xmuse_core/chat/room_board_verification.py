@@ -15,9 +15,11 @@ the owner can see what failed; digests are computed exactly as before.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -51,6 +53,8 @@ from xmuse_core.chat.room_execution_sandbox import (
 )
 from xmuse_core.chat.room_owner_clones import OwnerCloneError, OwnerCloneManager
 from xmuse_core.chat.room_owner_ids import owner_id_for_participant
+
+logger = logging.getLogger(__name__)
 
 BOARD_VERIFICATION_RISK_POLICY = "room_board_verification/v1"
 BOARD_VERIFICATION_WORKER_ID = "board-verification"
@@ -184,6 +188,18 @@ def find_overlapping_paths(path_groups: list[list[str]]) -> list[str]:
     return sorted(path for path, total in counts.items() if total > 1)
 
 
+def _board_review_response_seconds() -> int:
+    raw = os.environ.get("XMUSE_BOARD_REVIEW_RESPONSE_SECONDS")
+    if raw is not None:
+        try:
+            val = int(raw.strip())
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return 3600
+
+
 class RoomBoardVerificationWorker:
     """Claim pending board verifications and verify them one job at a time.
 
@@ -220,11 +236,19 @@ class RoomBoardVerificationWorker:
         """Claim and verify a single pending job; individual failures stay durable."""
 
         store = RoomBoardStore(self._db_path)
+        current_now = now or datetime.now(UTC)
+        try:
+            store.escalate_stale_reviews(
+                now=current_now,
+                response_seconds=_board_review_response_seconds(),
+            )
+        except Exception:
+            logger.exception("board review escalation failed")
         claimed = store.claim_next_board_verification(
             worker_id=self._worker_id,
             lease_ttl_s=self._lease_ttl_s,
             max_attempts=self._max_attempts,
-            now=now,
+            now=current_now,
         )
         if claimed is None:
             return {

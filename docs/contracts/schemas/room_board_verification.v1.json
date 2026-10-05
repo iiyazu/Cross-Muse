@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_verification.v1.json",
+  "title": "room_board_verification/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_verification/v1" },
+    "conversation_id": { "type": "string" },
+    "module_id": { "type": "string" },
+    "verification_id": { "type": "string" },
+    "status": {
+      "enum": ["pending", "running", "passed", "failed", "error", "superseded"]
+    },
+    "reason_code": { "type": ["string", "null"] },
+    "head_commit": { "type": ["string", "null"] },
+    "changed_path_count": { "type": "integer", "minimum": 0 },
+    "stacked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "module_id": { "type": "string" },
+          "verification_id": { "type": "string" }
+        },
+        "required": ["module_id", "verification_id"],
+        "additionalProperties": false
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "gate_id": { "type": "string" },
+          "status": { "type": "string" },
+          "exit_code": { "type": ["integer", "null"] },
+          "reason_code": { "type": ["string", "null"] },
+          "output_tail": { "$ref": "#/$defs/nullableAgentText" }
+        },
+        "required": ["gate_id", "status", "exit_code", "reason_code", "output_tail"],
+        "additionalProperties": false
+      }
+    },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "module_id",
+    "verification_id",
+    "status",
+    "reason_code",
+    "head_commit",
+    "changed_path_count",
+    "stacked",
+    "gates",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "maxLength": 2000 },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    }
+  }
+}

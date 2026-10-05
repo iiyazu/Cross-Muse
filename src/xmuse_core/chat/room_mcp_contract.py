@@ -12,6 +12,7 @@ ROOM_BOARD_CLAIM_TOOL_NAME = "chat_room_board_claim"
 ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME = "chat_room_board_publish_contract"
 ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME = "chat_room_board_report_progress"
 ROOM_BOARD_ASK_TOOL_NAME = "chat_room_board_ask"
+ROOM_BOARD_REVIEW_TOOL_NAME = "chat_room_board_review"
 ROOM_BOARD_TOOL_NAMES: tuple[str, ...] = (
     ROOM_BOARD_READ_TOOL_NAME,
     ROOM_BOARD_PROPOSE_SPLIT_TOOL_NAME,
@@ -19,6 +20,7 @@ ROOM_BOARD_TOOL_NAMES: tuple[str, ...] = (
     ROOM_BOARD_PUBLISH_CONTRACT_TOOL_NAME,
     ROOM_BOARD_REPORT_PROGRESS_TOOL_NAME,
     ROOM_BOARD_ASK_TOOL_NAME,
+    ROOM_BOARD_REVIEW_TOOL_NAME,
 )
 ROOM_TOOL_NAMES: tuple[str, ...] = (ROOM_OUTCOME_TOOL_NAME, *ROOM_BOARD_TOOL_NAMES)
 ROOM_OUTCOME_TOOL_SCHEMA: dict[str, Any] = {
@@ -314,6 +316,34 @@ ROOM_BOARD_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
             "references": _ID_LIST,
         },
         ["target_participant_id", "question"],
+    ),
+    _board_tool(
+        ROOM_BOARD_REVIEW_TOOL_NAME,
+        "Rule-assigned cross-family review: judge a verified module against its charter "
+        "and contracts. Only the assigned reviewer may call it with its review_id.",
+        {
+            "review_id": {"type": "string"},
+            "verdict": {"type": "string", "enum": ["endorse", "object"]},
+            "summary": {"type": "string", "maxLength": 4000},
+            "findings": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "severity": {
+                            "type": "string",
+                            "enum": ["blocker", "major", "minor"],
+                        },
+                        "text": {"type": "string", "maxLength": 1000},
+                    },
+                    "required": ["severity", "text"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        ["review_id", "verdict", "summary"],
     ),
 )
 

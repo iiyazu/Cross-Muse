@@ -51,6 +51,7 @@
       ],
       "additionalProperties": false
     },
+    "accepted_total": { "type": "integer", "minimum": 0 },
     "attention_total": { "type": "integer", "minimum": 0 },
     "attention": {
       "type": "array",
@@ -67,6 +68,7 @@
     "capabilities",
     "modules_total",
     "counts",
+    "accepted_total",
     "attention_total",
     "attention"
   ],

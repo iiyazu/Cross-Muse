@@ -25,12 +25,13 @@ from fastapi.responses import StreamingResponse
 from xmuse.operator_auth import require_operator_token
 from xmuse_core.chat.room_api_models import RoomBoardSplitDecisionRequest
 from xmuse_core.chat.room_application import RoomApplicationService
-from xmuse_core.chat.room_board import DECIDED_VIA_RE
+from xmuse_core.chat.room_board import DECIDED_VIA_RE, RoomBoardStore
 from xmuse_core.chat.room_board_projection import (
     board_events_page,
     build_board_projection,
     build_board_summary,
     build_contract_detail,
+    is_valid_finding_path,
 )
 from xmuse_core.chat.room_board_view import refresh_board_views
 from xmuse_core.chat.room_database import RoomDatabase
@@ -44,6 +45,20 @@ _CONFLICT_CODES = {
     "room_board_split_not_proposed",
     "room_board_charter_active",
     "room_board_split_digest_mismatch",
+    "room_board_review_not_pending",
+    "room_board_review_not_operator",
+    "room_board_review_digest_mismatch",
+    "room_board_review_material_incomplete",
+    "room_board_review_decided",
+    "room_board_review_forbidden",
+}
+
+_NOT_FOUND_CODES = {
+    "room_board_split_unknown",
+    "room_board_review_unknown",
+    "room_board_verification_unknown",
+    "room_board_contract_unknown",
+    "room_conversation_unknown",
 }
 
 _POLL_INTERVAL_S = 0.25
@@ -63,7 +78,7 @@ def _error_code(exc: Exception) -> str:
 
 def _store_error(exc: Exception) -> HTTPException:
     code = _error_code(exc)
-    if code == "room_board_split_unknown":
+    if code in _NOT_FOUND_CODES:
         http_status = status.HTTP_404_NOT_FOUND
     elif code in _CONFLICT_CODES:
         http_status = status.HTTP_409_CONFLICT
@@ -71,7 +86,7 @@ def _store_error(exc: Exception) -> HTTPException:
         http_status = status.HTTP_422_UNPROCESSABLE_CONTENT
     return HTTPException(
         status_code=http_status,
-        detail=operator_error(code, "Room board split was not decided"),
+        detail=operator_error(code, f"Room board operation failed: {code}"),
     )
 
 
@@ -361,4 +376,253 @@ def register_room_board_routes(
             refresh_board_views(root, payload.conversation_id)
         except Exception as exc:
             logger.warning("room board refresh after decision failed: %s", exc)
+        return dict(result)
+
+    @app.get("/api/chat/conversations/{conversation_id}/board/reviews/{review_id}")
+    def room_board_review(
+        conversation_id: str,
+        review_id: str,
+        response: Response,
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_conversation(root, conversation_id)
+        try:
+            return RoomBoardStore(root / "chat.db").review_detail(
+                conversation_id=conversation_id, review_id=review_id
+            )
+        except Exception as exc:
+            raise _store_error(exc) from exc
+
+    @app.get("/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}")
+    def room_board_verification(
+        conversation_id: str,
+        verification_id: str,
+        response: Response,
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_conversation(root, conversation_id)
+        try:
+            return RoomBoardStore(root / "chat.db").verification_detail(
+                conversation_id=conversation_id, verification_id=verification_id
+            )
+        except Exception as exc:
+            raise _store_error(exc) from exc
+
+    @app.get("/api/chat/operator/board-reviews/{review_id}/material")
+    def room_board_review_material(
+        review_id: str,
+        request: Request,
+        response: Response,
+    ) -> dict[str, Any]:
+        require_operator_token(request, configured_token=operator_token)
+        response.headers["Cache-Control"] = "no-store"
+        conversation_id = request.query_params.get("conversation_id")
+        if not conversation_id or not conversation_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_conversation_id_required",
+                    "conversation_id query parameter is required",
+                ),
+            )
+        _require_conversation(root, conversation_id)
+        try:
+            return RoomBoardStore(root / "chat.db").review_material(
+                conversation_id=conversation_id, review_id=review_id
+            )
+        except Exception as exc:
+            raise _store_error(exc) from exc
+
+    @app.post("/api/chat/operator/board-reviews/{review_id}/decision")
+    async def decide_room_board_review(
+        review_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        require_operator_token(request, configured_token=operator_token)
+
+        raw_body = await request.body()
+        if len(raw_body) > 65536:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=operator_error(
+                    "room_board_review_request_too_large",
+                    "Review decision body exceeds 64 KiB",
+                ),
+            )
+
+        try:
+            data = json.loads(raw_body)
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_request_invalid",
+                    "Review decision body must be valid JSON",
+                ),
+            ) from None
+
+        if not isinstance(data, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_request_invalid",
+                    "Review decision body must be a JSON object",
+                ),
+            )
+
+        allowed_keys = {
+            "conversation_id",
+            "verdict",
+            "expected_digest",
+            "summary",
+            "findings",
+            "decided_via",
+        }
+        required_keys = {
+            "conversation_id",
+            "verdict",
+            "expected_digest",
+            "summary",
+            "findings",
+        }
+        if not (data.keys() <= allowed_keys) or not (required_keys <= data.keys()):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_request_invalid",
+                    "Review decision body keys are invalid",
+                ),
+            )
+
+        conversation_id = data["conversation_id"]
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_request_invalid",
+                    "conversation_id is required",
+                ),
+            )
+
+        verdict = data["verdict"]
+        if verdict not in ("endorse", "object"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_request_invalid",
+                    "Verdict must be endorse or object",
+                ),
+            )
+
+        summary = data["summary"]
+        if not isinstance(summary, str) or not (1 <= len(summary.strip()) <= 4000):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_summary_invalid",
+                    "Summary must be 1 to 4000 characters",
+                ),
+            )
+
+        findings = data["findings"]
+        if not isinstance(findings, list) or len(findings) > 32:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_findings_invalid",
+                    "Findings must be a list of at most 32 items",
+                ),
+            )
+
+        clean_findings: list[dict[str, Any]] = []
+        for item in findings:
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=operator_error(
+                        "room_board_review_findings_invalid",
+                        "Finding must be an object",
+                    ),
+                )
+            if not (item.keys() <= {"severity", "path", "text"}) or not (
+                {"severity", "text"} <= item.keys()
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=operator_error(
+                        "room_board_review_findings_invalid",
+                        "Finding keys must be severity and text, with optional path",
+                    ),
+                )
+            sev = item.get("severity")
+            if sev not in ("blocker", "major", "minor"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=operator_error(
+                        "room_board_review_findings_invalid",
+                        "Severity must be blocker, major, or minor",
+                    ),
+                )
+            p = item.get("path")
+            if p is not None and not is_valid_finding_path(p):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=operator_error(
+                        "room_board_review_findings_invalid",
+                        "Finding path is invalid",
+                    ),
+                )
+            txt = item.get("text")
+            if not isinstance(txt, str) or not (1 <= len(txt.strip()) <= 1000):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=operator_error(
+                        "room_board_review_findings_invalid",
+                        "Finding text must be 1 to 1000 characters",
+                    ),
+                )
+            clean_findings.append({"severity": sev, "path": p, "text": txt.strip()})
+
+        if verdict == "object" and not any(
+            f["severity"] in ("blocker", "major") for f in clean_findings
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_review_findings_invalid",
+                    "An object verdict requires at least one blocker or major finding",
+                ),
+            )
+
+        decided_via = data.get("decided_via", "web")
+        if decided_via != "web":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=operator_error(
+                    "room_board_decided_via_invalid",
+                    "decided_via may only be web",
+                ),
+            )
+
+        try:
+            result = RoomApplicationService(
+                root / "chat.db", root / "god_sessions.json"
+            ).board_decide_review(
+                conversation_id=conversation_id,
+                review_id=review_id,
+                verdict=verdict,
+                summary=summary.strip(),
+                findings=clean_findings,
+                expected_digest=data["expected_digest"],
+                operator_identity="operator:local",
+                decided_via=decided_via,
+            )
+        except RoomApplicationError as exc:
+            raise _store_error(exc) from exc
+        except (KeyError, ValueError, RuntimeError) as exc:
+            raise _store_error(exc) from exc
+        try:
+            refresh_board_views(root, conversation_id)
+        except Exception as exc:
+            logger.warning("room board refresh after review decision failed: %s", exc)
         return dict(result)

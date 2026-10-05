@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xmuse.local/contracts/schemas/room_board_review.v1.json",
+  "title": "room_board_review/v1",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "room_board_review/v1" },
+    "conversation_id": { "type": "string" },
+    "module_id": { "type": "string" },
+    "review": {
+      "type": "object",
+      "properties": {
+        "status": { "enum": ["pending", "endorsed", "objected", "superseded"] },
+        "review_id": { "type": "string" },
+        "verification_id": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "rule_id": { "type": "string" },
+        "author_family": { "type": "string" },
+        "reviewer_kind": { "enum": ["participant", "operator"] },
+        "reviewer_participant_id": { "type": ["string", "null"] },
+        "reviewer_family": { "type": ["string", "null"] },
+        "escalated_from": { "$ref": "#/$defs/nullableEscalation" },
+        "findings_count": { "$ref": "#/$defs/findingsCount" },
+        "decided_via": { "enum": ["board_tool", "web", null] },
+        "updated_at": { "type": "string" }
+      },
+      "required": [
+        "status",
+        "review_id",
+        "verification_id",
+        "digest",
+        "rule_id",
+        "author_family",
+        "reviewer_kind",
+        "reviewer_participant_id",
+        "reviewer_family",
+        "escalated_from",
+        "findings_count",
+        "decided_via",
+        "updated_at"
+      ],
+      "additionalProperties": false
+    },
+    "head_commit": { "type": "string" },
+    "summary": { "$ref": "#/$defs/nullableAgentText" },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" },
+      "maxItems": 32
+    },
+    "rule_inputs": {
+      "type": "object",
+      "properties": {
+        "rule_id": { "type": "string" },
+        "author_participant_id": { "type": "string" },
+        "author_family": { "type": "string" },
+        "eligible": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "participant_id": { "type": "string" },
+              "family": { "type": "string" },
+              "pending": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["participant_id", "family", "pending"],
+            "additionalProperties": false
+          }
+        },
+        "last_reviewer_participant_id": { "type": ["string", "null"] },
+        "picked_participant_id": { "type": ["string", "null"] }
+      },
+      "required": [
+        "rule_id",
+        "author_participant_id",
+        "author_family",
+        "eligible",
+        "last_reviewer_participant_id",
+        "picked_participant_id"
+      ],
+      "additionalProperties": false
+    },
+    "created_at": { "type": "string" },
+    "decided_at": { "type": ["string", "null"] }
+  },
+  "required": [
+    "schema_version",
+    "conversation_id",
+    "module_id",
+    "review",
+    "head_commit",
+    "summary",
+    "findings",
+    "rule_inputs",
+    "created_at",
+    "decided_at"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "agentText": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "untrusted": { "const": true },
+        "truncated": { "type": "boolean" }
+      },
+      "required": ["text", "untrusted", "truncated"],
+      "additionalProperties": false
+    },
+    "nullableAgentText": {
+      "anyOf": [{ "$ref": "#/$defs/agentText" }, { "type": "null" }]
+    },
+    "findingsCount": {
+      "type": "object",
+      "properties": {
+        "blocker": { "type": "integer", "minimum": 0 },
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["blocker", "major", "minor"],
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "properties": {
+        "severity": { "enum": ["blocker", "major", "minor"] },
+        "path": {"anyOf": [{"type": "string", "pattern": "^(?![/])(?![A-Za-z]:)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\\\\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ufeff\\ufff9-\\ufffb]{1,512}$"}, {"type": "null"}]},
+        "text": { "$ref": "#/$defs/agentText" }
+      },
+      "required": ["severity", "path", "text"],
+      "additionalProperties": false
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "participant_id": { "type": "string" },
+        "family": { "type": "string" },
+        "reason_code": {
+          "enum": [
+            "board_review_reviewer_unavailable",
+            "board_review_reviewer_no_verdict",
+            "board_review_reviewer_unresponsive"
+          ]
+        },
+        "at": { "type": "string" }
+      },
+      "required": ["participant_id", "family", "reason_code", "at"],
+      "additionalProperties": false
+    },
+    "nullableEscalation": {
+      "anyOf": [{ "$ref": "#/$defs/escalation" }, { "type": "null" }]
+    }
+  }
+}

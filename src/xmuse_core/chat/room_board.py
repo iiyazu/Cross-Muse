@@ -14,7 +14,7 @@ import json
 import re
 import sqlite3
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -26,15 +26,21 @@ from xmuse_core.chat.room_board_projection import (
     MAX_CONSECUTIVE_FAILURES,
     ProgressFact,
     VerificationFact,
+    agent_text,
     build_board_projection,
     build_contract_detail,
     compute_counters,
     derive_lifecycle,
     derive_state,
     derive_verification_axis,
+    is_valid_finding_path,
+    review_digest,
     split_digest,
 )
-from xmuse_core.chat.room_collaboration import collaboration_policy_row
+from xmuse_core.chat.room_collaboration import (
+    collaboration_policy_row,
+    review_policy_for_conversation,
+)
 from xmuse_core.chat.room_database import RoomDatabase
 
 TOOL_READ = "chat_room_board_read"
@@ -43,6 +49,25 @@ TOOL_CLAIM = "chat_room_board_claim"
 TOOL_PUBLISH_CONTRACT = "chat_room_board_publish_contract"
 TOOL_REPORT_PROGRESS = "chat_room_board_report_progress"
 TOOL_ASK = "chat_room_board_ask"
+TOOL_REVIEW = "chat_room_board_review"
+
+BOARD_REVIEW_RULE_ID = "cross_family/v1"
+BOARD_REVIEW_STATUSES = ("pending", "endorsed", "objected", "superseded")
+BOARD_REVIEW_VERDICTS = ("endorse", "object")
+BOARD_REVIEW_SEVERITIES = ("blocker", "major", "minor")
+BOARD_REVIEW_REASONS = (
+    "board_review_reviewer_unavailable",
+    "board_review_reviewer_no_verdict",
+    "board_review_reviewer_unresponsive",
+)
+BOARD_REVIEW_RESPONSE_SECONDS_DEFAULT = 3600
+MAX_REVIEW_SUMMARY_CHARS = 4000
+MAX_REVIEW_FINDINGS = 32
+MAX_REVIEW_FINDING_TEXT_CHARS = 1000
+MAX_REVIEW_FINDING_PATH_CHARS = 512
+# The operator review material route (§8.2) returns at most this many UTF-8
+# bytes of marked patch text; markers may grow the text beyond the stored size.
+REVIEW_MATERIAL_PATCH_LIMIT_BYTES = 256 * 1024
 
 BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
@@ -278,6 +303,253 @@ def parse_contract_ref(value: Any) -> tuple[str, int | None]:
     return ref, None
 
 
+def assign_cross_family_reviewer(
+    *,
+    author_participant_id: str,
+    author_family: str,
+    candidates: Sequence[dict[str, Any]],
+    pending_loads: Mapping[str, int] | None = None,
+    last_reviewer_id: str | None = None,
+) -> str | None:
+    """Pick a cross-family reviewer under rule ``cross_family/v1``.
+
+    ``candidates`` holds active agent participants other than the author as
+    ``{"participant_id": ..., "family": ...}`` (families are admitted
+    ``cli_kind`` values).  Only candidates whose family differs from the
+    author's are eligible; the author never reviews its own work and nobody
+    volunteers.  Ordering is continuity (the module's last reviewer first),
+    then fewest pending reviews assigned, then ``participant_id``.  None means
+    no other family is present and a Human must review instead.
+    """
+
+    if not isinstance(author_participant_id, str) or not author_participant_id:
+        raise ValueError("room_board_review_author_invalid")
+    if not isinstance(author_family, str) or not author_family:
+        raise ValueError("room_board_review_author_invalid")
+    eligible: list[dict[str, Any]] = []
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        participant_id = entry.get("participant_id")
+        family = entry.get("family")
+        if not isinstance(participant_id, str) or not participant_id:
+            continue
+        if not isinstance(family, str) or not family:
+            continue
+        if participant_id == author_participant_id:
+            continue
+        if family == author_family:
+            continue
+        eligible.append({"participant_id": participant_id, "family": family})
+    if not eligible:
+        return None
+    loads = dict(pending_loads) if isinstance(pending_loads, Mapping) else {}
+    eligible_ids = {item["participant_id"] for item in eligible}
+    if isinstance(last_reviewer_id, str) and last_reviewer_id and last_reviewer_id in eligible_ids:
+        return last_reviewer_id
+
+    def _sort_key(item: dict[str, Any]) -> tuple[int, str]:
+        raw = loads.get(item["participant_id"], 0)
+        load = raw if isinstance(raw, int) and raw >= 0 else 0
+        return (load, str(item["participant_id"]))
+
+    return str(sorted(eligible, key=_sort_key)[0]["participant_id"])
+
+
+def normalize_review_summary(value: Any) -> str:
+    """Validate an untrusted review summary and return it trimmed.
+
+    The summary is required for both verdicts: 1-4000 characters after
+    trimming. A violation rejects the whole verdict, never truncates.
+    """
+
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip()) > MAX_REVIEW_SUMMARY_CHARS
+    ):
+        raise ValueError("room_board_review_summary_invalid")
+    return value.strip()
+
+
+_REVIEW_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def normalize_review_path(value: Any) -> str | None:
+    """Validate an untrusted review finding path, or return None for null.
+
+    A present path is a repository-relative POSIX path: at most 512
+    characters, no leading ``/``, no drive letter, no backslash, no ``.`` or
+    ``..`` segment, no control characters and no Unicode format characters (Cf).
+    A violation rejects the whole verdict, never truncates.
+    """
+
+    if value is None:
+        return None
+    if not is_valid_finding_path(value):
+        raise ValueError("room_board_review_findings_invalid")
+    return value
+
+
+def normalize_review_findings(value: Any) -> list[dict[str, Any]]:
+    """Validate untrusted review findings and return their canonical form."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_REVIEW_FINDINGS:
+        raise ValueError("room_board_review_findings_invalid")
+    cleaned: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise ValueError("room_board_review_findings_invalid")
+        unknown = set(entry) - {"path", "severity", "text"}
+        if unknown:
+            raise ValueError("room_board_review_findings_invalid")
+        severity = entry.get("severity")
+        if severity not in BOARD_REVIEW_SEVERITIES:
+            raise ValueError("room_board_review_findings_invalid")
+        text = entry.get("text")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text.strip()) > MAX_REVIEW_FINDING_TEXT_CHARS
+        ):
+            raise ValueError("room_board_review_findings_invalid")
+        finding: dict[str, Any] = {
+            "severity": severity,
+            "text": text.strip(),
+        }
+        clean_path = normalize_review_path(entry.get("path"))
+        if clean_path is not None:
+            finding["path"] = clean_path
+        cleaned.append(finding)
+    return cleaned
+
+
+def normalize_review_verdict(verdict: Any, findings: Sequence[dict[str, Any]]) -> str:
+    """Validate a review verdict against its findings."""
+
+    if verdict not in BOARD_REVIEW_VERDICTS:
+        raise ValueError("room_board_review_verdict_invalid")
+    if verdict == "object" and not any(
+        isinstance(item, dict) and item.get("severity") in ("blocker", "major") for item in findings
+    ):
+        raise ValueError(
+            "room_board_review_findings_invalid: object requires a blocker_or_major finding"
+        )
+    return str(verdict)
+
+
+# Bidirectional controls a reviewer must see rather than be steered by.
+_REVIEW_BIDI_CONTROLS = frozenset(
+    {
+        0x061C,
+        0x200E,
+        0x200F,
+        0x202A,
+        0x202B,
+        0x202C,
+        0x202D,
+        0x202E,
+        0x2066,
+        0x2067,
+        0x2068,
+        0x2069,
+    }
+)
+
+_REVIEW_MARKER_RE = re.compile(r"<U\+[0-9A-F]{4,}>")
+
+
+def _is_hidden_review_char(code: int) -> bool:
+    if code < 0x20 or 0x7F <= code <= 0x9F:
+        return True
+    return code in _REVIEW_BIDI_CONTROLS
+
+
+def mark_hidden_characters(text: str) -> tuple[str, int]:
+    """Make hidden characters visible for the operator review material route.
+
+    Every C0/C1 control except ``\\n`` and ``\\t`` (this includes ESC, so ANSI
+    escapes become visible), DEL, and every bidirectional control becomes
+    ``<U+XXXX>`` (uppercase hex, at least 4 digits). Returns the marked text
+    and the replacement count. This differs from ``AgentText`` sanitizing on
+    purpose: a reviewer must see the code as it is (Trojan Source).
+    """
+
+    if not isinstance(text, str):
+        raise ValueError("room_board_review_material_invalid")
+    marked: list[str] = []
+    count = 0
+    for char in text:
+        code = ord(char)
+        if char in ("\n", "\t") or not _is_hidden_review_char(code):
+            marked.append(char)
+        else:
+            marked.append(f"<U+{code:04X}>")
+            count += 1
+    return "".join(marked), count
+
+
+def _truncate_marked_patch(marked: str, limit: int) -> tuple[str, bool]:
+    """Cut marked patch text so its UTF-8 size fits ``limit`` bytes.
+
+    Cuts only at a line boundary; when a single line alone exceeds the limit
+    it cuts at a marker or code point boundary instead, never inside a marker
+    or a code point. Returns the cut text and whether it was truncated.
+    """
+
+    if len(marked.encode("utf-8")) <= limit:
+        return marked, False
+    lines = marked.split("\n")
+    parts: list[str] = []
+    size = 0
+    total = len(lines)
+    for index, line in enumerate(lines):
+        chunk = line if index == total - 1 else line + "\n"
+        chunk_bytes = len(chunk.encode("utf-8"))
+        if size + chunk_bytes > limit:
+            break
+        parts.append(chunk)
+        size += chunk_bytes
+    if parts:
+        return "".join(parts), True
+    head = lines[0] if lines else ""
+    atoms: list[str] = []
+    size = 0
+    pos = 0
+    for match in _REVIEW_MARKER_RE.finditer(head):
+        for char in head[pos : match.start()]:
+            char_bytes = len(char.encode("utf-8"))
+            if size + char_bytes > limit:
+                return "".join(atoms), True
+            atoms.append(char)
+            size += char_bytes
+        marker = match.group(0)
+        marker_bytes = len(marker.encode("utf-8"))
+        if size + marker_bytes > limit:
+            return "".join(atoms), True
+        atoms.append(marker)
+        size += marker_bytes
+        pos = match.end()
+    for char in head[pos:]:
+        char_bytes = len(char.encode("utf-8"))
+        if size + char_bytes > limit:
+            break
+        atoms.append(char)
+        size += char_bytes
+    return "".join(atoms), True
+
+
+def _material_patch_parts(patch_text: str | None) -> tuple[str, int, bool, int]:
+    """Return ``(text, bytes_total, truncated, hidden_char_count)`` for material."""
+
+    raw = patch_text if isinstance(patch_text, str) else ""
+    marked, hidden_char_count = mark_hidden_characters(raw)
+    text, truncated = _truncate_marked_patch(marked, REVIEW_MATERIAL_PATCH_LIMIT_BYTES)
+    return text, len(raw.encode("utf-8")), truncated, hidden_char_count
+
+
 def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -384,6 +656,30 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
                 f"done again.{tail_text}"
             )
         return f"Module {module_id} verification {status} ({reason})."
+    if activity_type == "board.review_requested":
+        reviewer = payload.get("reviewer_participant_id") or "the operator"
+        return (
+            f"Module {payload.get('module_id')} passed verification "
+            f"({payload.get('verification_id')}); {reviewer} must review it: read the "
+            f"material with chat_room_board_read using review_id "
+            f"{payload.get('review_id')}, judge it against the charter and contracts, "
+            "and answer with chat_room_board_review."
+        )
+    if activity_type == "board.review":
+        findings = payload.get("findings") or []
+        count = len(findings) if isinstance(findings, list) else 0
+        if payload.get("verdict") == "object":
+            return (
+                f"Module {payload.get('module_id')} review objected by "
+                f"{payload.get('reviewer_participant_id')} ({count} findings): "
+                f"{payload.get('summary') or ''} Fix inside your charter paths, "
+                "commit, and report done again."
+            )
+        return (
+            f"Module {payload.get('module_id')} review endorsed by "
+            f"{payload.get('reviewer_participant_id') or payload.get('reviewer_kind')}: "
+            f"{payload.get('summary') or ''}"
+        )
     return activity_type
 
 
@@ -707,6 +1003,7 @@ class RoomBoardStore:
         lease_token: str,
         client_request_id: str,
         contract_ref: str | None = None,
+        review_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if not isinstance(client_request_id, str) or not client_request_id.strip():
@@ -845,13 +1142,21 @@ class RoomBoardStore:
                         "created_at": str(found["created_at"]),
                     }
                 conn.commit()
-                return {
+                result: dict[str, Any] = {
                     "charters": charters,
                     "contracts": contracts,
                     "inbox": inbox,
                     "contract": contract,
                     "cursor_seq": cursor_seq,
                 }
+                if review_id is not None:
+                    result["review_material"] = self._review_material_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        participant_id=participant_id,
+                        review_id=review_id,
+                    )
+                return result
             except Exception:
                 conn.rollback()
                 raise
@@ -1777,6 +2082,12 @@ class RoomBoardStore:
                         "and status = 'pending'",
                         (stamp, conversation_id, module_id),
                     )
+                    conn.execute(
+                        "update room_board_reviews set status = 'superseded', "
+                        "updated_at = ? where conversation_id = ? and module_id = ? "
+                        "and status = 'pending'",
+                        (stamp, conversation_id, module_id),
+                    )
                     verification_id = _id("boardverify")
                     conn.execute(
                         """insert into room_board_verifications
@@ -2011,6 +2322,105 @@ class RoomBoardStore:
                 providers.add(provider)
         return sorted(providers)
 
+    def _review_material_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        review_id: str,
+    ) -> dict[str, Any]:
+        review = conn.execute(
+            "select * from room_board_reviews where review_id = ? and conversation_id = ?",
+            (review_id, conversation_id),
+        ).fetchone()
+        if review is None:
+            raise ValueError("room_board_review_unknown")
+        allowed = {str(review["author_participant_id"])}
+        if review["reviewer_participant_id"]:
+            allowed.add(str(review["reviewer_participant_id"]))
+        if participant_id not in allowed:
+            raise ValueError("room_board_review_forbidden")
+        module_id = str(review["module_id"])
+        verification_id = str(review["verification_id"])
+        charter = self._current_charter_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        charter_body = _decode(str(charter["charter_json"])) if charter is not None else None
+        wanted: set[str] = set()
+        if isinstance(charter_body, dict):
+            for key in ("provides", "depends"):
+                items = charter_body.get(key, [])
+                if isinstance(items, list):
+                    for contract_id in items:
+                        if isinstance(contract_id, str) and contract_id:
+                            wanted.add(contract_id)
+        contracts: list[dict[str, Any]] = []
+        for contract_id in sorted(wanted):
+            row = self._latest_contract_conn(
+                conn, conversation_id=conversation_id, contract_id=contract_id
+            )
+            if row is None:
+                continue
+            contracts.append(
+                {
+                    "contract_id": str(row["contract_id"]),
+                    "version": int(row["version"]),
+                    "digest": str(row["digest"]),
+                    "provider_module_id": str(row["provider_module_id"]),
+                    "kind": str(row["kind"]),
+                    "content": str(row["content"]),
+                }
+            )
+        verification = conn.execute(
+            "select * from room_board_verifications where verification_id = ?",
+            (verification_id,),
+        ).fetchone()
+        gates: list[dict[str, Any]] = []
+        stacked_ids: list[str] = []
+        patch_text: str | None = None
+        changed_paths: list[str] = []
+        if verification is not None:
+            result = _decode(verification["result_json"]) if verification["result_json"] else None
+            if isinstance(result, dict):
+                raw_gates = result.get("gates")
+                if isinstance(raw_gates, list):
+                    gates = [dict(item) for item in raw_gates if isinstance(item, dict)]
+                raw_stacked = result.get("stacked")
+                if isinstance(raw_stacked, list):
+                    stacked_ids = [
+                        str(item.get("module_id"))
+                        for item in raw_stacked
+                        if isinstance(item, dict) and item.get("module_id")
+                    ]
+            raw_patch = verification["patch_text"]
+            if isinstance(raw_patch, str) and raw_patch:
+                encoded = raw_patch.encode("utf-8")
+                if len(encoded) > MAX_VERIFICATION_PATCH_BYTES:
+                    raise ValueError("room_board_verification_patch_too_large")
+                patch_text = raw_patch
+            raw_changed = _decode(str(verification["changed_paths_json"] or "[]"))
+            if isinstance(raw_changed, list):
+                changed_paths = [str(item) for item in raw_changed if isinstance(item, str)]
+        upstream = self._provider_modules_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        return {
+            "review_id": review_id,
+            "module_id": module_id,
+            "verification_id": verification_id,
+            "status": str(review["status"]),
+            "author_participant_id": str(review["author_participant_id"]),
+            "charter": charter_body,
+            "charter_version": int(charter["version"]) if charter is not None else None,
+            "contracts": contracts,
+            "gates": gates,
+            "stacked_module_ids": stacked_ids or upstream,
+            "upstream_module_ids": upstream,
+            "changed_paths": changed_paths,
+            "patch_text": patch_text,
+        }
+
     def latest_passed_board_verification(
         self, conversation_id: str, module_id: str
     ) -> dict[str, Any] | None:
@@ -2070,6 +2480,259 @@ class RoomBoardStore:
                 ),
             ).fetchone()
             return row is not None
+
+    @staticmethod
+    def _active_agent_review_candidates_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> list[dict[str, Any]]:
+        from xmuse_core.chat.participant_store import INIT_GOD_ROLE
+
+        rows = conn.execute(
+            "select participant_id, cli_kind from participants "
+            "where conversation_id = ? and status = 'active' and role <> ? "
+            "order by participant_id",
+            (conversation_id, INIT_GOD_ROLE),
+        ).fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            kind = str(row["cli_kind"])
+            if kind not in ROOM_AGENT_CLI_KINDS:
+                continue
+            candidates.append({"participant_id": str(row["participant_id"]), "family": kind})
+        return candidates
+
+    @staticmethod
+    def _pending_review_loads_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> dict[str, int]:
+        try:
+            rows = conn.execute(
+                "select reviewer_participant_id, count(*) as total from room_board_reviews "
+                "where conversation_id = ? and status = 'pending' "
+                "and reviewer_participant_id is not null "
+                "group by reviewer_participant_id",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {str(row["reviewer_participant_id"]): int(row["total"]) for row in rows}
+
+    @staticmethod
+    def _last_module_reviewer_conn(
+        conn: sqlite3.Connection, *, conversation_id: str, module_id: str
+    ) -> str | None:
+        try:
+            row = conn.execute(
+                "select reviewer_participant_id from room_board_reviews "
+                "where conversation_id = ? and module_id = ? "
+                "and reviewer_participant_id is not null "
+                "order by created_at desc, review_id desc limit 1",
+                (conversation_id, module_id),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+        if row is None or row["reviewer_participant_id"] is None:
+            return None
+        return str(row["reviewer_participant_id"])
+
+    def _create_review_for_pass_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        module_id: str,
+        verification_id: str,
+        verification_activity_id: str,
+        verification_causal_depth: int,
+        stamp: str,
+    ) -> dict[str, Any] | None:
+        # Reviews open only when the room was created with
+        # ``review_policy: cross_family``; with ``off`` a passed verification
+        # stands on its own and no review row is ever written.
+        if review_policy_for_conversation(conn, conversation_id) != "cross_family":
+            return None
+        ver_row = conn.execute(
+            "select participant_id from room_board_verifications where verification_id = ?",
+            (verification_id,),
+        ).fetchone()
+        author_id = str(ver_row["participant_id"]) if ver_row is not None else ""
+        author_row = conn.execute(
+            "select cli_kind from participants where conversation_id = ? and participant_id = ?",
+            (conversation_id, author_id),
+        ).fetchone()
+        author_family = str(author_row["cli_kind"]) if author_row is not None else ""
+        candidates = self._active_agent_review_candidates_conn(
+            conn, conversation_id=conversation_id
+        )
+        loads = self._pending_review_loads_conn(conn, conversation_id=conversation_id)
+        last_reviewer = self._last_module_reviewer_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        eligible_inputs = [
+            {
+                "participant_id": item["participant_id"],
+                "family": item["family"],
+                "pending": int(loads.get(item["participant_id"], 0)),
+            }
+            for item in candidates
+            if item["participant_id"] != author_id and item["family"] != author_family
+        ]
+        eligible_inputs.sort(key=lambda item: str(item["participant_id"]))
+        picked = assign_cross_family_reviewer(
+            author_participant_id=author_id,
+            author_family=author_family,
+            candidates=candidates,
+            pending_loads=loads,
+            last_reviewer_id=last_reviewer,
+        )
+        rule_inputs = {
+            "author_id": author_id,
+            "author_family": author_family,
+            "eligible": eligible_inputs,
+            "pending_loads": {item["participant_id"]: item["pending"] for item in eligible_inputs},
+            "last_reviewer_id": last_reviewer,
+            "picked_participant_id": picked,
+        }
+        review_id = _id("boardreview")
+        if picked is None:
+            reviewer_kind = "operator"
+            reviewer_id: str | None = None
+            reviewer_family: str | None = None
+        else:
+            reviewer_kind = "participant"
+            reviewer_id = picked
+            reviewer_family = next(
+                (str(item["family"]) for item in candidates if item["participant_id"] == picked),
+                None,
+            )
+        conn.execute(
+            """insert into room_board_reviews
+               (review_id, conversation_id, module_id, verification_id,
+                author_participant_id, author_family, reviewer_kind,
+                reviewer_participant_id, reviewer_family, rule_id, rule_inputs_json,
+                status, verdict_json, request_activity_id, verdict_activity_id,
+                created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', null, null, null, ?, ?)""",
+            (
+                review_id,
+                conversation_id,
+                module_id,
+                verification_id,
+                author_id,
+                author_family,
+                reviewer_kind,
+                reviewer_id,
+                reviewer_family,
+                BOARD_REVIEW_RULE_ID,
+                _json(rule_inputs),
+                stamp,
+                stamp,
+            ),
+        )
+        charter = self._current_charter_conn(
+            conn, conversation_id=conversation_id, module_id=module_id
+        )
+        body = _decode(str(charter["charter_json"])) if charter is not None else None
+        report_to = body.get("report_to") if isinstance(body, dict) else None
+        lead = self._lead_participant_id(conn, conversation_id)
+        if reviewer_kind == "participant" and reviewer_id:
+            audience = [reviewer_id]
+        else:
+            fallback = report_to if isinstance(report_to, str) and report_to else lead
+            audience = [fallback] if fallback else []
+        request_activity = self._insert_board_activity_conn(
+            conn,
+            conversation_id=conversation_id,
+            activity_type="board.review_requested",
+            actor_kind="infrastructure",
+            actor_identity="infrastructure:board-review",
+            actor_participant_id=None,
+            causation_id=verification_activity_id,
+            causal_depth=verification_causal_depth + 1,
+            audience_participant_ids=audience,
+            payload={
+                "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                "review_id": review_id,
+                "module_id": module_id,
+                "verification_id": verification_id,
+                "author_participant_id": author_id,
+                "author_family": author_family,
+                "reviewer_kind": reviewer_kind,
+                "reviewer_participant_id": reviewer_id,
+                "reviewer_family": reviewer_family,
+                "rule_id": BOARD_REVIEW_RULE_ID,
+            },
+            stamp=stamp,
+        )
+        conn.execute(
+            "update room_board_reviews set request_activity_id = ? where review_id = ?",
+            (str(request_activity["activity_id"]), review_id),
+        )
+        woken: list[dict[str, Any]] = []
+        if reviewer_kind == "participant" and reviewer_id:
+            woken = self._wake_participants_conn(
+                conn,
+                conversation_id=conversation_id,
+                activity_id=str(request_activity["activity_id"]),
+                participant_ids=[reviewer_id],
+                stamp=stamp,
+            )
+        return {
+            "review_id": review_id,
+            "reviewer_kind": reviewer_kind,
+            "reviewer_participant_id": reviewer_id,
+            "reviewer_family": reviewer_family,
+            "request_activity_id": str(request_activity["activity_id"]),
+            "request_activity_seq": int(request_activity["seq"]),
+            "woken_participant_ids": [item["participant_id"] for item in woken],
+        }
+
+    @staticmethod
+    def _module_review_stats_conn(
+        conn: sqlite3.Connection, *, conversation_id: str
+    ) -> dict[str, dict[str, Any]]:
+        """Summarize review state per module (latest row plus counters)."""
+
+        try:
+            rows = conn.execute(
+                "select * from room_board_reviews where conversation_id = ? "
+                "order by created_at, review_id",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        by_module: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            by_module.setdefault(str(row["module_id"]), []).append(row)
+        stats: dict[str, dict[str, Any]] = {}
+        for module_id, items in by_module.items():
+            latest = items[-1]
+            verdict_data = _decode(str(latest["verdict_json"])) if latest["verdict_json"] else None
+            if isinstance(verdict_data, dict):
+                raw_findings = verdict_data.get("findings")
+                if isinstance(raw_findings, list):
+                    sanitized_findings = []
+                    for item in raw_findings:
+                        if isinstance(item, dict):
+                            item_copy = dict(item)
+                            raw_p = item_copy.get("path")
+                            item_copy["path"] = raw_p if is_valid_finding_path(raw_p) else None
+                            sanitized_findings.append(item_copy)
+                        else:
+                            sanitized_findings.append(item)
+                    verdict_data["findings"] = sanitized_findings
+            stats[module_id] = {
+                "status": str(latest["status"]),
+                "review_id": str(latest["review_id"]),
+                "verification_id": str(latest["verification_id"]),
+                "reviewer_kind": str(latest["reviewer_kind"]),
+                "reviewer_participant_id": latest["reviewer_participant_id"],
+                "reviewer_family": latest["reviewer_family"],
+                "verdict": verdict_data,
+                "reviews_endorsed": sum(1 for item in items if str(item["status"]) == "endorsed"),
+                "reviews_objected": sum(1 for item in items if str(item["status"]) == "objected"),
+            }
+        return stats
 
     def claim_next_board_verification(
         self,
@@ -2491,8 +3154,27 @@ class RoomBoardStore:
                         participant_ids=wake,
                         stamp=stamp,
                     )
+                review_info: dict[str, Any] | None = None
+                if status == "passed":
+                    review_info = self._create_review_for_pass_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        module_id=module_id,
+                        verification_id=verification_id,
+                        verification_activity_id=str(activity["activity_id"]),
+                        verification_causal_depth=int(activity["causal_depth"]),
+                        stamp=stamp,
+                    )
+                    if review_info is not None:
+                        for item in review_info.get("woken_participant_ids", []):
+                            if item not in [entry["participant_id"] for entry in woken]:
+                                woken.append(
+                                    {
+                                        "participant_id": item,
+                                    }
+                                )
                 conn.commit()
-                return {
+                result: dict[str, Any] = {
                     "verification_id": verification_id,
                     "status": status,
                     "activity_id": str(activity["activity_id"]),
@@ -2500,6 +3182,12 @@ class RoomBoardStore:
                     "woken_participant_ids": [item["participant_id"] for item in woken],
                     "escalated": escalated,
                 }
+                if review_info is not None:
+                    result["review_id"] = review_info["review_id"]
+                    result["reviewer_kind"] = review_info["reviewer_kind"]
+                    result["reviewer_participant_id"] = review_info["reviewer_participant_id"]
+                    result["review_request_activity_id"] = review_info["request_activity_id"]
+                return result
             except Exception:
                 conn.rollback()
                 raise
@@ -2765,6 +3453,772 @@ class RoomBoardStore:
                 raise ValueError("room_board_references_invalid")
         return list(references)
 
+    def review(
+        self,
+        *,
+        conversation_id: str,
+        participant_id: str,
+        caller_identity: str,
+        observation_id: str,
+        lease_token: str,
+        client_request_id: str,
+        review_id: str,
+        verdict: str,
+        summary: str,
+        findings: list[dict[str, Any]] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(client_request_id, str) or not client_request_id.strip():
+            raise ValueError("room_client_request_id_required")
+        if not isinstance(review_id, str) or not review_id.strip():
+            raise ValueError("room_board_review_unknown")
+        clean_summary = normalize_review_summary(summary)
+        clean_findings = normalize_review_findings(findings)
+        clean_verdict = normalize_review_verdict(verdict, clean_findings)
+        fingerprint = sha256(
+            _json(
+                {
+                    "tool": TOOL_REVIEW,
+                    "conversation_id": conversation_id,
+                    "participant_id": participant_id,
+                    "caller_identity": caller_identity,
+                    "observation_id": observation_id,
+                    "client_request_id": client_request_id,
+                    "review_id": review_id,
+                    "verdict": clean_verdict,
+                    "summary": clean_summary,
+                    "findings": clean_findings,
+                }
+            ).encode()
+        ).hexdigest()
+        current, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                replay = self._check_idempotency_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    tool_name=TOOL_REVIEW,
+                    caller_identity=caller_identity,
+                    client_request_id=client_request_id,
+                    fingerprint=fingerprint,
+                )
+                if replay is not None:
+                    conn.commit()
+                    return replay
+                _, source = self._check_lease_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    participant_id=participant_id,
+                    caller_identity=caller_identity,
+                    observation_id=observation_id,
+                    lease_token=lease_token,
+                    current=current,
+                )
+                stored = conn.execute(
+                    "select * from room_board_reviews where review_id = ? and conversation_id = ?",
+                    (review_id, conversation_id),
+                ).fetchone()
+                if stored is None:
+                    raise ValueError("room_board_review_unknown")
+                if str(stored["status"]) != "pending":
+                    raise ValueError("room_board_review_decided")
+                if (
+                    str(stored["reviewer_kind"]) != "participant"
+                    or str(stored["reviewer_participant_id"]) != participant_id
+                ):
+                    raise ValueError("room_board_review_forbidden")
+                module_id = str(stored["module_id"])
+                author_id = str(stored["author_participant_id"])
+                verdict_json = _json(
+                    {
+                        "verdict": clean_verdict,
+                        "summary": summary.strip(),
+                        "findings": clean_findings,
+                        "reviewer_participant_id": participant_id,
+                        "decided_via": "board_tool",
+                    }
+                )
+                charter = self._current_charter_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                body = _decode(str(charter["charter_json"])) if charter is not None else None
+                report_to = body.get("report_to") if isinstance(body, dict) else None
+                lead = self._lead_participant_id(conn, conversation_id)
+                if clean_verdict == "endorse":
+                    target = report_to if isinstance(report_to, str) and report_to else lead
+                    audience = [target] if target else []
+                    wake: list[str] = []
+                    new_status = "endorsed"
+                else:
+                    audience = [author_id]
+                    extra = report_to if isinstance(report_to, str) and report_to else lead
+                    if extra and extra not in audience:
+                        audience.append(extra)
+                    wake = [author_id]
+                    new_status = "objected"
+                causation = str(stored["request_activity_id"] or source["activity_id"])
+                try:
+                    cause = self._activity_from_conn(conn, causation)
+                    depth = int(cause["causal_depth"]) + 1
+                except KeyError:
+                    causation = str(source["activity_id"])
+                    depth = int(source["causal_depth"]) + 1
+                activity = self._insert_board_activity_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_type="board.review",
+                    actor_kind="participant",
+                    actor_identity=caller_identity,
+                    actor_participant_id=participant_id,
+                    causation_id=causation,
+                    causal_depth=depth,
+                    audience_participant_ids=audience,
+                    payload={
+                        "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                        "review_id": review_id,
+                        "module_id": module_id,
+                        "verification_id": str(stored["verification_id"]),
+                        "verdict": clean_verdict,
+                        "summary": summary.strip(),
+                        "findings": clean_findings,
+                        "reviewer_participant_id": participant_id,
+                        "reviewer_family": stored["reviewer_family"],
+                        "author_participant_id": author_id,
+                    },
+                    stamp=stamp,
+                )
+                conn.execute(
+                    "update room_board_reviews set status = ?, verdict_json = ?, "
+                    "verdict_activity_id = ?, decided_via = 'board_tool', "
+                    "updated_at = ? where review_id = ?",
+                    (
+                        new_status,
+                        verdict_json,
+                        str(activity["activity_id"]),
+                        stamp,
+                        review_id,
+                    ),
+                )
+                woken: list[dict[str, Any]] = []
+                if wake:
+                    woken = self._wake_participants_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        activity_id=str(activity["activity_id"]),
+                        participant_ids=wake,
+                        stamp=stamp,
+                    )
+                result = {
+                    "review_id": review_id,
+                    "module_id": module_id,
+                    "status": new_status,
+                    "verdict": clean_verdict,
+                    "activity_id": str(activity["activity_id"]),
+                    "activity_seq": int(activity["seq"]),
+                    "woken_participant_ids": [item["participant_id"] for item in woken],
+                    "request_fingerprint": fingerprint,
+                }
+                self._write_request_log_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    tool_name=TOOL_REVIEW,
+                    caller_identity=caller_identity,
+                    client_request_id=client_request_id,
+                    result=result,
+                    created_at=stamp,
+                )
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    def decide_review(
+        self,
+        *,
+        conversation_id: str,
+        review_id: str,
+        verdict: str,
+        summary: str,
+        findings: list[dict[str, Any]] | None = None,
+        expected_digest: str,
+        operator_identity: str,
+        decided_via: str = "web",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(operator_identity, str) or not operator_identity.strip():
+            raise ValueError("room_operator_identity_required")
+
+        # 1. Limits: summary, findings, verdict
+        clean_summary = normalize_review_summary(summary)
+        clean_findings = normalize_review_findings(findings)
+        clean_verdict = normalize_review_verdict(verdict, clean_findings)
+
+        # 2. decided_via must be exactly "web"
+        if decided_via != "web":
+            raise ValueError("room_board_decided_via_invalid")
+
+        if not isinstance(review_id, str) or not review_id.strip():
+            raise ValueError("room_board_review_unknown")
+
+        _, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                # 3. Review exists in conversation_id
+                stored = conn.execute(
+                    "select * from room_board_reviews where review_id = ? and conversation_id = ?",
+                    (review_id, conversation_id),
+                ).fetchone()
+                if stored is None:
+                    raise ValueError("room_board_review_unknown")
+
+                # 4. Pending and reviewer_kind == operator
+                if str(stored["status"]) != "pending" or str(stored["reviewer_kind"]) != "operator":
+                    raise ValueError("room_board_review_not_pending")
+
+                v_row = conn.execute(
+                    "select head_commit, patch_text from room_board_verifications "
+                    "where verification_id = ?",
+                    (str(stored["verification_id"]),),
+                ).fetchone()
+                head_commit = (
+                    str(v_row["head_commit"])
+                    if v_row is not None and v_row["head_commit"] is not None
+                    else None
+                )
+                raw_patch = (
+                    str(v_row["patch_text"])
+                    if v_row is not None and v_row["patch_text"] is not None
+                    else ""
+                )
+                actual_digest = review_digest(
+                    review_id=review_id,
+                    verification_id=str(stored["verification_id"]),
+                    head_commit=head_commit,
+                    patch_text=raw_patch,
+                )
+
+                # 5. expected_digest required and equal
+                if (
+                    not isinstance(expected_digest, str)
+                    or not expected_digest.strip()
+                    or expected_digest != actual_digest
+                ):
+                    raise ValueError("room_board_review_digest_mismatch")
+
+                # 6. endorse refused when the material would be truncated
+                if clean_verdict == "endorse":
+                    _, _, truncated, _ = _material_patch_parts(raw_patch)
+                    if truncated:
+                        raise ValueError("room_board_review_material_incomplete")
+
+                module_id = str(stored["module_id"])
+                author_id = str(stored["author_participant_id"])
+                new_status = "endorsed" if clean_verdict == "endorse" else "objected"
+                charter = self._current_charter_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                body = _decode(str(charter["charter_json"])) if charter is not None else None
+                report_to = body.get("report_to") if isinstance(body, dict) else None
+                lead = self._lead_participant_id(conn, conversation_id)
+                if clean_verdict == "endorse":
+                    target = report_to if isinstance(report_to, str) and report_to else lead
+                    audience = [target] if target else []
+                    wake: list[str] = []
+                else:
+                    audience = [author_id]
+                    extra = report_to if isinstance(report_to, str) and report_to else lead
+                    if extra and extra not in audience:
+                        audience.append(extra)
+                    wake = [author_id]
+                causation = str(stored["request_activity_id"])
+                cause = self._activity_from_conn(conn, causation)
+                activity = self._insert_board_activity_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_type="board.review",
+                    actor_kind="operator",
+                    actor_identity=operator_identity,
+                    actor_participant_id=None,
+                    causation_id=causation,
+                    causal_depth=int(cause["causal_depth"]) + 1,
+                    audience_participant_ids=audience,
+                    payload={
+                        "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                        "review_id": review_id,
+                        "module_id": module_id,
+                        "verification_id": str(stored["verification_id"]),
+                        "verdict": clean_verdict,
+                        "summary": clean_summary,
+                        "findings": clean_findings,
+                        "reviewer_kind": "operator",
+                        "author_participant_id": author_id,
+                        "decided_via": decided_via,
+                        "operator_identity": operator_identity,
+                    },
+                    stamp=stamp,
+                )
+                verdict_json = _json(
+                    {
+                        "verdict": clean_verdict,
+                        "summary": clean_summary,
+                        "findings": clean_findings,
+                        "decided_via": decided_via,
+                        "operator_identity": operator_identity,
+                    }
+                )
+                conn.execute(
+                    "update room_board_reviews set status = ?, verdict_json = ?, "
+                    "verdict_activity_id = ?, decided_via = ?, operator_identity = ?, "
+                    "updated_at = ? where review_id = ?",
+                    (
+                        new_status,
+                        verdict_json,
+                        str(activity["activity_id"]),
+                        decided_via,
+                        operator_identity,
+                        stamp,
+                        review_id,
+                    ),
+                )
+                woken: list[dict[str, Any]] = []
+                if wake:
+                    woken = self._wake_participants_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        activity_id=str(activity["activity_id"]),
+                        participant_ids=wake,
+                        stamp=stamp,
+                    )
+                conn.commit()
+                return {
+                    "review_id": review_id,
+                    "module_id": module_id,
+                    "status": new_status,
+                    "verdict": clean_verdict,
+                    "activity_id": str(activity["activity_id"]),
+                    "activity_seq": int(activity["seq"]),
+                    "woken_participant_ids": [item["participant_id"] for item in woken],
+                }
+            except Exception:
+                conn.rollback()
+                raise
+
+    def review_material(self, conversation_id: str, review_id: str) -> dict[str, Any]:
+        """Fetch material for operator review (``room_board_review_material/v1``)."""
+        with self._connect() as conn:
+            stored = conn.execute(
+                "select * from room_board_reviews where review_id = ? and conversation_id = ?",
+                (review_id, conversation_id),
+            ).fetchone()
+            if stored is None:
+                raise ValueError("room_board_review_unknown")
+            if str(stored["reviewer_kind"]) != "operator":
+                raise ValueError("room_board_review_not_operator")
+            ver_row = conn.execute(
+                "select head_commit, patch_text from room_board_verifications "
+                "where verification_id = ?",
+                (str(stored["verification_id"]),),
+            ).fetchone()
+            head_commit = (
+                str(ver_row["head_commit"])
+                if ver_row is not None and ver_row["head_commit"] is not None
+                else None
+            )
+            raw_patch = (
+                str(ver_row["patch_text"])
+                if ver_row is not None and ver_row["patch_text"] is not None
+                else ""
+            )
+            digest = review_digest(
+                review_id=review_id,
+                verification_id=str(stored["verification_id"]),
+                head_commit=head_commit,
+                patch_text=raw_patch,
+            )
+            text, bytes_total, truncated, hidden_char_count = _material_patch_parts(raw_patch)
+            return {
+                "schema_version": "room_board_review_material/v1",
+                "review_id": review_id,
+                "verification_id": str(stored["verification_id"]),
+                "head_commit": head_commit or "",
+                "digest": digest,
+                "patch": {
+                    "text": text,
+                    "bytes_total": bytes_total,
+                    "truncated": truncated,
+                    "hidden_char_count": hidden_char_count,
+                },
+            }
+
+    def escalate_stale_reviews(
+        self,
+        now: datetime,
+        response_seconds: int,
+    ) -> list[dict[str, Any]]:
+        """Move stale pending participant reviews to the operator (§3.10)."""
+        escalated: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                pending_reviews = conn.execute(
+                    "select * from room_board_reviews "
+                    "where status = 'pending' and reviewer_kind = 'participant' "
+                    "order by created_at, review_id"
+                ).fetchall()
+                stamp = _timestamp(now)
+                for review in pending_reviews:
+                    conv_id = str(review["conversation_id"])
+                    reviewer_id = str(review["reviewer_participant_id"])
+                    request_act_id = (
+                        str(review["request_activity_id"])
+                        if review["request_activity_id"]
+                        else None
+                    )
+
+                    reason_code: str | None = None
+
+                    p_row = conn.execute(
+                        "select status from participants "
+                        "where participant_id = ? and conversation_id = ?",
+                        (reviewer_id, conv_id),
+                    ).fetchone()
+                    if p_row is None or str(p_row["status"]) != "active":
+                        reason_code = "board_review_reviewer_unavailable"
+                    elif request_act_id:
+                        obs = conn.execute(
+                            "select status, control_state, attempt_count from room_observations "
+                            "where activity_id = ? and participant_id = ? and conversation_id = ?",
+                            (request_act_id, reviewer_id, conv_id),
+                        ).fetchone()
+                        if obs is not None and str(obs["control_state"]) in {
+                            "exhausted",
+                            "cancelled",
+                        }:
+                            reason_code = "board_review_reviewer_unavailable"
+                        elif obs is not None and str(obs["status"]) == "completed":
+                            reason_code = "board_review_reviewer_no_verdict"
+
+                    if reason_code is None:
+                        created = _parse_timestamp(str(review["created_at"]))
+                        if (now - created).total_seconds() >= response_seconds:
+                            reason_code = "board_review_reviewer_unresponsive"
+
+                    if reason_code is None:
+                        continue
+
+                    old_reviewer_id = reviewer_id
+                    old_reviewer_family = (
+                        str(review["reviewer_family"]) if review["reviewer_family"] else None
+                    )
+                    escalation_obj = {
+                        "participant_id": old_reviewer_id,
+                        "family": old_reviewer_family,
+                        "reason_code": reason_code,
+                        "at": stamp,
+                    }
+
+                    module_id = str(review["module_id"])
+                    charter = self._current_charter_conn(
+                        conn, conversation_id=conv_id, module_id=module_id
+                    )
+                    charter_body = (
+                        _decode(str(charter["charter_json"])) if charter is not None else None
+                    )
+                    report_to = (
+                        charter_body.get("report_to") if isinstance(charter_body, dict) else None
+                    )
+                    lead = self._lead_participant_id(conn, conv_id)
+                    fallback = report_to if isinstance(report_to, str) and report_to else lead
+                    audience = [fallback] if fallback else []
+
+                    causation = request_act_id or str(review["verification_id"])
+                    try:
+                        cause = self._activity_from_conn(conn, causation)
+                        causal_depth = int(cause["causal_depth"]) + 1
+                    except KeyError:
+                        causation = str(review["review_id"])
+                        causal_depth = 1
+
+                    activity = self._insert_board_activity_conn(
+                        conn,
+                        conversation_id=conv_id,
+                        activity_type="board.review_requested",
+                        actor_kind="infrastructure",
+                        actor_identity="infrastructure:board-review",
+                        actor_participant_id=None,
+                        causation_id=causation,
+                        causal_depth=causal_depth,
+                        audience_participant_ids=audience,
+                        payload={
+                            "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                            "review_id": str(review["review_id"]),
+                            "module_id": module_id,
+                            "verification_id": str(review["verification_id"]),
+                            "author_participant_id": str(review["author_participant_id"]),
+                            "author_family": str(review["author_family"]),
+                            "reviewer_kind": "operator",
+                            "reviewer_participant_id": None,
+                            "reviewer_family": None,
+                            "rule_id": str(review["rule_id"]),
+                            "escalated_from": escalation_obj,
+                        },
+                        stamp=stamp,
+                    )
+
+                    conn.execute(
+                        """update room_board_reviews
+                           set reviewer_kind = 'operator',
+                               reviewer_participant_id = null,
+                               reviewer_family = null,
+                               escalation_json = ?,
+                               request_activity_id = ?,
+                               updated_at = ?
+                           where review_id = ?""",
+                        (
+                            _json(escalation_obj),
+                            str(activity["activity_id"]),
+                            stamp,
+                            str(review["review_id"]),
+                        ),
+                    )
+
+                    escalated.append(
+                        {
+                            "review_id": str(review["review_id"]),
+                            "conversation_id": conv_id,
+                            "module_id": module_id,
+                            "reason_code": reason_code,
+                            "escalated_from": escalation_obj,
+                            "activity_id": str(activity["activity_id"]),
+                            "activity_seq": int(activity["seq"]),
+                        }
+                    )
+                conn.commit()
+                return escalated
+            except Exception:
+                conn.rollback()
+                raise
+
+    def review_detail(self, conversation_id: str, review_id: str) -> dict[str, Any]:
+        """Fetch review detail for one review (§5.1)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "select * from room_board_reviews where review_id = ? and conversation_id = ?",
+                (review_id, conversation_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("room_board_review_unknown")
+
+            ver_row = conn.execute(
+                "select head_commit, patch_text from room_board_verifications "
+                "where verification_id = ?",
+                (str(row["verification_id"]),),
+            ).fetchone()
+            head_commit = (
+                str(ver_row["head_commit"])
+                if ver_row is not None and ver_row["head_commit"] is not None
+                else None
+            )
+            raw_patch = (
+                str(ver_row["patch_text"])
+                if ver_row is not None and ver_row["patch_text"] is not None
+                else ""
+            )
+            digest = review_digest(
+                review_id=review_id,
+                verification_id=str(row["verification_id"]),
+                head_commit=head_commit,
+                patch_text=raw_patch,
+            )
+
+            verdict_data = _decode(str(row["verdict_json"])) if row["verdict_json"] else None
+            raw_summary = verdict_data.get("summary") if verdict_data else None
+            summary = agent_text(raw_summary, max_chars=4000) if raw_summary is not None else None
+            findings_raw = verdict_data.get("findings", []) if verdict_data else []
+
+            findings_count = {
+                "blocker": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "blocker"
+                ),
+                "major": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "major"
+                ),
+                "minor": sum(
+                    1
+                    for item in findings_raw
+                    if isinstance(item, dict) and item.get("severity") == "minor"
+                ),
+            }
+
+            clean_findings: list[dict[str, Any]] = []
+            if isinstance(findings_raw, list):
+                for item in findings_raw[:32]:
+                    if isinstance(item, dict):
+                        raw_p = item.get("path")
+                        p = raw_p if is_valid_finding_path(raw_p) else None
+                        clean_findings.append(
+                            {
+                                "severity": str(item.get("severity")),
+                                "path": p,
+                                "text": agent_text(item.get("text"), max_chars=1000),
+                            }
+                        )
+
+            review_obj = {
+                "status": str(row["status"]),
+                "review_id": review_id,
+                "verification_id": str(row["verification_id"]),
+                "digest": digest,
+                "rule_id": str(row["rule_id"]),
+                "author_family": str(row["author_family"]),
+                "reviewer_kind": str(row["reviewer_kind"]),
+                "reviewer_participant_id": (
+                    str(row["reviewer_participant_id"])
+                    if row["reviewer_participant_id"] is not None
+                    else None
+                ),
+                "reviewer_family": (
+                    str(row["reviewer_family"]) if row["reviewer_family"] is not None else None
+                ),
+                "escalated_from": (
+                    _decode(str(row["escalation_json"])) if row["escalation_json"] else None
+                ),
+                "findings_count": findings_count,
+                "decided_via": str(row["decided_via"]) if row["decided_via"] else None,
+                "updated_at": str(row["updated_at"]),
+            }
+
+            raw_inputs = _decode(str(row["rule_inputs_json"])) if row["rule_inputs_json"] else {}
+            rule_inputs = {
+                "rule_id": str(row["rule_id"]),
+                "author_participant_id": str(
+                    raw_inputs.get("author_participant_id")
+                    or raw_inputs.get("author_id")
+                    or row["author_participant_id"]
+                ),
+                "author_family": str(raw_inputs.get("author_family") or row["author_family"]),
+                "eligible": [
+                    {
+                        "participant_id": str(item["participant_id"]),
+                        "family": str(item["family"]),
+                        "pending": int(item.get("pending", 0)),
+                    }
+                    for item in raw_inputs.get("eligible", [])
+                ],
+                "last_reviewer_participant_id": (
+                    raw_inputs.get("last_reviewer_participant_id")
+                    or raw_inputs.get("last_reviewer_id")
+                ),
+                "picked_participant_id": raw_inputs.get("picked_participant_id"),
+            }
+
+            decided_at = (
+                str(row["updated_at"]) if str(row["status"]) in ("endorsed", "objected") else None
+            )
+
+            return {
+                "schema_version": "room_board_review/v1",
+                "conversation_id": conversation_id,
+                "module_id": str(row["module_id"]),
+                "review": review_obj,
+                "head_commit": head_commit or "",
+                "summary": summary,
+                "findings": clean_findings,
+                "rule_inputs": rule_inputs,
+                "created_at": str(row["created_at"]),
+                "decided_at": decided_at,
+            }
+
+    def verification_detail(self, conversation_id: str, verification_id: str) -> dict[str, Any]:
+        """Fetch verification detail for one verification (§5.2)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "select * from room_board_verifications "
+                "where verification_id = ? and conversation_id = ?",
+                (verification_id, conversation_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("room_board_verification_unknown")
+
+            result = _decode(str(row["result_json"])) if row["result_json"] else {}
+            evidence = result.get("evidence") if isinstance(result, dict) else {}
+            output_tails = evidence.get("output_tails") if isinstance(evidence, dict) else {}
+            raw_gates = result.get("gates") if isinstance(result, dict) else []
+            clean_gates: list[dict[str, Any]] = []
+            if isinstance(raw_gates, list):
+                for item in raw_gates:
+                    if isinstance(item, dict):
+                        gid = str(item.get("gate_id"))
+                        raw_tail = output_tails.get(gid) if isinstance(output_tails, dict) else None
+                        tail = (
+                            agent_text(raw_tail, max_chars=2000) if raw_tail is not None else None
+                        )
+                        clean_gates.append(
+                            {
+                                "gate_id": gid,
+                                "status": str(item.get("status")),
+                                "exit_code": (
+                                    int(item["exit_code"])
+                                    if item.get("exit_code") is not None
+                                    else None
+                                ),
+                                "reason_code": (
+                                    str(item["reason_code"])
+                                    if item.get("reason_code") is not None
+                                    else None
+                                ),
+                                "output_tail": tail,
+                            }
+                        )
+
+            raw_changed = _decode(str(row["changed_paths_json"] or "[]"))
+            changed_path_count = len(raw_changed) if isinstance(raw_changed, list) else 0
+
+            raw_stacked = result.get("stacked") if isinstance(result, dict) else []
+            clean_stacked = (
+                [
+                    {
+                        "module_id": str(item.get("module_id")),
+                        "verification_id": str(item.get("verification_id")),
+                    }
+                    for item in raw_stacked
+                    if isinstance(item, dict)
+                ]
+                if isinstance(raw_stacked, list)
+                else []
+            )
+
+            reason_code = result.get("reason_code") if isinstance(result, dict) else None
+
+            return {
+                "schema_version": "room_board_verification/v1",
+                "conversation_id": conversation_id,
+                "module_id": str(row["module_id"]),
+                "verification_id": verification_id,
+                "status": str(row["status"]),
+                "reason_code": str(reason_code) if reason_code is not None else None,
+                "head_commit": (
+                    str(row["head_commit"]) if row["head_commit"] is not None else None
+                ),
+                "changed_path_count": changed_path_count,
+                "stacked": clean_stacked,
+                "gates": clean_gates,
+                "created_at": str(row["created_at"]),
+                "updated_at": str(row["updated_at"]),
+            }
+
+    def review_policy(self, conversation_id: str) -> str:
+        """Return the room's review policy (``off`` | ``cross_family``)."""
+        with self._connect() as conn:
+            return review_policy_for_conversation(conn, conversation_id)
+
     def owner_view(self, conversation_id: str, participant_id: str) -> dict[str, Any]:
         """Pure read of one owner's board slice (no lease, no writes)."""
 
@@ -2773,6 +4227,7 @@ class RoomBoardStore:
             verification_stats = self._module_verification_stats_conn(
                 conn, conversation_id=conversation_id
             )
+            review_stats = self._module_review_stats_conn(conn, conversation_id=conversation_id)
             my_modules: list[dict[str, Any]] = []
             other_modules: list[dict[str, Any]] = []
             for module_id in sorted(charter_map):
@@ -2782,6 +4237,17 @@ class RoomBoardStore:
                 body = info["charter"] if isinstance(info["charter"], dict) else {}
                 provides = list(body.get("provides", [])) if isinstance(body, dict) else []
                 depends = list(body.get("depends", [])) if isinstance(body, dict) else []
+                review_entry = review_stats.get(module_id) or {
+                    "status": None,
+                    "review_id": None,
+                    "verification_id": None,
+                    "reviewer_kind": None,
+                    "reviewer_participant_id": None,
+                    "reviewer_family": None,
+                    "verdict": None,
+                    "reviews_endorsed": 0,
+                    "reviews_objected": 0,
+                }
                 if str(info["owner_participant_id"]) == participant_id:
                     charter_row = conn.execute(
                         """select * from room_board_charters
@@ -2819,6 +4285,7 @@ class RoomBoardStore:
                                 "verifications_failed": 0,
                                 "rework_rounds": 0,
                             },
+                            "review": review_entry,
                         }
                     )
                 else:

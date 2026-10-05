@@ -67,6 +67,7 @@ class RoomCollaborationInit(BaseModel):
 
     mode: Literal["broadcast", "addressed"]
     lead_role: str | None = Field(default=None, min_length=1, max_length=64)
+    review_policy: Literal["off", "cross_family"] = "off"
 
     @field_validator("lead_role", mode="before")
     @classmethod
@@ -210,6 +211,33 @@ class RoomBoardSplitDecisionRequest(BaseModel):
     @field_validator("conversation_id", mode="before")
     @classmethod
     def _strip_board_decision_text(cls, value: object) -> object:
+        return strip_required_string(value)
+
+
+class RoomBoardReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str | None = Field(default=None, max_length=500)
+    severity: Literal["blocker", "major", "minor"]
+    text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("path", "text", mode="before")
+    @classmethod
+    def _strip_finding_text(cls, value: object) -> object:
+        return strip_optional_string(value)
+
+
+class RoomBoardReviewDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(min_length=1, max_length=200)
+    verdict: Literal["endorse", "object"]
+    summary: str = Field(min_length=1, max_length=4000)
+    findings: list[RoomBoardReviewFinding] = Field(default_factory=list, max_length=32)
+
+    @field_validator("conversation_id", "summary", mode="before")
+    @classmethod
+    def _strip_review_decision_text(cls, value: object) -> object:
         return strip_required_string(value)
 
 

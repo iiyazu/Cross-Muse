@@ -1,0 +1,37 @@
+{
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:01:40.000000Z",
+  "decided_at": null,
+  "findings": [],
+  "head_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "module_id": "beta",
+  "review": {
+    "author_family": "codex",
+    "decided_via": null,
+    "digest": "sha256:2df9fdc1871ddcd97c6d419b27d5e4f10c6dd82ade419d6c431f080d81fa0db5",
+    "escalated_from": null,
+    "findings_count": {
+      "blocker": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "review_id": "boardreview_0000000000000000000000000000002e",
+    "reviewer_family": null,
+    "reviewer_kind": "operator",
+    "reviewer_participant_id": null,
+    "rule_id": "cross_family/v1",
+    "status": "pending",
+    "updated_at": "2026-01-01T00:01:40.000000Z",
+    "verification_id": "boardverify_0000000000000000000000000000002a"
+  },
+  "rule_inputs": {
+    "author_family": "codex",
+    "author_participant_id": "part_00000000000000000000000000000004",
+    "eligible": [],
+    "last_reviewer_participant_id": null,
+    "picked_participant_id": null,
+    "rule_id": "cross_family/v1"
+  },
+  "schema_version": "room_board_review/v1",
+  "summary": null
+}

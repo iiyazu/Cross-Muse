@@ -16,6 +16,7 @@ import pytest
 from tests.xmuse.board_scenarios import (
     INJECTION_PROMPT,
     NOW,
+    REVIEW_SCENARIOS,
     SCENARIOS,
     SERVER_TIME,
     _approved_board,
@@ -40,6 +41,7 @@ from xmuse_core.chat.room_board_projection import (
     compute_revision,
     compute_stale_dependents,
     derive_lifecycle,
+    derive_module_accepted,
     derive_module_attention,
     derive_state,
     derive_verification_axis,
@@ -312,6 +314,8 @@ def test_compute_counters_table(
         "superseded": expected[3],
         "errored": expected[4],
         "rework_rounds": expected[5],
+        "reviews_endorsed": 0,
+        "reviews_objected": 0,
     }
 
 
@@ -380,6 +384,179 @@ def test_failed_stops_being_attention_after_newer_report() -> None:
         escalated=False,
         is_stale=False,
     ) == {"kind": "none", "reason_code": None}
+
+
+@pytest.mark.parametrize(
+    ("state", "reviews_capability", "review_status", "expected"),
+    [
+        ("verified", 0, "none", True),
+        ("verified", 0, "pending", True),
+        ("verified", 0, "objected", True),
+        ("verified", 1, "endorsed", True),
+        ("verified", 1, "pending", False),
+        ("verified", 1, "objected", False),
+        ("verified", 1, "superseded", False),
+        ("verified", 1, "none", False),
+        ("done_claimed", 0, "none", False),
+        ("done_claimed", 1, "endorsed", False),
+        ("verification_failed", 0, "none", False),
+        ("verification_failed", 1, "endorsed", False),
+        ("working", 1, "endorsed", False),
+    ],
+)
+def test_derive_module_accepted_table(
+    state: str, reviews_capability: int, review_status: str, expected: bool
+) -> None:
+    assert (
+        derive_module_accepted(
+            state=state,
+            reviews_capability=reviews_capability,
+            review_status=review_status,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "v_status", "escalated", "rev_status", "rev_kind", "stale", "kind", "reason"),
+    [
+        # Error beats review
+        (
+            "done_claimed",
+            "error",
+            False,
+            "pending",
+            "operator",
+            False,
+            "operator",
+            "board_attention_verification_error",
+        ),
+        # Escalated failed beats review
+        (
+            "done_claimed",
+            "failed",
+            True,
+            "pending",
+            "operator",
+            False,
+            "lead",
+            "board_attention_verification_escalated",
+        ),
+        # Failed verification beats review
+        (
+            "done_claimed",
+            "failed",
+            False,
+            "pending",
+            "operator",
+            False,
+            "owner",
+            "board_attention_verification_failed",
+        ),
+        # Review operator pending wins when passed
+        (
+            "done_claimed",
+            "passed",
+            False,
+            "pending",
+            "operator",
+            False,
+            "operator",
+            "board_attention_review_operator_pending",
+        ),
+        # Review operator pending beats blocked
+        (
+            "blocked",
+            "passed",
+            False,
+            "pending",
+            "operator",
+            False,
+            "operator",
+            "board_attention_review_operator_pending",
+        ),
+        # Review participant pending is NOT attention: blocked wins
+        (
+            "blocked",
+            "passed",
+            False,
+            "pending",
+            "participant",
+            False,
+            "lead",
+            "board_attention_module_blocked",
+        ),
+        # Review participant pending is NOT attention: stale wins
+        (
+            "working",
+            "passed",
+            False,
+            "pending",
+            "participant",
+            True,
+            "owner",
+            "board_attention_contract_stale",
+        ),
+        # Review participant pending with none: none
+        ("done_claimed", "passed", False, "pending", "participant", False, "none", None),
+        # Review objected with done_claimed wins
+        (
+            "done_claimed",
+            "passed",
+            False,
+            "objected",
+            "participant",
+            False,
+            "owner",
+            "board_attention_review_objected",
+        ),
+        # Review objected with done_claimed beats blocked
+        (
+            "done_claimed",
+            "passed",
+            False,
+            "objected",
+            "operator",
+            False,
+            "owner",
+            "board_attention_review_objected",
+        ),
+        # Review objected stops being attention when owner filed newer report (lifecycle working)
+        ("working", "passed", False, "objected", "participant", False, "none", None),
+        (
+            "working",
+            "passed",
+            False,
+            "objected",
+            "participant",
+            True,
+            "owner",
+            "board_attention_contract_stale",
+        ),
+        # Review endorsed is not attention
+        ("done_claimed", "passed", False, "endorsed", "participant", False, "none", None),
+        # Review superseded is not attention
+        ("done_claimed", "passed", False, "superseded", "participant", False, "none", None),
+    ],
+)
+def test_attention_review_precedence_table(
+    lifecycle: str,
+    v_status: str,
+    escalated: bool,
+    rev_status: str,
+    rev_kind: str | None,
+    stale: bool,
+    kind: str,
+    reason: str | None,
+) -> None:
+    assert derive_module_attention(
+        lifecycle=lifecycle,
+        verification_status=v_status,
+        escalated=escalated,
+        review_status=rev_status,
+        review_reviewer_kind=rev_kind,
+        is_stale=stale,
+    ) == {"kind": kind, "reason_code": reason}
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +708,56 @@ def test_board_fixture_reproduces_and_validates(tmp_path: Path, name: str) -> No
     jsonschema.validate(triple["summary"], summary_schema)
     jsonschema.validate(triple["events_page"], events_schema)
 
+    if name in REVIEW_SCENARIOS:
+        with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+            rev_row = conn.execute(
+                "select review_id from room_board_reviews where conversation_id = ? "
+                "order by created_at desc, rowid desc limit 1",
+                (ctx["conversation_id"],),
+            ).fetchone()
+        assert rev_row is not None
+        review_id = str(rev_row["review_id"])
+        review_data = ctx["store"].review_detail(ctx["conversation_id"], review_id)
+        review_target = FIXTURE_DIR / f"{name}.review.json"
+        review_text = _dump(review_data)
+        if os.environ.get("UPDATE_BOARD_FIXTURES") == "1":
+            review_target.write_text(review_text, encoding="utf-8")
+        assert review_target.exists(), f"missing review fixture {review_target}"
+        assert review_target.read_text(encoding="utf-8") == review_text
+        review_schema = _load_schema("room_board_review.v1.json")
+        jsonschema.validate(review_data, review_schema)
+
+    if name == "review_operator_pending":
+        material_data = ctx["store"].review_material(ctx["conversation_id"], review_id)
+        material_target = FIXTURE_DIR / f"{name}.material.json"
+        material_text = _dump(material_data)
+        if os.environ.get("UPDATE_BOARD_FIXTURES") == "1":
+            material_target.write_text(material_text, encoding="utf-8")
+        assert material_target.exists(), f"missing material fixture {material_target}"
+        assert material_target.read_text(encoding="utf-8") == material_text
+        material_schema = _load_schema("room_board_review_material.v1.json")
+        jsonschema.validate(material_data, material_schema)
+
+    if name == "verification_failed_rework":
+        with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+            ver_row = conn.execute(
+                "select verification_id from room_board_verifications "
+                "where conversation_id = ? and status = 'failed' "
+                "order by created_at desc, rowid desc limit 1",
+                (ctx["conversation_id"],),
+            ).fetchone()
+        assert ver_row is not None
+        verification_id = str(ver_row["verification_id"])
+        ver_data = ctx["store"].verification_detail(ctx["conversation_id"], verification_id)
+        ver_target = FIXTURE_DIR / f"{name}.verification.json"
+        ver_text = _dump(ver_data)
+        if os.environ.get("UPDATE_BOARD_FIXTURES") == "1":
+            ver_target.write_text(ver_text, encoding="utf-8")
+        assert ver_target.exists(), f"missing verification fixture {ver_target}"
+        assert ver_target.read_text(encoding="utf-8") == ver_text
+        ver_schema = _load_schema("room_board_verification.v1.json")
+        jsonschema.validate(ver_data, ver_schema)
+
 
 def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURE_DIR / f"{name}.json").read_text(encoding="utf-8"))
@@ -619,6 +846,8 @@ def test_fixture_failed_rework() -> None:
         "superseded": 0,
         "errored": 0,
         "rework_rounds": 2,
+        "reviews_endorsed": 0,
+        "reviews_objected": 0,
     }
     assert module["verification"]["gate_ids"] == ["patch_diff_check"]
     assert module["attention"] == {
@@ -792,10 +1021,31 @@ EVENT_DATA_KEYS = {
         "escalated",
         "stacked",
     },
+    "review_requested": {
+        "review_id",
+        "verification_id",
+        "rule_id",
+        "author_family",
+        "reviewer_kind",
+        "reviewer_participant_id",
+        "reviewer_family",
+        "escalated_from",
+    },
+    "review": {
+        "review_id",
+        "verdict",
+        "findings_count",
+        "findings",
+        "findings_total",
+        "summary",
+        "decided_via",
+    },
 }
 
 
 def _walk_privacy(value: Any, path: str) -> None:
+    if path.endswith(".patch.text") or path.endswith("patch.text"):
+        return
     if isinstance(value, dict):
         for key, item in value.items():
             assert key not in FORBIDDEN_KEYS, f"forbidden key {key} at {path}"
@@ -821,6 +1071,18 @@ def test_fixture_privacy(name: str) -> None:
         assert set(event["data"]) == EVENT_DATA_KEYS[event["kind"]], event
     for event in fixture["events_page"]["events"]:
         assert set(event["data"]) == EVENT_DATA_KEYS[event["kind"]], event
+
+
+def test_route_fixtures_privacy() -> None:
+    for path in sorted(FIXTURE_DIR.glob("*.review.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        _walk_privacy(doc, "$")
+    for path in sorted(FIXTURE_DIR.glob("*.material.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        _walk_privacy(doc, "$")
+    for path in sorted(FIXTURE_DIR.glob("*.verification.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        _walk_privacy(doc, "$")
 
 
 # ---------------------------------------------------------------------------

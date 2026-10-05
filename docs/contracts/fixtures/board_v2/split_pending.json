@@ -23,7 +23,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "2:4e1bece55dc8",
+    "revision": "2:1ffd6f26f01b",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -91,7 +91,8 @@
         "role_preset": null
       }
     ],
-    "revision": "2:4e1bece55dc8",
+    "review_policy": "off",
+    "revision": "2:1ffd6f26f01b",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -170,6 +171,7 @@
     "stale_dependents": []
   },
   "summary": {
+    "accepted_total": 0,
     "attention": [
       {
         "kind": "operator",
@@ -201,7 +203,7 @@
       "working": 0
     },
     "modules_total": 0,
-    "revision": "2:4e1bece55dc8",
+    "revision": "2:1ffd6f26f01b",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }
