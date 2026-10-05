@@ -32,6 +32,10 @@ import {
   decideBoardSplit as requestBoardSplitDecision
 } from "@/lib/board-api";
 import {
+  fetchBoardReviewDetail,
+  submitBoardReviewDecision as requestBoardReviewDecision
+} from "@/lib/board-review-api";
+import {
   listPluginGrants,
   revokePluginGrant
 } from "@/lib/grant-api";
@@ -1186,6 +1190,77 @@ export const useRoomStore = create<RoomState>((set, get) => ({
           }
         };
       });
+    }
+  },
+
+  async loadBoardReview(reviewId, roomId = get().selectedRoomId ?? "") {
+    if (!reviewId) return;
+    const actualRoomId = typeof roomId === "string" && roomId ? roomId : get().selectedRoomId ?? "";
+    if (!actualRoomId) return;
+    try {
+      const detail = await fetchBoardReviewDetail(actualRoomId, reviewId, apiOptions());
+      if (get().selectedRoomId !== actualRoomId && !get().boardByRoom[actualRoomId]) return;
+      set((state) => {
+        const cache = state.boardByRoom[actualRoomId] ?? emptyBoardCache();
+        const reviewDetailErrors = { ...cache.reviewDetailErrors };
+        delete reviewDetailErrors[reviewId];
+        return {
+          boardByRoom: {
+            ...state.boardByRoom,
+            [actualRoomId]: {
+              ...cache,
+              reviewDetails: { ...cache.reviewDetails, [reviewId]: detail },
+              reviewDetailErrors,
+              error: cache.error
+            }
+          }
+        };
+      });
+    } catch (error) {
+      if (isCallerAbort(error)) return;
+      const failure = describeError(error);
+      set((state) => {
+        const cache = state.boardByRoom[actualRoomId] ?? emptyBoardCache();
+        return {
+          boardByRoom: {
+            ...state.boardByRoom,
+            [actualRoomId]: {
+              ...cache,
+              reviewDetailErrors: { ...cache.reviewDetailErrors, [reviewId]: failure }
+            }
+          }
+        };
+      });
+    }
+  },
+
+  async submitBoardReviewDecision(args, roomId = get().selectedRoomId ?? "") {
+    const actualRoomId = typeof roomId === "string" && roomId ? roomId : get().selectedRoomId ?? "";
+    if (!actualRoomId || !args?.reviewId) return false;
+    try {
+      await requestBoardReviewDecision(
+        {
+          conversationId: actualRoomId,
+          reviewId: args.reviewId,
+          verdict: args.verdict,
+          expectedDigest: args.expectedDigest,
+          summary: args.summary,
+          findings: args.findings
+        },
+        apiOptions()
+      );
+      abortBoardRequest(actualRoomId);
+      await get().refreshBoard(actualRoomId);
+      return true;
+    } catch (error) {
+      if (isCallerAbort(error)) return false;
+      const failure = describeError(error);
+      set({ boardActionError: failure });
+      if (failure.status === 409) {
+        abortBoardRequest(actualRoomId);
+        await get().refreshBoard(actualRoomId);
+      }
+      return false;
     }
   },
 

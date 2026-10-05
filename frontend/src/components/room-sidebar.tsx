@@ -72,6 +72,8 @@ export function RoomSidebar({
   const [selectedTemplateId, setSelectedTemplateId] = useState("builtin.development");
   const [collaborationMode, setCollaborationMode] = useState<RoomCollaborationMode>("broadcast");
   const [leadRole, setLeadRole] = useState<string | null>(null);
+  const [reviewEnabled, setReviewEnabled] = useState(false);
+  const reviewAvailable = (setupOptions?.review_policies ?? []).includes("cross_family");
   const createTriggerRef = useRef<HTMLButtonElement>(null);
   const wasCreatingRef = useRef(false);
   const filtered = rooms.filter((room) => room.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
@@ -146,8 +148,15 @@ export function RoomSidebar({
     if (!title.trim()) return;
     const requestId = createRequestId ?? `ui_room_create_${crypto.randomUUID()}`;
     const collaboration: RoomCollaborationInit = collaborationMode === "addressed"
-      ? { mode: "addressed", lead_role: effectiveLeadRole || null }
-      : { mode: "broadcast" };
+      ? {
+          mode: "addressed",
+          lead_role: effectiveLeadRole || null,
+          ...(reviewAvailable && reviewEnabled ? { review_policy: "cross_family" as const } : {})
+        }
+      : {
+          mode: "broadcast",
+          ...(reviewAvailable && reviewEnabled ? { review_policy: "cross_family" as const } : {})
+        };
     await onCreate(title, requestId, selectedTemplateId, collaboration);
   }
 
@@ -220,6 +229,20 @@ export function RoomSidebar({
                   </label>
                 ) : null}
               </fieldset>
+              {reviewAvailable ? (
+                <label className="room-review-toggle">
+                  <input
+                    checked={reviewEnabled}
+                    disabled={createPending}
+                    onChange={(event) => setReviewEnabled(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>
+                    <strong>跨模型族复核</strong>
+                    <small>验证通过后，由不同模型族复核补丁；关闭则与今日行为一致</small>
+                  </span>
+                </label>
+              ) : null}
               <p className="room-create-note">
                 {collaborationMode === "addressed"
                   ? "仅被 @ 提及的 Agent（或未提及时的 lead）会观察本次消息；该策略在 Room 内持久生效。"
