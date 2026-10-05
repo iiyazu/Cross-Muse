@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -919,3 +920,68 @@ def test_frontend_toolchain_digest_binds_discovered_node_executable(
     )
 
     assert first != second
+
+
+def _seed_repo(path: Path) -> Path:
+    path.mkdir(parents=True)
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "t@example.invalid"],
+        ["config", "user.name", "T"],
+    ):
+        subprocess.run(["git", "-C", str(path), *args], check=True)
+    (path / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "seed"], check=True)
+    return path
+
+
+def test_layout_uses_the_stage_git_metadata_for_worktrees_and_clones(tmp_path: Path) -> None:
+    """A verification stage is a worktree of the execution root; an integration
+    stage is an independent clone. Both must yield a mountable git layout (the
+    clone used to fail with execution_git_metadata_invalid before any gate ran)."""
+
+    root = _seed_repo(tmp_path / "root")
+    worktree = tmp_path / "worktree-stage"
+    subprocess.run(
+        ["git", "-C", str(root), "worktree", "add", "-q", "--detach", str(worktree)], check=True
+    )
+    clone = tmp_path / "clone-stage"
+    subprocess.run(["git", "clone", "-q", "--no-hardlinks", str(root), str(clone)], check=True)
+    bwrap = tmp_path / "bwrap"
+    bwrap.write_bytes(b"bwrap")
+
+    for stage, common, git_dir_env in (
+        (worktree, root / ".git", "/repo-git/worktrees/worktree-stage"),
+        (clone, clone / ".git", "/repo-git"),
+    ):
+        layout = sandbox.discover_sandbox_layout(
+            stage=stage,
+            execution_root=root,
+            gate_ids=("patch_diff_check",),
+            bwrap_path=bwrap,
+        )
+        command = build_bwrap_command(layout, GATE_SPECS["patch_diff_check"])
+        mount = command.index("/repo-git", command.index("--ro-bind"))
+        assert command[mount - 1] == str(common.resolve())
+        env = command.index("GIT_DIR")
+        assert command[env + 1] == git_dir_env
+
+
+@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+def test_patch_diff_check_runs_for_real_on_an_independent_clone_stage(tmp_path: Path) -> None:
+    root = _seed_repo(tmp_path / "root")
+    clone = tmp_path / "clone-stage"
+    subprocess.run(["git", "clone", "-q", "--no-hardlinks", str(root), str(clone)], check=True)
+    (clone / "README.md").write_text("seed\nintegrated\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(clone), "add", "README.md"], check=True)
+
+    layout = sandbox.discover_sandbox_layout(
+        stage=clone, execution_root=root, gate_ids=("patch_diff_check",)
+    )
+    try:
+        result = run_gate(layout, "patch_diff_check")
+    finally:
+        layout.close()
+
+    assert result.status == "passed", result
