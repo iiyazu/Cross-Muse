@@ -377,3 +377,6 @@ MemoryOS IDs, paths, or traces.
 
 Implementation and fresh tests are evidence. See [QUICKSTART.md](QUICKSTART.md) and the
 [implementation map](docs/xmuse/README.md).
+
+Board reliability (`verify`, `false-done`, `review`, `integration`) is measured in-repo by
+`xmuse-eval board`; see [docs/eval.md](docs/eval.md).
