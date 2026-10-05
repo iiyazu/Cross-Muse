@@ -13,7 +13,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -645,9 +645,3 @@ def _atomic_write_private_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
-
-
-def command_has_api_key(command: Sequence[str], api_key: str) -> bool:
-    """Test/helper invariant: the server-only key must never be an argv value."""
-
-    return any(api_key and api_key in part for part in command)
