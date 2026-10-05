@@ -3194,7 +3194,7 @@ export const integration_fallback_to_incumbent = {
           "done_reports": 2,
           "errored": 0,
           "failed": 0,
-          "integrations_conflicted": 0,
+          "integrations_conflicted": 1,
           "integrations_gate_failed": 0,
           "passed": 2,
           "reviews_endorsed": 0,
@@ -3455,7 +3455,7 @@ export const integration_fallback_to_incumbent = {
       }
     ],
     "review_policy": "off",
-    "revision": "15:98d96518a693",
+    "revision": "15:f4455529d7d0",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -3592,7 +3592,7 @@ export const integration_fallback_to_incumbent = {
       "status": "integrated"
     },
     "modules_total": 3,
-    "revision": "15:98d96518a693",
+    "revision": "15:f4455529d7d0",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

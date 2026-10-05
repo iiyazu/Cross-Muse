@@ -426,7 +426,11 @@ def discover_sandbox_layout(
     capability_gate_ids = profile.gate_ids if profile is not None else selected
     capability_needs_python = any(_gate_uses_python(value) for value in capability_gate_ids)
 
-    git_common = _git_path(root, "--git-common-dir")
+    _git_path(root, "--git-common-dir")  # the execution root must be a git repository
+    # The stage's own metadata: a verification stage is a worktree of the
+    # execution root and shares its common dir, while an integration stage is a
+    # host-made clone of the mirror with a git dir of its own.
+    git_common = _git_path(worktree, "--git-common-dir")
     git_dir = _git_path(worktree, "--git-dir")
     python_root: Path | None = None
     site_packages: Path | None = None
