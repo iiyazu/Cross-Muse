@@ -1350,6 +1350,7 @@ class RoomBoardStore:
         decision: str,
         operator_identity: str,
         decided_via: str = "web",
+        grant_id: str | None = None,
         expected_digest: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
@@ -1359,6 +1360,13 @@ class RoomBoardStore:
             raise ValueError("room_operator_identity_required")
         if not isinstance(decided_via, str) or not DECIDED_VIA_RE.match(decided_via):
             raise ValueError("room_board_decided_via_invalid")
+        if decided_via.startswith("plugin:"):
+            if not isinstance(grant_id, str) or not grant_id:
+                raise ValueError(
+                    "room_board_grant_id_invalid: grant_id required for plugin decisions"
+                )
+        elif grant_id is not None:
+            raise ValueError("room_board_grant_id_invalid: grant_id only for plugin decisions")
         _, stamp = _current_stamp(now)
         with self._connect() as conn:
             conn.execute("begin immediate")
@@ -1394,6 +1402,7 @@ class RoomBoardStore:
                             "split_id": split_id,
                             "decision": "rejected",
                             "decided_via": decided_via,
+                            "grant_id": grant_id,
                         },
                         stamp=stamp,
                     )
@@ -1479,6 +1488,7 @@ class RoomBoardStore:
                             "version": 1,
                             "owner_participant_id": owner,
                             "decided_via": decided_via,
+                            "grant_id": grant_id,
                             "charter": charter,
                             "contracts": [
                                 {

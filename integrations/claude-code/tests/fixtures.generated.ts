@@ -69,6 +69,7 @@ export const contract_revised_stale_dependent = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -85,6 +86,7 @@ export const contract_revised_stale_dependent = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -101,6 +103,7 @@ export const contract_revised_stale_dependent = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -688,6 +691,7 @@ export const injection_text = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -704,6 +708,7 @@ export const injection_text = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1201,6 +1206,7 @@ export const lifecycle_mix = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1217,6 +1223,7 @@ export const lifecycle_mix = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1233,6 +1240,7 @@ export const lifecycle_mix = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1249,6 +1257,7 @@ export const lifecycle_mix = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1265,6 +1274,7 @@ export const lifecycle_mix = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1945,6 +1955,7 @@ export const review_endorsed = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -1961,6 +1972,7 @@ export const review_endorsed = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -2395,6 +2407,7 @@ export const review_escalated = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -2411,6 +2424,7 @@ export const review_escalated = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -2869,6 +2883,7 @@ export const review_objected = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -2885,6 +2900,7 @@ export const review_objected = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -3354,6 +3370,7 @@ export const review_operator_pending = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -3370,6 +3387,7 @@ export const review_operator_pending = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -3886,6 +3904,7 @@ export const review_participant_pending = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -3902,6 +3921,7 @@ export const review_participant_pending = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -4302,6 +4322,7 @@ export const review_superseded = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -4318,6 +4339,7 @@ export const review_superseded = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -4738,6 +4760,7 @@ export const split_approved_via_plugin = {
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -4754,6 +4777,7 @@ export const split_approved_via_plugin = {
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -4785,6 +4809,7 @@ export const split_approved_via_plugin = {
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "decided_via": "cli",
+          "grant_id": null,
           "split_id": "split_0000000000000000000000000000001f"
         },
         "kind": "split_rejected",
@@ -5357,6 +5382,7 @@ export const superseded_done = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -5373,6 +5399,7 @@ export const superseded_done = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -5780,6 +5807,7 @@ export const verification_error = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -5796,6 +5824,7 @@ export const verification_error = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -6190,6 +6219,7 @@ export const verification_escalated = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -6206,6 +6236,7 @@ export const verification_escalated = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -6676,6 +6707,7 @@ export const verification_failed_rework = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -6692,6 +6724,7 @@ export const verification_failed_rework = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -7123,6 +7156,7 @@ export const verified = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -7139,6 +7173,7 @@ export const verified = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -7519,6 +7554,7 @@ export const verifying_and_waiting = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -7535,6 +7571,7 @@ export const verifying_and_waiting = {
         "data": {
           "charter_version": 1,
           "decided_via": "web",
+          "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },

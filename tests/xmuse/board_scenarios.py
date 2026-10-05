@@ -786,6 +786,7 @@ def _scenario_split_approved_via_plugin(tmp_path: Path) -> dict[str, Any]:
         decision="approve",
         operator_identity="operator:host",
         decided_via="plugin:claude-code",
+        grant_id="grant_split_approved_via_plugin",
         now=NOW,
     )
     # A fresh split on the same conversation rejects cleanly with another provenance.

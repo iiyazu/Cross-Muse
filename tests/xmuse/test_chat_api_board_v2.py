@@ -628,7 +628,7 @@ def test_board_decide_split_digest_and_provenance(tmp_path: Path) -> None:
 
     approved = client.post(
         path,
-        json={**body, "expected_digest": split["digest"], "decided_via": "plugin:claude-code"},
+        json={**body, "expected_digest": split["digest"], "decided_via": "web"},
         headers=OPERATOR_HEADERS,
     )
     assert approved.status_code == 200
@@ -636,12 +636,11 @@ def test_board_decide_split_digest_and_provenance(tmp_path: Path) -> None:
 
     decided = client.get(_board_url(conversation_id)).json()
     assert decided["splits"][0]["status"] == "approved"
-    assert decided["splits"][0]["decided_via"] == "plugin:claude-code"
+    assert decided["splits"][0]["decided_via"] == "web"
     assert decided["splits"][0]["actions"]["decide"]["available"] is False
     assigned = [event for event in decided["events"] if event["kind"] == "charter_assigned"]
-    assert assigned and all(
-        event["data"]["decided_via"] == "plugin:claude-code" for event in assigned
-    )
+    assert assigned and all(event["data"]["decided_via"] == "web" for event in assigned)
+    assert assigned and all(event["data"]["grant_id"] is None for event in assigned)
 
     replay = client.post(path, json=body, headers=OPERATOR_HEADERS)
     assert replay.status_code == 409
@@ -665,6 +664,7 @@ def test_board_decide_split_reject_records_cli_provenance(tmp_path: Path) -> Non
     events = [event for event in board["events"] if event["kind"] == "split_rejected"]
     assert len(events) == 1
     assert events[0]["data"]["decided_via"] == "cli"
+    assert events[0]["data"]["grant_id"] is None
 
 
 def test_board_decide_split_defaults_to_web(tmp_path: Path) -> None:
@@ -682,7 +682,10 @@ def test_board_decide_split_defaults_to_web(tmp_path: Path) -> None:
     assert board["splits"][0]["decided_via"] == "web"
 
 
-@pytest.mark.parametrize("decided_via", ["bogus", "plugin:", "PLUGIN:x", "web ", "plugin:a!b"])
+@pytest.mark.parametrize(
+    "decided_via",
+    ["bogus", "plugin:", "PLUGIN:x", "web ", "plugin:a!b", "plugin:claude-code"],
+)
 def test_board_decide_split_invalid_decided_via(tmp_path: Path, decided_via: str) -> None:
     client, conversation_id, _ctx = _scenario("split_pending", tmp_path)
     split_id = client.get(_board_url(conversation_id)).json()["splits"][0]["split_id"]
@@ -713,6 +716,17 @@ def test_board_decide_split_fixture_provenance(tmp_path: Path) -> None:
     rejected = next(split for split in by_id.values() if split["status"] == "rejected")
     assert approved["decided_via"] == "plugin:claude-code"
     assert rejected["decided_via"] == "cli"
+    assigned = [event for event in board["events"] if event["kind"] == "charter_assigned"]
+    assert assigned and all(
+        event["data"]["decided_via"] == "plugin:claude-code" for event in assigned
+    )
+    assert assigned and all(
+        event["data"]["grant_id"] == "grant_split_approved_via_plugin" for event in assigned
+    )
+    refused = [event for event in board["events"] if event["kind"] == "split_rejected"]
+    assert len(refused) == 1
+    assert refused[0]["data"]["decided_via"] == "cli"
+    assert refused[0]["data"]["grant_id"] is None
 
 
 def test_board_decide_split_cross_conversation_404(tmp_path: Path) -> None:

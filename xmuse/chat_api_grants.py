@@ -269,6 +269,7 @@ def register_plugin_grant_routes(
                 decision=str(body["decision"]),
                 operator_identity=f"plugin-grant:{auth['grant_id']}",
                 decided_via=f"plugin:{auth['host']}",
+                grant_id=auth["grant_id"],
                 expected_digest=str(body["expected_digest"]),
             )
         except (KeyError, ValueError) as exc:
