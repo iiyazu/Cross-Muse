@@ -260,22 +260,6 @@ def reconcile_memoryos_runtime(
     ).reconcile(lifecycle_locked=lifecycle_locked)
 
 
-def _reconcile_optional_memoryos_runtime(
-    control: MemoryOSRuntimeControl,
-    *,
-    manifest: dict[str, Any],
-    paths: WorkroomPaths,
-    deps: WorkroomDependencies,
-    lifecycle_locked: bool = False,
-) -> dict[str, Any]:
-    return MemoryOSRuntimeCoordinator(
-        control=control,
-        manifest=manifest,
-        paths=paths,
-        deps=deps,
-    ).reconcile_optional(lifecycle_locked=lifecycle_locked)
-
-
 def reconcile_memoryos_rebuild_action(
     control: MemoryOSRuntimeControl,
     *,
