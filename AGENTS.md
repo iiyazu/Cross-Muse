@@ -176,9 +176,19 @@ output). Entrypoints read exported environment variables and do not load `.env`.
   projections. Harness frontend gates call fixed read-only dependency entrypoints rather than
   candidate-controlled package scripts.
 - The fixed Harness profiles are `docs/v1`, `python-uv/v1`, `xmuse-monorepo/v2`,
-  `python-uv-ty/v1`, `node-pnpm-library/v1`, and `node-pnpm-next-workspace/v1`. They invoke
-  only server-owned direct entrypoints whose marker, lock, configuration, and local capability
-  have been frozen; they never accept repository scripts, arbitrary argv, or network installs.
+  `python-uv-ty/v1`, `node-pnpm-library/v1`, `node-pnpm-next-workspace/v1`, and
+  `remix-monorepo/v1`. They invoke only server-owned direct entrypoints whose marker, lock,
+  configuration, and local capability have been frozen; they never accept repository scripts,
+  arbitrary argv, or network installs. The one controlled exception is `remix-monorepo/v1`:
+  a server-owned driver runs `tsc --noEmit` and the repository's own test runner (the public
+  `runRemixTest` of `packages/test`, never the `remix` cli) per affected workspace package
+  (derived from the changed paths). The runner and its import closure (`packages/test/`,
+  `packages/assert/`, `packages/node-tsx/`, `packages/terminal/`) are frozen file by file as
+  repository markers, re-proved with the toolchain capability before every run, mounted
+  read-only from the execution root while gates run, and never a candidate path. Package
+  scripts are only checked for presence, never executed, and an affected package without the
+  matching script fails. As with every test gate, candidate code still runs while the tests
+  run.
 - Source-backed memory remains optional at installation time. Workroom defaults to
   `--memory-mode auto`: it selects only an installer-owned, digest-verified full-local
   companion; `--memory`/`--memory-mode on` is the explicit source/development path and
