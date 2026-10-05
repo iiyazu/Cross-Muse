@@ -50,6 +50,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import board_owners_smoke as smoke  # noqa: E402
+from xmuse.room_runner import _agy_config  # noqa: E402
 from xmuse_core.chat.participant_store import Participant, ParticipantStore  # noqa: E402
 from xmuse_core.chat.room_acp_transport import (  # noqa: E402
     CLAUDE_ACP_PROFILE,
@@ -61,6 +62,11 @@ from xmuse_core.chat.room_agent_stream import (  # noqa: E402
     RoomAgentStreamCache,
     RoomAgentStreamProjector,
 )
+from xmuse_core.chat.room_agy_sandbox import (  # noqa: E402
+    resolve_agy_executable,
+    resolve_agy_python3,
+)
+from xmuse_core.chat.room_agy_transport import AgyRoomObservationTransport  # noqa: E402
 from xmuse_core.chat.room_api_models import (  # noqa: E402
     ParticipantInit,
     RoomCollaborationInit,
@@ -258,8 +264,11 @@ async def run_eval(
     run_timeout_s: float,
     phase_timeout_s: float,
     max_turn_s: float,
+    owner_cli: str = "opencode",
+    agy_model: str = smoke.AGY_DEFAULT_MODEL,
 ) -> dict[str, Any]:
     started = time.monotonic()
+    owner_cli_model = owner_model if owner_cli == "opencode" else agy_model
     source = root / "source-repo"
     seed_head = prepare_source_repo(seed, source, install)
     # Every owner clone gets the same offline install before its first turn.
@@ -275,16 +284,21 @@ async def run_eval(
             ParticipantInit(
                 role=role,
                 display_name=f"Owner {module['module_id']}",
-                cli_kind="opencode",
-                model=owner_model,
+                cli_kind=owner_cli,  # type: ignore[arg-type]
+                model=owner_cli_model,
                 workspace_access="workspace_write",
             )
             for role, module in zip(roles, modules, strict=True)
         ],
     ]
-    if reviewer == "claude":
+    if reviewer != "none":
         participants.append(
-            ParticipantInit(role="reviewer", display_name="Reviewer", cli_kind="claude")
+            ParticipantInit(
+                role="reviewer",
+                display_name="Reviewer",
+                cli_kind=reviewer,  # type: ignore[arg-type]
+                model=agy_model if reviewer == "antigravity" else None,
+            )
         )
     setup = RoomSetupService(root).create_conversation(
         RoomConversationCreate(
@@ -293,7 +307,7 @@ async def run_eval(
             collaboration=RoomCollaborationInit(
                 mode="addressed",
                 lead_role="lead",
-                review_policy="cross_family" if reviewer == "claude" else "off",
+                review_policy="off" if reviewer == "none" else "cross_family",
             ),
             initial_participants=participants,
         )
@@ -316,7 +330,8 @@ async def run_eval(
         source_repo=source,
         mcp_url=mcp_url,
         owner_model=owner_model,
-        frontend_cli="opencode",
+        frontend_cli=owner_cli,
+        agy_model=agy_model,
     )
     created: list[RoomObservationTransport] = []
     inner_factory = build_owner_acp_transport_factory(
@@ -361,6 +376,28 @@ async def run_eval(
         )
         readonly["claude"] = claude_transport
         created.append(claude_transport)
+    elif reviewer == "antigravity":
+        agy = resolve_agy_executable()
+        agy_python3 = resolve_agy_python3()
+        if agy is None or agy_python3 is None:
+            raise RuntimeError("agy reviewer requested but agy or its python3 was not found")
+        agy_transport = AgyRoomObservationTransport(
+            config=_agy_config(
+                root=root,
+                worktree=source,
+                room_mcp_url=mcp_url,
+                agy_executable=agy,
+                model=agy_model,
+                bridge_script=Path(__file__).resolve().parents[1] / "xmuse" / "room_mcp_stdio.py",
+                python3=agy_python3,
+            ),
+            registry_path=root / "god_sessions.json",
+            control_store=controls,
+            skill_decision_store=decisions,
+            stream_projector=projector,
+        )
+        readonly["antigravity"] = agy_transport
+        created.append(agy_transport)
     host = RoomParticipantHost(
         root / "chat.db",
         RoomOwnerTransportRouter(readonly, settings=settings, transport_factory=_factory),
@@ -448,7 +485,7 @@ async def run_eval(
                 timeout_s=remaining,
                 label="work",
                 root=root,
-                wait_for_reviews=reviewer == "claude",
+                wait_for_reviews=reviewer != "none",
                 wait_for_integration=True,
             )
             phases["work"] = {"idle": work_idle}
@@ -478,7 +515,12 @@ async def run_eval(
         "profile_id": profile_id,
         "seed_head": seed_head,
         "reviewer": reviewer,
-        "models": {"lead": lead_model, "owners": owner_model},
+        "owner_cli": owner_cli,
+        "models": {
+            "lead": lead_model,
+            "owners": owner_cli_model,
+            "reviewer": agy_model if reviewer == "antigravity" else None,
+        },
         "phases": phases,
         "human_messages": human_messages,
         "modules": module_states,
@@ -504,7 +546,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install-command", default=DEFAULT_INSTALL_COMMAND)
     parser.add_argument("--lead-model", default=smoke.DEFAULT_LEAD_MODEL)
     parser.add_argument("--owner-model", default=smoke.DEFAULT_OWNER_MODEL)
-    parser.add_argument("--reviewer", choices=["none", "claude"], default="none")
+    parser.add_argument("--owner-cli", choices=["opencode", "antigravity"], default="opencode")
+    parser.add_argument("--agy-model", default=smoke.AGY_DEFAULT_MODEL)
+    parser.add_argument("--reviewer", choices=["none", "claude", "antigravity"], default="none")
     parser.add_argument("--run-timeout-s", type=float, default=DEFAULT_RUN_TIMEOUT_S)
     parser.add_argument("--phase-timeout-s", type=float, default=smoke.DEFAULT_PHASE_TIMEOUT_S)
     parser.add_argument("--max-turn-s", type=float, default=3600.0)
@@ -512,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         lead_model = smoke.validate_model(args.lead_model)
         owner_model = smoke.validate_model(args.owner_model)
+        agy_model = smoke.validate_agy_model(args.agy_model)
+        if args.owner_cli == "antigravity" and args.reviewer == "antigravity":
+            raise ValueError("an antigravity reviewer cannot review antigravity owners")
         profile = get_execution_gate_profile(args.profile)
         plan = load_plan(Path(args.plan))
     except ValueError as exc:
@@ -535,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
                 lead_model=lead_model,
                 owner_model=owner_model,
                 reviewer=args.reviewer,
+                owner_cli=args.owner_cli,
+                agy_model=agy_model,
                 run_timeout_s=args.run_timeout_s,
                 phase_timeout_s=args.phase_timeout_s,
                 max_turn_s=args.max_turn_s,
