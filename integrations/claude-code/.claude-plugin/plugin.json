@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "xmuse",
   "version": "0.1.0",
-  "description": "Read-only xmuse room board status: status line, toasts, pane and a status tool. Never writes, never handles tokens.",
+  "description": "xmuse room board status: status line, toasts, pane and a status tool, plus human-approved split decisions under a short-lived plugin grant. Never holds the operator token.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "baseUrl": {

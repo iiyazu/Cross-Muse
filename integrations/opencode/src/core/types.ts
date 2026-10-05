@@ -60,7 +60,30 @@ export type XmuseBoard = {
   details: XmuseModuleDetail[];
   contracts: { contract_id: string; latest_version: number }[];
   proposed_splits: string[];
+  splits: XmuseSplitSummary[];
   operator_attention: XmuseAttentionItem[];
+};
+
+// One split row the pane may offer a decision on. Only structured fields:
+// status codes and the digest guard. Module titles and path globs stay in
+// the expanded module detail and never enter a control label or a toast.
+export type XmuseSplitSummary = {
+  split_id: string;
+  status: string;
+  digest: string;
+};
+
+// Non-secret grant metadata the pane renders from. The token itself lives
+// only in a module-level variable of the hooks module, never here.
+export type XmuseGrantMeta = {
+  grantId: string;
+  expiresAt: string;
+  conversationId: string;
+};
+
+export type XmuseConfirming = {
+  splitId: string;
+  decision: string;
 };
 
 export type XmuseCache = {
@@ -79,6 +102,9 @@ export type XmuseCache = {
   nextRetryAt: number;
   paneOpen: boolean;
   expanded: { [module_id: string]: boolean };
+  grant: XmuseGrantMeta | null;
+  confirming: XmuseConfirming | null;
+  formEpoch: number;
 };
 
 declare module "claude-code" {
