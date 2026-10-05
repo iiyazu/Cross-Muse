@@ -3,7 +3,13 @@
 // normalized defensively: unknown fields ignored, unknown enum values kept
 // as opaque strings, missing capabilities tolerated, oversized data capped.
 
-import type { XmuseAttentionItem, XmuseBoard, XmuseModule, XmuseSummary } from "../types/index";
+import type {
+  XmuseAttentionItem,
+  XmuseBoard,
+  XmuseModule,
+  XmuseSplitSummary,
+  XmuseSummary,
+} from "../types/index";
 import { safe, safeId } from "./text";
 
 export type GetResult =
@@ -254,12 +260,16 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
   contracts.sort((a, b) => (a.contract_id < b.contract_id ? -1 : 1));
 
   const proposed: string[] = [];
+  const splits: XmuseSplitSummary[] = [];
   for (const item of asArray(root["splits"]).slice(0, 50)) {
     const r = asRecord(item);
     if (r === null) continue;
-    if (r["status"] !== "proposed") continue;
     const sid = asString(r["split_id"]);
     if (sid === null || sid === "") continue;
+    const status = asString(r["status"]) ?? "?";
+    const digest = asString(r["digest"]) ?? "";
+    splits.push({ split_id: sid, status, digest: safe(digest, 128) });
+    if (r["status"] !== "proposed") continue;
     proposed.push(sid);
   }
 
@@ -269,6 +279,7 @@ export function normalizeBoard(json: unknown): XmuseBoard | null {
     details,
     contracts,
     proposed_splits: proposed.slice(0, 10),
+    splits: splits.slice(0, 10),
     operator_attention: normalizeAttention(root["attention"]).filter((a) => a.kind === "operator"),
   };
 }

@@ -21,6 +21,12 @@ HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
 FIXTURE_DIR = PLUGIN_ROOT / ".." / ".." / "docs" / "contracts" / "fixtures" / "board_v2"
 OUT_PATH = PLUGIN_ROOT / "tests" / "fixtures.generated.ts"
+GRANT_GOLDEN_DIR = PLUGIN_ROOT / ".." / ".." / "docs" / "contracts" / "fixtures" / "plugin_grant_v1"
+GRANT_OUT_PATH = PLUGIN_ROOT / "tests" / "grant_golden.generated.ts"
+
+GRANT_HEADER = """// GENERATED from docs/contracts/fixtures/plugin_grant_v1/*.json by
+// tools/sync_fixtures.py. Do not edit by hand.
+"""
 
 HEADER = """// GENERATED from docs/contracts/fixtures/board_v2/*.json by
 // tools/sync_fixtures.py. Do not edit by hand.
@@ -48,6 +54,21 @@ def load_scenarios() -> list[tuple[str, dict]]:
     return scenarios
 
 
+def load_grant_golden() -> dict[str, dict]:
+    golden: dict[str, dict] = {}
+    for path in sorted(GRANT_GOLDEN_DIR.glob("*.json")):
+        with open(path, encoding="utf-8") as fh:
+            golden[path.stem] = json.load(fh)
+    if not golden:
+        raise ValueError(f"no grant golden files found in {GRANT_GOLDEN_DIR}")
+    return golden
+
+
+def render_grant_golden(golden: dict[str, dict]) -> str:
+    body = json.dumps(golden, sort_keys=True, ensure_ascii=True, indent=2)
+    return GRANT_HEADER + f"export const GRANT_GOLDEN: Record<string, any> = {body};\n"
+
+
 def render(scenarios: list[tuple[str, dict]]) -> str:
     chunks = [HEADER]
     names = []
@@ -68,16 +89,24 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     scenarios = load_scenarios()
     rendered = render(scenarios)
+    golden = load_grant_golden()
+    grant_rendered = render_grant_golden(golden)
+    outputs = [(OUT_PATH, rendered), (GRANT_OUT_PATH, grant_rendered)]
     if args.check:
-        current = OUT_PATH.read_text(encoding="utf-8") if OUT_PATH.exists() else ""
-        if current != rendered:
-            print(f"stale: {OUT_PATH} (run python tools/sync_fixtures.py)", file=sys.stderr)
-            return 1
-        print(f"ok: {OUT_PATH} is current ({len(scenarios)} scenarios)")
+        for path, text in outputs:
+            current = path.read_text(encoding="utf-8") if path.exists() else ""
+            if current != text:
+                print(f"stale: {path} (run python tools/sync_fixtures.py)", file=sys.stderr)
+                return 1
+        print(
+            f"ok: generated fixtures are current ({len(scenarios)} scenarios, {len(golden)} golden)"
+        )
         return 0
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(rendered, encoding="utf-8")
+    for path, text in outputs:
+        path.write_text(text, encoding="utf-8")
     print(f"wrote {OUT_PATH} ({len(scenarios)} scenarios)")
+    print(f"wrote {GRANT_OUT_PATH} ({len(golden)} grant golden)")
     return 0
 
 

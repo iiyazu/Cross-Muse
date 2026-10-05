@@ -1,4 +1,10 @@
 export type {
+  GrantDomain,
+  GrantDomainActions,
+  GrantDomainState,
+  RoomGrantCache
+} from "./grants";
+export type {
   CodexDomain,
   CodexDomainActions,
   CodexDomainState,
@@ -37,6 +43,7 @@ export type { UiDomain, UiDomainActions, UiDomainState } from "./ui";
 import type { BoardDomain } from "./board";
 import type { CodexDomain } from "./codex";
 import type { ExecutionDomain } from "./execution";
+import type { GrantDomain } from "./grants";
 import type { MemoryDomain } from "./memory";
 import type { OperationsDomain } from "./operations";
 import type { RoomDomain } from "./room";
@@ -50,5 +57,6 @@ export type RoomStoreRoot = RoomDomain &
   MemoryDomain &
   BoardDomain &
   CodexDomain &
+  GrantDomain &
   UiDomain &
   SyncDomainActions;
