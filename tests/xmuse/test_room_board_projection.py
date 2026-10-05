@@ -1435,6 +1435,40 @@ def test_integration_green_head_accepted(tmp_path: Path) -> None:
                 assert vid in endorsed, (name, module_id)
 
 
+def test_integration_demo_room_shows_every_finished_state(tmp_path: Path) -> None:
+    """The demo room (not a golden fixture) carries integrated, fallback,
+    conflicted and gate_failed modules at once; a fallback in a failed job is
+    a conflict, never a gate suspect (§3.11 rule 6)."""
+
+    ctx = build_scenario("integration_demo", tmp_path)
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        projection = build_board_projection(conn, ctx["conversation_id"], now=SERVER_TIME)
+    summary = build_board_summary(projection)
+    by_id = {module["module_id"]: module for module in projection["modules"]}
+
+    assert projection["integration"]["latest"]["status"] == "gate_failed"
+    assert projection["integration"]["green_head_commit"]
+    m1, m2, m3, m4 = (by_id[name]["integration"] for name in ("m1", "m2", "m3", "m4"))
+    assert m2["status"] == "integrated"
+    # m1 fell back: conflicted, its older version still in the green head.
+    assert m1["status"] == "conflicted"
+    assert m1["integrated_verification_id"] not in (None, m1["verification_id"])
+    assert m3["status"] == "conflicted"
+    assert m3["integrated_verification_id"] is None
+    assert m3["conflict_path_count"] == 1
+    assert m4["status"] == "gate_failed"
+    assert m4["gate_ids"]
+    assert by_id["m1"]["counters"]["integrations_conflicted"] == 2
+    assert by_id["m1"]["counters"]["integrations_gate_failed"] == 0
+    assert by_id["m4"]["counters"]["integrations_gate_failed"] == 1
+    assert summary["accepted_total"] == 4
+    assert summary["integrated_total"] == 1
+    room_level = [item for item in projection["attention"] if item.get("integration_id")]
+    assert len(room_level) == 1 and room_level[0]["module_id"] is None
+    owners = {item["module_id"] for item in projection["attention"] if item["kind"] == "owner"}
+    assert owners == {"m1", "m3"}
+
+
 def test_conflict_paths_only_in_integration_sidecars() -> None:
     for name in SCENARIOS:
         fixture = _fixture(name)
