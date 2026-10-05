@@ -1,0 +1,12 @@
+# Optional: xmuse board status hooks for dsh (opt-in, off unless mounted).
+#
+# Mount the Claude Code hooks bridge and point it at the hooks file in
+# this package. Only shell-form `command` handlers run; the commands
+# below carry no agent text, only counts and fixed labels.
+
+hooks:
+  - name: '@deepseek-ai/dsh-hooks-claude-code'
+    config:
+      configPath: ./integrations/dsh/hooks.claude.json
+      pluginRoot: ./integrations/dsh
+      projectDir: .
