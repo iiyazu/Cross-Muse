@@ -83,6 +83,31 @@ describe("board labels", () => {
     }
   });
 
+  it("labels the execution gate code that integration gate results carry", () => {
+    expect(boardReasonLabel("execution_gate_failed")).toBe("门禁未通过");
+  });
+
+  it("labels every gate and job-level execution code, and keeps new ones in the family", () => {
+    for (const code of [
+      "execution_gate_timeout",
+      "execution_gate_memory_limit",
+      "execution_gate_process_limit",
+      "execution_gate_scratch_limit",
+      "execution_gate_resource_probe_failed",
+      "execution_cancelled",
+      "execution_git_metadata_invalid",
+      "execution_sandbox_unavailable",
+      "execution_gate_profile_marker_invalid",
+      "execution_toolchain_capability_drift",
+      "execution_repo_busy"
+    ]) {
+      const label = boardReasonLabel(code);
+      expect(label, code).not.toContain(code);
+      expect(label, code).not.toContain("未知原因");
+    }
+    expect(boardReasonLabel("execution_future_thing")).toBe("执行环境问题（execution_future_thing）");
+  });
+
   it("renders unknown codes through the explicit unknown path", () => {
     expect(boardReasonLabel("some_future_code")).toBe("未知原因（some_future_code）");
     expect(boardAttentionReasonLabel("future_attention")).toBe("未知原因（future_attention）");
