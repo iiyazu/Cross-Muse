@@ -11,6 +11,7 @@ import pytest
 from scripts import board_brownfield_eval as brownfield
 from xmuse_core.chat.room_board import normalize_charter
 from xmuse_core.chat.room_board_integration import INTEGRATION_REF_PREFIX
+from xmuse_core.chat.room_database import RoomDatabase
 
 
 def _plan(**overrides: object) -> dict[str, object]:
@@ -116,3 +117,12 @@ def test_export_green_head_writes_a_plain_repository_at_the_integration_ref(
     result = Path(str(exported["result_repo"]))
     assert _git(result, "rev-parse", "HEAD") == green
     assert (result / "a.txt").read_text(encoding="utf-8") == "integrated\n"
+
+
+def test_collect_board_rows_reads_the_real_schema(tmp_path: Path) -> None:
+    RoomDatabase(tmp_path / "chat.db").initialize()
+
+    assert brownfield.collect_board_rows(tmp_path, "conv_missing") == {
+        "verifications": [],
+        "reviews": [],
+    }

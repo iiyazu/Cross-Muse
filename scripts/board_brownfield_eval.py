@@ -227,7 +227,8 @@ def collect_board_rows(root: Path, conversation_id: str) -> dict[str, Any]:
                 "created_at": row["created_at"],
             }
             for row in conn.execute(
-                "select module_id, status, reason_code, created_at "
+                "select module_id, status, "
+                "json_extract(result_json, '$.reason_code') as reason_code, created_at "
                 "from room_board_verifications where conversation_id = ? "
                 "order by created_at, rowid",
                 (conversation_id,),
