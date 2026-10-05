@@ -5,6 +5,11 @@ import {
   type ApiClientOptions
 } from "./api";
 import { normalizeBoardReview } from "./board-review-api";
+import {
+  normalizeBoardModuleIntegration,
+  normalizeBoardSummaryIntegration,
+  normalizeRoomIntegration
+} from "./board-integration-api";
 import type {
   AgentText,
   BoardAttentionItem,
@@ -217,7 +222,10 @@ function normalizeCounters(value: unknown): BoardCounters {
     errored: asNonNegativeInt(source.errored),
     rework_rounds: asNonNegativeInt(source.rework_rounds),
     reviews_endorsed: asNonNegativeInt(source.reviews_endorsed),
-    reviews_objected: asNonNegativeInt(source.reviews_objected)
+    reviews_objected: asNonNegativeInt(source.reviews_objected),
+    integrations_conflicted: asNonNegativeInt(source.integrations_conflicted),
+    integrations_gate_failed: asNonNegativeInt(source.integrations_gate_failed),
+    conflict_fix_rounds: asNonNegativeInt(source.conflict_fix_rounds)
   };
 }
 
@@ -244,7 +252,8 @@ function normalizeAttentionItem(value: unknown): BoardAttentionItem | null {
         kind: "unknown",
         reason_code: reasonCode,
         module_id: asOptionalString(value.module_id),
-        split_id: asOptionalString(value.split_id)
+        split_id: asOptionalString(value.split_id),
+        integration_id: asOptionalString(value.integration_id)
       };
     }
     return null;
@@ -255,7 +264,8 @@ function normalizeAttentionItem(value: unknown): BoardAttentionItem | null {
     kind,
     reason_code: reasonCode,
     module_id: asOptionalString(value.module_id),
-    split_id: asOptionalString(value.split_id)
+    split_id: asOptionalString(value.split_id),
+    integration_id: asOptionalString(value.integration_id)
   };
 }
 
@@ -278,6 +288,7 @@ function normalizeModule(value: unknown): BoardModule | null {
     state: normalizeState(value.state),
     review: normalizeBoardReview(value.review),
     accepted: typeof value.accepted === "boolean" ? value.accepted : false,
+    integration: normalizeBoardModuleIntegration(value.integration),
     attention: normalizeModuleAttention(value.attention)
   };
 }
@@ -478,6 +489,7 @@ export function normalizeRoomBoardProjection(payload: unknown): RoomBoardProject
     revision: asString(payload.revision, ""),
     capabilities: normalizeCapabilities(payload.capabilities),
     review_policy: typeof payload.review_policy === "string" ? payload.review_policy : "off",
+    integration: normalizeRoomIntegration(payload.integration),
     participants,
     modules,
     contracts,
@@ -534,6 +546,12 @@ export function normalizeBoardSummary(payload: unknown): RoomBoardSummary {
     counts,
     accepted_total: asNonNegativeInt(
       (payload as Record<string, unknown>).accepted_total
+    ),
+    integrated_total: asNonNegativeInt(
+      (payload as Record<string, unknown>).integrated_total
+    ),
+    integration: normalizeBoardSummaryIntegration(
+      (payload as Record<string, unknown>).integration
     ),
     attention_total: asNonNegativeInt(payload.attention_total),
     attention
