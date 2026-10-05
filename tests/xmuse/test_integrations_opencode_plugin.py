@@ -149,3 +149,37 @@ def test_bun_suite() -> None:
         timeout=300,
     )
     assert proc.returncode == 0, f"bun test failed:\n{proc.stdout}\n{proc.stderr}"
+
+
+def test_never_fetch_integration_detail() -> None:
+    violations: list[str] = []
+    for path in _plugin_sources():
+        text = path.read_text(encoding="utf-8")
+        if "board/integrations" in text:
+            violations.append(str(path.relative_to(PLUGIN_ROOT)))
+    assert not violations, "§5.3 route referenced in plugin source:\n" + "\n".join(violations)
+
+
+def test_integration_vocabulary_matches_claude_mod() -> None:
+    claude_labels = (CLAUDE_ROOT / "src" / "labels.ts").read_text(encoding="utf-8")
+    opencode_labels = (PLUGIN_ROOT / "src" / "core" / "labels.ts").read_text(encoding="utf-8")
+    # Generated core cannot drift: sync_core.py already asserts byte equality,
+    # but the vocabulary itself must contain the fixed words.
+    assert (
+        opencode_labels == claude_labels.replace('"../types/index"', '"./types"')
+        or opencode_labels.replace('"./types"', '"../types/index"') == claude_labels
+    )
+    for needle in (
+        "排队集成",
+        "集成中",
+        "已集成",
+        "等待依赖集成",
+        "门禁失败·嫌疑",
+        "集成异常·自动重试",
+        "分支为旧版本",
+        "未入分支",
+        "集成异常（宿主自动重试）",
+        "集成冲突待处理",
+        "集成门禁失败",
+    ):
+        assert needle in opencode_labels, f"src/core/labels.ts missing {needle!r}"

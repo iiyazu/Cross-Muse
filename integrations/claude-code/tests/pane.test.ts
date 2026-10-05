@@ -595,3 +595,103 @@ for (const name of [...REVIEW_FIXTURES, ...OLD_FIXTURES] as const) {
     }
   });
 }
+
+// ------------------------------------------------------- integration (M2b)
+
+const INTEGRATION_PANE_SCENARIOS = [
+  "integration_conflicted",
+  "integration_dependency_upgrade",
+  "integration_error",
+  "integration_fallback_to_incumbent",
+  "integration_gate_failed",
+  "integration_integrated",
+  "integration_pending_running",
+  "review_endorsed_integrated",
+] as const;
+
+for (const name of INTEGRATION_PANE_SCENARIOS) {
+  test(`pane draws ${name} without paths or job ids`, OPTIONS, async ($, on) => {
+    const statuses: (string | undefined)[] = [];
+    const toasts: string[] = [];
+    await loadFixture($, on, name, statuses, toasts);
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({
+        plugin: "xmuse",
+        surface,
+        component: "Pane",
+        requestId: "xmuse",
+        props: paneProps(80) as never,
+      });
+      expect((await ui.drawn()).type).toBe("Box");
+      const dumps = await nodeDump(ui);
+      for (const dump of dumps) {
+        expect(dump).not.toContain("boardintegration_");
+        expect(dump).not.toContain("docs/");
+        expect(dump).not.toContain("expected Hello, Ada!");
+        expect(dump).not.toContain("board/integrations");
+      }
+      await ui.unmount();
+    }
+    for (const t of statuses) {
+      expect(String(t)).not.toContain("boardintegration_");
+    }
+    const status = await $.command.run({ command: "xmuse", args: "status" });
+    expect(String(status.text)).not.toContain("boardintegration_");
+  });
+}
+
+test("pane fallback row and room line", OPTIONS, async ($, on) => {
+  const statuses: (string | undefined)[] = [];
+  const toasts: string[] = [];
+  await loadFixture($, on, "integration_fallback_to_incumbent", statuses, toasts);
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({
+      plugin: "xmuse",
+      surface,
+      component: "Pane",
+      requestId: "xmuse",
+      props: paneProps(80) as never,
+    });
+    expect(await ui.find({ type: "Text", text: /集成冲突 1 路径·分支为旧版本/ })).toBeDefined();
+    expect(await ui.find({ type: "Text", text: /已验证 3 · 已集成 2/ })).toBeDefined();
+    expect(await ui.find({ type: "Text", text: /集成分支 8d191a5e/ })).toBeDefined();
+    await ui.unmount();
+  }
+});
+
+test("pane gate_failed suspect row and lead label", OPTIONS, async ($, on) => {
+  const statuses: (string | undefined)[] = [];
+  const toasts: string[] = [];
+  await loadFixture($, on, "integration_gate_failed", statuses, toasts);
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({
+      plugin: "xmuse",
+      surface,
+      component: "Pane",
+      requestId: "xmuse",
+      props: paneProps(80) as never,
+    });
+    expect(await ui.find({ type: "Text", text: /门禁失败·嫌疑/ })).toBeDefined();
+    expect(await ui.find({ type: "Text", text: /集成门禁失败/ })).toBeDefined();
+    await ui.unmount();
+  }
+});
+
+test("pane error operator label has no job id target", OPTIONS, async ($, on) => {
+  const statuses: (string | undefined)[] = [];
+  const toasts: string[] = [];
+  await loadFixture($, on, "integration_error", statuses, toasts);
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({
+      plugin: "xmuse",
+      surface,
+      component: "Pane",
+      requestId: "xmuse",
+      props: paneProps(80) as never,
+    });
+    expect(await ui.find({ type: "Text", text: /集成异常（宿主自动重试）/ })).toBeDefined();
+    const dumps = await nodeDump(ui);
+    for (const dump of dumps) expect(dump).not.toContain("boardintegration_");
+    await ui.unmount();
+  }
+});

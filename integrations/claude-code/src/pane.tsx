@@ -4,9 +4,18 @@
 // person pressed the expand Button.
 
 import type { XmuseBoard, XmuseCache, XmuseModule } from "../types/index";
-import { statusText } from "./board_state";
+import { attentionTarget, statusText } from "./board_state";
 import { grantExpired, remainingMmSs } from "./grant_state";
-import { ACCEPTED_BADGE, displayState, findingsPart, reviewStatusWord } from "./labels";
+import {
+  ACCEPTED_BADGE,
+  displayState,
+  findingsPart,
+  integrationJobWord,
+  integrationModuleWord,
+  reviewAttentionLabel,
+  reviewStatusWord,
+  shortGreenHead,
+} from "./labels";
 import { roomLink, safe, safeId, shortRev, shortRoom } from "./text";
 
 export type PaneEnv = {
@@ -15,7 +24,7 @@ export type PaneEnv = {
   };
 };
 
-function moduleLine(m: XmuseModule, reviewsOn: boolean): string {
+function moduleLine(m: XmuseModule, reviewsOn: boolean, integrationsOn: boolean): string {
   // accepted is the only completion mark: an accepted module shows
   // 已验收, a verified-but-not-accepted one keeps 已验证 and gains the
   // review part below. While reviews are off the row is byte-identical
@@ -33,7 +42,24 @@ function moduleLine(m: XmuseModule, reviewsOn: boolean): string {
     const rp = reviewPart(m);
     if (rp !== "") line += " · " + rp;
   }
+  if (integrationsOn) {
+    const iw = integrationModuleWord(m.integration, 1);
+    if (iw !== "") line += " · " + iw;
+  }
   return line;
+}
+
+// Room line: accepted/integrated counts plus the green branch.
+// Shown only while integrations are on and any part is non-trivial.
+export function roomIntegrationLine(board: XmuseBoard): string {
+  if (board.integrations !== 1) return "";
+  const job = integrationJobWord(board.integration.status);
+  const head = shortGreenHead(board.integration.green_head_commit);
+  if (!(board.integrated_total > 0 || head !== "" || job !== "")) return "";
+  const acceptedWord = (board.reviews === 1 ? "已验收 " : "已验证 ") + String(board.accepted_total);
+  const segs = [acceptedWord, "已集成 " + String(board.integrated_total)];
+  if (head !== "") segs.push("集成分支 " + head);
+  return segs.join(" · ");
 }
 
 // One fixed-word review part per module row, counts only. Empty when
@@ -62,7 +88,11 @@ export function headerLine(cache: XmuseCache): string {
 
 export function attentionLine(kind: string, reason: string, target: string): string {
   const mark = kind === "operator" ? "! " : kind === "lead" ? "* " : "- ";
-  return mark + safe(kind, 16) + " " + safe(reason, 64) + " " + target;
+  // Room-level integration items carry no target: the label stands alone.
+  // The fixed label table already covers their reason codes.
+  const label = reviewAttentionLabel(reason) ?? safe(reason, 64);
+  if (target === "") return mark + safe(kind, 16) + " " + label;
+  return mark + safe(kind, 16) + " " + label + " " + target;
 }
 
 // Pure tree builder used by the hook and the tests. Returns plain-data
@@ -110,7 +140,7 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
     return rank(a.kind) - rank(b.kind);
   });
   for (const a of operatorFirst.slice(0, 10)) {
-    const target = a.module_id !== null ? safeId(a.module_id) : safe(a.split_id ?? "?", 32);
+    const target = attentionTarget(a);
     nodes.push({ type: "text", text: attentionLine(a.kind, a.reason_code, target) });
   }
 
@@ -119,8 +149,11 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
     nodes.push({ type: "text", text: "看板明细未加载", dim: true });
     return nodes;
   }
+  const integrationsOn = board.integrations === 1;
+  const roomLine = roomIntegrationLine(board);
+  if (roomLine !== "") nodes.push({ type: "text", text: roomLine });
   for (const m of board.modules.slice(0, 100)) {
-    nodes.push({ type: "text", text: moduleLine(m, board.reviews === 1) });
+    nodes.push({ type: "text", text: moduleLine(m, board.reviews === 1, integrationsOn) });
     // An operator-pending review links to the room page, same style as
     // the proposed-split link. Room page only: no review id and no patch
     // reference anywhere in the pane.

@@ -12,6 +12,20 @@ export type XmuseAttentionItem = {
   reason_code: string;
   module_id: string | null;
   split_id: string | null;
+  integration_id: string | null;
+};
+
+export type XmuseIntegrationState = {
+  status: string | null;
+  green_head_commit: string | null;
+};
+
+export type XmuseModuleIntegration = {
+  status: string;
+  verification_id: string | null;
+  integrated_verification_id: string | null;
+  conflict_path_count: number;
+  reason_code: string | null;
 };
 
 export type XmuseSummary = {
@@ -27,6 +41,16 @@ export type XmuseSummary = {
   // capabilities.reviews from the projection/summary: 1 while cross-family
   // reviews are on, 0 otherwise (old servers: 0).
   reviews: number;
+  // capabilities.integrations (§3.11): 1 while the host integrates, 0
+  // otherwise (old servers: 0). Gates every integration word.
+  integrations: number;
+  // Accepted modules integrated at their current verification (§3.11).
+  // Default 0 on old servers.
+  integrated_total: number;
+  // Room-level job state (§3.11, §7.1): latest status (null when none or
+  // integrated) is shown as a job word; the green head is shortened.
+  // Never a path, never a job id.
+  integration: XmuseIntegrationState;
 };
 
 export type XmuseAgentSnippet = {
@@ -64,6 +88,9 @@ export type XmuseModule = {
   // The one completion value (§4.4). Missing on old servers: false.
   accepted: boolean;
   review: XmuseReviewInfo;
+  // Per-module integration state (§3.11). The none values when the module
+  // has no candidate or the server predates integrations.
+  integration: XmuseModuleIntegration;
 };
 
 export type XmuseModuleDetail = {
@@ -83,6 +110,12 @@ export type XmuseBoard = {
   reviews: number;
   // Modules with accepted == true in this projection.
   accepted_total: number;
+  // capabilities.integrations of the projection (1 while integrating).
+  integrations: number;
+  // Modules accepted and integrated at their current verification.
+  integrated_total: number;
+  // Room-level job state (§3.11): latest status plus the green head.
+  integration: XmuseIntegrationState;
 };
 
 // One split row the pane may offer a decision on. Only structured fields:

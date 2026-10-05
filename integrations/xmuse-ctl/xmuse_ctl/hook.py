@@ -207,7 +207,8 @@ def _attention_target(item: dict[str, object]) -> str:
     split_id = item.get("split_id")
     if isinstance(split_id, str) and split_id != "":
         return safe(split_id, 64)
-    return "?"
+    # Room-level integration items carry only an integration_id: no target.
+    return ""
 
 
 def hook_line(summary: dict[str, object]) -> str | None:
@@ -227,7 +228,8 @@ def hook_line(summary: dict[str, object]) -> str | None:
         label = labels.reason_label(item.get("reason_code"))
         if label == "":
             label = "待处理"
-        entries.append(label + " " + _attention_target(item))
+        target = _attention_target(item)
+        entries.append(label if target == "" else label + " " + target)
     if entries:
         line += "; " + "; ".join(entries)
     if len(line) > MAX_LINE_CHARS:
