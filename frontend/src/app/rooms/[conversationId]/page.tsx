@@ -1,3 +1,5 @@
+import { ResetNotice } from "../../reset-notice";
+
 export default function RoomPage() {
-  return null;
+  return <ResetNotice />;
 }

@@ -3,6 +3,38 @@
 The browser Workroom consumes bounded Room projections and durable invalidation events. It
 is never authority for messages, Agent outcomes, attempts, or controls.
 
+## Status: the presentation layer was removed on purpose
+
+The components, the styles and the UI end-to-end specs were deleted (last commit that still has
+them: `1eb3337`) so the presentation can be rebuilt from a clean base. `/` and
+`/rooms/{conversation_id}` serve a placeholder (`src/app/reset-notice.tsx`). What stays is the
+adaptation layer, and it is the contract the new UI builds on:
+
+| Path | Role |
+| --- | --- |
+| `src/lib` | API clients, projection normalizers (defence-in-depth sanitising of `AgentText`), view models, label tables, the board/review/integration/grant types |
+| `src/store` | the zustand store, sync coordination, persistence, caches |
+| `src/app/api` | fixed same-origin routes that add the server-only operator token; the browser never holds it |
+| `e2e/room-first-real.spec.ts`, `room-soak-real.spec.ts`, `playwright*.config.ts` | the backend's real-acceptance harness: keep the prompts and the acceptance contract; the selectors encode the removed UI and must be rewritten with the new one |
+| `src/app/globals.css` | kept as a path (backend tooling names it); its content is a placeholder |
+
+Rules the rebuilt UI must keep (they are product invariants, not styling):
+
+- `accepted` is the only completion value. A module the owner calls `done` is a claim and must
+  never look like a verified one; verification, review and integration are separate axes.
+- Agent-authored text arrives as `AgentText` (`untrusted: true`): render it as plain text, label
+  it as the agent's own words, and never put it in a title, `aria-label`, toast, status line or
+  `document.title`.
+- Operator decisions (split approval, review verdicts, execution decisions, runtime recovery) go
+  through the fixed Next routes only. Material patches and integration details are read in the
+  Web only; plugins and the CLI never read them.
+- The shared timeline stays primary; the Workbench is a progressive dock, not a Dashboard.
+- Capability gating comes from `capabilities.*` of the projection, never from display hints.
+- Keep the accessibility behaviour the previous UI had: focus return after dialogs, `aria-live`
+  that never announces secrets (pairing codes), axe-clean pages.
+
+`npm run test:e2e` currently runs one smoke spec; the Room flows return with the new UI.
+
 The unified local lifecycle currently supports Linux and WSL and requires Node.js 20.9+ and
 npm. Backend setup is in
 [QUICKSTART.md](../QUICKSTART.md); the current wire contract is in
