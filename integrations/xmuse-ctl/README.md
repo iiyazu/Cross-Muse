@@ -73,6 +73,29 @@ object instead (same structured fields, same filtering).
   for opt-in command hooks (see `hook` below). Reads one JSON object
   from stdin, prints exactly one JSON object on stdout, always exits 0.
 
+## Integration
+
+When the room integrates (`capabilities.integrations == 1`) the CLI shows
+fixed words and counts only:
+
+- `status --line` appends ` · 已集成 N` (when `integrated_total > 0`)
+  and the job word when the latest job did not integrate (`排队集成` /
+  `集成中` / `集成冲突` / `集成门禁失败` / `集成异常`).
+- `status` adds `集成分支 <8 hex>` when the green head exists.
+- `board` adds a room line like `已验收 N · 已集成 M · 集成分支 <head>`
+  (`已验证` while reviews are off) and one `集成` word per module row
+  (`排队集成` / `集成中` / `已集成` / `等待依赖集成` /
+  `集成冲突 N 路径` / `门禁失败·嫌疑` / `集成异常·自动重试`,
+  plus `·分支为旧版本` or `·未入分支`).
+- `watch` summarizes `integration` events from structured fields only
+  (`已集成 N 个模块`, `嫌疑 a、b`, `m1 冲突 N 路径（已回退）`).
+
+Conflict detail is Web-only: conflicting paths and gate output tails leave
+only through `GET …/board/integrations/{id}` (§5.3), which plugins, the CLI
+and the mod never call — paths and gate output would reach a model's
+context. `--json` carries `integrated_total`, `integrations` and
+`integration: {status, green_head}` (8 hex), never paths or job ids.
+
 Common options: `--room ID|PREFIX` (overrides the binding), `--json`,
 `--api-base`.
 

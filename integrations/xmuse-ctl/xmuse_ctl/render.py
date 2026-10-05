@@ -51,6 +51,18 @@ def _operator_count(summary: dict[str, object]) -> int:
     return total
 
 
+def _integration_job(summary_or_board: dict[str, object]) -> str:
+    integration = summary_or_board.get("integration")
+    status = integration.get("status") if isinstance(integration, dict) else None
+    return labels_module.integration_job_word(status)
+
+
+def _integration_head8(summary_or_board: dict[str, object]) -> str:
+    integration = summary_or_board.get("integration")
+    head = integration.get("green_head_commit") if isinstance(integration, dict) else None
+    return labels_module.short_green_head(head)
+
+
 def status_line(summary: dict[str, object]) -> str:
     """One status line, mirroring the mod's status text."""
     counts = summary["counts"]
@@ -70,10 +82,21 @@ def status_line(summary: dict[str, object]) -> str:
     pending = _operator_count(summary)
     if pending > 0:
         line += " · 待你处理 " + str(pending)
-    integrated = summary["integrated_total"]
-    if summary["integrations"] == 1 and isinstance(integrated, int) and integrated > 0:
+    integrated = summary.get("integrated_total")
+    if summary.get("integrations") == 1 and isinstance(integrated, int) and integrated > 0:
         line += " · 已集成 " + str(integrated)
+    # Job word after 已集成 N when the latest job did not integrate.
+    # Quiet rooms (no job, nothing integrated) keep the old line.
+    if summary.get("integrations") == 1:
+        job = _integration_job(summary)
+        if job != "":
+            line += " · " + job
     return line
+
+
+def _is_integration_attention(item: dict[str, object]) -> bool:
+    reason = item.get("reason_code")
+    return isinstance(reason, str) and reason.startswith("board_attention_integration_")
 
 
 def _attention_target(item: dict[str, object]) -> str:
@@ -81,7 +104,20 @@ def _attention_target(item: dict[str, object]) -> str:
     if isinstance(module_id, str) and module_id != "":
         return safe_id(module_id)
     split_id = item.get("split_id")
-    return safe(split_id, 32) if isinstance(split_id, str) and split_id != "" else "?"
+    if isinstance(split_id, str) and split_id != "":
+        return safe(split_id, 32)
+    # Room-level integration items carry only an integration_id: the label
+    # stands alone, never the job id.
+    return ""
+
+
+def _attention_line(item: dict[str, object], mark: str) -> str:
+    reason = item.get("reason_code")
+    label = labels_module.reason_label(reason)
+    if label == "":
+        label = "待处理"
+    target = _attention_target(item)
+    return mark + " " + label if target == "" else mark + " " + label + " " + target
 
 
 def status_block(summary: dict[str, object]) -> str:
@@ -105,10 +141,23 @@ def status_block(summary: dict[str, object]) -> str:
     modules_line = "模块 " + str(summary["modules_total"])
     if parts:
         modules_line += " " + " ".join(parts)
-    integrated_count = summary["integrated_total"]
-    if summary["integrations"] == 1 and isinstance(integrated_count, int) and integrated_count > 0:
+    integrated_count = summary.get("integrated_total")
+    if (
+        summary.get("integrations") == 1
+        and isinstance(integrated_count, int)
+        and integrated_count > 0
+    ):
         modules_line += " 已集成 " + str(integrated_count)
+    if summary.get("integrations") == 1:
+        job = _integration_job(summary)
+        if job != "":
+            modules_line += " · " + job
     lines.append(modules_line)
+    # Green branch, if any. Counts and short commit only.
+    if summary.get("integrations") == 1:
+        head8 = _integration_head8(summary)
+        if head8 != "":
+            lines.append("集成分支 " + head8)
     lines.append("待你处理 " + str(_operator_count(summary)))
     attention = summary["attention"]
     assert isinstance(attention, list)
@@ -117,13 +166,11 @@ def status_block(summary: dict[str, object]) -> str:
         assert isinstance(item, dict)
         if item["kind"] != "operator":
             continue
+        if summary.get("integrations") != 1 and _is_integration_attention(item):
+            continue
         if shown >= 5:
             break
-        reason = item.get("reason_code")
-        label = labels_module.reason_label(reason)
-        if label == "":
-            label = "待处理"
-        lines.append("! " + label + " " + _attention_target(item))
+        lines.append(_attention_line(item, "!"))
         shown += 1
     return "\n".join(lines)
 
@@ -153,6 +200,15 @@ def status_json(summary: dict[str, object]) -> dict[str, object]:
                 "split_id": safe(split_id, 32) if isinstance(split_id, str) else None,
             }
         )
+    integration = summary.get("integration")
+    if not isinstance(integration, dict):
+        integration = {"status": None, "green_head_commit": None}
+    raw_status = integration.get("status")
+    raw_head = integration.get("green_head_commit")
+    head8 = labels_module.short_green_head(raw_head) if isinstance(raw_head, str) else ""
+    integrated_total = summary.get("integrated_total")
+    if not isinstance(integrated_total, int) or isinstance(integrated_total, bool):
+        integrated_total = 0
     return {
         "conversation_id": safe(room_id, 128),
         "short_id": short_room(room_id),
@@ -163,12 +219,46 @@ def status_json(summary: dict[str, object]) -> dict[str, object]:
         "accepted_total": summary["accepted_total"],
         "attention_total": summary["attention_total"],
         "attention": items,
-        "integrated_total": summary["integrated_total"],
+        "integrations": 1 if summary.get("integrations") == 1 else 0,
+        "integrated_total": max(0, int(integrated_total)),
+        "integration": {
+            "status": safe(raw_status, 32) if isinstance(raw_status, str) else None,
+            "green_head": head8,
+        },
         "line": status_line(summary),
     }
 
 
-def _module_row(module: dict[str, object], reviews_on: bool) -> str:
+def room_integration_line(board: dict[str, object]) -> str:
+    """Room line like the mod's: accepted/integrated counts plus branch.
+
+    Shown only while integrations are on and any part is non-trivial.
+    Uses 已验证 while reviews are off, 已验收 while on.
+    """
+    if board.get("integrations") != 1:
+        return ""
+    integrated = board.get("integrated_total")
+    integrated_total = (
+        integrated if isinstance(integrated, int) and not isinstance(integrated, bool) else 0
+    )
+    head8 = _integration_head8(board)
+    job = _integration_job(board)
+    if not (integrated_total > 0 or head8 != "" or job != ""):
+        return ""
+    accepted = board.get("accepted_total")
+    accepted_total = accepted if isinstance(accepted, int) and not isinstance(accepted, bool) else 0
+    accepted_word = (
+        "已验收 " + str(accepted_total)
+        if board.get("reviews") == 1
+        else "已验证 " + str(accepted_total)
+    )
+    segs = [accepted_word, "已集成 " + str(max(0, integrated_total))]
+    if head8 != "":
+        segs.append("集成分支 " + head8)
+    return " · ".join(segs)
+
+
+def _module_row(module: dict[str, object], reviews_on: bool, integrations_on: bool = False) -> str:
     state = module["state"]
     assert isinstance(state, str)
     # The one completion mark. Like the mod and the Web it appears only
@@ -220,6 +310,11 @@ def _module_row(module: dict[str, object], reviews_on: bool) -> str:
             if findings != "":
                 segs.append(findings)
             line += " · " + " · ".join(segs)
+    if integrations_on:
+        integration = module.get("integration")
+        word = labels_module.integration_module_word(integration, 1)
+        if word != "":
+            line += " · " + word
     return line
 
 
@@ -230,8 +325,12 @@ def board_text(board: dict[str, object], web_base: str) -> str:
     revision = board["revision"]
     assert isinstance(revision, str)
     reviews_on = board["reviews"] == 1
+    integrations_on = board.get("integrations") == 1
     link = api_module.web_room_link(web_base, room_id)
     lines = ["看板 " + short_room(room_id) + " rev " + short_rev(revision)]
+    room_line = room_integration_line(board)
+    if room_line != "":
+        lines.append(room_line)
     lines.append("module_id owner [provider] state review accepted 报告/通过/失败/返工")
     modules = board["modules"]
     assert isinstance(modules, list)
@@ -239,21 +338,19 @@ def board_text(board: dict[str, object], web_base: str) -> str:
         lines.append("暂无模块")
     for module in modules:
         assert isinstance(module, dict)
-        lines.append(_module_row(module, reviews_on))
+        lines.append(_module_row(module, reviews_on, integrations_on))
     attention = board["attention"]
     assert isinstance(attention, list)
     for item in attention:
         assert isinstance(item, dict)
+        if board.get("integrations") != 1 and _is_integration_attention(item):
+            continue
         label = labels_module.reason_label(item.get("reason_code"))
         if label == "":
             label = "待处理"
-        lines.append(
-            labels_module.attention_mark(item.get("kind"))
-            + " "
-            + label
-            + " "
-            + _attention_target(item)
-        )
+        target = _attention_target(item)
+        mark = labels_module.attention_mark(item.get("kind"))
+        lines.append(mark + " " + label if target == "" else mark + " " + label + " " + target)
     splits = board["splits"]
     assert isinstance(splits, list)
     for split in splits:
@@ -278,6 +375,7 @@ def board_json(board: dict[str, object], web_base: str) -> dict[str, object]:
     assert isinstance(revision, str)
     modules = board["modules"]
     assert isinstance(modules, list)
+    integrations_on = board.get("integrations") == 1
     rows = []
     for module in modules:
         assert isinstance(module, dict)
@@ -305,6 +403,9 @@ def board_json(board: dict[str, object], web_base: str) -> dict[str, object]:
                 "findings": labels_module.findings_part(
                     int(review["blocker"]), int(review["major"]), int(review["minor"])
                 ),
+                "integration": labels_module.integration_module_word(module.get("integration"), 1)
+                if integrations_on
+                else "",
                 "counters": {
                     "done_reports": module["done_reports"],
                     "passed": module["passed"],
@@ -338,13 +439,29 @@ def board_json(board: dict[str, object], web_base: str) -> dict[str, object]:
         assert isinstance(split_id, str)
         if split["status"] == "proposed":
             pending.append(safe(split_id, 64))
+    integration = board.get("integration")
+    if not isinstance(integration, dict):
+        integration = {"status": None, "green_head_commit": None}
+    raw_status = integration.get("status")
+    raw_head = integration.get("green_head_commit")
+    head8 = labels_module.short_green_head(raw_head) if isinstance(raw_head, str) else ""
+    integrated_total = board.get("integrated_total")
+    if not isinstance(integrated_total, int) or isinstance(integrated_total, bool):
+        integrated_total = 0
     return {
         "conversation_id": safe(room_id, 128),
         "short_id": short_room(room_id),
         "revision": safe(revision, 64),
         "board_seq": board["board_seq"],
         "reviews": board["reviews"],
+        "integrations": 1 if board.get("integrations") == 1 else 0,
         "accepted_total": board["accepted_total"],
+        "integrated_total": max(0, int(integrated_total)),
+        "integration": {
+            "status": safe(raw_status, 32) if isinstance(raw_status, str) else None,
+            "green_head": head8,
+        },
+        "room_line": room_integration_line(board),
         "modules_total": len(rows),
         "modules": rows,
         "attention": items,
@@ -447,7 +564,65 @@ def summarize_event(event: dict[str, object]) -> str:
         if via != "":
             segs.append(via)
         return " ".join(segs)
+    if kind == "integration":
+        return _summarize_integration_event(data)
     return labels_module.event_kind_label(kind)
+
+
+def _summarize_integration_event(data: dict[str, object]) -> str:
+    """Fixed-word integration summary from structured fields only.
+
+    Never a path, never output_tail, never a job id: only the status
+    word, integrated counts, sanitized suspect module ids and per-conflict
+    counts with an optional fell-back mark.
+    """
+    status = data.get("status")
+    if status == "integrated":
+        status_word = "已集成"
+    elif status in ("conflicted", "gate_failed", "error", "pending", "running"):
+        status_word = labels_module.integration_job_word(status)
+        if status_word == "":
+            status_word = "集成结果"
+    else:
+        status_word = "集成结果"
+    segs = [status_word]
+    integrated_ids = data.get("integrated_module_ids")
+    if isinstance(integrated_ids, list):
+        segs.append(
+            "已集成 " + str(len([m for m in integrated_ids if isinstance(m, str)])) + " 个模块"
+        )
+    suspects = data.get("suspect_module_ids")
+    if isinstance(suspects, list):
+        names = [safe_id(m) for m in suspects if isinstance(m, str) and m != ""][:8]
+        if names:
+            segs.append("嫌疑 " + "、".join(names))
+    conflicts = data.get("conflicts")
+    if isinstance(conflicts, list):
+        for entry in conflicts[:8]:
+            if not isinstance(entry, dict):
+                continue
+            mid = entry.get("module_id")
+            if not isinstance(mid, str) or mid == "":
+                continue
+            raw_count = entry.get("conflict_path_count")
+            if isinstance(raw_count, bool):
+                count = 0
+            elif isinstance(raw_count, (int, float)):
+                try:
+                    count = max(0, int(raw_count))
+                except (TypeError, ValueError):
+                    count = 0
+            else:
+                count = 0
+            # Fallen-back conflicts keep the older version in the branch.
+            mark = "（已回退）" if entry.get("fell_back") is True else ""
+            segs.append(safe_id(mid) + " 冲突 " + str(count) + " 路径" + mark)
+    waiting = data.get("waiting_module_ids")
+    if isinstance(waiting, list):
+        names = [safe_id(m) for m in waiting if isinstance(m, str) and m != ""][:8]
+        if names:
+            segs.append("等待 " + "、".join(names))
+    return " ".join(segs)
 
 
 def event_line(event: dict[str, object]) -> str:
