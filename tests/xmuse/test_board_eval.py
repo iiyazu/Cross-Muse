@@ -39,6 +39,7 @@ def _module(
     *,
     done_reports: int = 0,
     rework_rounds: int = 0,
+    failed: int | None = None,
     endorsed: int = 0,
     objected: int = 0,
     conflicts: int = 0,
@@ -50,6 +51,7 @@ def _module(
         "counters": _counters(
             done_reports=done_reports,
             rework_rounds=rework_rounds,
+            failed=rework_rounds if failed is None else failed,
             reviews_endorsed=endorsed,
             reviews_objected=objected,
             integrations_conflicted=conflicts,
@@ -153,6 +155,30 @@ def test_aggregate_group_counts_claims_verified_and_rework() -> None:
         "opencode-go/muse-spark-1.3-contributor",
     ]
     assert stats["provider_kinds"] == ["opencode"]
+
+
+def test_false_done_counts_every_failure_and_fix_rounds_only_conflicted_modules() -> None:
+    records = [
+        _record(
+            scenario="integration",
+            summary=_summary(
+                scenario="integration",
+                modules={
+                    # One failure before the first pass, one after a later done.
+                    "backend": _module(done_reports=3, rework_rounds=1, failed=2),
+                    "frontend": _module(done_reports=2, conflicts=1, fix_rounds=2),
+                },
+            ),
+        ),
+    ]
+
+    stats = board_eval.aggregate_group(records)
+
+    assert stats["false_done_intercepted"] == 2
+    assert stats["mean_rework_rounds"] == 0.5
+    assert stats["integration_conflicts"] == 1
+    assert stats["mean_conflict_fix_rounds"] == 2.0
+    assert stats["conflict_fix_n"] == 1
 
 
 def test_aggregate_group_tolerates_failed_and_timed_out_runs() -> None:
@@ -261,7 +287,9 @@ def test_from_results_reaggregates_without_running(tmp_path: Path) -> None:
         results / "integration-0.json",
         _summary(scenario="integration", ok=False, wall_seconds=20.0),
     )
-    _write_result(results / "broken.json", "{not json")
+    _write_result(results / "integration-1.json", "{not json")
+    # A scenario outside --scenarios never reaches the overall row.
+    _write_result(results / "review-0.json", _summary(scenario="review"))
     out_dir = tmp_path / "out"
 
     rc = board_eval.main(
@@ -283,6 +311,7 @@ def test_from_results_reaggregates_without_running(tmp_path: Path) -> None:
     assert report["per_scenario"]["verify"]["ok"] == 1
     assert report["per_scenario"]["integration"]["ok"] == 0
     # The invalid file is a recorded failed run, not a crash.
+    assert report["per_scenario"]["integration"]["runs"] == 2
     assert report["overall"]["runs"] == 3
     assert report["overall"]["ok"] == 1
     assert (out_dir / "report.md").is_file()

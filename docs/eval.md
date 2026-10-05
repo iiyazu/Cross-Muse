@@ -14,13 +14,24 @@ from the same `room_board_projection` derivation (counters of
 | `verify` | Host verification of `done`: every module must end host-verified and every verification wake-up must reuse the owner's session. False claims on the way are the measurement (`verification_loop`). |
 | `false-done` | Fault injection: the backend is told to report `done` on a breaking stub. The host must fail the verification in a gate, wake the owner in the same session, and pass the fix. |
 | `review` | Cross-family review (`review_policy: cross_family`): every module must end verified and endorsed by a different-family reviewer; objections must be followed by fixes. |
-| `integration` | Shared-file conflict: both charters cover `src/shared/flags.py` and both owners change the same lines. Both pass verification, the host integration worker leaves the newcomer `conflicted`, the drill asks it to fix, and the run ends when both modules are `integrated`. The user's checkout must stay byte-identical. |
+| `integration` | Shared-file conflict: both charters cover `src/shared/flags.py` and both owners change the same line. Both pass verification, the host integration worker leaves the newcomer `conflicted` and wakes its owner (`board.integration`), and the run ends when both modules are `integrated`. Only if the host's wake-up does not get there does the smoke post one fallback Human fix request (`integration_loop.human_nudged`); the Human message never counts as the owner being woken. The user's checkout must stay byte-identical for the whole run. |
 
 Every scenario's summary carries per-module `modules` (§6 counters plus final
 `state`, `accepted`, `integration_status` from the projection), `models`,
 `provider_kinds`, wall seconds, `ok` and the checks.
 
+The table's metrics, summed over modules and runs:
+
+- claimed → verified: modules ending host-verified / `done` reports.
+- false done intercepted: failed host verifications (`counters.failed`).
+- mean rework: failed verifications before a module's first pass, per module.
+- objected = review catches: cross-family objections.
+- mean fix rounds: conflict fix rounds, over modules that conflicted at least once.
+
 ## How to run
+
+`xmuse-eval` runs from a source checkout (`uv sync --all-groups`, then `uv run xmuse-eval`):
+it drives `scripts/`, which the wheel does not ship.
 
 ```bash
 xmuse-eval board --scenarios verify,false-done,review,integration --repeat 3 --out /tmp/xmuse-board-eval

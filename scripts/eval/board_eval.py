@@ -112,6 +112,7 @@ def summarize_modules(summary: Mapping[str, Any]) -> dict[str, Any]:
     modules = raw if isinstance(raw, Mapping) else {}
     claims = 0
     verified = 0
+    failed = 0
     rework: list[int] = []
     endorsed = 0
     objected = 0
@@ -129,15 +130,22 @@ def summarize_modules(summary: Mapping[str, Any]) -> dict[str, Any]:
         claims += _int(counts.get("done_reports"))
         if info.get("state") == "verified":
             verified += 1
+        # Every failed host verification is one intercepted false `done`;
+        # rework_rounds only counts those before the first pass.
+        failed += _int(counts.get("failed"))
         rework.append(_int(counts.get("rework_rounds")))
         endorsed += _int(counts.get("reviews_endorsed"))
         objected += _int(counts.get("reviews_objected"))
-        conflicts += _int(counts.get("integrations_conflicted"))
-        fix_rounds.append(_int(counts.get("conflict_fix_rounds")))
+        module_conflicts = _int(counts.get("integrations_conflicted"))
+        conflicts += module_conflicts
+        # Fix rounds are averaged over modules that actually conflicted.
+        if module_conflicts:
+            fix_rounds.append(_int(counts.get("conflict_fix_rounds")))
     return {
         "modules": len([item for item in modules.values() if isinstance(item, Mapping)]),
         "claims": claims,
         "verified": verified,
+        "failed": failed,
         "rework": rework,
         "endorsed": endorsed,
         "objected": objected,
@@ -157,6 +165,7 @@ def aggregate_group(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     ok = sum(1 for item in records if item.get("status") == "ok")
     claims = 0
     verified = 0
+    failed = 0
     rework: list[int] = []
     endorsed = 0
     objected = 0
@@ -175,6 +184,7 @@ def aggregate_group(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         module_stats = summarize_modules(summary)
         claims += int(module_stats["claims"])
         verified += int(module_stats["verified"])
+        failed += int(module_stats["failed"])
         rework.extend(int(value) for value in module_stats["rework"])
         endorsed += int(module_stats["endorsed"])
         objected += int(module_stats["objected"])
@@ -189,7 +199,7 @@ def aggregate_group(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "claims": claims,
         "verified": verified,
         "claimed_verified_ratio": (verified / claims) if claims else None,
-        "false_done_intercepted": sum(rework),
+        "false_done_intercepted": failed,
         "mean_rework_rounds": _mean(rework),
         "rework_n": len(rework),
         "reviews_endorsed": endorsed,
@@ -217,7 +227,9 @@ def build_report(
 ) -> dict[str, Any]:
     """Build the ``board_eval_report/v1`` dict from run records."""
 
-    ordered = list(records)
+    # Re-aggregated result directories may hold scenarios outside the
+    # selection; they must not leak into the overall row.
+    ordered = [item for item in records if item.get("scenario") in scenarios]
     per_scenario = {
         name: aggregate_group([item for item in ordered if item.get("scenario") == name])
         for name in scenarios
@@ -274,8 +286,8 @@ def render_markdown_table(report: Mapping[str, Any]) -> str:
         wall_map = wall if isinstance(wall, Mapping) else {}
         wall_n = int(wall_map.get("n", 0))
         wall_text = (
-            f"{wall_map.get('median')}s"
-            f" [{wall_map.get('min')}s-{wall_map.get('max')}s] (n={wall_n})"
+            f"{float(wall_map['median']):.0f}s"
+            f" [{float(wall_map['min']):.0f}s-{float(wall_map['max']):.0f}s] (n={wall_n})"
             if wall_map.get("median") is not None
             else f"n/a (n={wall_n})"
         )
@@ -305,7 +317,9 @@ def render_markdown_table(report: Mapping[str, Any]) -> str:
         if not scenarios
         else "ok rate = runs ok / runs; "
         "claimed→verified = modules verified / done claims; "
-        "false done intercepted = Σ rework_rounds; "
+        "false done intercepted = failed host verifications; "
+        "mean rework = failed verifications before the first pass, per module; "
+        "mean fix rounds = over modules that conflicted; "
         "review catches = objected; "
         "wall = median [min-max] seconds"
     )

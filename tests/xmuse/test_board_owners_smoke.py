@@ -676,7 +676,8 @@ def test_integration_fix_message_is_short_and_neutral() -> None:
     message = smoke.build_integration_fix_human_message(module_id="frontend")
 
     assert "src/shared/flags.py" in message
-    assert "frontend" in message
+    # A new file, not adjacent lines: those would still collide in a 3-way apply.
+    assert "src/shared/frontend_flags.py" in message
     assert "done" in message
     # Never tell the agent the answer to the checks.
     assert "integrated" not in message
@@ -744,14 +745,14 @@ def _integration_evidence(**overrides: object) -> dict[str, object]:
     base: dict[str, object] = {
         "integration_jobs": [_integration_job("job-1")],
         "integration_conflicted_module": "frontend",
-        "integration_drill_observation_ids": ["obs-fix-1"],
+        "integration_drill_observation_ids": [],
         "participants": {
             "backend": {"observations": []},
             "frontend": {
                 "observations": [
                     {
-                        "observation_id": "obs-fix-1",
-                        "source_activity_type": "message.posted",
+                        "observation_id": "obs-int-1",
+                        "source_activity_type": "board.integration",
                         "status": "completed",
                         "provider_session_ids": ["s-front"],
                     }
@@ -837,16 +838,18 @@ def test_conflict_detected_survives_the_final_clean_job() -> None:
     assert smoke.compute_integration_checks(evidence)["conflict_detected"] is True
 
 
-def test_owner_woken_accepts_a_board_integration_wake_up() -> None:
-    evidence = _integration_evidence(
-        integration_drill_observation_ids=[],
+def test_owner_woken_requires_the_host_wake_up_not_the_human_nudge() -> None:
+    assert smoke.compute_integration_checks(_integration_evidence())["owner_woken"] is True
+
+    nudged_only = _integration_evidence(
+        integration_drill_observation_ids=["obs-fix-1"],
         participants={
             "backend": {"observations": []},
             "frontend": {
                 "observations": [
                     {
-                        "observation_id": "obs-int-9",
-                        "source_activity_type": "board.integration",
+                        "observation_id": "obs-fix-1",
+                        "source_activity_type": "message.posted",
                         "status": "completed",
                         "provider_session_ids": ["s-front"],
                     }
@@ -855,7 +858,23 @@ def test_owner_woken_accepts_a_board_integration_wake_up() -> None:
         },
     )
 
-    assert smoke.compute_integration_checks(evidence)["owner_woken"] is True
+    assert smoke.compute_integration_checks(nudged_only)["owner_woken"] is False
+    assert smoke.compute_integration_loop(nudged_only)["human_nudged"] is True
+
+
+def test_owner_woken_follows_the_first_conflict_after_a_clean_job() -> None:
+    # The owner fixed after the host's wake-up: the newest job is clean, but
+    # the woken owner is still the one from the first conflict.
+    evidence = _integration_evidence(
+        integration_jobs=[
+            _integration_job("job-1"),
+            _integration_job("job-2", frontend_status="applied"),
+        ],
+    )
+
+    assert smoke.first_conflicted_module(evidence["integration_jobs"]) == "frontend"  # type: ignore[arg-type]
+    assert smoke.integration_ok(evidence) is True
+    assert smoke.compute_integration_loop(evidence)["human_nudged"] is False
 
 
 def test_compute_integration_loop_counts_conflicts() -> None:
@@ -864,6 +883,7 @@ def test_compute_integration_loop_counts_conflicts() -> None:
     assert loop["jobs"] == 1
     assert loop["conflicts"] == 1
     assert loop["all_integrated"] is True
+    assert loop["human_nudged"] is False
     assert loop["modules"]["frontend"] == {"conflicts": 1, "integrated": True}
     assert loop["modules"]["backend"] == {"conflicts": 0, "integrated": True}
 

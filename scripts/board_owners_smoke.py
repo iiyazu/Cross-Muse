@@ -36,9 +36,10 @@ Three scenarios are supported (``--scenario``); every summary carries
 * ``integration``: the lead's split gives both owners charters covering one
   shared file and tells both to change the same lines of it.  Both pass
   verification, then the host integration worker (started like the
-  verification worker) finds the newcomer conflicted; a Human drill asks the
-  conflicted owner to fix, and the run ends when both modules are
-  ``integrated`` or the phase timeout passes.
+  verification worker) finds the newcomer conflicted and wakes its owner.
+  Only if that wake-up does not lead to both modules ``integrated`` does a
+  fallback Human message ask the conflicted owner to fix; the run ends when
+  both modules are ``integrated`` or the phase timeout passes.
 
 Every scenario summary also carries per-module ``modules`` (the §6 counters
 plus final ``state``, ``accepted`` and ``integration_status`` read from the
