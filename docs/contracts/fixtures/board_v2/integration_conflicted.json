@@ -228,7 +228,7 @@
             }
           ],
           "gate_ids": [],
-          "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+          "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
           "integrated_module_ids": [
             "ma"
           ],
@@ -247,7 +247,7 @@
     ],
     "has_more": false,
     "reset": false,
-    "revision": "13:d721cb50729c",
+    "revision": "13:d7ee3d30f725",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
@@ -516,7 +516,7 @@
             }
           ],
           "gate_ids": [],
-          "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+          "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
           "integrated_module_ids": [
             "ma"
           ],
@@ -534,7 +534,7 @@
       }
     ],
     "integration": {
-      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
       "latest": {
         "finished_at": "2026-01-01T00:52:10.000000Z",
         "integration_id": "boardintegration_0000000000000000000000000000003c",
@@ -819,7 +819,7 @@
       }
     ],
     "review_policy": "off",
-    "revision": "13:d721cb50729c",
+    "revision": "13:d7ee3d30f725",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -947,11 +947,11 @@
     },
     "integrated_total": 1,
     "integration": {
-      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
       "status": "integrated"
     },
     "modules_total": 3,
-    "revision": "13:d721cb50729c",
+    "revision": "13:d7ee3d30f725",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

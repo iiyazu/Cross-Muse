@@ -1635,7 +1635,9 @@ def test_fixture_integration_fallback_to_incumbent() -> None:
     assert m1["integration"]["integrated_verification_id"] is not None
     assert m1["integration"]["integrated_verification_id"] != m1["integration"]["verification_id"]
     assert _module(fixture, "m2")["integration"]["status"] == "integrated"
-    assert fixture["summary"]["integrated_total"] == 1
+    # The independent newcomer m3 integrates, so the branch moves despite m1's fallback.
+    assert _module(fixture, "m3")["integration"]["status"] == "integrated"
+    assert fixture["summary"]["integrated_total"] == 2
     sidecar = _integration_fixture("integration_fallback_to_incumbent")
     assert sidecar["status"] == "integrated"
     assert sidecar["green_head_commit"] == fixture["projection"]["integration"]["green_head_commit"]

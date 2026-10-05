@@ -503,14 +503,12 @@ def test_incumbent_first_newcomer_falls_back_and_branch_moves(
     assert by_module["m1"]["applied_verification_id"] != by_module["m1"]["verification_id"]
     assert by_module["m1"]["conflicts_total"] == 1
     assert by_module["m1"]["conflicts"] == [{"path": "docs/b.txt", "attributed_module_ids": ["m2"]}]
+    # Only a fallback, no new code: the result equals the green head, so no gate
+    # runs and the branch does not move (rule 5).
     green2 = _mirror_ref(ctx)
-    assert green2 and green2 != green1
-    assert job["green_after"] == green2
-    assert job["result_commit"] == green2
-    # One commit per applied module (rule 1): m2 then m1's fallback.
-    mirror = ctx["clones_root"] / ".mirror.git"
-    rev_list = _git_mirror(mirror, "rev-list", "--count", f"{green1}..{green2}").strip()
-    assert rev_list == "2"
+    assert green2 == green1
+    assert job["green_after"] == green1
+    assert job["result_commit"] == green1
     tree = _mirror_tree(ctx, green2)
     assert tree["docs/a.txt"] == "a1\n"
     assert tree["docs/b.txt"] == "b1\n"
@@ -620,7 +618,7 @@ def test_rule4_pin_culprit_newcomer_never_breaks_incumbent(
     ]
     assert by_module["m1"]["conflicts_total"] == 1
     green2 = _mirror_ref(ctx)
-    assert green2 and green2 != green1
+    assert green2 == green1  # culprit pinned back: nothing new, branch stays (rule 5)
     tree = _mirror_tree(ctx, green2)
     assert tree["docs/a.txt"] == "a1\n"
     assert tree["docs/shared.txt"] == "m2s\n"

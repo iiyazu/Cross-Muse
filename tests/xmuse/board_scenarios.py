@@ -1543,8 +1543,9 @@ def _scenario_integration_fallback_to_incumbent(tmp_path: Path) -> dict[str, Any
             specs=[
                 {"id": "m1", "paths": ["docs/a.txt"]},
                 {"id": "m2", "paths": ["docs/b.txt"]},
+                {"id": "m3", "paths": ["docs/c.txt"]},
             ],
-            files={"docs/a.txt": "a0\n", "docs/b.txt": "b0\n"},
+            files={"docs/a.txt": "a0\n", "docs/b.txt": "b0\n", "docs/c.txt": "c0\n"},
         )
         _iwrite(ctx, "m1", "docs/a.txt", "a1\n", "m1 v1")
         _iwrite(ctx, "m2", "docs/b.txt", "b1\n", "m2 v1")
@@ -1555,10 +1556,13 @@ def _scenario_integration_fallback_to_incumbent(tmp_path: Path) -> dict[str, Any
         assert claimed is not None
         _irun(ctx, claimed, now=_itime(32))
         # m1's new candidate also rewrites m2's file: m2 (incumbent) applies
-        # first, m1 falls back to its older integrated version, branch moves.
+        # first, m1 falls back to its older integrated version, and the
+        # independent newcomer m3 integrates, so the branch moves.
         _iwrite(ctx, "m1", "docs/a.txt", "a2\n", "m1 v2a")
         _iwrite(ctx, "m1", "docs/b.txt", "bX\n", "m1 v2b")
+        _iwrite(ctx, "m3", "docs/c.txt", "c1\n", "m3 v1")
         _ipass(ctx, 1, "m1", "done-m1v2", now=_itime(40))
+        _ipass(ctx, 3, "m3", "done-m3v1", now=_itime(45))
         assert _ienqueue(ctx, now=_itime(50)) is not None
         claimed = _iclaim(ctx, now=_itime(51))
         assert claimed is not None

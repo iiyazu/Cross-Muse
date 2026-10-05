@@ -1469,7 +1469,7 @@ export const integration_conflicted = {
             }
           ],
           "gate_ids": [],
-          "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+          "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
           "integrated_module_ids": [
             "ma"
           ],
@@ -1487,7 +1487,7 @@ export const integration_conflicted = {
       }
     ],
     "integration": {
-      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
       "latest": {
         "finished_at": "2026-01-01T00:52:10.000000Z",
         "integration_id": "boardintegration_0000000000000000000000000000003c",
@@ -1772,7 +1772,7 @@ export const integration_conflicted = {
       }
     ],
     "review_policy": "off",
-    "revision": "13:d721cb50729c",
+    "revision": "13:d7ee3d30f725",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -1900,11 +1900,11 @@ export const integration_conflicted = {
     },
     "integrated_total": 1,
     "integration": {
-      "green_head_commit": "e23be6c79dfefaf4668b1bed91617b4b3014a017",
+      "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
       "status": "integrated"
     },
     "modules_total": 3,
-    "revision": "13:d721cb50729c",
+    "revision": "13:d7ee3d30f725",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }
@@ -2160,7 +2160,7 @@ export const integration_dependency_upgrade = {
             }
           ],
           "gate_ids": [],
-          "green_head_commit": "146fa446e9c4c463b33c542b25dd58423a5bd630",
+          "green_head_commit": "caf8b97420dadd03a7a091d691412d9479fff677",
           "integrated_module_ids": [
             "m1",
             "m2"
@@ -2177,7 +2177,7 @@ export const integration_dependency_upgrade = {
       }
     ],
     "integration": {
-      "green_head_commit": "146fa446e9c4c463b33c542b25dd58423a5bd630",
+      "green_head_commit": "caf8b97420dadd03a7a091d691412d9479fff677",
       "latest": {
         "finished_at": "2026-01-01T00:52:10.000000Z",
         "integration_id": "boardintegration_00000000000000000000000000000034",
@@ -2378,7 +2378,7 @@ export const integration_dependency_upgrade = {
       }
     ],
     "review_policy": "off",
-    "revision": "12:844633296706",
+    "revision": "12:072359d6ca80",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -2493,11 +2493,11 @@ export const integration_dependency_upgrade = {
     },
     "integrated_total": 1,
     "integration": {
-      "green_head_commit": "146fa446e9c4c463b33c542b25dd58423a5bd630",
+      "green_head_commit": "caf8b97420dadd03a7a091d691412d9479fff677",
       "status": "integrated"
     },
     "modules_total": 2,
-    "revision": "12:844633296706",
+    "revision": "12:072359d6ca80",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }
@@ -2849,7 +2849,7 @@ export const integration_fallback_to_incumbent = {
         "split_id": null
       }
     ],
-    "board_seq": 12,
+    "board_seq": 15,
     "capabilities": {
       "integrations": 1,
       "lessons": 0,
@@ -2876,6 +2876,16 @@ export const integration_fallback_to_incumbent = {
         "provider_module_id": "m2",
         "updated_at": "2026-01-01T00:00:10.000000Z",
         "versions_count": 1
+      },
+      {
+        "author_participant_id": "part_00000000000000000000000000000005",
+        "contract_id": "api.m3",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "kind": "api_schema",
+        "latest_version": 1,
+        "provider_module_id": "m3",
+        "updated_at": "2026-01-01T00:00:10.000000Z",
+        "versions_count": 1
       }
     ],
     "conversation_id": "conv_00000000000000000000000000000001",
@@ -2889,9 +2899,10 @@ export const integration_fallback_to_incumbent = {
         "data": {
           "module_ids": [
             "m1",
-            "m2"
+            "m2",
+            "m3"
           ],
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_0000000000000000000000000000001e"
         },
         "kind": "split_proposed",
         "module_id": null,
@@ -2908,7 +2919,7 @@ export const integration_fallback_to_incumbent = {
           "decided_via": "web",
           "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_0000000000000000000000000000001e"
         },
         "kind": "charter_assigned",
         "module_id": "m1",
@@ -2925,11 +2936,28 @@ export const integration_fallback_to_incumbent = {
           "decided_via": "web",
           "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000004",
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_0000000000000000000000000000001e"
         },
         "kind": "charter_assigned",
         "module_id": "m2",
         "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "operator",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:00:10.000000Z",
+        "data": {
+          "charter_version": 1,
+          "decided_via": "web",
+          "grant_id": null,
+          "owner_participant_id": "part_00000000000000000000000000000005",
+          "split_id": "split_0000000000000000000000000000001e"
+        },
+        "kind": "charter_assigned",
+        "module_id": "m3",
+        "seq": 5
       },
       {
         "actor": {
@@ -2949,7 +2977,7 @@ export const integration_fallback_to_incumbent = {
         },
         "kind": "progress",
         "module_id": "m1",
-        "seq": 5
+        "seq": 6
       },
       {
         "actor": {
@@ -2963,11 +2991,11 @@ export const integration_fallback_to_incumbent = {
           "reason_code": null,
           "stacked": [],
           "status": "passed",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "verification_id": "boardverify_00000000000000000000000000000029"
         },
         "kind": "verification",
         "module_id": "m1",
-        "seq": 6
+        "seq": 7
       },
       {
         "actor": {
@@ -2987,7 +3015,7 @@ export const integration_fallback_to_incumbent = {
         },
         "kind": "progress",
         "module_id": "m2",
-        "seq": 7
+        "seq": 8
       },
       {
         "actor": {
@@ -3001,11 +3029,11 @@ export const integration_fallback_to_incumbent = {
           "reason_code": null,
           "stacked": [],
           "status": "passed",
-          "verification_id": "boardverify_00000000000000000000000000000027"
+          "verification_id": "boardverify_0000000000000000000000000000002f"
         },
         "kind": "verification",
         "module_id": "m2",
-        "seq": 8
+        "seq": 9
       },
       {
         "actor": {
@@ -3016,12 +3044,12 @@ export const integration_fallback_to_incumbent = {
         "data": {
           "conflicts": [],
           "gate_ids": [],
-          "green_head_commit": "4de3cad90d3e6dff5c997ae073ddfc925977e14a",
+          "green_head_commit": "432ba2b79f833bada82d38fffc87d7bd3129140d",
           "integrated_module_ids": [
             "m1",
             "m2"
           ],
-          "integration_id": "boardintegration_0000000000000000000000000000002b",
+          "integration_id": "boardintegration_00000000000000000000000000000033",
           "reason_code": null,
           "status": "integrated",
           "suspect_module_ids": [],
@@ -3029,7 +3057,7 @@ export const integration_fallback_to_incumbent = {
         },
         "kind": "integration",
         "module_id": null,
-        "seq": 9
+        "seq": 10
       },
       {
         "actor": {
@@ -3049,7 +3077,7 @@ export const integration_fallback_to_incumbent = {
         },
         "kind": "progress",
         "module_id": "m1",
-        "seq": 10
+        "seq": 11
       },
       {
         "actor": {
@@ -3063,11 +3091,49 @@ export const integration_fallback_to_incumbent = {
           "reason_code": null,
           "stacked": [],
           "status": "passed",
-          "verification_id": "boardverify_00000000000000000000000000000030"
+          "verification_id": "boardverify_00000000000000000000000000000038"
         },
         "kind": "verification",
         "module_id": "m1",
-        "seq": 11
+        "seq": 12
+      },
+      {
+        "actor": {
+          "kind": "participant",
+          "participant_id": "part_00000000000000000000000000000005"
+        },
+        "at": "2026-01-01T00:45:10.000000Z",
+        "data": {
+          "claims": [],
+          "claims_total": 0,
+          "status": "done",
+          "summary": {
+            "text": "finished",
+            "truncated": false,
+            "untrusted": true
+          }
+        },
+        "kind": "progress",
+        "module_id": "m3",
+        "seq": 13
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:45:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_0000000000000000000000000000003e"
+        },
+        "kind": "verification",
+        "module_id": "m3",
+        "seq": 14
       },
       {
         "actor": {
@@ -3087,12 +3153,13 @@ export const integration_fallback_to_incumbent = {
             }
           ],
           "gate_ids": [],
-          "green_head_commit": "ff0ab9c897aa976f732cc6fee3cacb38cad85cbe",
+          "green_head_commit": "8d191a5e343aa15363492f7a1570b59100c54300",
           "integrated_module_ids": [
             "m1",
-            "m2"
+            "m2",
+            "m3"
           ],
-          "integration_id": "boardintegration_00000000000000000000000000000034",
+          "integration_id": "boardintegration_00000000000000000000000000000042",
           "reason_code": null,
           "status": "integrated",
           "suspect_module_ids": [],
@@ -3100,15 +3167,15 @@ export const integration_fallback_to_incumbent = {
         },
         "kind": "integration",
         "module_id": null,
-        "seq": 12
+        "seq": 15
       }
     ],
     "integration": {
-      "green_head_commit": "ff0ab9c897aa976f732cc6fee3cacb38cad85cbe",
+      "green_head_commit": "8d191a5e343aa15363492f7a1570b59100c54300",
       "latest": {
         "finished_at": "2026-01-01T00:52:10.000000Z",
-        "integration_id": "boardintegration_00000000000000000000000000000034",
-        "module_count": 2,
+        "integration_id": "boardintegration_00000000000000000000000000000042",
+        "module_count": 3,
         "reason_code": null,
         "status": "integrated"
       }
@@ -3139,12 +3206,12 @@ export const integration_fallback_to_incumbent = {
         "integration": {
           "conflict_path_count": 1,
           "gate_ids": [],
-          "integrated_verification_id": "boardverify_00000000000000000000000000000021",
-          "integration_id": "boardintegration_00000000000000000000000000000034",
+          "integrated_verification_id": "boardverify_00000000000000000000000000000029",
+          "integration_id": "boardintegration_00000000000000000000000000000042",
           "reason_code": "board_integration_conflict",
           "status": "conflicted",
           "updated_at": "2026-01-01T00:52:10.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000030"
+          "verification_id": "boardverify_00000000000000000000000000000038"
         },
         "lifecycle": "done_claimed",
         "module_id": "m1",
@@ -3186,12 +3253,12 @@ export const integration_fallback_to_incumbent = {
           "changed_path_count": 2,
           "escalated": false,
           "gate_ids": [],
-          "head_commit": "2a0615574f593cf288012c7d1a7f638ae3b87842",
+          "head_commit": "f07c855c1987b040e9204b812cb65f4c225a2070",
           "reason_code": null,
           "stacked": [],
           "status": "passed",
           "updated_at": "2026-01-01T00:40:40.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000030"
+          "verification_id": "boardverify_00000000000000000000000000000038"
         }
       },
       {
@@ -3218,12 +3285,12 @@ export const integration_fallback_to_incumbent = {
         "integration": {
           "conflict_path_count": 0,
           "gate_ids": [],
-          "integrated_verification_id": "boardverify_00000000000000000000000000000027",
-          "integration_id": "boardintegration_00000000000000000000000000000034",
+          "integrated_verification_id": "boardverify_0000000000000000000000000000002f",
+          "integration_id": "boardintegration_00000000000000000000000000000042",
           "reason_code": null,
           "status": "integrated",
           "updated_at": "2026-01-01T00:52:10.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000027"
+          "verification_id": "boardverify_0000000000000000000000000000002f"
         },
         "lifecycle": "done_claimed",
         "module_id": "m2",
@@ -3265,12 +3332,91 @@ export const integration_fallback_to_incumbent = {
           "changed_path_count": 1,
           "escalated": false,
           "gate_ids": [],
-          "head_commit": "50c68a446eeb665d08011431200ca3bca4c3d78b",
+          "head_commit": "08ff5be4c47df385913a44bffb1caf6daeb2b507",
           "reason_code": null,
           "stacked": [],
           "status": "passed",
           "updated_at": "2026-01-01T00:20:40.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000027"
+          "verification_id": "boardverify_0000000000000000000000000000002f"
+        }
+      },
+      {
+        "accepted": true,
+        "attention": {
+          "kind": "none",
+          "reason_code": null
+        },
+        "charter_version": 1,
+        "counters": {
+          "conflict_fix_rounds": 0,
+          "done_reports": 1,
+          "errored": 0,
+          "failed": 0,
+          "integrations_conflicted": 0,
+          "integrations_gate_failed": 0,
+          "passed": 1,
+          "reviews_endorsed": 0,
+          "reviews_objected": 0,
+          "rework_rounds": 0,
+          "superseded": 0
+        },
+        "depends": [],
+        "integration": {
+          "conflict_path_count": 0,
+          "gate_ids": [],
+          "integrated_verification_id": "boardverify_0000000000000000000000000000003e",
+          "integration_id": "boardintegration_00000000000000000000000000000042",
+          "reason_code": null,
+          "status": "integrated",
+          "updated_at": "2026-01-01T00:52:10.000000Z",
+          "verification_id": "boardverify_0000000000000000000000000000003e"
+        },
+        "lifecycle": "done_claimed",
+        "module_id": "m3",
+        "owner_participant_id": "part_00000000000000000000000000000005",
+        "paths": [
+          "docs/c.txt"
+        ],
+        "provides": [
+          "api.m3"
+        ],
+        "report_to": "part_00000000000000000000000000000002",
+        "review": {
+          "actions": {},
+          "author_family": null,
+          "decided_via": null,
+          "digest": null,
+          "escalated_from": null,
+          "findings_count": {
+            "blocker": 0,
+            "major": 0,
+            "minor": 0
+          },
+          "review_id": null,
+          "reviewer_family": null,
+          "reviewer_kind": null,
+          "reviewer_participant_id": null,
+          "rule_id": null,
+          "status": "none",
+          "updated_at": null,
+          "verification_id": null
+        },
+        "state": "verified",
+        "title": {
+          "text": "m3",
+          "truncated": false,
+          "untrusted": true
+        },
+        "verification": {
+          "changed_path_count": 1,
+          "escalated": false,
+          "gate_ids": [],
+          "head_commit": "3eed55eafc733dd42fb8a6de696b509bb57a2d5d",
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "updated_at": "2026-01-01T00:45:40.000000Z",
+          "verification_id": "boardverify_0000000000000000000000000000003e"
         }
       }
     ],
@@ -3298,10 +3444,18 @@ export const integration_fallback_to_incumbent = {
         "participant_id": "part_00000000000000000000000000000004",
         "provider_kind": "codex",
         "role_preset": null
+      },
+      {
+        "display_name": "Agent 3",
+        "is_lead": false,
+        "model_family": "codex",
+        "participant_id": "part_00000000000000000000000000000005",
+        "provider_kind": "codex",
+        "role_preset": null
       }
     ],
     "review_policy": "off",
-    "revision": "12:f9d23cfa620a",
+    "revision": "15:98d96518a693",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -3313,8 +3467,8 @@ export const integration_fallback_to_incumbent = {
               "reject"
             ],
             "available": false,
-            "expected_digest": "sha256:30e803938ef0ac7c58891c1aa587b23ee054e6e1838d923e463a4ffed29dc250",
-            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "expected_digest": "sha256:68f4ffe8fc47a0eb7768ab313f52341a174181073dd39bf0fd286a8beab79962",
+            "href": "/api/chat/operator/board-splits/split_0000000000000000000000000000001e/decision",
             "method": "POST"
           }
         },
@@ -3330,12 +3484,18 @@ export const integration_fallback_to_incumbent = {
             "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
             "kind": "api_schema",
             "provider_module_id": "m2"
+          },
+          {
+            "contract_id": "api.m3",
+            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "kind": "api_schema",
+            "provider_module_id": "m3"
           }
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
         "decided_via": "web",
-        "digest": "sha256:30e803938ef0ac7c58891c1aa587b23ee054e6e1838d923e463a4ffed29dc250",
+        "digest": "sha256:68f4ffe8fc47a0eb7768ab313f52341a174181073dd39bf0fd286a8beab79962",
         "modules": [
           {
             "depends": [],
@@ -3368,17 +3528,33 @@ export const integration_fallback_to_incumbent = {
               "truncated": false,
               "untrusted": true
             }
+          },
+          {
+            "depends": [],
+            "module_id": "m3",
+            "owner_participant_id": "part_00000000000000000000000000000005",
+            "paths": [
+              "docs/c.txt"
+            ],
+            "provides": [
+              "api.m3"
+            ],
+            "title": {
+              "text": "m3",
+              "truncated": false,
+              "untrusted": true
+            }
           }
         ],
         "proposed_by_participant_id": "part_00000000000000000000000000000002",
-        "split_id": "split_00000000000000000000000000000018",
+        "split_id": "split_0000000000000000000000000000001e",
         "status": "approved"
       }
     ],
     "stale_dependents": []
   },
   "summary": {
-    "accepted_total": 2,
+    "accepted_total": 3,
     "attention": [
       {
         "integration_id": null,
@@ -3389,7 +3565,7 @@ export const integration_fallback_to_incumbent = {
       }
     ],
     "attention_total": 1,
-    "board_seq": 12,
+    "board_seq": 15,
     "capabilities": {
       "integrations": 1,
       "lessons": 0,
@@ -3405,18 +3581,18 @@ export const integration_fallback_to_incumbent = {
       "ready_for_review": 0,
       "verification_error": 0,
       "verification_failed": 0,
-      "verified": 2,
+      "verified": 3,
       "verifying": 0,
       "waiting_for_provider": 0,
       "working": 0
     },
-    "integrated_total": 1,
+    "integrated_total": 2,
     "integration": {
-      "green_head_commit": "ff0ab9c897aa976f732cc6fee3cacb38cad85cbe",
+      "green_head_commit": "8d191a5e343aa15363492f7a1570b59100c54300",
       "status": "integrated"
     },
-    "modules_total": 2,
-    "revision": "12:f9d23cfa620a",
+    "modules_total": 3,
+    "revision": "15:98d96518a693",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

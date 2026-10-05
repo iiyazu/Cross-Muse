@@ -800,6 +800,26 @@ class RoomBoardIntegrationEngine:
                 for module_id, outcome in outcomes.items()
                 if outcome.applied_verification_id is not None
             }
+            if applied_versions == green_applied:
+                # Every newcomer conflicted, fell back or waits: the result equals the
+                # green head (or is empty before the first one), so no gate runs and
+                # the branch does not move (contract §3.11 rule 5).
+                return IntegrationRunOutcome(
+                    status="integrated",
+                    reason_code=None,
+                    result_commit=green_commit,
+                    items=tuple(
+                        {
+                            "module_id": module_id,
+                            "status": outcomes[module_id].status,
+                            "applied_verification_id": outcomes[module_id].applied_verification_id,
+                            "conflicts": outcomes[module_id].conflicts,
+                            "conflicts_total": outcomes[module_id].conflicts_total,
+                            "reason_code": outcomes[module_id].reason_code,
+                        }
+                        for module_id in ordered
+                    ),
+                )
             union_paths = sorted(
                 {path for vid in applied_versions.values() for path in changed_of[vid]}
             )

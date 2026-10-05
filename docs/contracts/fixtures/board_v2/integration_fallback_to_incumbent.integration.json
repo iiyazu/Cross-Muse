@@ -12,21 +12,21 @@
       "status": "passed"
     }
   ],
-  "green_head_commit": "ff0ab9c897aa976f732cc6fee3cacb38cad85cbe",
-  "integration_id": "boardintegration_00000000000000000000000000000034",
+  "green_head_commit": "8d191a5e343aa15363492f7a1570b59100c54300",
+  "integration_id": "boardintegration_00000000000000000000000000000042",
   "items": [
     {
-      "applied_verification_id": "boardverify_00000000000000000000000000000027",
+      "applied_verification_id": "boardverify_0000000000000000000000000000002f",
       "conflicts": [],
       "conflicts_total": 0,
       "module_id": "m2",
       "order": 1,
       "role": "incumbent",
       "status": "applied",
-      "verification_id": "boardverify_00000000000000000000000000000027"
+      "verification_id": "boardverify_0000000000000000000000000000002f"
     },
     {
-      "applied_verification_id": "boardverify_00000000000000000000000000000021",
+      "applied_verification_id": "boardverify_00000000000000000000000000000029",
       "conflicts": [
         {
           "attributed_module_ids": [
@@ -40,11 +40,21 @@
       "order": 2,
       "role": "newcomer",
       "status": "fell_back",
-      "verification_id": "boardverify_00000000000000000000000000000030"
+      "verification_id": "boardverify_00000000000000000000000000000038"
+    },
+    {
+      "applied_verification_id": "boardverify_0000000000000000000000000000003e",
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m3",
+      "order": 3,
+      "role": "newcomer",
+      "status": "applied",
+      "verification_id": "boardverify_0000000000000000000000000000003e"
     }
   ],
   "reason_code": null,
-  "result_commit": "ff0ab9c897aa976f732cc6fee3cacb38cad85cbe",
+  "result_commit": "8d191a5e343aa15363492f7a1570b59100c54300",
   "schema_version": "room_board_integration/v1",
   "status": "integrated"
 }
