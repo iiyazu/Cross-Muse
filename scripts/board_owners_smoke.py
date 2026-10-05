@@ -411,21 +411,23 @@ def build_integration_split_human_message(*, backend_id: str, frontend_id: str) 
 
 
 def build_integration_fix_human_message(*, module_id: str) -> str:
-    """Return the conflict fix request for the conflicted newcomer owner.
+    """Return the fallback fix request for the conflicted newcomer owner.
 
-    Short and neutral: it names the file and the rework loop (restore the
-    overlapping lines, move own content aside, test, commit, done) without
-    stating any of the run's checks.
+    Sent only when the host's own ``board.integration`` wake-up did not lead
+    to both modules integrated.  Short and neutral: it names the file and the
+    rework loop without stating any of the run's checks.  The owner's value
+    moves to a new file, because lines added next to the contested line would
+    still collide in a three-way apply.
     """
 
     return (
         f"To the {module_id} owner: the host integration could not combine "
         "your change to src/shared/flags.py with the other module's change "
-        "to the same lines. In your clone, restore those lines to their "
-        "original content and add your module's content as new lines elsewhere "
-        "in the same file. Update your test to match, keep the code typed, run "
-        "python -m pytest -q src/shared, commit only src/shared/**, report "
-        "progress and done."
+        "to the same lines. In your clone, restore src/shared/flags.py to its "
+        f"original content and put your module's value in a new file "
+        f"src/shared/{module_id}_flags.py instead. Update your test to match, keep "
+        "the code typed, run python -m pytest -q src/shared, commit only "
+        "src/shared/**, report progress and done."
     )
 
 
@@ -851,6 +853,21 @@ def latest_conflicted_module(jobs: list[Any]) -> str | None:
     return str(module_id) if isinstance(module_id, str) and module_id else None
 
 
+def first_conflicted_module(jobs: list[Any]) -> str | None:
+    """Return the conflicted module of the oldest finished job with a conflict.
+
+    That is the owner the host had to wake; later jobs may already show it
+    integrated after the fix.
+    """
+
+    for job in _finished_integration_jobs(jobs):
+        items = _conflicted_items(job)
+        if items:
+            module_id = items[0].get("module_id")
+            return str(module_id) if isinstance(module_id, str) and module_id else None
+    return None
+
+
 def source_repo_snapshot(path: Path) -> dict[str, Any]:
     """Snapshot the user's checkout: HEAD, porcelain status and file hashes.
 
@@ -943,6 +960,9 @@ def compute_integration_loop(evidence: Mapping[str, Any]) -> dict[str, Any]:
         "modules": per_module,
         "all_integrated": bool(per_module)
         and all(item["integrated"] for item in per_module.values()),
+        # True when the host's own wake-up was not enough and the smoke had
+        # to post the fallback Human fix request.
+        "human_nudged": bool(_str_list(evidence.get("integration_drill_observation_ids"))),
     }
 
 
@@ -950,9 +970,10 @@ def compute_integration_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
     """Checks for the ``integration`` scenario.
 
     The host must have left a conflicted candidate behind in a finished job,
-    the conflicted owner must have completed the fix request (or a
-    ``board.integration`` wake-up), every module must end ``integrated`` in
-    the projection, and the user's checkout must be byte-identical.
+    the host itself must have woken that module's owner (a completed
+    ``board.integration`` observation; the fallback Human request does not
+    count), every module must end ``integrated`` in the projection, and the
+    user's checkout must be byte-identical.
     """
 
     raw_jobs = evidence.get("integration_jobs")
@@ -960,25 +981,20 @@ def compute_integration_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
     finished = _finished_integration_jobs(jobs)
     # Historical: the final clean job must not erase the earlier conflict.
     conflict_detected = any(_conflicted_items(job) for job in finished)
-    conflicted_module = latest_conflicted_module(jobs)
+    conflicted_module = first_conflicted_module(jobs)
     raw_participants = evidence.get("participants")
     participants = raw_participants if isinstance(raw_participants, Mapping) else {}
-    drill_ids = set(_str_list(evidence.get("integration_drill_observation_ids")))
     owner_woken = False
     if isinstance(conflicted_module, str):
         owner = participants.get(conflicted_module)
         raw_observations = owner.get("observations") if isinstance(owner, Mapping) else None
         observations: list[Any] = raw_observations if isinstance(raw_observations, list) else []
-        for item in observations:
-            if not isinstance(item, Mapping) or item.get("status") != "completed":
-                continue
-            if item.get("source_activity_type") == "board.integration":
-                owner_woken = True
-                break
-            observation_id = item.get("observation_id")
-            if isinstance(observation_id, str) and observation_id in drill_ids:
-                owner_woken = True
-                break
+        owner_woken = any(
+            isinstance(item, Mapping)
+            and item.get("status") == "completed"
+            and item.get("source_activity_type") == "board.integration"
+            for item in observations
+        )
     loop = compute_integration_loop(evidence)
     return {
         "conflict_detected": bool(conflict_detected),
@@ -2024,33 +2040,29 @@ async def _run_integration_phase(
     root: Path,
     conversation_id: str,
     by_role: dict[str, Participant],
-    source_repo: Path,
+    checkout_before: dict[str, Any] | None,
     phase_timeout_s: float,
     phases_ok: bool,
 ) -> dict[str, Any]:
-    """Run the shared-file conflict drill after the charter phase.
+    """Run the shared-file conflict loop after the charter phase.
 
-    Pumps until observations, verifications and integration jobs are idle,
-    finds the conflicted newcomer in the newest finished job, posts one Human
-    fix request to its owner (no further Human message follows: the fix must
-    be driven only by that request), then pumps again.  The run ends when
-    every module is ``integrated`` in the projection or the phase timeout
-    passes.
+    Pumps until observations, verifications and integration jobs are idle.
+    The host wakes the conflicted owner by itself (``board.integration``);
+    when that alone ends with every module ``integrated`` no Human message
+    is sent.  Otherwise, if the newest finished job still leaves a module
+    conflicted, one fallback Human fix request goes to its owner and the
+    loop pumps again.  The run ends when every module is ``integrated`` in
+    the projection or the phase timeout passes.
     """
 
     state: dict[str, Any] = {
         "phase_ok": False,
         "conflicted_module": None,
         "drill_observation_ids": [],
-        "checkout_before": None,
+        "checkout_before": checkout_before,
     }
     if not phases_ok:
         _mark("integration_skipped", reason="earlier phase failed")
-        return state
-    try:
-        state["checkout_before"] = source_repo_snapshot(source_repo)
-    except Exception as exc:
-        _mark("integration_snapshot_failed", error=f"{type(exc).__name__}: {exc}")
         return state
     integrate_idle = await _pump_until_idle(
         host=host,
@@ -2062,7 +2074,12 @@ async def _run_integration_phase(
         wait_for_integration=True,
     )
     jobs = _collect_integration_jobs(root, conversation_id)
+    state["conflicted_module"] = first_conflicted_module(jobs)
     conflicted = latest_conflicted_module(jobs)
+    states = board_module_states(root, conversation_id)
+    both = bool(states) and all(
+        info.get("integration_status") == "integrated" for info in states.values()
+    )
     _mark(
         "integrate_phase",
         idle=integrate_idle,
@@ -2076,11 +2093,16 @@ async def _run_integration_phase(
             }
             for job in jobs
         ],
-        conflicted_module=conflicted,
+        first_conflicted_module=state["conflicted_module"],
+        latest_conflicted_module=conflicted,
+        both_integrated=both,
     )
+    if integrate_idle and both:
+        # The host's own wake-up closed the loop; no Human message needed.
+        state["phase_ok"] = state["conflicted_module"] is not None
+        return state
     if not integrate_idle or conflicted is None or conflicted not in by_role:
         return state
-    state["conflicted_module"] = conflicted
     owner = by_role[conflicted]
     posted = kernel.post_human_activity(
         conversation_id=conversation_id,
@@ -2305,6 +2327,13 @@ async def _run_smoke(
     integration_thread: threading.Thread | None = None
     drill: dict[str, Any] | None = None
     integration_state: dict[str, Any] | None = None
+    checkout_before: dict[str, Any] | None = None
+    if scenario == "integration":
+        # Before any worker starts: the whole run must leave the checkout alone.
+        try:
+            checkout_before = source_repo_snapshot(source_repo)
+        except Exception as exc:
+            _mark("integration_snapshot_failed", error=f"{type(exc).__name__}: {exc}")
     try:
         await projector.start()
         verification_stop, verification_thread = _start_verification_worker(
@@ -2438,9 +2467,9 @@ async def _run_smoke(
                 root=root,
                 conversation_id=conversation_id,
                 by_role=by_role,
-                source_repo=source_repo,
+                checkout_before=checkout_before,
                 phase_timeout_s=phase_timeout_s,
-                phases_ok=phases_ok,
+                phases_ok=phases_ok and checkout_before is not None,
             )
             phases_ok = phases_ok and bool(integration_state["phase_ok"])
         elif scenario == "revision" and phases_ok:
