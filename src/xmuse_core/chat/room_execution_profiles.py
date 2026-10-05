@@ -89,20 +89,19 @@ _NODE_TOOLING_PREFIXES = (
 _XMUSE_BACKEND_PREFIXES = ("xmuse/", *_PYTHON_PREFIXES)
 _XMUSE_BACKEND_FILES = frozenset({*_PYTHON_ROOT_FILES, "AGENTS.md"})
 REMIX_MONOREPO_PROFILE_ID = "remix-monorepo/v1"
-# The repository's own test runner (`remix test`: cli-entry.ts -> the cli
-# dispatcher -> the test command -> packages/test with packages/assert).  The
-# profile executes it, so the dispatch path is frozen: its files are repository
-# markers and no candidate may touch them.  Other cli commands stay editable;
-# like every test gate, candidate code still runs while the tests run.
+# The repository's own test runner.  The server-owned driver calls the public
+# `runRemixTest` of packages/test directly (never the `remix` cli dispatcher), so
+# the runner is packages/test plus its whole static import closure (node-tsx and
+# terminal) and the assertion library the tests import.  These packages are
+# frozen: their files are repository markers, they are mounted read-only from the
+# execution root while gates run, and no candidate may touch them.
 REMIX_RUNNER_PATHS: tuple[str, ...] = (
     "packages/assert/",
-    "packages/cli/src/index.ts",
-    "packages/cli/src/lib/cli.ts",
-    "packages/cli/src/lib/commands/test.ts",
-    "packages/remix/src/cli-entry.ts",
-    "packages/remix/src/cli.ts",
+    "packages/node-tsx/",
+    "packages/terminal/",
     "packages/test/",
 )
+REMIX_RUNNER_ENTRY = "packages/test/src/cli.ts"
 _REMIX_PACKAGE_RE = re.compile(r"packages/([a-z0-9][a-z0-9._-]*)/(.+)")
 
 

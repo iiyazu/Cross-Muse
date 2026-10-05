@@ -737,7 +737,10 @@ def run_execution_controller(store: ExecutionStore, config: ControllerConfig) ->
                         expected_toolchain_capability_digest=(
                             gate_plan.toolchain_capability_digest
                         ),
-                        gate_packages=affected_packages(gate_plan.profile_id, changed_files),
+                        # The same authorized path set the plan was validated against.
+                        gate_packages=affected_packages(
+                            gate_plan.profile_id, candidate.allowed_files
+                        ),
                     )
                     resource_monitor = GateResourceMonitor(staged.stage)
                     try:

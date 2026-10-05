@@ -238,27 +238,35 @@ def test_remix_monorepo_accepts_package_sources_and_docs_only() -> None:
         )
         == profile.gate_ids
     )
-    # Other cli commands are ordinary package sources.
-    assert affected_packages("remix-monorepo/v1", ("packages/cli/src/lib/commands/db.ts",)) == (
-        "cli",
-    )
-    # Package docs and change files never run package gates.
+    # The driver never loads the `remix` cli, so cli and remix sources are ordinary.
+    assert affected_packages(
+        "remix-monorepo/v1",
+        ("packages/cli/src/lib/commands/test.ts", "packages/remix/src/cli-entry.ts"),
+    ) == ("cli", "remix")
+    # Package docs and change files never run package gates ...
     assert gate_ids_for_profile_paths(
         "remix-monorepo/v1",
         ("packages/headers/README.md", "packages/headers/.changes/minor.accept.md"),
     ) == ("patch_diff_check",)
+    # ... but docs next to a source change still get the package gates.
+    assert (
+        gate_ids_for_profile_paths(
+            "remix-monorepo/v1", ("packages/headers/README.md", "packages/headers/src/a.ts")
+        )
+        == profile.gate_ids
+    )
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        # The frozen test runner: the profile executes it.
+        # The frozen test runner and its import closure: the profile executes it.
+        "packages/test/src/cli.ts",
         "packages/test/src/lib/runner.ts",
         "packages/assert/src/index.ts",
-        "packages/cli/src/lib/commands/test.ts",
-        "packages/cli/src/lib/cli.ts",
-        "packages/remix/src/cli-entry.ts",
-        "packages/remix/src/cli.ts",
+        "packages/node-tsx/src/load-module.ts",
+        "packages/terminal/src/index.ts",
+        "packages/test/README.md",
         # Package, lock and tool configuration.
         "packages/headers/package.json",
         "packages/headers/tsconfig.json",

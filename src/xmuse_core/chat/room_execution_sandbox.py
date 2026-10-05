@@ -28,6 +28,7 @@ from typing import IO
 
 from xmuse_core.chat.room_execution_profiles import (
     REMIX_MONOREPO_PROFILE_ID,
+    REMIX_RUNNER_ENTRY,
     REMIX_RUNNER_PATHS,
     ExecutionGateProfile,
     get_execution_gate_profile,
@@ -186,6 +187,7 @@ class SandboxLayout:
     # workspace package's installed node_modules (host path, sandbox path).
     gate_packages: tuple[str, ...] = ()
     package_node_modules: tuple[tuple[Path, str], ...] = ()
+    runner_mounts: tuple[tuple[Path, str], ...] = ()
 
     def close(self) -> None:
         if self.artifact_snapshot_root is None:
@@ -464,10 +466,12 @@ def discover_sandbox_layout(
     if any(_REMIX_PACKAGE_NAME_RE.match(name) is None for name in gate_packages):
         raise RoomExecutionSandboxError("execution_gate_plan_invalid")
     package_node_modules: tuple[tuple[Path, str], ...] = ()
+    runner_mounts: tuple[tuple[Path, str], ...] = ()
     if needs_remix:
         if not REMIX_GATE_DRIVER.is_file():
             raise RoomExecutionSandboxError("execution_toolchain_unavailable")
         package_node_modules = _remix_package_node_modules(root, worktree)
+        runner_mounts = _remix_runner_mounts(root)
     layout = SandboxLayout(
         stage=worktree,
         git_common_dir=git_common,
@@ -484,6 +488,7 @@ def discover_sandbox_layout(
         artifact_snapshot_root=artifact_snapshot_root,
         gate_packages=tuple(gate_packages),
         package_node_modules=package_node_modules,
+        runner_mounts=runner_mounts,
     )
     if profile is not None and expected_toolchain_capability_digest is not None:
         snapshot_evidence = tuple(
@@ -522,9 +527,13 @@ def _remix_package_node_modules(root: Path, stage: Path) -> tuple[tuple[Path, st
     if not packages_dir.is_dir():
         raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
     mounts: list[tuple[Path, str]] = []
+    runner_names = {path.split("/")[1] for path in REMIX_RUNNER_PATHS}
     for package in sorted(packages_dir.iterdir()):
         name = package.name
         if _REMIX_PACKAGE_NAME_RE.match(name) is None or package.is_symlink():
+            continue
+        if name in runner_names:
+            # Mounted whole (with its node_modules) by _remix_runner_mounts.
             continue
         installed = package / "node_modules"
         if installed.is_symlink() or not installed.is_dir():
@@ -535,15 +544,56 @@ def _remix_package_node_modules(root: Path, stage: Path) -> tuple[tuple[Path, st
     return tuple(mounts)
 
 
+def _remix_runner_mounts(root: Path) -> tuple[tuple[Path, str], ...]:
+    """The frozen runner packages from the execution root, mounted read-only.
+
+    They replace the stage's copies inside the sandbox, so nothing that runs
+    during a gate (candidate tests included) can rewrite the runner mid-run.
+    """
+
+    mounts: list[tuple[Path, str]] = []
+    for relative in REMIX_RUNNER_PATHS:
+        source = root / relative.rstrip("/")
+        if source.is_symlink() or not source.is_dir():
+            raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+        mounts.append((source.resolve(strict=True), f"/workspace/{relative.rstrip('/')}"))
+    return tuple(mounts)
+
+
+def _remix_dependency_digest(mounts: tuple[tuple[Path, str], ...]) -> str:
+    """Digest each package ``node_modules`` listing (pnpm links into the root store)."""
+
+    values: list[dict[str, object]] = []
+    for installed, mount in mounts:
+        entries: list[dict[str, str]] = []
+        for child in sorted(installed.iterdir()):
+            children = (
+                sorted(child.iterdir())
+                if child.name.startswith("@") and child.is_dir() and not child.is_symlink()
+                else [child]
+            )
+            for item in children:
+                relative = str(item.relative_to(installed))
+                if item.is_symlink():
+                    target = os.readlink(item)
+                else:
+                    target = "dir" if item.is_dir() else "file"
+                entries.append({"name": relative, "target": target})
+                if len(entries) > 4096:
+                    raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        values.append({"mount": mount, "entries": entries})
+    return _canonical_digest(values)
+
+
 def _remix_runner_contract(root: Path) -> dict[str, object]:
     """Freeze the repository's own test runner: every tracked file under it.
 
     The profile executes this runner, so its exact bytes are marker evidence and
-    re-proved with the rest of the repository manifest; candidates can never
-    change these paths (``remix_monorepo_paths/v1`` rejects them).
+    part of the toolchain capability re-proved before every gate run; candidates
+    can never change these paths (``remix_monorepo_paths/v1`` rejects them).
     """
 
-    entry = root / "packages" / "remix" / "src" / "cli-entry.ts"
+    entry = root / REMIX_RUNNER_ENTRY
     if entry.is_symlink() or not entry.is_file():
         raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
     result = subprocess.run(
@@ -559,10 +609,7 @@ def _remix_runner_contract(root: Path) -> dict[str, object]:
     if not names or len(names) > _MAX_REMIX_RUNNER_FILES:
         raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
     files = [{"path": name, "digest": _trusted_file_digest(root / name)} for name in names]
-    return {
-        "runner_entry": "packages/remix/src/cli-entry.ts",
-        "runner_files": _canonical_digest(files),
-    }
+    return {"runner_entry": REMIX_RUNNER_ENTRY, "runner_files": _canonical_digest(files)}
 
 
 def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGateProfile) -> str:
@@ -690,6 +737,12 @@ def build_toolchain_capability_digest(
         facts["frontend_gate_entries"] = _node_gate_entry_digest(root, selected)
         if any(value in REMIX_GATE_IDS for value in selected):
             facts["remix_gate_driver"] = _trusted_file_digest(REMIX_GATE_DRIVER)
+            # Re-proved by discover_sandbox_layout before every run: the runner
+            # bytes and the installed dependency links of every package.
+            facts["remix_runner"] = _remix_runner_contract(root)
+            facts["remix_package_dependencies"] = _remix_dependency_digest(
+                _remix_package_node_modules(root, root)
+            )
         facts["node"] = {
             "digest": _trusted_executable_digest(
                 node.resolve(strict=True),
@@ -989,6 +1042,10 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
                 REMIX_GATE_DRIVER_MOUNT,
             )
         )
+        if not layout.runner_mounts:
+            raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+        for source, mount in layout.runner_mounts:
+            command.extend(("--ro-bind", str(source), mount))
         for installed, mount in layout.package_node_modules:
             command.extend(("--dir", mount, "--ro-bind", str(installed), mount))
     command.extend(("--proc", "/proc"))

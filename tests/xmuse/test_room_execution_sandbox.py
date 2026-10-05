@@ -922,44 +922,66 @@ def test_frontend_toolchain_digest_binds_discovered_node_executable(
     assert first != second
 
 
+REMIX_RUNNER_FILES = (
+    "packages/test/src/cli.ts",
+    "packages/test/src/lib/runner.ts",
+    "packages/assert/src/index.ts",
+    "packages/node-tsx/src/load-module.ts",
+    "packages/terminal/src/index.ts",
+)
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
 def _remix_repository(tmp_path: Path) -> Path:
     repo = tmp_path / "remix-repo"
     files = {
         "package.json": json.dumps({"name": "remix-monorepo", "packageManager": "pnpm@10.34.2"}),
         "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
         "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
-        "packages/remix/src/cli-entry.ts": "export {}\n",
-        "packages/cli/src/index.ts": "export {}\n",
-        "packages/cli/src/lib/cli.ts": "export {}\n",
-        "packages/cli/src/lib/commands/test.ts": "export {}\n",
-        "packages/remix/src/cli.ts": "export {}\n",
-        "packages/test/src/index.ts": "export {}\n",
-        "packages/assert/src/index.ts": "export {}\n",
         "packages/headers/package.json": json.dumps({"name": "@remix-run/headers"}),
         "packages/headers/src/index.ts": "export {}\n",
+        **{name: "export {}\n" for name in REMIX_RUNNER_FILES},
     }
     for name, content in files.items():
         target = repo / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True
-    )
-    subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "seed"], check=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "T")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "seed")
+    # Installed, untracked dependencies: root store plus per-package links.
+    (repo / "node_modules" / ".pnpm").mkdir(parents=True)
+    (repo / "node_modules" / ".modules.yaml").write_text("layoutVersion: 5\n", encoding="utf-8")
+    tsc = repo / "node_modules" / "typescript" / "bin" / "tsc"
+    tsc.parent.mkdir(parents=True)
+    tsc.write_text("// tsc\n", encoding="utf-8")
+    for package in ("headers", "test"):
+        installed = repo / "packages" / package / "node_modules" / "@remix-run"
+        installed.mkdir(parents=True)
+        (installed / "assert").symlink_to("../../../assert")
     return repo
 
 
-def test_remix_gate_command_mounts_the_server_driver_and_package_dependencies(
+def _remix_stage(repo: Path, tmp_path: Path) -> Path:
+    stage = tmp_path / "stage"
+    _git(repo, "worktree", "add", "-q", "--detach", str(stage))
+    return stage
+
+
+def test_remix_gate_command_mounts_runner_read_only_from_the_execution_root(
     tmp_path: Path,
 ) -> None:
     layout = _layout(tmp_path)
     root_modules = tmp_path / "root-node-modules"
     headers_modules = tmp_path / "headers-node-modules"
-    root_modules.mkdir()
-    headers_modules.mkdir()
+    runner = tmp_path / "trusted-runner-test"
+    for path in (root_modules, headers_modules, runner):
+        path.mkdir()
     remix_layout = SandboxLayout(
         **{
             **layout.__dict__,
@@ -970,10 +992,15 @@ def test_remix_gate_command_mounts_the_server_driver_and_package_dependencies(
             "package_node_modules": (
                 (headers_modules, "/workspace/packages/headers/node_modules"),
             ),
+            "runner_mounts": ((runner, "/workspace/packages/test"),),
         }
     )
 
     command = build_bwrap_command(remix_layout, GATE_SPECS["node_pnpm_remix_test"])
+
+    def bound(source: Path) -> list[str]:
+        index = command.index(str(source))
+        return command[index - 1 : index + 2]
 
     assert command[-6:] == [
         "--chdir",
@@ -983,37 +1010,39 @@ def test_remix_gate_command_mounts_the_server_driver_and_package_dependencies(
         sandbox.REMIX_GATE_DRIVER_MOUNT,
         "test",
     ]
-    driver = command.index(str(sandbox.REMIX_GATE_DRIVER))
-    assert command[driver - 1 : driver + 2] == [
+    assert bound(sandbox.REMIX_GATE_DRIVER) == [
         "--ro-bind",
         str(sandbox.REMIX_GATE_DRIVER),
         sandbox.REMIX_GATE_DRIVER_MOUNT,
     ]
-    mount = command.index(str(headers_modules))
-    assert command[mount - 1 : mount + 2] == [
+    # The runner replaces the stage copy read-only, after the writable stage bind.
+    assert bound(runner) == ["--ro-bind", str(runner), "/workspace/packages/test"]
+    assert command.index(str(runner)) > command.index("/workspace")
+    assert bound(headers_modules) == [
         "--ro-bind",
         str(headers_modules),
         "/workspace/packages/headers/node_modules",
     ]
     packages = command.index("XMUSE_GATE_PACKAGES")
-    assert command[packages - 1 : packages + 2] == [
-        "--setenv",
-        "XMUSE_GATE_PACKAGES",
-        "headers,multipart-parser",
-    ]
+    assert command[packages + 1] == "headers,multipart-parser"
     assert "/bin/sh" not in command
-    # Other node gates never see the driver or the package list.
+    # Other node gates never see the driver, the runner mount or the package list.
     jest = build_bwrap_command(remix_layout, GATE_SPECS["node_pnpm_jest"])
     assert str(sandbox.REMIX_GATE_DRIVER) not in jest
+    assert str(runner) not in jest
     assert "XMUSE_GATE_PACKAGES" not in jest
 
-    forged = SandboxLayout(**{**remix_layout.__dict__, "gate_packages": ("../etc",)})
-    with pytest.raises(RoomExecutionSandboxError) as raised:
-        build_bwrap_command(forged, GATE_SPECS["node_pnpm_remix_test"])
-    assert raised.value.code == "execution_gate_plan_invalid"
+    for forged in (
+        SandboxLayout(**{**remix_layout.__dict__, "gate_packages": ("../etc",)}),
+        SandboxLayout(**{**remix_layout.__dict__, "runner_mounts": ()}),
+    ):
+        with pytest.raises(RoomExecutionSandboxError) as raised:
+            build_bwrap_command(forged, GATE_SPECS["node_pnpm_remix_test"])
+        assert raised.value.code == "execution_gate_plan_invalid"
 
 
-def test_remix_manifest_freezes_the_repository_test_runner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("runner_file", REMIX_RUNNER_FILES)
+def test_remix_manifest_freezes_every_runner_package(tmp_path: Path, runner_file: str) -> None:
     repo = _remix_repository(tmp_path)
     profile = get_execution_gate_profile("remix-monorepo/v1")
 
@@ -1022,30 +1051,57 @@ def test_remix_manifest_freezes_the_repository_test_runner(tmp_path: Path) -> No
     # A package source change leaves the runner evidence alone ...
     (repo / "packages/headers/src/index.ts").write_text("export const x = 1\n", encoding="utf-8")
     assert sandbox._validated_repository_marker_contract(repo, profile) == before
-    # ... while any runner byte changes it.
-    (repo / "packages/test/src/index.ts").write_text("export const pass = true\n", encoding="utf-8")
+    # ... while a byte of any runner package changes it.
+    (repo / runner_file).write_text("export const pass = true\n", encoding="utf-8")
     assert sandbox._validated_repository_marker_contract(repo, profile) != before
 
-    (repo / "packages/remix/src/cli-entry.ts").unlink()
+
+def test_remix_manifest_requires_the_runner_entry(tmp_path: Path) -> None:
+    repo = _remix_repository(tmp_path)
+    (repo / "packages/test/src/cli.ts").unlink()
+
     with pytest.raises(RoomExecutionSandboxError) as raised:
-        build_repository_manifest_digest(repo, profile)
-    assert raised.value.code in {
-        "execution_gate_profile_marker_invalid",
-        "execution_gate_profile_marker_missing",
-    }
+        build_repository_manifest_digest(repo, get_execution_gate_profile("remix-monorepo/v1"))
+    assert raised.value.code == "execution_gate_profile_marker_invalid"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_remix_layout_mounts_each_installed_package_node_modules(tmp_path: Path) -> None:
+def test_remix_capability_reproves_runner_bytes_and_package_dependencies(
+    tmp_path: Path,
+) -> None:
     repo = _remix_repository(tmp_path)
-    (repo / "node_modules").mkdir()
-    (repo / "packages/headers/node_modules").mkdir()
+    profile = get_execution_gate_profile("remix-monorepo/v1")
+
+    def capability() -> str:
+        return build_toolchain_capability_digest(repo, profile, bwrap_path="/usr/bin/true")
+
+    first = capability()
+    assert capability() == first
+    (repo / "packages/terminal/src/index.ts").write_text("export const y = 2\n", encoding="utf-8")
+    second = capability()
+    assert second != first
+    link = repo / "packages/headers/node_modules/@remix-run/assert"
+    link.unlink()
+    link.symlink_to("../../../test")
+    assert capability() != second
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_remix_layout_takes_runner_and_dependencies_from_the_execution_root(
+    tmp_path: Path,
+) -> None:
+    repo = _remix_repository(tmp_path)
+    stage = _remix_stage(repo, tmp_path)
+    # A symlinked node_modules is never mounted; a package missing from the
+    # stage gets no mount either.
+    (repo / "packages/ghost").mkdir()
+    (repo / "packages/ghost/node_modules").symlink_to(repo / "node_modules")
     bwrap = tmp_path / "bwrap"
     bwrap.write_bytes(b"bwrap")
     gate_ids = ("node_pnpm_remix_typecheck", "node_pnpm_remix_test")
 
     layout = sandbox.discover_sandbox_layout(
-        stage=repo,
+        stage=stage,
         execution_root=repo,
         gate_ids=gate_ids,
         bwrap_path=bwrap,
@@ -1053,19 +1109,24 @@ def test_remix_layout_mounts_each_installed_package_node_modules(tmp_path: Path)
     )
 
     assert layout.gate_packages == ("headers",)
+    # Runner packages come whole from the root (their node_modules included).
     assert layout.package_node_modules == (
         (
             (repo / "packages/headers/node_modules").resolve(),
             "/workspace/packages/headers/node_modules",
         ),
     )
+    assert dict((mount, source) for source, mount in layout.runner_mounts) == {
+        f"/workspace/packages/{name}": (repo / "packages" / name).resolve()
+        for name in ("assert", "node-tsx", "terminal", "test")
+    }
     for bad_gate_ids, packages in (
         (("node_pnpm_jest",), ("headers",)),
         (gate_ids, ("Headers",)),
     ):
         with pytest.raises(RoomExecutionSandboxError) as raised:
             sandbox.discover_sandbox_layout(
-                stage=repo,
+                stage=stage,
                 execution_root=repo,
                 gate_ids=bad_gate_ids,
                 bwrap_path=bwrap,
@@ -1075,24 +1136,36 @@ def test_remix_layout_mounts_each_installed_package_node_modules(tmp_path: Path)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_remix_driver_gates_each_affected_package_with_fixed_entrypoints(
+def test_remix_driver_runs_fixed_entrypoints_per_package_and_never_passes_unchecked(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
-    fail_marker = "fail-here"
+    log = tmp_path / "calls.jsonl"
+    record = (
+        'import { appendFileSync, existsSync } from "node:fs";\n'
+        "const call = (extra) => appendFileSync("
+        f"{json.dumps(str(log))}, JSON.stringify({{cwd: process.cwd(), ...extra}}) + '\\n');\n"
+    )
     for relative, content in {
         "node_modules/typescript/bin/tsc": (
-            'const fs = require("node:fs");\n'
-            f'process.exit(fs.existsSync("{fail_marker}") ? 1 : 0);\n'
+            record
+            + "call({tool: 'tsc', argv: process.argv.slice(2)});\n"
+            + 'process.exit(existsSync("fail-here") ? 1 : 0);\n'
         ),
-        "packages/remix/src/cli-entry.ts": (
-            'import { existsSync } from "node:fs";\n'
-            f'process.exit(existsSync("{fail_marker}") ? 1 : 0);\n'
+        # The frozen runner: only its public runRemixTest API is used.
+        "packages/test/src/cli.ts": (
+            record
+            + "export async function runRemixTest(options) {\n"
+            + "  call({tool: 'runRemixTest', options});\n"
+            + '  return existsSync("fail-here") ? 1 : 0;\n'
+            + "}\n"
         ),
-        "packages/ok/package.json": json.dumps({"scripts": {"typecheck": "x", "test": "x"}}),
-        "packages/broken/package.json": json.dumps({"scripts": {"test": "x"}}),
-        f"packages/broken/{fail_marker}": "",
-        "packages/docsonly/package.json": json.dumps({"scripts": {}}),
+        "packages/ok/package.json": json.dumps(
+            {"scripts": {"typecheck": "exit 1", "test": "exit 1"}}
+        ),
+        "packages/broken/package.json": json.dumps({"scripts": {"typecheck": "x", "test": "x"}}),
+        "packages/broken/fail-here": "",
+        "packages/untested/package.json": json.dumps({"scripts": {"typecheck": "x"}}),
     }.items():
         target = workspace / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1101,6 +1174,7 @@ def test_remix_driver_gates_each_affected_package_with_fixed_entrypoints(
     assert node is not None
 
     def drive(mode: str, packages: str) -> subprocess.CompletedProcess[str]:
+        log.unlink(missing_ok=True)
         return subprocess.run(
             [node, str(sandbox.REMIX_GATE_DRIVER), mode],
             env={
@@ -1114,17 +1188,40 @@ def test_remix_driver_gates_each_affected_package_with_fixed_entrypoints(
             check=False,
         )
 
-    typecheck = drive("typecheck", "broken,docsonly,ok")
+    def calls() -> list[dict[str, object]]:
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    # The scripts say "exit 1": a pass proves script text is never executed.
+    typecheck = drive("typecheck", "ok")
     assert typecheck.returncode == 0, typecheck.stdout + typecheck.stderr
-    assert "broken: skipped (no typecheck script)" in typecheck.stdout
-    assert "1/1 packages passed (3 affected)" in typecheck.stdout
-
-    test = drive("test", "broken,ok,missing")
-    assert test.returncode == 1, test.stdout + test.stderr
-    assert "### test broken: exit 1" in test.stdout
-    assert "### test ok: exit 0" in test.stdout
-    assert "missing: skipped (no package.json)" in test.stdout
-
-    assert drive("test", "").returncode == 0
+    assert calls() == [{"cwd": str(workspace / "packages/ok"), "tool": "tsc", "argv": ["--noEmit"]}]
+    test = drive("test", "ok")
+    assert test.returncode == 0, test.stdout + test.stderr
+    assert calls() == [
+        {
+            "cwd": str(workspace / "packages/ok"),
+            "tool": "runRemixTest",
+            "options": {
+                "cwd": str(workspace / "packages/ok"),
+                "type": ["server"],
+                "concurrency": 2,
+            },
+        }
+    ]
+    # One failing package fails the gate; the others still run.
+    failing = drive("test", "broken,ok")
+    assert failing.returncode == 1
+    assert [call["cwd"] for call in calls()] == [
+        str(workspace / "packages/broken"),
+        str(workspace / "packages/ok"),
+    ]
+    # Nothing passes unchecked: no script, no package.json, or no package at all.
+    untested = drive("test", "untested")
+    assert untested.returncode == 1 and calls() == []
+    assert "declares no test script" in untested.stdout
+    assert drive("test", "missing").returncode == 1
+    assert drive("test", "").returncode == 1
     assert drive("test", "../etc").returncode == 2
     assert drive("install", "ok").returncode == 2
