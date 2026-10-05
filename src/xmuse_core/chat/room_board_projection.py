@@ -397,19 +397,13 @@ def derive_module_integration(module_id: str, facts: IntegrationFacts) -> dict[s
             "gate_ids": [],
             "updated_at": stamp,
         }
-    if (
-        finished.status == "gate_failed"
-        and item.role == "newcomer"
-        and item.status in ("applied", "fell_back")
-    ):
-        applied = item.applied_verification_id
+    if finished.status == "gate_failed" and item.role == "newcomer" and item.status == "applied":
+        # A suspect: its own candidate was in the result the gates rejected.
         return {
             "status": "gate_failed",
             "integration_id": finished.integration_id,
             "verification_id": candidate,
-            "integrated_verification_id": (
-                applied if applied is not None and applied != candidate else integrated_vid
-            ),
+            "integrated_verification_id": integrated_vid,
             "reason_code": finished.reason_code or BOARD_INTEGRATION_GATE_FAILED,
             "conflict_path_count": 0,
             "gate_ids": list(finished.failed_gate_ids),
@@ -480,13 +474,12 @@ def derive_integration_counters(module_id: str, facts: IntegrationFacts) -> dict
         item = next((entry for entry in job.items if entry.module_id == module_id), None)
         if item is None:
             continue
-        if item.status == "conflicted":
+        # A fallback is a conflict of the module's new candidate (§3.11 rule 3).
+        if item.status in ("conflicted", "fell_back"):
             conflicted += 1
-        if (
-            job.status == "gate_failed"
-            and item.role == "newcomer"
-            and item.status in ("applied", "fell_back")
-        ):
+        # Suspects are the newcomers whose own candidate went into the failed result;
+        # a fallback only put the already integrated version back.
+        if job.status == "gate_failed" and item.role == "newcomer" and item.status == "applied":
             gate_failed += 1
     applied_vids = {
         item.applied_verification_id

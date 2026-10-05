@@ -41,7 +41,7 @@
     }
   ],
   "reason_code": "board_integration_gate_failed",
-  "result_commit": null,
+  "result_commit": "2bffdff1ebf02287357e2f606288d57959f6712a",
   "schema_version": "room_board_integration/v1",
   "status": "gate_failed"
 }

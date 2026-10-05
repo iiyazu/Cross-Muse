@@ -1672,7 +1672,7 @@ def test_fixture_integration_gate_failed() -> None:
     ]
     sidecar = _integration_fixture("integration_gate_failed")
     assert sidecar["status"] == "gate_failed"
-    assert sidecar["result_commit"] is None
+    assert isinstance(sidecar["result_commit"], str) and len(sidecar["result_commit"]) == 40
     assert sidecar["gates"][0]["status"] == "failed"
     assert sidecar["gates"][0]["output_tail"]["untrusted"] is True
 
