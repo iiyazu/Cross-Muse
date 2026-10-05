@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "plugin_pairing_invalid",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Pairing code is missing or invalid",
+    "retryable": false
+  }
+}

@@ -104,6 +104,11 @@ print(
         "/api/chat/conversations/{conversation_id}/board/stream",
         "/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}",
         "/api/chat/operator/board-splits/{split_id}/decision",
+        "/api/chat/operator/plugin-grants",
+        "/api/chat/operator/plugin-grants/{grant_id}/revoke",
+        "/api/chat/plugin/grants/exchange",
+        "/api/chat/plugin/grants/revoke",
+        "/api/chat/plugin/board-splits/{split_id}/decision",
     }
 
 
