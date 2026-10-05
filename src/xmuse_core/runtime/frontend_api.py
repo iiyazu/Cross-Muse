@@ -12,7 +12,6 @@ DEFAULT_FRONTEND_ORIGINS = (
     "http://127.0.0.1:3000",
 )
 LOOPBACK_ORIGIN_RE = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
-_LOOPBACK_ORIGIN_PATTERN = re.compile(LOOPBACK_ORIGIN_RE)
 # ``testserver`` is Starlette's TestClient host: a bare single-label name that a
 # rebinding web page cannot choose, so it does not weaken the loopback guard.
 LOOPBACK_HOST_RE = r"^(localhost|127\.0\.0\.1|\[::1\]|testserver)(:\d{1,5})?$"
@@ -45,18 +44,6 @@ def frontend_cors_kwargs(*, allow_credentials: bool) -> dict[str, Any]:
         "allow_methods": ["*"],
         "allow_headers": ["*"],
     }
-
-
-def is_frontend_origin_allowed(
-    origin: str | None,
-    environ: Mapping[str, str] | None = None,
-) -> bool:
-    if not origin:
-        return False
-    normalized = origin.rstrip("/")
-    if normalized in resolve_frontend_origins(environ):
-        return True
-    return bool(_LOOPBACK_ORIGIN_PATTERN.match(normalized))
 
 
 def operator_error(

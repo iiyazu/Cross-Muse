@@ -41,6 +41,7 @@ packages = ["xmuse", "src/xmuse_core"]
 
 [dependency-groups]
 dev = [
+    "coverage>=7.6",
     "httpx2>=2.5,<3",
     "jsonschema>=4.26.0",
     "mypy>=1.18.2",
