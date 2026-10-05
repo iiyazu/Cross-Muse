@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.xmuse.sandbox_support import bwrap_usable
 from xmuse_core.chat.room_agy_sandbox import (
     ROOM_AGY_READ_ONLY_CONFINEMENT,
     build_agy_sandbox_command,
@@ -251,7 +252,7 @@ def test_python3_under_home_is_rejected_but_agy_is_rebound(tmp_path: Path) -> No
     assert str(home_agy.resolve()) in ro_dests
 
 
-@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is not installed")
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
 @pytest.mark.parametrize(
     ("writable", "operator_mcp_file"), [(False, True), (True, True), (False, False)]
 )
