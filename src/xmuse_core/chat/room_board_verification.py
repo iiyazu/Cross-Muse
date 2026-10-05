@@ -41,6 +41,7 @@ from xmuse_core.chat.room_execution_controller import (
 )
 from xmuse_core.chat.room_execution_profiles import (
     RoomExecutionProfileError,
+    affected_packages,
     build_execution_gate_plan,
     get_execution_gate_profile,
 )
@@ -507,6 +508,7 @@ class RoomBoardVerificationWorker:
                     gate_ids=plan.gate_ids,
                     profile=self._profile,
                     expected_toolchain_capability_digest=toolchain_capability_digest,
+                    gate_packages=affected_packages(self._profile.profile_id, combined_changed),
                 )
                 try:
                     results = [

@@ -33,6 +33,7 @@ from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 from xmuse_core.chat.room_execution_profiles import (
     ExecutionGatePlan,
     RoomExecutionProfileError,
+    affected_packages,
     execution_gate_plan_from_mapping,
     get_execution_gate_profile,
 )
@@ -736,6 +737,7 @@ def run_execution_controller(store: ExecutionStore, config: ControllerConfig) ->
                         expected_toolchain_capability_digest=(
                             gate_plan.toolchain_capability_digest
                         ),
+                        gate_packages=affected_packages(gate_plan.profile_id, changed_files),
                     )
                     resource_monitor = GateResourceMonitor(staged.stage)
                     try:

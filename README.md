@@ -264,7 +264,9 @@ The fixed profiles are `docs/v1` (documentation plus diff-check), `python-uv/v1`
 (`ruff`, `mypy src`, and `pytest`), `xmuse-monorepo/v2` (backend plus direct TypeScript,
 ESLint, Vitest, and Next build gates), `python-uv-ty/v1` (Ruff, ty, and pytest),
 `node-pnpm-library/v1` (Prettier, TypeScript, Jest, and tsup), and
-`node-pnpm-next-workspace/v1` (Biome, workspace TypeScript, Vitest, and Next build).
+`node-pnpm-next-workspace/v1` (Biome, workspace TypeScript, Vitest, and Next build), and
+`remix-monorepo/v1` (per affected workspace package: TypeScript and the repository's own test
+runner, which is frozen as markers and can never be changed by a candidate).
 Only `docs/v1` can run diff-check alone. Missing markers, preinstalled dependencies,
 Bubblewrap, or fixed tool entrypoints block both manual and consensus execution. xmuse never
 runs repository package scripts, accepts candidate-controlled argv, or installs dependencies

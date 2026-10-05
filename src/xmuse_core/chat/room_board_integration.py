@@ -42,6 +42,7 @@ from xmuse_core.chat.room_board import (
 from xmuse_core.chat.room_board_projection import is_valid_finding_path
 from xmuse_core.chat.room_execution_profiles import (
     RoomExecutionProfileError,
+    affected_packages,
     build_execution_gate_plan,
     get_execution_gate_profile,
 )
@@ -575,6 +576,7 @@ class RoomBoardIntegrationEngine:
                 gate_ids=plan.gate_ids,
                 profile=self._profile,
                 expected_toolchain_capability_digest=toolchain_capability_digest,
+                gate_packages=affected_packages(self._profile.profile_id, tuple(changed_paths)),
             )
         except (OSError, RoomExecutionSandboxError) as exc:
             raise BoardIntegrationTransientError(

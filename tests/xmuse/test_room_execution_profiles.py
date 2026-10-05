@@ -7,6 +7,7 @@ import pytest
 from xmuse_core.chat.room_execution_profiles import (
     EXECUTION_GATE_PROFILE_SCHEMA,
     RoomExecutionProfileError,
+    affected_packages,
     build_execution_gate_plan,
     execution_gate_plan_from_mapping,
     gate_ids_for_profile_paths,
@@ -220,3 +221,70 @@ def test_private_plan_round_trip_is_strict_and_safe_reference_hides_digests() ->
             changed_paths=("src/example.py",),
         )
     assert raised.value.code == "room_execution_gate_plan_invalid"
+
+
+def test_remix_monorepo_accepts_package_sources_and_docs_only() -> None:
+    profile = get_execution_gate_profile("remix-monorepo/v1")
+
+    assert profile.gate_ids == (
+        "patch_diff_check",
+        "node_pnpm_remix_typecheck",
+        "node_pnpm_remix_test",
+    )
+    assert (
+        gate_ids_for_profile_paths(
+            "remix-monorepo/v1",
+            ("packages/headers/src/lib/accept.ts", "packages/headers/src/lib/accept.test.ts"),
+        )
+        == profile.gate_ids
+    )
+    # Other cli commands are ordinary package sources.
+    assert affected_packages("remix-monorepo/v1", ("packages/cli/src/lib/commands/db.ts",)) == (
+        "cli",
+    )
+    # Package docs and change files never run package gates.
+    assert gate_ids_for_profile_paths(
+        "remix-monorepo/v1",
+        ("packages/headers/README.md", "packages/headers/.changes/minor.accept.md"),
+    ) == ("patch_diff_check",)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # The frozen test runner: the profile executes it.
+        "packages/test/src/lib/runner.ts",
+        "packages/assert/src/index.ts",
+        "packages/cli/src/lib/commands/test.ts",
+        "packages/cli/src/lib/cli.ts",
+        "packages/remix/src/cli-entry.ts",
+        "packages/remix/src/cli.ts",
+        # Package, lock and tool configuration.
+        "packages/headers/package.json",
+        "packages/headers/tsconfig.json",
+        "pnpm-lock.yaml",
+        "package.json",
+        # Installed dependencies and paths outside workspace packages.
+        "packages/headers/node_modules/x/index.js",
+        "scripts/postinstall.ts",
+        "packages/Headers/src/a.ts",
+    ],
+)
+def test_remix_monorepo_rejects_runner_configuration_and_outside_paths(path: str) -> None:
+    with pytest.raises(RoomExecutionProfileError) as raised:
+        gate_ids_for_profile_paths("remix-monorepo/v1", ("packages/headers/src/a.ts", path))
+    assert raised.value.code == "room_execution_gate_path_uncovered"
+
+
+def test_affected_packages_are_a_pure_function_of_source_paths() -> None:
+    paths = (
+        "packages/headers/src/lib/accept.ts",
+        "packages/multipart-parser/src/lib/parser.test.ts",
+        "packages/headers/src/index.ts",
+        "packages/cookie/README.md",
+        "docs/guide.md",
+    )
+
+    assert affected_packages("remix-monorepo/v1", paths) == ("headers", "multipart-parser")
+    assert affected_packages("remix-monorepo/v1", ("packages/cookie/README.md",)) == ()
+    assert affected_packages("node-pnpm-library/v1", ("src/index.ts",)) == ()

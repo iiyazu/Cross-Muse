@@ -88,6 +88,22 @@ _NODE_TOOLING_PREFIXES = (
 )
 _XMUSE_BACKEND_PREFIXES = ("xmuse/", *_PYTHON_PREFIXES)
 _XMUSE_BACKEND_FILES = frozenset({*_PYTHON_ROOT_FILES, "AGENTS.md"})
+REMIX_MONOREPO_PROFILE_ID = "remix-monorepo/v1"
+# The repository's own test runner (`remix test`: cli-entry.ts -> the cli
+# dispatcher -> the test command -> packages/test with packages/assert).  The
+# profile executes it, so the dispatch path is frozen: its files are repository
+# markers and no candidate may touch them.  Other cli commands stay editable;
+# like every test gate, candidate code still runs while the tests run.
+REMIX_RUNNER_PATHS: tuple[str, ...] = (
+    "packages/assert/",
+    "packages/cli/src/index.ts",
+    "packages/cli/src/lib/cli.ts",
+    "packages/cli/src/lib/commands/test.ts",
+    "packages/remix/src/cli-entry.ts",
+    "packages/remix/src/cli.ts",
+    "packages/test/",
+)
+_REMIX_PACKAGE_RE = re.compile(r"packages/([a-z0-9][a-z0-9._-]*)/(.+)")
 
 
 class RoomExecutionProfileError(ValueError):
@@ -230,6 +246,13 @@ _PROFILE_SPECS = (
         "node_pnpm_workspace_paths/v2",
         "node_pnpm_workspace_markers/v1",
     ),
+    _ProfileSpec(
+        REMIX_MONOREPO_PROFILE_ID,
+        1,
+        ("patch_diff_check", "node_pnpm_remix_typecheck", "node_pnpm_remix_test"),
+        "remix_monorepo_paths/v1",
+        "remix_monorepo_markers/v1",
+    ),
 )
 
 
@@ -307,6 +330,14 @@ def _classify_paths(profile_id: str, paths: tuple[str, ...]) -> str:
             path in _PYTHON_ROOT_FILES or path.startswith(_PYTHON_PREFIXES)
         ):
             backend.append(path)
+        elif profile_id == REMIX_MONOREPO_PROFILE_ID:
+            kind = _remix_path_kind(path)
+            if kind == "source":
+                frontend.append(path)
+            elif kind == "docs":
+                docs.append(path)
+            else:
+                unknown.append(path)
         elif profile_id in {"node-pnpm-library/v1", "node-pnpm-next-workspace/v1"} and (
             _is_node_candidate_path(path)
         ):
@@ -342,7 +373,11 @@ def gate_ids_for_profile_paths(profile_id: str, paths: tuple[str, ...]) -> tuple
     profile = get_execution_gate_profile(profile_id)
     kind = _classify_paths(profile_id, paths)
     if kind == "docs":
-        return ("patch_diff_check",) if profile_id == "docs/v1" else profile.gate_ids
+        if profile_id in {"docs/v1", REMIX_MONOREPO_PROFILE_ID}:
+            return ("patch_diff_check",)
+        return profile.gate_ids
+    if profile_id == REMIX_MONOREPO_PROFILE_ID:
+        return profile.gate_ids
     if profile_id in {"python-uv/v1", "python-uv-ty/v1"}:
         return profile.gate_ids
     if profile_id in {"node-pnpm-library/v1", "node-pnpm-next-workspace/v1"}:
@@ -361,6 +396,48 @@ def gate_ids_for_profile_paths(profile_id: str, paths: tuple[str, ...]) -> tuple
     if kind == "mixed":
         return ("patch_diff_check", *backend, *frontend)
     raise RoomExecutionProfileError("room_execution_gate_path_uncovered")
+
+
+def _remix_path_kind(path: str) -> str:
+    """Classify one canonical path for ``remix-monorepo/v1``.
+
+    Only workspace-package sources (``packages/<name>/...``) and documentation are
+    accepted.  Package, lock and tool configuration, installed dependencies and the
+    frozen test runner are never candidate paths.
+    """
+
+    if path.startswith(REMIX_RUNNER_PATHS):
+        return "rejected"
+    if _is_documentation_path(path):
+        return "docs"
+    match = _REMIX_PACKAGE_RE.fullmatch(path)
+    if match is None or "node_modules" in PurePosixPath(path).parts:
+        return "rejected"
+    if PurePosixPath(path).suffix.casefold() in _DOC_SUFFIXES:
+        # Package READMEs, changelogs and change files (`.changes/*.md`).
+        return "docs"
+    return "source" if _is_node_candidate_path(path) else "rejected"
+
+
+def affected_packages(profile_id: str, paths: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the workspace packages whose sources a path set changes.
+
+    Only ``remix-monorepo/v1`` selects gates per package; every other profile
+    returns ``()``.  The result is a pure function of the changed paths, so a
+    frozen plan never needs to store it.
+    """
+
+    if profile_id != REMIX_MONOREPO_PROFILE_ID:
+        return ()
+    names: set[str] = set()
+    for raw in paths:
+        path = canonical_execution_path(raw)
+        if _remix_path_kind(path) != "source":
+            continue
+        match = _REMIX_PACKAGE_RE.fullmatch(path)
+        if match is not None:
+            names.add(match.group(1))
+    return tuple(sorted(names))
 
 
 def _is_node_candidate_path(path: str) -> bool:
