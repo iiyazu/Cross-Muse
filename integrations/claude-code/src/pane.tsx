@@ -5,7 +5,8 @@
 
 import type { XmuseBoard, XmuseCache, XmuseModule } from "../types/index";
 import { statusText } from "./board_state";
-import { displayState } from "./labels";
+import { grantExpired, remainingMmSs } from "./grant_state";
+import { ACCEPTED_BADGE, displayState, findingsPart, reviewStatusWord } from "./labels";
 import { roomLink, safe, safeId, shortRev, shortRoom } from "./text";
 
 export type PaneEnv = {
@@ -14,15 +15,38 @@ export type PaneEnv = {
   };
 };
 
-function moduleLine(m: XmuseModule): string {
+function moduleLine(m: XmuseModule, reviewsOn: boolean): string {
+  // accepted is the only completion mark: an accepted module shows
+  // 已验收, a verified-but-not-accepted one keeps 已验证 and gains the
+  // review part below. While reviews are off the row is byte-identical
+  // to the pre-review form.
+  const statePart = reviewsOn && m.accepted ? ACCEPTED_BADGE : displayState(m.state);
   const parts = [
     safeId(m.module_id),
     m.owner_display,
     "[" + safe(m.provider_kind, 24) + "]",
-    displayState(m.state),
+    statePart,
     "报告" + String(m.done_reports) + "/通过" + String(m.passed) + "/失败" + String(m.failed) + "/返工" + String(m.rework_rounds),
   ];
-  return parts.join(" ");
+  let line = parts.join(" ");
+  if (reviewsOn) {
+    const rp = reviewPart(m);
+    if (rp !== "") line += " · " + rp;
+  }
+  return line;
+}
+
+// One fixed-word review part per module row, counts only. Empty when
+// there is no review. Never hidden for unknown statuses (?value).
+function reviewPart(m: XmuseModule): string {
+  const word = reviewStatusWord(m.review.status, m.review.reviewer_kind);
+  if (word === "") return "";
+  const segs = [word];
+  if (m.review.escalated_from_present) segs.push("已升级");
+  const fc = m.review.findings_count;
+  const fp = findingsPart(fc.blocker, fc.major, fc.minor);
+  if (fp !== "") segs.push(fp);
+  return segs.join(" · ");
 }
 
 export function headerLine(cache: XmuseCache): string {
@@ -42,16 +66,42 @@ export function attentionLine(kind: string, reason: string, target: string): str
 }
 
 // Pure tree builder used by the hook and the tests. Returns plain-data
-// nodes so tests can assert without a surface.
+// nodes so tests can assert without a surface. Control labels are fixed
+// words only (批准/拒绝/取消/撤销授权): split ids live in keys, agent text
+// never enters a label, and toasts never carry either.
 export type PaneNode =
   | { type: "text"; text: string; dim?: boolean }
   | { type: "button"; key: string; label: string }
-  | { type: "link"; key: string; label: string; href: string };
+  | { type: "link"; key: string; label: string; href: string }
+  | { type: "input"; key: string; label: string; placeholder?: string; submitLabel?: string; value?: string };
 
-export function buildPaneNodes(cache: XmuseCache, webUrl: string): PaneNode[] {
+export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number = Date.now()): PaneNode[] {
   const nodes: PaneNode[] = [];
   nodes.push({ type: "text", text: headerLine(cache) });
   nodes.push({ type: "text", text: statusText(cache), dim: true });
+
+  // Grant section. Always drawn, even while unbound or offline, so the
+  // default pane offers pairing. The confirm field never hints the digest.
+  nodes.push({ type: "text", text: "授权" });
+  const grant = cache.grant;
+  const boundId = cache.binding;
+  const grantLive = grant !== null && boundId !== null && !grantExpired(grant.expiresAt, nowMs);
+  const liveGrant = grantLive ? grant : null;
+  if (liveGrant === null) {
+    nodes.push({ type: "text", text: "在 Web 看板的“插件授权”生成配对码，然后输入这里。" });
+    nodes.push({
+      type: "input",
+      key: "xmuse-pairing",
+      label: "配对码",
+      placeholder: "ABCD-EFGH",
+      submitLabel: "配对",
+      value: "",
+    });
+  } else {
+    nodes.push({ type: "text", text: "已授权 · 剩余 " + remainingMmSs(liveGrant.expiresAt, nowMs) });
+    nodes.push({ type: "button", key: "xmuse-revoke", label: "撤销授权" });
+  }
+
   if (cache.offline || cache.binding === null || cache.summary === null) return nodes;
 
   const summary = cache.summary;
@@ -70,7 +120,14 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string): PaneNode[] {
     return nodes;
   }
   for (const m of board.modules.slice(0, 100)) {
-    nodes.push({ type: "text", text: moduleLine(m) });
+    nodes.push({ type: "text", text: moduleLine(m, board.reviews === 1) });
+    // An operator-pending review links to the room page, same style as
+    // the proposed-split link. Room page only: no review id and no patch
+    // reference anywhere in the pane.
+    if (board.reviews === 1 && m.review.status === "pending" && m.review.reviewer_kind === "operator") {
+      const reviewHref = roomLink(webUrl, summary.conversation_id);
+      if (reviewHref !== "") nodes.push({ type: "link", key: "review-" + safeId(m.module_id), label: "在 Web 复核", href: reviewHref });
+    }
     if (m.failed > 0 && m.gate_ids.length > 0) {
       nodes.push({ type: "text", text: "门禁: " + m.gate_ids.slice(0, 6).join(" ") });
     }
@@ -92,10 +149,30 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string): PaneNode[] {
     }
   }
 
-  for (const sid of board.proposed_splits.slice(0, 10)) {
+  for (const row of board.splits.slice(0, 10)) {
+    if (row.status !== "proposed") continue;
     const href = roomLink(webUrl, summary.conversation_id);
-    nodes.push({ type: "text", text: "待审批 " + safe(sid, 64) });
-    if (href !== "") nodes.push({ type: "link", key: "split-" + safe(sid, 64), label: "在 Web 审批", href });
+    nodes.push({ type: "text", text: "待审批 " + safe(row.split_id, 64) });
+    if (href !== "") nodes.push({ type: "link", key: "split-" + safe(row.split_id, 64), label: "在 Web 审批", href });
+    // Decision buttons appear only for a live grant bound to this room and
+    // a split that carries a digest guard. Labels stay fixed words.
+    const eligible =
+      grantLive && grant !== null && boundId !== null && grant.conversationId === boundId && row.digest !== "";
+    if (!eligible) continue;
+    const pending = cache.confirming;
+    if (pending !== null && pending.splitId === row.split_id) {
+      nodes.push({
+        type: "input",
+        key: "xmuse-confirm",
+        label: "输入摘要前 6 位以确认",
+        placeholder: "请输入前 6 位",
+        value: "",
+      });
+      nodes.push({ type: "button", key: "xmuse-cancel-confirm", label: "取消" });
+    } else if (pending === null) {
+      nodes.push({ type: "button", key: "xmuse-approve-" + row.split_id, label: "批准" });
+      nodes.push({ type: "button", key: "xmuse-reject-" + row.split_id, label: "拒绝" });
+    }
   }
 
   if (board.contracts.length === 0) {
@@ -115,10 +192,18 @@ export type PaneEls = {
   Text: (props: never) => unknown;
   Button: (props: never) => unknown;
   Link: (props: never) => unknown;
+  Input?: (props: never) => unknown;
 };
 
-export function PaneTree(props: { els: PaneEls; nodes: PaneNode[]; onExpand: (moduleId: string) => void }): unknown {
+export function PaneTree(props: {
+  els: PaneEls;
+  nodes: PaneNode[];
+  onExpand: (moduleId: string) => void;
+  onControl: (key: string) => void;
+  onSubmit: (key: string, value: string) => void;
+}): unknown {
   const { Box, Text, Button, Link } = props.els;
+  const Field = props.els.Input;
   return (
     <Box flexDirection="column">
       {props.nodes.map((n, i) => {
@@ -129,9 +214,25 @@ export function PaneTree(props: { els: PaneEls; nodes: PaneNode[]; onExpand: (mo
             </Text>
           );
         }
+        if (n.type === "input") {
+          if (Field === undefined) return <Text key={n.key} dimColor>{n.label}</Text>;
+          return (
+            <Field
+              key={n.key}
+              label={n.label}
+              placeholder={n.placeholder}
+              submitLabel={n.submitLabel}
+              value={n.value ?? ""}
+              onSubmit={(value: string) => props.onSubmit(n.key, value)}
+            />
+          );
+        }
         if (n.type === "button") {
-          const moduleId = n.key.startsWith("expand-") ? n.key.slice("expand-".length) : n.key;
-          return <Button key={n.key} label={n.label} onPress={() => props.onExpand(moduleId)} />;
+          if (n.key.startsWith("expand-")) {
+            const moduleId = n.key.slice("expand-".length);
+            return <Button key={n.key} label={n.label} onPress={() => props.onExpand(moduleId)} />;
+          }
+          return <Button key={n.key} label={n.label} onPress={() => props.onControl(n.key)} />;
         }
         return <Link key={n.key} label={n.label} href={n.href} />;
       })}

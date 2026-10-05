@@ -603,18 +603,22 @@ def project_event(activity_row: Mapping[str, Any]) -> dict[str, Any] | None:
         }
     elif kind == "split_rejected":
         decided_via = payload.get("decided_via")
+        grant_id = payload.get("grant_id")
         data = {
             "split_id": str(payload.get("split_id")),
             "decided_via": str(decided_via) if isinstance(decided_via, str) else None,
+            "grant_id": str(grant_id) if isinstance(grant_id, str) else None,
         }
     elif kind == "charter_assigned":
         module_id = str(payload.get("module_id"))
         decided_via = payload.get("decided_via")
+        grant_id = payload.get("grant_id")
         data = {
             "split_id": str(payload.get("split_id")),
             "owner_participant_id": str(payload.get("owner_participant_id")),
             "charter_version": int(payload.get("version", 0)),
             "decided_via": str(decided_via) if isinstance(decided_via, str) else None,
+            "grant_id": str(grant_id) if isinstance(grant_id, str) else None,
         }
     elif kind == "claimed":
         module_id = str(payload.get("module_id"))

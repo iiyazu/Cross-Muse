@@ -4,11 +4,23 @@
 
 import type { XmuseAttentionItem, XmuseCache, XmuseSummary } from "../types/index";
 import { COUNT_KEYS } from "./api";
-import { STATUS_GROUPS } from "./labels";
+import { STATUS_GROUPS, reviewAttentionLabel } from "./labels";
 import { safe, safeId, shortRev, shortRoom } from "./text";
 
 export function attentionKey(a: XmuseAttentionItem): string {
   return safe(a.reason_code, 64) + "|" + safe(a.module_id ?? "", 64) + "|" + safe(a.split_id ?? "", 64);
+}
+
+// Attention the mod toasts about when it is gained: every operator item
+// plus an objected review (owner kind). Structured fields only.
+export function toastableAttention(summary: XmuseSummary): XmuseAttentionItem[] {
+  return summary.attention.filter(
+    (a) => a.kind === "operator" || (a.kind === "owner" && a.reason_code === "board_attention_review_objected"),
+  );
+}
+
+export function toastableKeys(summary: XmuseSummary): string[] {
+  return toastableAttention(summary).map(attentionKey);
 }
 
 function operatorCount(summary: XmuseSummary): number {
@@ -20,6 +32,7 @@ function operatorCount(summary: XmuseSummary): number {
 // One status line. Examples:
 //   "xmuse 离线"  "xmuse 未绑定房间"
 //   "看板 3 模块 · ✓1 …1 ✗1 · 待你处理 1"
+// The ✓ part counts accepted modules (§4.4), never merely verified ones.
 export function statusText(cache: XmuseCache): string {
   if (cache.offline) return "xmuse 离线";
   if (cache.binding === null) return "xmuse 未绑定房间";
@@ -27,7 +40,7 @@ export function statusText(cache: XmuseCache): string {
   const s = cache.summary;
   const parts: string[] = [];
   for (const g of STATUS_GROUPS) {
-    const n = s.counts[g.state] ?? 0;
+    const n = g.state === "verified" ? s.accepted_total : (s.counts[g.state] ?? 0);
     if (n > 0) parts.push(g.glyph + String(n));
   }
   let line = "看板 " + String(s.modules_total) + " 模块";
@@ -47,7 +60,7 @@ export function statusBlock(cache: XmuseCache): string {
   lines.push("xmuse " + shortRoom(s.conversation_id) + " rev " + shortRev(s.revision));
   const parts: string[] = [];
   for (const g of STATUS_GROUPS) {
-    const n = s.counts[g.state] ?? 0;
+    const n = g.state === "verified" ? s.accepted_total : (s.counts[g.state] ?? 0);
     if (n > 0) parts.push(g.glyph + String(n));
   }
   lines.push("模块 " + String(s.modules_total) + (parts.length > 0 ? " " + parts.join(" ") : ""));
@@ -55,7 +68,8 @@ export function statusBlock(cache: XmuseCache): string {
   lines.push("待你处理 " + String(operatorCount(s)));
   for (const a of op) {
     const target = a.module_id !== null ? safeId(a.module_id) : safe(a.split_id ?? "?", 32);
-    lines.push("! " + safe(a.reason_code, 64) + " " + target);
+    const label = reviewAttentionLabel(a.reason_code) ?? safe(a.reason_code, 64);
+    lines.push("! " + label + " " + target);
   }
   return lines.slice(0, 8).join("\n");
 }
@@ -68,11 +82,11 @@ export function planToast(prev: XmuseCache, next: XmuseSummary, stateNotes: stri
   if (!prev.baselined || prev.summary === null) return null;
   const items: string[] = [];
   const before = new Set(prev.seenAttention);
-  for (const a of next.attention) {
-    if (a.kind !== "operator") continue;
+  for (const a of toastableAttention(next)) {
     if (!before.has(attentionKey(a))) {
       const target = a.module_id !== null ? safeId(a.module_id) : safe(a.split_id ?? "?", 32);
-      items.push("待处理 " + safe(a.reason_code, 64) + " " + target);
+      const label = reviewAttentionLabel(a.reason_code) ?? "待处理 " + safe(a.reason_code, 64);
+      items.push(label + " " + target);
     }
   }
   for (const note of stateNotes.slice(0, 3)) items.push(note);

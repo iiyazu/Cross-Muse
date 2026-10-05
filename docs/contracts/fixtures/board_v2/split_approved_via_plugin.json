@@ -29,6 +29,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -45,6 +46,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -76,6 +78,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "decided_via": "cli",
+          "grant_id": null,
           "split_id": "split_0000000000000000000000000000001f"
         },
         "kind": "split_rejected",
@@ -147,6 +150,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000003",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -163,6 +167,7 @@
         "data": {
           "charter_version": 1,
           "decided_via": "plugin:claude-code",
+          "grant_id": "grant_split_approved_via_plugin",
           "owner_participant_id": "part_00000000000000000000000000000004",
           "split_id": "split_00000000000000000000000000000018"
         },
@@ -194,6 +199,7 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "decided_via": "cli",
+          "grant_id": null,
           "split_id": "split_0000000000000000000000000000001f"
         },
         "kind": "split_rejected",

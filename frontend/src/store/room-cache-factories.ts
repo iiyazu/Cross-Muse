@@ -3,6 +3,7 @@ import type {
   RoomCache,
   RoomCodexCache,
   RoomExecutionCache,
+  RoomGrantCache,
   RoomMemoryCache
 } from "@/store/domain";
 
@@ -83,6 +84,19 @@ export function createEmptyBoardCache(): RoomBoardCache {
     consecutiveFailures: 0,
     lastSyncedAt: 0,
     error: null,
-    contractDetails: {}
+    contractDetails: {},
+    reviewDetails: {},
+    reviewDetailErrors: {}
+  };
+}
+
+export function createEmptyGrantCache(): RoomGrantCache {
+  return {
+    grants: [],
+    loading: false,
+    requestGeneration: 0,
+    consecutiveFailures: 0,
+    lastSyncedAt: 0,
+    error: null
   };
 }

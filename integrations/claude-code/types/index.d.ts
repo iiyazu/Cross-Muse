@@ -22,11 +22,25 @@ export type XmuseSummary = {
   counts: { [state: string]: number };
   attention: XmuseAttentionItem[];
   attention_total: number;
+  // Accepted modules (§4.4). Equals counts.verified while reviews are off.
+  accepted_total: number;
+  // capabilities.reviews from the projection/summary: 1 while cross-family
+  // reviews are on, 0 otherwise (old servers: 0).
+  reviews: number;
 };
 
 export type XmuseAgentSnippet = {
   field: string;
   text: string;
+};
+
+// Structured review state of one module. Counts only: the mod never
+// reads review summaries or finding text (no AgentText leaves here).
+export type XmuseReviewInfo = {
+  status: string;
+  reviewer_kind: string | null;
+  escalated_from_present: boolean;
+  findings_count: { blocker: number; major: number; minor: number };
 };
 
 export type XmuseModule = {
@@ -47,6 +61,9 @@ export type XmuseModule = {
   paths: string[];
   provides: string[];
   depends: string[];
+  // The one completion value (§4.4). Missing on old servers: false.
+  accepted: boolean;
+  review: XmuseReviewInfo;
 };
 
 export type XmuseModuleDetail = {
@@ -60,7 +77,34 @@ export type XmuseBoard = {
   details: XmuseModuleDetail[];
   contracts: { contract_id: string; latest_version: number }[];
   proposed_splits: string[];
+  splits: XmuseSplitSummary[];
   operator_attention: XmuseAttentionItem[];
+  // capabilities.reviews of the projection (1 while reviews are on).
+  reviews: number;
+  // Modules with accepted == true in this projection.
+  accepted_total: number;
+};
+
+// One split row the pane may offer a decision on. Only structured fields:
+// status codes and the digest guard. Module titles and path globs stay in
+// the expanded module detail and never enter a control label or a toast.
+export type XmuseSplitSummary = {
+  split_id: string;
+  status: string;
+  digest: string;
+};
+
+// Non-secret grant metadata the pane renders from. The token itself lives
+// only in a module-level variable of the hooks module, never here.
+export type XmuseGrantMeta = {
+  grantId: string;
+  expiresAt: string;
+  conversationId: string;
+};
+
+export type XmuseConfirming = {
+  splitId: string;
+  decision: string;
 };
 
 export type XmuseCache = {
@@ -79,6 +123,9 @@ export type XmuseCache = {
   nextRetryAt: number;
   paneOpen: boolean;
   expanded: { [module_id: string]: boolean };
+  grant: XmuseGrantMeta | null;
+  confirming: XmuseConfirming | null;
+  formEpoch: number;
 };
 
 declare module "claude-code" {

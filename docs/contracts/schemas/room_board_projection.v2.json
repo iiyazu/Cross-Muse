@@ -610,9 +610,10 @@
               "type": "object",
               "properties": {
                 "split_id": { "type": "string" },
-                "decided_via": { "type": ["string", "null"] }
+                "decided_via": { "type": ["string", "null"] },
+                "grant_id": { "type": ["string", "null"] }
               },
-              "required": ["split_id", "decided_via"],
+              "required": ["split_id", "decided_via", "grant_id"],
               "additionalProperties": false
             },
             {
@@ -621,9 +622,10 @@
                 "split_id": { "type": "string" },
                 "owner_participant_id": { "type": "string" },
                 "charter_version": { "type": "integer" },
-                "decided_via": { "type": ["string", "null"] }
+                "decided_via": { "type": ["string", "null"] },
+                "grant_id": { "type": ["string", "null"] }
               },
-              "required": ["split_id", "owner_participant_id", "charter_version", "decided_via"],
+              "required": ["split_id", "owner_participant_id", "charter_version", "decided_via", "grant_id"],
               "additionalProperties": false
             },
             {
