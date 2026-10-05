@@ -1180,3 +1180,28 @@ def test_vocabulary_matches_hosts() -> None:
         "未入分支",
     ):
         assert needle in claude_labels, f"claude labels.ts missing {needle!r}"
+
+
+def test_execution_reason_codes_have_fixed_labels() -> None:
+    from xmuse_ctl import labels
+
+    for code in (
+        "execution_gate_failed",
+        "execution_gate_timeout",
+        "execution_gate_memory_limit",
+        "execution_gate_process_limit",
+        "execution_gate_scratch_limit",
+        "execution_gate_resource_probe_failed",
+        "execution_cancelled",
+        "execution_git_metadata_invalid",
+        "execution_sandbox_unavailable",
+        "execution_gate_profile_marker_invalid",
+        "execution_toolchain_capability_drift",
+        "execution_repo_busy",
+    ):
+        label = labels.reason_label(code)
+        assert code not in label
+        assert "未知原因" not in label
+    # A code that is new but in the family stays an execution problem, with the code shown.
+    assert labels.reason_label("execution_future_thing") == "执行环境问题（execution_future_thing）"
+    assert labels.reason_label("something_else") == "未知原因（something_else）"
