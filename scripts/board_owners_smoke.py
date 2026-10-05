@@ -30,6 +30,21 @@ Three scenarios are supported (``--scenario``); every summary carries
   Human message is sent after the drill.  Observed 2026-10-04: OpenCode
   owners decline to sabotage their own module even when the drill is framed
   as an operator-authorized calibration, so ``verify`` is the measured path.
+* ``review``: split and charters with ``cross_family`` review policy.  It
+  passes when every module ends verified and endorsed by a different-family
+  reviewer, and every objection is followed by a fix.
+* ``integration``: the lead's split gives both owners charters covering one
+  shared file and tells both to change the same lines of it.  Both pass
+  verification, then the host integration worker (started like the
+  verification worker) finds the newcomer conflicted; a Human drill asks the
+  conflicted owner to fix, and the run ends when both modules are
+  ``integrated`` or the phase timeout passes.
+
+Every scenario summary also carries per-module ``modules`` (the §6 counters
+plus final ``state``, ``accepted`` and ``integration_status`` read from the
+same ``room_board_projection`` derivation the UI uses), ``models``,
+``provider_kinds`` and ``wall_seconds``.  With ``--result <path>`` the
+summary is additionally written as JSON to that path (stdout is unchanged).
 
 The script prints timed delivery evidence plus one JSON summary.  Agent child
 processes are always terminated before exit.
@@ -39,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -52,7 +68,7 @@ import time
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +94,8 @@ from xmuse_core.chat.room_api_models import (
     RoomConversationCreate,
 )
 from xmuse_core.chat.room_application import RoomApplicationService
+from xmuse_core.chat.room_board_integration import RoomBoardIntegrationWorker
+from xmuse_core.chat.room_board_projection import build_board_projection
 from xmuse_core.chat.room_board_verification import (
     BOARD_VERIFICATION_GATE_FAILED,
     RoomBoardVerificationWorker,
@@ -133,7 +151,7 @@ CONTRACT_V2_CONTENT = (
     'api.greeting.greet and returns "<message> [en]".'
 )
 
-ALLOWED_SCENARIOS = ("revision", "verify", "false-done", "review")
+ALLOWED_SCENARIOS = ("revision", "verify", "false-done", "review", "integration")
 DEFAULT_SCENARIO = "revision"
 # Smallest fixed profile whose gates run pytest on changed Python paths: the
 # seed below satisfies its markers and local toolchain capability offline.
@@ -162,7 +180,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/api", "src/client"]
+packages = ["src/api", "src/client", "src/shared"]
 """
 SEED_GITIGNORE = ".venv/\n__pycache__/\n*.pyc\n.pytest_cache/\n.mypy_cache/\n"
 SEED_GREETING_TEST_PY = '''\
@@ -183,10 +201,21 @@ def test_greet_mentions_the_given_name() -> None:
 # satisfiable by its own module and its providers: only the provider's
 # contract test is seeded.  A dependent's test in the seed would fail every
 # provider verification for work the provider does not own.
+# The integration scenario needs one shared file both charters cover: the
+# seed carries it with neutral content and no test of its own, so each
+# owner's verification stage (base + only its own patch) stays green while
+# the two patches collide on the same lines at integration time.
+SEED_SHARED_FLAGS_PY = '''\
+"""Shared flags edited by both owners in the integration scenario."""
+
+OWNER = "none"
+'''
 SEED_FILES: tuple[tuple[str, str], ...] = (
     ("src/api/__init__.py", ""),
     ("src/api/test_greeting_contract.py", SEED_GREETING_TEST_PY),
     ("src/client/__init__.py", ""),
+    ("src/shared/__init__.py", ""),
+    ("src/shared/flags.py", SEED_SHARED_FLAGS_PY),
 )
 
 OPERATOR_IDENTITY = "operator:smoke"
@@ -317,6 +346,86 @@ def build_drill_human_message() -> str:
         "submit your outcome. When the host's verification result comes back, "
         "restore a correct implementation, run the tests, commit, and report done "
         "again."
+    )
+
+
+def build_integration_split_spec(*, backend_id: str, frontend_id: str) -> dict[str, Any]:
+    """Return the exact two-owner shared-file split the lead must propose.
+
+    Both charters cover ``src/shared/**`` and each acceptance tells its
+    owner to change the same ``OWNER`` line of ``src/shared/flags.py`` to
+    its own value, with a module-specific test file so the two patches
+    collide on exactly one path at integration time.
+    """
+
+    modules = [
+        {
+            "module_id": "backend",
+            "title": "Backend shared flags",
+            "paths": ["src/shared/**"],
+            "provides": [],
+            "depends": [],
+            "acceptance": [
+                'Set OWNER = "backend" on the shared line of src/shared/flags.py, '
+                "add src/shared/test_backend_flags.py asserting "
+                'shared.flags.OWNER == "backend" with typed Python, run '
+                "python -m pytest -q src/shared, commit only src/shared/**, "
+                "report progress and done."
+            ],
+            "report_to": None,
+        },
+        {
+            "module_id": "frontend",
+            "title": "Frontend shared flags",
+            "paths": ["src/shared/**"],
+            "provides": [],
+            "depends": [],
+            "acceptance": [
+                'Set OWNER = "frontend" on the shared line of src/shared/flags.py, '
+                "add src/shared/test_frontend_flags.py asserting "
+                'shared.flags.OWNER == "frontend" with typed Python, run '
+                "python -m pytest -q src/shared, commit only src/shared/**, "
+                "report progress and done."
+            ],
+            "report_to": None,
+        },
+    ]
+    return {
+        "modules": modules,
+        "assignments": {"backend": backend_id, "frontend": frontend_id},
+        "contracts": [],
+    }
+
+
+def build_integration_split_human_message(*, backend_id: str, frontend_id: str) -> str:
+    """Return the Human instruction that tells the lead to propose the shared split."""
+
+    spec = build_integration_split_spec(backend_id=backend_id, frontend_id=frontend_id)
+    payload = json.dumps(spec, indent=2, sort_keys=True)
+    return (
+        "Propose the module split for this room now. Call "
+        "chat_room_board_propose_split with EXACTLY this split (modules, "
+        f"assignments, contracts):\n{payload}\n"
+        "After the split tool succeeds, submit a short outcome and stop."
+    )
+
+
+def build_integration_fix_human_message(*, module_id: str) -> str:
+    """Return the conflict fix request for the conflicted newcomer owner.
+
+    Short and neutral: it names the file and the rework loop (restore the
+    overlapping lines, move own content aside, test, commit, done) without
+    stating any of the run's checks.
+    """
+
+    return (
+        f"To the {module_id} owner: the host integration could not combine "
+        "your change to src/shared/flags.py with the other module's change "
+        "to the same lines. In your clone, restore those lines to their "
+        "original content and add your module's content as new lines elsewhere "
+        "in the same file. Update your test to match, keep the code typed, run "
+        "python -m pytest -q src/shared, commit only src/shared/**, report "
+        "progress and done."
     )
 
 
@@ -640,6 +749,251 @@ def review_ok(evidence: Mapping[str, Any]) -> bool:
     return all(compute_review_checks(evidence).values())
 
 
+INTEGRATION_FINISHED_STATUSES = ("integrated", "conflicted", "gate_failed", "error")
+INTEGRATION_CONFLICT_ITEM_STATUSES = ("conflicted", "fell_back")
+SHARED_CONFLICT_FILE = "src/shared/flags.py"
+
+
+def _collect_integration_jobs(root: Path, conversation_id: str) -> list[dict[str, Any]]:
+    """Return finished and unfinished integration jobs with items, oldest first."""
+
+    conn = _connect_db(root)
+    try:
+        try:
+            rows = conn.execute(
+                "select integration_id, status, reason_code, created_at, finished_at "
+                "from room_board_integrations where conversation_id = ? "
+                "order by created_at, rowid",
+                (conversation_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        jobs: list[dict[str, Any]] = []
+        for row in rows:
+            integration_id = str(row["integration_id"])
+            try:
+                item_rows = conn.execute(
+                    "select module_id, verification_id, item_order, role, status, "
+                    "applied_verification_id, conflicts_total, reason_code "
+                    "from room_board_integration_items where integration_id = ? "
+                    "order by item_order, module_id",
+                    (integration_id,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                item_rows = []
+            jobs.append(
+                {
+                    "integration_id": integration_id,
+                    "status": str(row["status"]),
+                    "reason_code": row["reason_code"],
+                    "created_at": str(row["created_at"]),
+                    "finished_at": str(row["finished_at"]) if row["finished_at"] else None,
+                    "items": [
+                        {
+                            "module_id": str(item["module_id"]),
+                            "verification_id": str(item["verification_id"]),
+                            "order": int(item["item_order"]),
+                            "role": str(item["role"]),
+                            "status": str(item["status"]),
+                            "applied_verification_id": (
+                                str(item["applied_verification_id"])
+                                if item["applied_verification_id"] is not None
+                                else None
+                            ),
+                            "conflicts_total": int(item["conflicts_total"]),
+                            "reason_code": item["reason_code"],
+                        }
+                        for item in item_rows
+                    ],
+                }
+            )
+        return jobs
+    finally:
+        conn.close()
+
+
+def _finished_integration_jobs(jobs: list[Any]) -> list[Mapping[str, Any]]:
+    """Return only finished integration jobs (pending/running never count)."""
+
+    finished: list[Mapping[str, Any]] = []
+    for job in jobs:
+        if isinstance(job, Mapping) and job.get("status") in INTEGRATION_FINISHED_STATUSES:
+            finished.append(job)
+    return finished
+
+
+def _conflicted_items(job: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Return the job items whose candidate the host could not place."""
+
+    raw = job.get("items")
+    items = raw if isinstance(raw, list) else []
+    return [
+        item
+        for item in items
+        if isinstance(item, Mapping) and item.get("status") in INTEGRATION_CONFLICT_ITEM_STATUSES
+    ]
+
+
+def latest_conflicted_module(jobs: list[Any]) -> str | None:
+    """Return the conflicted module of the newest finished job, if any.
+
+    Only the newest finished job matters: an older conflict may already have
+    been fixed by a newer candidate.
+    """
+
+    finished = _finished_integration_jobs(jobs)
+    if not finished:
+        return None
+    items = _conflicted_items(finished[-1])
+    if not items:
+        return None
+    module_id = items[0].get("module_id")
+    return str(module_id) if isinstance(module_id, str) and module_id else None
+
+
+def source_repo_snapshot(path: Path) -> dict[str, Any]:
+    """Snapshot the user's checkout: HEAD, porcelain status and file hashes.
+
+    The ``.git`` directory and the seed ``.venv`` tree are excluded from the
+    hashes (presence of ``.venv`` is recorded instead): the host must never
+    write into the checkout's tracked worktree, while the environment-owned
+    virtualenv stays outside the comparison.
+    """
+
+    head = _run_git(["rev-parse", "HEAD"], cwd=path)
+    status = _run_git(["status", "--porcelain"], cwd=path)
+    hashes: dict[str, str] = {}
+    for candidate in sorted(path.rglob("*")):
+        if ".git" in candidate.parts or not candidate.is_file():
+            continue
+        relative = candidate.relative_to(path)
+        if ".venv" in relative.parts:
+            continue
+        hashes[str(relative)] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    venv_present = (path / ".venv").is_dir()
+    return {"head": head, "status": status, "hashes": hashes, "venv_present": venv_present}
+
+
+def board_module_states(root: Path, conversation_id: str) -> dict[str, dict[str, Any]]:
+    """Read per-module §6 counters, state, accepted and integration status.
+
+    Uses the same ``room_board_projection`` derivation the UI consumes; an
+    empty dict is returned when the projection cannot be built.
+    """
+
+    conn = _connect_db(root)
+    try:
+        try:
+            projection = build_board_projection(conn, conversation_id, now=datetime.now(UTC))
+        except Exception:
+            return {}
+    finally:
+        conn.close()
+    modules = projection.get("modules")
+    states: dict[str, dict[str, Any]] = {}
+    if not isinstance(modules, list):
+        return states
+    for module in modules:
+        if not isinstance(module, Mapping):
+            continue
+        module_id = module.get("module_id")
+        if not isinstance(module_id, str) or not module_id:
+            continue
+        integration = module.get("integration")
+        integration_status = (
+            str(integration.get("status"))
+            if isinstance(integration, Mapping) and isinstance(integration.get("status"), str)
+            else "none"
+        )
+        counters = module.get("counters")
+        states[module_id] = {
+            "counters": dict(counters) if isinstance(counters, Mapping) else {},
+            "state": module.get("state"),
+            "accepted": bool(module.get("accepted")),
+            "integration_status": integration_status,
+        }
+    return states
+
+
+def compute_integration_loop(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """Measure the conflict -> fix -> integrate loop of one run.
+
+    Per module: finished jobs that left its candidate unplaced, and whether
+    it ends ``integrated``.  Totals sum the modules.
+    """
+
+    raw_jobs = evidence.get("integration_jobs")
+    jobs = list(raw_jobs) if isinstance(raw_jobs, list) else []
+    finished = _finished_integration_jobs(jobs)
+    raw_states = evidence.get("module_states")
+    states = raw_states if isinstance(raw_states, Mapping) else {}
+    per_module: dict[str, dict[str, Any]] = {}
+    for module_id in sorted(states):
+        conflicts = sum(
+            1
+            for job in finished
+            if any(item.get("module_id") == module_id for item in _conflicted_items(job))
+        )
+        info = states.get(module_id)
+        integrated = isinstance(info, Mapping) and info.get("integration_status") == "integrated"
+        per_module[str(module_id)] = {"conflicts": conflicts, "integrated": bool(integrated)}
+    return {
+        "jobs": len(finished),
+        "conflicts": sum(item["conflicts"] for item in per_module.values()),
+        "modules": per_module,
+        "all_integrated": bool(per_module)
+        and all(item["integrated"] for item in per_module.values()),
+    }
+
+
+def compute_integration_checks(evidence: Mapping[str, Any]) -> dict[str, bool]:
+    """Checks for the ``integration`` scenario.
+
+    The host must have left a conflicted candidate behind in a finished job,
+    the conflicted owner must have completed the fix request (or a
+    ``board.integration`` wake-up), every module must end ``integrated`` in
+    the projection, and the user's checkout must be byte-identical.
+    """
+
+    raw_jobs = evidence.get("integration_jobs")
+    jobs = list(raw_jobs) if isinstance(raw_jobs, list) else []
+    finished = _finished_integration_jobs(jobs)
+    # Historical: the final clean job must not erase the earlier conflict.
+    conflict_detected = any(_conflicted_items(job) for job in finished)
+    conflicted_module = latest_conflicted_module(jobs)
+    raw_participants = evidence.get("participants")
+    participants = raw_participants if isinstance(raw_participants, Mapping) else {}
+    drill_ids = set(_str_list(evidence.get("integration_drill_observation_ids")))
+    owner_woken = False
+    if isinstance(conflicted_module, str):
+        owner = participants.get(conflicted_module)
+        raw_observations = owner.get("observations") if isinstance(owner, Mapping) else None
+        observations: list[Any] = raw_observations if isinstance(raw_observations, list) else []
+        for item in observations:
+            if not isinstance(item, Mapping) or item.get("status") != "completed":
+                continue
+            if item.get("source_activity_type") == "board.integration":
+                owner_woken = True
+                break
+            observation_id = item.get("observation_id")
+            if isinstance(observation_id, str) and observation_id in drill_ids:
+                owner_woken = True
+                break
+    loop = compute_integration_loop(evidence)
+    return {
+        "conflict_detected": bool(conflict_detected),
+        "owner_woken": bool(owner_woken),
+        "both_integrated": bool(loop["all_integrated"]),
+        "user_checkout_untouched": bool(evidence.get("user_checkout_untouched")),
+    }
+
+
+def integration_ok(evidence: Mapping[str, Any]) -> bool:
+    """Return the final ``ok`` verdict for integration evidence."""
+
+    return all(compute_integration_checks(evidence).values())
+
+
 @contextmanager
 def _serve_room_mcp(root: Path) -> Iterator[str]:
     server = uvicorn.Server(
@@ -930,6 +1284,44 @@ def _stop_verification_worker(stop: threading.Event, thread: threading.Thread) -
     _mark("board_verification_worker_stopped", alive=thread.is_alive())
 
 
+def _start_integration_worker(
+    *, root: Path, execution_root: Path, execution_profile_id: str
+) -> tuple[threading.Event, threading.Thread]:
+    """Start the real board integration worker on a background thread.
+
+    Mirrors :func:`_start_verification_worker`: the smoke does not start the
+    Chat API, so it runs ``RoomBoardIntegrationWorker(...).reconcile_once()``
+    itself every ~1 s until the smoke ends.  Blocking git/gate work stays off
+    the pump event loop, exactly as the Chat API's ``asyncio.to_thread``
+    offload does.
+    """
+
+    worker = RoomBoardIntegrationWorker(
+        db_path=root / "chat.db",
+        clones_root=root / "runtime" / "owner-clones",
+        xmuse_root=root,
+        execution_root=execution_root,
+        execution_profile_id=execution_profile_id,
+    )
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                result = worker.reconcile_once()
+            except Exception as exc:
+                _mark("board_integration_error", error=f"{type(exc).__name__}: {exc}")
+            else:
+                if result.get("board_integrations_claimed"):
+                    _mark("board_integration_reconciled", **result)
+            stop.wait(1.0)
+
+    thread = threading.Thread(target=_loop, name="board-integration", daemon=True)
+    thread.start()
+    _mark("board_integration_worker_started", profile_id=execution_profile_id)
+    return stop, thread
+
+
 def _has_active_verifications(root: Path, conversation_id: str) -> bool:
     conn = _connect_db(root)
     try:
@@ -950,6 +1342,22 @@ def _has_pending_reviews(root: Path, conversation_id: str) -> bool:
             row = conn.execute(
                 "select count(*) as total from room_board_reviews "
                 "where conversation_id = ? and status = 'pending'",
+                (conversation_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return int(row["total"]) > 0
+    finally:
+        conn.close()
+
+
+def _has_active_integrations(root: Path, conversation_id: str) -> bool:
+    conn = _connect_db(root)
+    try:
+        try:
+            row = conn.execute(
+                "select count(*) as total from room_board_integrations "
+                "where conversation_id = ? and status in ('pending', 'running')",
                 (conversation_id,),
             ).fetchone()
         except sqlite3.OperationalError:
@@ -980,6 +1388,7 @@ async def _pump_until_idle(
     label: str,
     root: Path,
     wait_for_reviews: bool = False,
+    wait_for_integration: bool = False,
 ) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -999,12 +1408,14 @@ async def _pump_until_idle(
             _is_idle(kernel, conversation_id)
             and not _has_active_verifications(root, conversation_id)
             and not (wait_for_reviews and _has_pending_reviews(root, conversation_id))
+            and not (wait_for_integration and _has_active_integrations(root, conversation_id))
         ):
             await asyncio.sleep(IDLE_SETTLE_S)
             if (
                 _is_idle(kernel, conversation_id)
                 and not _has_active_verifications(root, conversation_id)
                 and not (wait_for_reviews and _has_pending_reviews(root, conversation_id))
+                and not (wait_for_integration and _has_active_integrations(root, conversation_id))
             ):
                 _mark(f"{label}_idle")
                 return True
@@ -1257,6 +1668,7 @@ def _collect_evidence(
     conversation_id: str,
     by_role: dict[str, Participant],
     drill: dict[str, Any] | None = None,
+    integration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     backend = by_role["backend"]
     frontend = by_role["frontend"]
@@ -1382,7 +1794,12 @@ def _collect_evidence(
         except Exception as exc:
             git_log = f"unavailable: {exc}"
         files: dict[str, str | None] = {}
-        for name in ("src/api/greeting.py", "src/client/render.py"):
+        for name in (
+            "src/api/greeting.py",
+            "src/client/render.py",
+            "src/shared/__init__.py",
+            "src/shared/flags.py",
+        ):
             candidate = clone_dir / name
             try:
                 files[name] = candidate.read_text(encoding="utf-8") if candidate.is_file() else None
@@ -1507,6 +1924,22 @@ def _collect_evidence(
         evidence["backend_drill_session_ids"] = drill_sessions
         evidence["backend_woken_session_ids"] = woken_sessions
         evidence["backend_rework_rounds"] = module_verifications["backend"]["rework_rounds"]
+    integration_jobs = _collect_integration_jobs(root, conversation_id)
+    evidence["integration_jobs"] = integration_jobs
+    evidence["module_states"] = board_module_states(root, conversation_id)
+    if integration is not None:
+        evidence["integration_conflicted_module"] = integration.get("conflicted_module")
+        evidence["integration_drill_observation_ids"] = list(
+            _str_list(integration.get("drill_observation_ids"))
+        )
+        before = integration.get("checkout_before")
+        try:
+            after = source_repo_snapshot(root / "source-repo")
+        except Exception as exc:
+            after = {"error": f"{type(exc).__name__}: {exc}"}
+        evidence["user_checkout_before"] = before
+        evidence["user_checkout_after"] = after
+        evidence["user_checkout_untouched"] = isinstance(before, dict) and before == after
     return evidence
 
 
@@ -1584,6 +2017,116 @@ async def _run_drill_phase(
     return drill
 
 
+async def _run_integration_phase(
+    *,
+    host: RoomParticipantHost,
+    kernel: RoomKernelStore,
+    root: Path,
+    conversation_id: str,
+    by_role: dict[str, Participant],
+    source_repo: Path,
+    phase_timeout_s: float,
+    phases_ok: bool,
+) -> dict[str, Any]:
+    """Run the shared-file conflict drill after the charter phase.
+
+    Pumps until observations, verifications and integration jobs are idle,
+    finds the conflicted newcomer in the newest finished job, posts one Human
+    fix request to its owner (no further Human message follows: the fix must
+    be driven only by that request), then pumps again.  The run ends when
+    every module is ``integrated`` in the projection or the phase timeout
+    passes.
+    """
+
+    state: dict[str, Any] = {
+        "phase_ok": False,
+        "conflicted_module": None,
+        "drill_observation_ids": [],
+        "checkout_before": None,
+    }
+    if not phases_ok:
+        _mark("integration_skipped", reason="earlier phase failed")
+        return state
+    try:
+        state["checkout_before"] = source_repo_snapshot(source_repo)
+    except Exception as exc:
+        _mark("integration_snapshot_failed", error=f"{type(exc).__name__}: {exc}")
+        return state
+    integrate_idle = await _pump_until_idle(
+        host=host,
+        kernel=kernel,
+        conversation_id=conversation_id,
+        timeout_s=phase_timeout_s,
+        label="integrate",
+        root=root,
+        wait_for_integration=True,
+    )
+    jobs = _collect_integration_jobs(root, conversation_id)
+    conflicted = latest_conflicted_module(jobs)
+    _mark(
+        "integrate_phase",
+        idle=integrate_idle,
+        jobs=[
+            {
+                "id": job["integration_id"],
+                "status": job["status"],
+                "items": [
+                    {"module": item["module_id"], "status": item["status"]} for item in job["items"]
+                ],
+            }
+            for job in jobs
+        ],
+        conflicted_module=conflicted,
+    )
+    if not integrate_idle or conflicted is None or conflicted not in by_role:
+        return state
+    state["conflicted_module"] = conflicted
+    owner = by_role[conflicted]
+    posted = kernel.post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content=build_integration_fix_human_message(module_id=conflicted),
+        client_request_id=f"board-owners-smoke-integration-fix-{uuid.uuid4().hex}",
+        mentions=[owner.participant_id],
+    )
+    observations = posted.get("observations") if isinstance(posted, dict) else None
+    state["drill_observation_ids"] = (
+        [
+            str(item.get("observation_id"))
+            for item in observations
+            if isinstance(item, dict) and item.get("observation_id")
+        ]
+        if isinstance(observations, list)
+        else []
+    )
+    _mark(
+        "integration_fix_requested",
+        module_id=conflicted,
+        observations=state["drill_observation_ids"],
+    )
+    fix_idle = await _pump_until_idle(
+        host=host,
+        kernel=kernel,
+        conversation_id=conversation_id,
+        timeout_s=phase_timeout_s,
+        label="integrate-fix",
+        root=root,
+        wait_for_integration=True,
+    )
+    states = board_module_states(root, conversation_id)
+    both = bool(states) and all(
+        info.get("integration_status") == "integrated" for info in states.values()
+    )
+    _mark(
+        "integrate_fix_phase",
+        idle=fix_idle,
+        states={mid: info.get("integration_status") for mid, info in states.items()},
+        both_integrated=both,
+    )
+    state["phase_ok"] = fix_idle and both
+    return state
+
+
 async def _run_smoke(
     *,
     root: Path,
@@ -1595,6 +2138,7 @@ async def _run_smoke(
     phase_timeout_s: float,
     scenario: str,
     execution_profile_id: str,
+    result_path: Path | None = None,
 ) -> int:
     source_repo = root / "source-repo"
     if scenario == "review" and frontend_cli == "opencode":
@@ -1757,7 +2301,10 @@ async def _run_smoke(
     phases_ok = True
     verification_stop: threading.Event | None = None
     verification_thread: threading.Thread | None = None
+    integration_stop: threading.Event | None = None
+    integration_thread: threading.Thread | None = None
     drill: dict[str, Any] | None = None
+    integration_state: dict[str, Any] | None = None
     try:
         await projector.start()
         verification_stop, verification_thread = _start_verification_worker(
@@ -1765,13 +2312,25 @@ async def _run_smoke(
             execution_root=source_repo,
             execution_profile_id=execution_profile_id,
         )
+        if scenario == "integration":
+            integration_stop, integration_thread = _start_integration_worker(
+                root=root,
+                execution_root=source_repo,
+                execution_profile_id=execution_profile_id,
+            )
         # Phase 1: split proposal by the lead.
+        if scenario == "integration":
+            split_message = build_integration_split_human_message(
+                backend_id=backend.participant_id, frontend_id=frontend.participant_id
+            )
+        else:
+            split_message = build_split_human_message(
+                backend_id=backend.participant_id, frontend_id=frontend.participant_id
+            )
         kernel.post_human_activity(
             conversation_id=conversation_id,
             human_id="human",
-            content=build_split_human_message(
-                backend_id=backend.participant_id, frontend_id=frontend.participant_id
-            ),
+            content=split_message,
             client_request_id=f"board-owners-smoke-split-{uuid.uuid4().hex}",
             mentions=[lead.participant_id],
         )
@@ -1872,6 +2431,18 @@ async def _run_smoke(
                 phases_ok=phases_ok,
             )
             phases_ok = phases_ok and bool(drill["phase_ok"])
+        elif scenario == "integration":
+            integration_state = await _run_integration_phase(
+                host=host,
+                kernel=kernel,
+                root=root,
+                conversation_id=conversation_id,
+                by_role=by_role,
+                source_repo=source_repo,
+                phase_timeout_s=phase_timeout_s,
+                phases_ok=phases_ok,
+            )
+            phases_ok = phases_ok and bool(integration_state["phase_ok"])
         elif scenario == "revision" and phases_ok:
             revision_before = _completed_observation_ids(
                 root, conversation_id, frontend.participant_id
@@ -1917,6 +2488,8 @@ async def _run_smoke(
     finally:
         if verification_stop is not None and verification_thread is not None:
             _stop_verification_worker(verification_stop, verification_thread)
+        if integration_stop is not None and integration_thread is not None:
+            _stop_verification_worker(integration_stop, integration_thread)
         for created_transport in created:
             aclose = getattr(created_transport, "aclose", None)
             if callable(aclose):
@@ -1929,7 +2502,21 @@ async def _run_smoke(
         conversation_id=conversation_id,
         by_role=by_role,
         drill=drill if scenario == "false-done" else None,
+        integration=integration_state if scenario == "integration" else None,
     )
+    raw_states = evidence.get("module_states")
+    modules_summary: dict[str, Any] = dict(raw_states) if isinstance(raw_states, dict) else {}
+    raw_participants = evidence.get("participants")
+    participants_map = raw_participants if isinstance(raw_participants, Mapping) else {}
+    models = {
+        str(role): info.get("model") if isinstance(info, Mapping) else None
+        for role, info in participants_map.items()
+    }
+    provider_kinds = {
+        str(role): info.get("cli_kind") if isinstance(info, Mapping) else None
+        for role, info in participants_map.items()
+    }
+    wall_seconds = time.monotonic() - _START
     if scenario == "false-done":
         checks: dict[str, bool] = compute_false_done_checks(evidence)
         smoke_ok = phases_ok and false_done_ok(evidence)
@@ -1968,6 +2555,18 @@ async def _run_smoke(
             "conversation_id": conversation_id,
             "evidence": evidence,
         }
+    elif scenario == "integration":
+        checks = compute_integration_checks(evidence)
+        summary = {
+            "ok": phases_ok and all(checks.values()),
+            "scenario": scenario,
+            "checks": checks,
+            "phases_ok": phases_ok,
+            "verification_loop": compute_verification_loop(evidence),
+            "integration_loop": compute_integration_loop(evidence),
+            "conversation_id": conversation_id,
+            "evidence": evidence,
+        }
     else:
         checks = compute_board_smoke_checks(evidence)
         summary = {
@@ -2002,8 +2601,25 @@ async def _run_smoke(
                 for item in info["observations"]
             ],
         )
+    summary.update(
+        {
+            "modules": modules_summary,
+            "models": models,
+            "provider_kinds": provider_kinds,
+            "wall_seconds": wall_seconds,
+        }
+    )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str), flush=True)
     _mark("smoke_result", ok=bool(summary["ok"]))
+    if result_path is not None:
+        try:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(
+                json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"board smoke result unwritten: {exc}", flush=True)
     return 0 if summary["ok"] else 1
 
 
@@ -2016,6 +2632,11 @@ def main() -> int:
     parser.add_argument("--phase-timeout-s", type=float, default=DEFAULT_PHASE_TIMEOUT_S)
     parser.add_argument("--scenario", choices=list(ALLOWED_SCENARIOS), default=DEFAULT_SCENARIO)
     parser.add_argument("--execution-profile", default=DEFAULT_EXECUTION_PROFILE_ID)
+    parser.add_argument(
+        "--result",
+        default=None,
+        help="write the machine-readable summary JSON to this path (stdout unchanged)",
+    )
     parser.add_argument(
         "--keep-root",
         action="store_true",
@@ -2036,6 +2657,7 @@ def main() -> int:
     )
     root = Path(tempfile.mkdtemp(prefix="xmuse-board-owners-smoke-"))
     root.mkdir(parents=True, exist_ok=True)
+    result_path = Path(args.result) if args.result else None
     try:
         with _serve_room_mcp(root) as mcp_url:
             return asyncio.run(
@@ -2049,6 +2671,7 @@ def main() -> int:
                     phase_timeout_s=args.phase_timeout_s,
                     scenario=args.scenario,
                     execution_profile_id=execution_profile.profile_id,
+                    result_path=result_path,
                 )
             )
     finally:

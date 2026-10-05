@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
+xmuse-eval = "scripts.eval.board_eval:main"
 xmuse-chat-api = "xmuse.chat_api:main"
 xmuse-mcp-server = "xmuse.room_mcp_server:main"
 xmuse-room-runner = "xmuse.room_runner:main"

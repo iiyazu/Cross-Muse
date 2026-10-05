@@ -144,7 +144,13 @@ def test_frontend_cli_accepts_antigravity() -> None:
 
 def test_scenario_defaults_to_revision() -> None:
     assert smoke.DEFAULT_SCENARIO == "revision"
-    assert set(smoke.ALLOWED_SCENARIOS) == {"revision", "verify", "false-done", "review"}
+    assert set(smoke.ALLOWED_SCENARIOS) == {
+        "revision",
+        "verify",
+        "false-done",
+        "review",
+        "integration",
+    }
 
 
 def test_default_execution_profile_runs_pytest() -> None:
@@ -458,11 +464,16 @@ def test_seed_pins_the_v1_contract_protocol() -> None:
     # The charter phase must have real work: implementations are not
     # pre-written. Only the provider's contract test is seeded, because a
     # dependent's test would fail the provider's whole-repository gates.
+    # The integration scenario additionally seeds one shared file (with no
+    # test of its own) that both owners' charters cover.
     assert set(by_path) == {
         "src/api/__init__.py",
         "src/api/test_greeting_contract.py",
         "src/client/__init__.py",
+        "src/shared/__init__.py",
+        "src/shared/flags.py",
     }
+    assert 'OWNER = "none"' in by_path["src/shared/flags.py"]
     # The backend contract test pins the v1 protocol from CONTRACT_V1_CONTENT.
     assert "Hello, <name>!" in smoke.CONTRACT_V1_CONTENT
     assert "from api.greeting import greet" in by_path["src/api/test_greeting_contract.py"]
@@ -622,3 +633,276 @@ def test_build_review_detail_carries_families() -> None:
 
     assert detail["reviewer_family"] == "claude"
     assert detail["author_family"] == "opencode"
+
+
+def test_integration_split_gives_both_owners_the_shared_file() -> None:
+    spec = smoke.build_integration_split_spec(backend_id="backend-1", frontend_id="frontend-1")
+
+    by_module = {module["module_id"]: module for module in spec["modules"]}
+    assert set(by_module) == {"backend", "frontend"}
+    # Both charters cover the one shared file, with no contracts or
+    # dependencies, so each verification stage holds only its own patch.
+    assert by_module["backend"]["paths"] == ["src/shared/**"]
+    assert by_module["frontend"]["paths"] == ["src/shared/**"]
+    assert by_module["backend"]["provides"] == []
+    assert by_module["backend"]["depends"] == []
+    assert by_module["frontend"]["provides"] == []
+    assert by_module["frontend"]["depends"] == []
+    assert spec["assignments"] == {"backend": "backend-1", "frontend": "frontend-1"}
+    assert spec["contracts"] == []
+    # Both acceptances edit the same line to different values, with
+    # module-specific test files so the patches collide on exactly one path.
+    backend_text = " ".join(by_module["backend"]["acceptance"])
+    frontend_text = " ".join(by_module["frontend"]["acceptance"])
+    assert "src/shared/flags.py" in backend_text
+    assert "src/shared/flags.py" in frontend_text
+    assert '"backend"' in backend_text
+    assert '"frontend"' in frontend_text
+    assert "test_backend_flags.py" in backend_text
+    assert "test_frontend_flags.py" in frontend_text
+
+
+def test_integration_split_human_message_embeds_the_exact_split_json() -> None:
+    message = smoke.build_integration_split_human_message(backend_id="b", frontend_id="f")
+
+    assert "chat_room_board_propose_split" in message
+    payload_text = message.split(":\n", 1)[1].rsplit("\n", 1)[0]
+    assert json.loads(payload_text) == smoke.build_integration_split_spec(
+        backend_id="b", frontend_id="f"
+    )
+
+
+def test_integration_fix_message_is_short_and_neutral() -> None:
+    message = smoke.build_integration_fix_human_message(module_id="frontend")
+
+    assert "src/shared/flags.py" in message
+    assert "frontend" in message
+    assert "done" in message
+    # Never tell the agent the answer to the checks.
+    assert "integrated" not in message
+    assert "conflict_detected" not in message
+    assert "both_integrated" not in message
+
+
+def _integration_job(
+    job_id: str, *, frontend_status: str = "conflicted", job_status: str = "integrated"
+) -> dict[str, object]:
+    return {
+        "integration_id": job_id,
+        "status": job_status,
+        "reason_code": None,
+        "created_at": "2026-01-01T00:00:00.000000Z",
+        "finished_at": "2026-01-01T00:01:00.000000Z",
+        "items": [
+            {
+                "module_id": "backend",
+                "verification_id": "v1",
+                "order": 1,
+                "role": "newcomer",
+                "status": "applied",
+                "applied_verification_id": "v1",
+                "conflicts_total": 0,
+                "reason_code": None,
+            },
+            {
+                "module_id": "frontend",
+                "verification_id": "v2",
+                "order": 2,
+                "role": "newcomer",
+                "status": frontend_status,
+                "applied_verification_id": None,
+                "conflicts_total": 1 if frontend_status != "applied" else 0,
+                "reason_code": (
+                    "board_integration_conflict" if frontend_status != "applied" else None
+                ),
+            },
+        ],
+    }
+
+
+def _integration_evidence(**overrides: object) -> dict[str, object]:
+    def _module_state(integration_status: str) -> dict[str, object]:
+        return {
+            "counters": {
+                "done_reports": 2,
+                "passed": 2,
+                "failed": 0,
+                "superseded": 0,
+                "errored": 0,
+                "rework_rounds": 0,
+                "reviews_endorsed": 0,
+                "reviews_objected": 0,
+                "integrations_conflicted": 0,
+                "integrations_gate_failed": 0,
+                "conflict_fix_rounds": 0,
+            },
+            "state": "verified",
+            "accepted": True,
+            "integration_status": integration_status,
+        }
+
+    base: dict[str, object] = {
+        "integration_jobs": [_integration_job("job-1")],
+        "integration_conflicted_module": "frontend",
+        "integration_drill_observation_ids": ["obs-fix-1"],
+        "participants": {
+            "backend": {"observations": []},
+            "frontend": {
+                "observations": [
+                    {
+                        "observation_id": "obs-fix-1",
+                        "source_activity_type": "message.posted",
+                        "status": "completed",
+                        "provider_session_ids": ["s-front"],
+                    }
+                ]
+            },
+        },
+        "module_states": {
+            "backend": _module_state("integrated"),
+            "frontend": _module_state("integrated"),
+        },
+        "user_checkout_untouched": True,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_latest_conflicted_module_names_the_newest_conflict() -> None:
+    assert smoke.latest_conflicted_module([_integration_job("job-1")]) == "frontend"
+    assert (
+        smoke.latest_conflicted_module(
+            [_integration_job("job-1"), _integration_job("job-2", frontend_status="applied")]
+        )
+        is None
+    )
+    assert smoke.latest_conflicted_module([]) is None
+    assert smoke.latest_conflicted_module([_integration_job("job-1", job_status="running")]) is None
+
+
+def test_integration_ok_requires_every_check() -> None:
+    assert smoke.integration_ok(_integration_evidence()) is True
+
+    assert (
+        smoke.integration_ok(
+            _integration_evidence(
+                integration_jobs=[_integration_job("job-1", frontend_status="applied")],
+                integration_conflicted_module=None,
+            )
+        )
+        is False
+    )
+    assert (
+        smoke.integration_ok(
+            _integration_evidence(
+                participants={
+                    "backend": {"observations": []},
+                    "frontend": {"observations": []},
+                }
+            )
+        )
+        is False
+    )
+    frontend_pending = _integration_evidence()
+    states = frontend_pending["module_states"]
+    assert isinstance(states, dict)
+    frontend_state = dict(states["frontend"])
+    assert isinstance(frontend_state, dict)
+    frontend_state["integration_status"] = "conflicted"
+    states["frontend"] = frontend_state
+    assert smoke.integration_ok(frontend_pending) is False
+    assert smoke.integration_ok(_integration_evidence(user_checkout_untouched=False)) is False
+
+
+def test_compute_integration_checks_reports_each_condition() -> None:
+    checks = smoke.compute_integration_checks(_integration_evidence(user_checkout_untouched=False))
+
+    assert checks == {
+        "conflict_detected": True,
+        "owner_woken": True,
+        "both_integrated": True,
+        "user_checkout_untouched": False,
+    }
+
+
+def test_conflict_detected_survives_the_final_clean_job() -> None:
+    evidence = _integration_evidence(
+        integration_jobs=[
+            _integration_job("job-1"),
+            _integration_job("job-2", frontend_status="applied"),
+        ],
+        integration_conflicted_module=None,
+    )
+
+    assert smoke.compute_integration_checks(evidence)["conflict_detected"] is True
+
+
+def test_owner_woken_accepts_a_board_integration_wake_up() -> None:
+    evidence = _integration_evidence(
+        integration_drill_observation_ids=[],
+        participants={
+            "backend": {"observations": []},
+            "frontend": {
+                "observations": [
+                    {
+                        "observation_id": "obs-int-9",
+                        "source_activity_type": "board.integration",
+                        "status": "completed",
+                        "provider_session_ids": ["s-front"],
+                    }
+                ]
+            },
+        },
+    )
+
+    assert smoke.compute_integration_checks(evidence)["owner_woken"] is True
+
+
+def test_compute_integration_loop_counts_conflicts() -> None:
+    loop = smoke.compute_integration_loop(_integration_evidence())
+
+    assert loop["jobs"] == 1
+    assert loop["conflicts"] == 1
+    assert loop["all_integrated"] is True
+    assert loop["modules"]["frontend"] == {"conflicts": 1, "integrated": True}
+    assert loop["modules"]["backend"] == {"conflicts": 0, "integrated": True}
+
+
+def test_source_repo_snapshot_detects_checkout_changes(tmp_path: object) -> None:
+    import subprocess
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    repo = tmp_path / "source"
+    repo.mkdir()
+    env = {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_PAGER": "cat",
+    }
+    subprocess.run(["git", "init"], cwd=str(repo), env=env, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=str(repo),
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"],
+        cwd=str(repo),
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(repo), env=env, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"], cwd=str(repo), env=env, check=True, capture_output=True
+    )
+
+    before = smoke.source_repo_snapshot(repo)
+    assert smoke.source_repo_snapshot(repo) == before
+    (repo / "file.txt").write_text("changed\n", encoding="utf-8")
+    assert smoke.source_repo_snapshot(repo) != before
