@@ -11,10 +11,9 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "module_ids": [
-            "alpha",
-            "beta"
+            "m1"
           ],
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_00000000000000000000000000000012"
         },
         "kind": "split_proposed",
         "module_id": null,
@@ -31,35 +30,18 @@
           "decided_via": "web",
           "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_00000000000000000000000000000012"
         },
         "kind": "charter_assigned",
-        "module_id": "alpha",
+        "module_id": "m1",
         "seq": 3
-      },
-      {
-        "actor": {
-          "kind": "operator",
-          "participant_id": null
-        },
-        "at": "2026-01-01T00:00:10.000000Z",
-        "data": {
-          "charter_version": 1,
-          "decided_via": "web",
-          "grant_id": null,
-          "owner_participant_id": "part_00000000000000000000000000000004",
-          "split_id": "split_00000000000000000000000000000018"
-        },
-        "kind": "charter_assigned",
-        "module_id": "beta",
-        "seq": 4
       },
       {
         "actor": {
           "kind": "participant",
           "participant_id": "part_00000000000000000000000000000003"
         },
-        "at": "2026-01-01T00:00:10.000000Z",
+        "at": "2026-01-01T00:10:10.000000Z",
         "data": {
           "claims": [],
           "claims_total": 0,
@@ -71,7 +53,25 @@
           }
         },
         "kind": "progress",
-        "module_id": "alpha",
+        "module_id": "m1",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:10:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000019"
+        },
+        "kind": "verification",
+        "module_id": "m1",
         "seq": 5
       },
       {
@@ -79,32 +79,35 @@
           "kind": "infrastructure",
           "participant_id": null
         },
-        "at": "2026-01-01T00:00:10.000000Z",
+        "at": "2026-01-01T00:30:10.000000Z",
         "data": {
-          "escalated": false,
+          "conflicts": [],
           "gate_ids": [],
-          "reason_code": "board_verification_attempts_exhausted",
-          "stacked": [],
+          "green_head_commit": null,
+          "integrated_module_ids": [],
+          "integration_id": "boardintegration_0000000000000000000000000000001d",
+          "reason_code": "board_integration_attempts_exhausted",
           "status": "error",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "suspect_module_ids": [],
+          "waiting_module_ids": []
         },
-        "kind": "verification",
-        "module_id": "alpha",
+        "kind": "integration",
+        "module_id": null,
         "seq": 6
       }
     ],
     "has_more": false,
     "reset": false,
-    "revision": "6:f09203a9c727",
+    "revision": "6:cb0a3a34b849",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
     "attention": [
       {
-        "integration_id": null,
+        "integration_id": "boardintegration_0000000000000000000000000000001d",
         "kind": "operator",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_error",
+        "module_id": null,
+        "reason_code": "board_attention_integration_error",
         "split_id": null
       }
     ],
@@ -118,21 +121,11 @@
     "contracts": [
       {
         "author_participant_id": "part_00000000000000000000000000000003",
-        "contract_id": "api.alpha",
-        "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
+        "contract_id": "api.m1",
+        "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
         "kind": "api_schema",
         "latest_version": 1,
-        "provider_module_id": "alpha",
-        "updated_at": "2026-01-01T00:00:10.000000Z",
-        "versions_count": 1
-      },
-      {
-        "author_participant_id": "part_00000000000000000000000000000004",
-        "contract_id": "api.beta",
-        "digest": "sha256:c7c1bbc4fa3f758507b8c7e10e44dd153781f3a38dd6c41c63e8f19090eb9184",
-        "kind": "types",
-        "latest_version": 1,
-        "provider_module_id": "beta",
+        "provider_module_id": "m1",
         "updated_at": "2026-01-01T00:00:10.000000Z",
         "versions_count": 1
       }
@@ -147,10 +140,9 @@
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "module_ids": [
-            "alpha",
-            "beta"
+            "m1"
           ],
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_00000000000000000000000000000012"
         },
         "kind": "split_proposed",
         "module_id": null,
@@ -167,35 +159,18 @@
           "decided_via": "web",
           "grant_id": null,
           "owner_participant_id": "part_00000000000000000000000000000003",
-          "split_id": "split_00000000000000000000000000000018"
+          "split_id": "split_00000000000000000000000000000012"
         },
         "kind": "charter_assigned",
-        "module_id": "alpha",
+        "module_id": "m1",
         "seq": 3
-      },
-      {
-        "actor": {
-          "kind": "operator",
-          "participant_id": null
-        },
-        "at": "2026-01-01T00:00:10.000000Z",
-        "data": {
-          "charter_version": 1,
-          "decided_via": "web",
-          "grant_id": null,
-          "owner_participant_id": "part_00000000000000000000000000000004",
-          "split_id": "split_00000000000000000000000000000018"
-        },
-        "kind": "charter_assigned",
-        "module_id": "beta",
-        "seq": 4
       },
       {
         "actor": {
           "kind": "participant",
           "participant_id": "part_00000000000000000000000000000003"
         },
-        "at": "2026-01-01T00:00:10.000000Z",
+        "at": "2026-01-01T00:10:10.000000Z",
         "data": {
           "claims": [],
           "claims_total": 0,
@@ -207,7 +182,25 @@
           }
         },
         "kind": "progress",
-        "module_id": "alpha",
+        "module_id": "m1",
+        "seq": 4
+      },
+      {
+        "actor": {
+          "kind": "infrastructure",
+          "participant_id": null
+        },
+        "at": "2026-01-01T00:10:40.000000Z",
+        "data": {
+          "escalated": false,
+          "gate_ids": [],
+          "reason_code": null,
+          "stacked": [],
+          "status": "passed",
+          "verification_id": "boardverify_00000000000000000000000000000019"
+        },
+        "kind": "verification",
+        "module_id": "m1",
         "seq": 5
       },
       {
@@ -215,41 +208,50 @@
           "kind": "infrastructure",
           "participant_id": null
         },
-        "at": "2026-01-01T00:00:10.000000Z",
+        "at": "2026-01-01T00:30:10.000000Z",
         "data": {
-          "escalated": false,
+          "conflicts": [],
           "gate_ids": [],
-          "reason_code": "board_verification_attempts_exhausted",
-          "stacked": [],
+          "green_head_commit": null,
+          "integrated_module_ids": [],
+          "integration_id": "boardintegration_0000000000000000000000000000001d",
+          "reason_code": "board_integration_attempts_exhausted",
           "status": "error",
-          "verification_id": "boardverify_00000000000000000000000000000021"
+          "suspect_module_ids": [],
+          "waiting_module_ids": []
         },
-        "kind": "verification",
-        "module_id": "alpha",
+        "kind": "integration",
+        "module_id": null,
         "seq": 6
       }
     ],
     "integration": {
       "green_head_commit": null,
-      "latest": null
+      "latest": {
+        "finished_at": "2026-01-01T00:30:10.000000Z",
+        "integration_id": "boardintegration_0000000000000000000000000000001d",
+        "module_count": 1,
+        "reason_code": "board_integration_attempts_exhausted",
+        "status": "error"
+      }
     },
     "metrics_version": "board_metrics/v1",
     "modules": [
       {
-        "accepted": false,
+        "accepted": true,
         "attention": {
-          "kind": "operator",
-          "reason_code": "board_attention_verification_error"
+          "kind": "none",
+          "reason_code": null
         },
         "charter_version": 1,
         "counters": {
           "conflict_fix_rounds": 0,
           "done_reports": 1,
-          "errored": 1,
+          "errored": 0,
           "failed": 0,
           "integrations_conflicted": 0,
           "integrations_gate_failed": 0,
-          "passed": 0,
+          "passed": 1,
           "reviews_endorsed": 0,
           "reviews_objected": 0,
           "rework_rounds": 0,
@@ -260,20 +262,20 @@
           "conflict_path_count": 0,
           "gate_ids": [],
           "integrated_verification_id": null,
-          "integration_id": null,
-          "reason_code": null,
-          "status": "none",
-          "updated_at": null,
-          "verification_id": null
+          "integration_id": "boardintegration_0000000000000000000000000000001d",
+          "reason_code": "board_integration_attempts_exhausted",
+          "status": "error",
+          "updated_at": "2026-01-01T00:30:10.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000019"
         },
         "lifecycle": "done_claimed",
-        "module_id": "alpha",
+        "module_id": "m1",
         "owner_participant_id": "part_00000000000000000000000000000003",
         "paths": [
-          "src/alpha/**"
+          "docs/a.txt"
         ],
         "provides": [
-          "api.alpha"
+          "api.m1"
         ],
         "report_to": "part_00000000000000000000000000000002",
         "review": {
@@ -296,103 +298,22 @@
           "updated_at": null,
           "verification_id": null
         },
-        "state": "verification_error",
+        "state": "verified",
         "title": {
-          "text": "Alpha module",
+          "text": "m1",
           "truncated": false,
           "untrusted": true
         },
         "verification": {
-          "changed_path_count": 0,
+          "changed_path_count": 1,
           "escalated": false,
           "gate_ids": [],
-          "head_commit": null,
-          "reason_code": "board_verification_attempts_exhausted",
-          "stacked": [],
-          "status": "error",
-          "updated_at": "2026-01-01T00:00:10.000000Z",
-          "verification_id": "boardverify_00000000000000000000000000000021"
-        }
-      },
-      {
-        "accepted": false,
-        "attention": {
-          "kind": "none",
-          "reason_code": null
-        },
-        "charter_version": 1,
-        "counters": {
-          "conflict_fix_rounds": 0,
-          "done_reports": 0,
-          "errored": 0,
-          "failed": 0,
-          "integrations_conflicted": 0,
-          "integrations_gate_failed": 0,
-          "passed": 0,
-          "reviews_endorsed": 0,
-          "reviews_objected": 0,
-          "rework_rounds": 0,
-          "superseded": 0
-        },
-        "depends": [
-          "api.alpha"
-        ],
-        "integration": {
-          "conflict_path_count": 0,
-          "gate_ids": [],
-          "integrated_verification_id": null,
-          "integration_id": null,
-          "reason_code": null,
-          "status": "none",
-          "updated_at": null,
-          "verification_id": null
-        },
-        "lifecycle": "assigned",
-        "module_id": "beta",
-        "owner_participant_id": "part_00000000000000000000000000000004",
-        "paths": [
-          "src/beta/**"
-        ],
-        "provides": [
-          "api.beta"
-        ],
-        "report_to": "part_00000000000000000000000000000002",
-        "review": {
-          "actions": {},
-          "author_family": null,
-          "decided_via": null,
-          "digest": null,
-          "escalated_from": null,
-          "findings_count": {
-            "blocker": 0,
-            "major": 0,
-            "minor": 0
-          },
-          "review_id": null,
-          "reviewer_family": null,
-          "reviewer_kind": null,
-          "reviewer_participant_id": null,
-          "rule_id": null,
-          "status": "none",
-          "updated_at": null,
-          "verification_id": null
-        },
-        "state": "assigned",
-        "title": {
-          "text": "Beta module",
-          "truncated": false,
-          "untrusted": true
-        },
-        "verification": {
-          "changed_path_count": 0,
-          "escalated": false,
-          "gate_ids": [],
-          "head_commit": null,
+          "head_commit": "26b45c2b40e2a9bdeac0d1344364fe7db251e866",
           "reason_code": null,
           "stacked": [],
-          "status": "none",
-          "updated_at": null,
-          "verification_id": null
+          "status": "passed",
+          "updated_at": "2026-01-01T00:10:40.000000Z",
+          "verification_id": "boardverify_00000000000000000000000000000019"
         }
       }
     ],
@@ -412,18 +333,10 @@
         "participant_id": "part_00000000000000000000000000000003",
         "provider_kind": "codex",
         "role_preset": null
-      },
-      {
-        "display_name": "Agent 2",
-        "is_lead": false,
-        "model_family": "codex",
-        "participant_id": "part_00000000000000000000000000000004",
-        "provider_kind": "codex",
-        "role_preset": null
       }
     ],
     "review_policy": "off",
-    "revision": "6:f09203a9c727",
+    "revision": "6:cb0a3a34b849",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -435,80 +348,56 @@
               "reject"
             ],
             "available": false,
-            "expected_digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
-            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000018/decision",
+            "expected_digest": "sha256:d333471196e4d9f38e273007bac4b4a7fcba3ac77285c5caccf6b57248172c8b",
+            "href": "/api/chat/operator/board-splits/split_00000000000000000000000000000012/decision",
             "method": "POST"
           }
         },
         "contracts": [
           {
-            "contract_id": "api.alpha",
-            "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
+            "contract_id": "api.m1",
+            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
             "kind": "api_schema",
-            "provider_module_id": "alpha"
-          },
-          {
-            "contract_id": "api.beta",
-            "digest": "sha256:c7c1bbc4fa3f758507b8c7e10e44dd153781f3a38dd6c41c63e8f19090eb9184",
-            "kind": "types",
-            "provider_module_id": "beta"
+            "provider_module_id": "m1"
           }
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
         "decided_via": "web",
-        "digest": "sha256:b4aa5e95346952af898a7b6d28852fc716ec57864501efea4b4b3070849e2f88",
+        "digest": "sha256:d333471196e4d9f38e273007bac4b4a7fcba3ac77285c5caccf6b57248172c8b",
         "modules": [
           {
             "depends": [],
-            "module_id": "alpha",
+            "module_id": "m1",
             "owner_participant_id": "part_00000000000000000000000000000003",
             "paths": [
-              "src/alpha/**"
+              "docs/a.txt"
             ],
             "provides": [
-              "api.alpha"
+              "api.m1"
             ],
             "title": {
-              "text": "Alpha module",
-              "truncated": false,
-              "untrusted": true
-            }
-          },
-          {
-            "depends": [
-              "api.alpha"
-            ],
-            "module_id": "beta",
-            "owner_participant_id": "part_00000000000000000000000000000004",
-            "paths": [
-              "src/beta/**"
-            ],
-            "provides": [
-              "api.beta"
-            ],
-            "title": {
-              "text": "Beta module",
+              "text": "m1",
               "truncated": false,
               "untrusted": true
             }
           }
         ],
         "proposed_by_participant_id": "part_00000000000000000000000000000002",
-        "split_id": "split_00000000000000000000000000000018",
+        "split_id": "split_00000000000000000000000000000012",
         "status": "approved"
       }
     ],
     "stale_dependents": []
   },
   "summary": {
-    "accepted_total": 0,
+    "accepted_total": 1,
     "attention": [
       {
-        "integration_id": null,
+        "integration_id": "boardintegration_0000000000000000000000000000001d",
         "kind": "operator",
-        "module_id": "alpha",
-        "reason_code": "board_attention_verification_error",
+        "module_id": null,
+        "reason_code": "board_attention_integration_error",
         "split_id": null
       }
     ],
@@ -522,14 +411,14 @@
     },
     "conversation_id": "conv_00000000000000000000000000000001",
     "counts": {
-      "assigned": 1,
+      "assigned": 0,
       "blocked": 0,
       "claimed": 0,
       "done_claimed": 0,
       "ready_for_review": 0,
-      "verification_error": 1,
+      "verification_error": 0,
       "verification_failed": 0,
-      "verified": 0,
+      "verified": 1,
       "verifying": 0,
       "waiting_for_provider": 0,
       "working": 0
@@ -537,10 +426,10 @@
     "integrated_total": 0,
     "integration": {
       "green_head_commit": null,
-      "status": null
+      "status": "error"
     },
-    "modules_total": 2,
-    "revision": "6:f09203a9c727",
+    "modules_total": 1,
+    "revision": "6:cb0a3a34b849",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

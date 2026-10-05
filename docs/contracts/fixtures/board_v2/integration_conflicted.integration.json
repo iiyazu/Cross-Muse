@@ -1,0 +1,53 @@
+{
+  "attempt_count": 1,
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:50:10.000000Z",
+  "finished_at": "2026-01-01T00:52:10.000000Z",
+  "gates": [],
+  "green_head_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
+  "integration_id": "boardintegration_0000000000000000000000000000003c",
+  "items": [
+    {
+      "applied_verification_id": "boardverify_00000000000000000000000000000029",
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "ma",
+      "order": 1,
+      "role": "incumbent",
+      "status": "applied",
+      "verification_id": "boardverify_00000000000000000000000000000029"
+    },
+    {
+      "applied_verification_id": null,
+      "conflicts": [
+        {
+          "attributed_module_ids": [
+            "ma",
+            "mb"
+          ],
+          "path": "docs/shared.txt"
+        }
+      ],
+      "conflicts_total": 1,
+      "module_id": "mb",
+      "order": 2,
+      "role": "newcomer",
+      "status": "conflicted",
+      "verification_id": "boardverify_00000000000000000000000000000032"
+    },
+    {
+      "applied_verification_id": null,
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "mc",
+      "order": 3,
+      "role": "newcomer",
+      "status": "waiting",
+      "verification_id": "boardverify_00000000000000000000000000000038"
+    }
+  ],
+  "reason_code": null,
+  "result_commit": "b46cb6f8d7ea517382c13775c0497a0e2921567b",
+  "schema_version": "room_board_integration/v1",
+  "status": "integrated"
+}

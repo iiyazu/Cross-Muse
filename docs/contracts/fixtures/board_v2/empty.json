@@ -5,14 +5,14 @@
     "events": [],
     "has_more": false,
     "reset": false,
-    "revision": "0:a898dd1a3c93",
+    "revision": "0:6d52cbcaa97c",
     "schema_version": "room_board_events/v1"
   },
   "projection": {
     "attention": [],
     "board_seq": 0,
     "capabilities": {
-      "integrations": 0,
+      "integrations": 1,
       "lessons": 0,
       "reviews": 0,
       "verification": 1
@@ -20,6 +20,10 @@
     "contracts": [],
     "conversation_id": "conv_00000000000000000000000000000001",
     "events": [],
+    "integration": {
+      "green_head_commit": null,
+      "latest": null
+    },
     "metrics_version": "board_metrics/v1",
     "modules": [],
     "participants": [
@@ -49,7 +53,7 @@
       }
     ],
     "review_policy": "off",
-    "revision": "0:a898dd1a3c93",
+    "revision": "0:6d52cbcaa97c",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [],
@@ -61,7 +65,7 @@
     "attention_total": 0,
     "board_seq": 0,
     "capabilities": {
-      "integrations": 0,
+      "integrations": 1,
       "lessons": 0,
       "reviews": 0,
       "verification": 1
@@ -80,8 +84,13 @@
       "waiting_for_provider": 0,
       "working": 0
     },
+    "integrated_total": 0,
+    "integration": {
+      "green_head_commit": null,
+      "status": null
+    },
     "modules_total": 0,
-    "revision": "0:a898dd1a3c93",
+    "revision": "0:6d52cbcaa97c",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

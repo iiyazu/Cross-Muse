@@ -1,0 +1,43 @@
+{
+  "attempt_count": 1,
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "created_at": "2026-01-01T00:50:10.000000Z",
+  "finished_at": "2026-01-01T00:52:10.000000Z",
+  "gates": [],
+  "green_head_commit": "caf8b97420dadd03a7a091d691412d9479fff677",
+  "integration_id": "boardintegration_00000000000000000000000000000034",
+  "items": [
+    {
+      "applied_verification_id": "boardverify_00000000000000000000000000000021",
+      "conflicts": [
+        {
+          "attributed_module_ids": [
+            "m1",
+            "m2"
+          ],
+          "path": "docs/shared.txt"
+        }
+      ],
+      "conflicts_total": 1,
+      "module_id": "m1",
+      "order": 1,
+      "role": "newcomer",
+      "status": "conflicted",
+      "verification_id": "boardverify_00000000000000000000000000000030"
+    },
+    {
+      "applied_verification_id": "boardverify_00000000000000000000000000000027",
+      "conflicts": [],
+      "conflicts_total": 0,
+      "module_id": "m2",
+      "order": 2,
+      "role": "incumbent",
+      "status": "applied",
+      "verification_id": "boardverify_00000000000000000000000000000027"
+    }
+  ],
+  "reason_code": null,
+  "result_commit": "caf8b97420dadd03a7a091d691412d9479fff677",
+  "schema_version": "room_board_integration/v1",
+  "status": "integrated"
+}

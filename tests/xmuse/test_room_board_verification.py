@@ -470,6 +470,9 @@ def test_board_projection_counters_and_browser_safety(tmp_path: Path) -> None:
         "rework_rounds": 2,
         "reviews_endorsed": 0,
         "reviews_objected": 0,
+        "integrations_conflicted": 0,
+        "integrations_gate_failed": 0,
+        "conflict_fix_rounds": 0,
     }
     assert entry["lifecycle"] == "done_claimed"
     assert entry["state"] == "verified"

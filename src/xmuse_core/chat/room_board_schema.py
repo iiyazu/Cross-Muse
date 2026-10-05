@@ -167,3 +167,62 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
         "create index if not exists idx_room_board_reviews_reviewer "
         "on room_board_reviews(conversation_id, reviewer_participant_id, status)"
     )
+    conn.execute(
+        """create table if not exists room_board_integrations (
+                integration_id text primary key,
+                conversation_id text not null references conversations(id),
+                status text not null check (
+                    status in ('pending','running','integrated','conflicted',
+                               'gate_failed','error')
+                ),
+                reason_code text,
+                input_set_json text not null default '[]',
+                attempt_count integer not null default 0 check (attempt_count >= 0),
+                lease_owner text,
+                lease_token text,
+                lease_expires_at text,
+                not_before text,
+                auto_retry_count integer not null default 0 check (auto_retry_count >= 0),
+                restart_retry_done integer not null default 0 check (
+                    restart_retry_done in (0, 1)
+                ),
+                green_before text,
+                green_after text,
+                result_commit text,
+                gates_json text,
+                activity_id text references room_activities(activity_id),
+                created_at text not null,
+                updated_at text not null,
+                finished_at text
+            )"""
+    )
+    conn.execute(
+        """create table if not exists room_board_integration_items (
+                integration_id text not null references
+                    room_board_integrations(integration_id),
+                conversation_id text not null references conversations(id),
+                module_id text not null,
+                verification_id text not null references
+                    room_board_verifications(verification_id),
+                item_order integer not null check (item_order >= 0),
+                role text not null check (role in ('incumbent','newcomer')),
+                status text not null check (
+                    status in ('applied','fell_back','conflicted','waiting','not_applied')
+                ),
+                applied_verification_id text references
+                    room_board_verifications(verification_id),
+                conflicts_json text not null default '[]',
+                conflicts_total integer not null default 0 check (conflicts_total >= 0),
+                reason_code text,
+                created_at text not null,
+                primary key (integration_id, module_id)
+            )"""
+    )
+    conn.execute(
+        "create index if not exists idx_room_board_integrations_conversation "
+        "on room_board_integrations(conversation_id, status, created_at)"
+    )
+    conn.execute(
+        "create index if not exists idx_room_board_integration_items_module "
+        "on room_board_integration_items(conversation_id, module_id, integration_id)"
+    )

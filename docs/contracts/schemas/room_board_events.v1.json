@@ -95,7 +95,8 @@
             "question",
             "verification",
             "review_requested",
-            "review"
+            "review",
+            "integration"
           ]
         },
         "at": { "type": "string" },
@@ -261,6 +262,45 @@
                 "findings_total",
                 "summary",
                 "decided_via"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "integration_id": { "type": "string" },
+                "status": { "enum": ["integrated", "conflicted", "gate_failed", "error"] },
+                "reason_code": { "type": ["string", "null"] },
+                "green_head_commit": { "type": ["string", "null"] },
+                "integrated_module_ids": { "type": "array", "items": { "type": "string" } },
+                "suspect_module_ids": { "type": "array", "items": { "type": "string" } },
+                "conflicts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "module_id": { "type": "string" },
+                      "conflict_path_count": { "type": "integer", "minimum": 0 },
+                      "attributed_module_ids": { "type": "array", "items": { "type": "string" } },
+                      "fell_back": { "type": "boolean" }
+                    },
+                    "required": ["module_id", "conflict_path_count", "attributed_module_ids", "fell_back"],
+                    "additionalProperties": false
+                  }
+                },
+                "waiting_module_ids": { "type": "array", "items": { "type": "string" } },
+                "gate_ids": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": [
+                "integration_id",
+                "status",
+                "reason_code",
+                "green_head_commit",
+                "integrated_module_ids",
+                "suspect_module_ids",
+                "conflicts",
+                "waiting_module_ids",
+                "gate_ids"
               ],
               "additionalProperties": false
             }

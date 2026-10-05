@@ -57,6 +57,7 @@ _NOT_FOUND_CODES = {
     "room_board_split_unknown",
     "room_board_review_unknown",
     "room_board_verification_unknown",
+    "room_board_integration_unknown",
     "room_board_contract_unknown",
     "room_conversation_unknown",
 }
@@ -408,6 +409,21 @@ def register_room_board_routes(
         try:
             return RoomBoardStore(root / "chat.db").verification_detail(
                 conversation_id=conversation_id, verification_id=verification_id
+            )
+        except Exception as exc:
+            raise _store_error(exc) from exc
+
+    @app.get("/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}")
+    def room_board_integration(
+        conversation_id: str,
+        integration_id: str,
+        response: Response,
+    ) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        _require_conversation(root, conversation_id)
+        try:
+            return RoomBoardStore(root / "chat.db").integration_detail(
+                conversation_id=conversation_id, integration_id=integration_id
             )
         except Exception as exc:
             raise _store_error(exc) from exc
