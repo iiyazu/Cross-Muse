@@ -380,3 +380,176 @@
     animation: none;
   }
 }
+
+.room-board-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.room-board-heading-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.room-board-accepted-total {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.room-board-pending-review {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+
+/* Solid review chips take the page background as text colour, like board badges. */
+.room-board-review-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.room-board-review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.room-board-review-chip.is-endorsed {
+  background: var(--success);
+  color: var(--bg);
+}
+
+.room-board-review-chip.is-objected {
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.room-board-review-chip.is-operator-pending {
+  background: var(--warn);
+  color: var(--bg);
+}
+
+.room-board-review-chip.is-pending {
+  border: 1px solid var(--border);
+  color: var(--muted-strong);
+}
+
+.room-board-review-chip.is-muted {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.room-board-review-glyph {
+  font-style: normal;
+}
+
+.room-board-review-by,
+.room-board-review-findings {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-board-review-by code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.room-board-accepted {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--success);
+  color: var(--bg);
+}
+
+.room-board-review-detail {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-size: 11px;
+}
+
+.room-board-review-detail > summary {
+  cursor: pointer;
+  color: var(--muted-strong);
+  font-weight: 650;
+}
+
+.room-board-review-why {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.room-board-review-why code {
+  font-family: var(--font-mono);
+}
+
+.room-board-review-findings-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.room-board-operator-review {
+  display: grid;
+  gap: 8px;
+}
+
+.room-board-review-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-size: 11px;
+}
+
+.room-board-review-panel h4,
+.room-board-review-panel h5 {
+  margin: 0;
+}
+
+.room-board-review-patch {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: var(--space-2);
+  font: 10px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.room-board-review-finding {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.room-board-review-status {
+  margin: 0;
+  color: var(--success);
+  font-size: 11px;
+}

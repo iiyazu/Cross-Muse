@@ -84,7 +84,9 @@ export function createEmptyBoardCache(): RoomBoardCache {
     consecutiveFailures: 0,
     lastSyncedAt: 0,
     error: null,
-    contractDetails: {}
+    contractDetails: {},
+    reviewDetails: {},
+    reviewDetailErrors: {}
   };
 }
 

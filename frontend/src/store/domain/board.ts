@@ -1,3 +1,4 @@
+import type { BoardReviewDetail } from "@/lib/board-review-types";
 import type { XmuseApiErrorShape } from "@/lib/types";
 import type {
   BoardContractDetail,
@@ -17,6 +18,8 @@ export type RoomBoardCache = {
   lastSyncedAt: number;
   error: XmuseApiErrorShape | null;
   contractDetails: Record<string, BoardContractDetail>;
+  reviewDetails: Record<string, BoardReviewDetail>;
+  reviewDetailErrors: Record<string, XmuseApiErrorShape>;
 };
 
 export type BoardDomainState = {
@@ -28,7 +31,12 @@ export type BoardDomainState = {
 export type BoardDomainActions = {
   refreshBoard: (roomId?: string) => Promise<void>;
   loadBoardContract: (contractId: string, version?: number, roomId?: string) => Promise<void>;
+  loadBoardReview: (reviewId: string, roomId?: string) => Promise<void>;
   decideBoardSplit: (split: BoardSplit, decision: "approve" | "reject", roomId?: string) => Promise<boolean>;
+  submitBoardReviewDecision: (
+    args: { reviewId: string; verdict: "endorse" | "object"; summary: string; findings: Array<{ severity: string; path: string | null; text: string }>; expectedDigest: string },
+    roomId?: string
+  ) => Promise<boolean>;
   startBoardSync: () => void;
 };
 
@@ -39,7 +47,7 @@ export type BoardReadCapability = DomainCapability<
 >;
 export type BoardWriteCapability = DomainCapability<
   BoardDomain,
-  "refreshBoard" | "loadBoardContract" | "decideBoardSplit"
+  "refreshBoard" | "loadBoardContract" | "loadBoardReview" | "decideBoardSplit" | "submitBoardReviewDecision"
 >;
 
 export function createBoardCacheSelector(

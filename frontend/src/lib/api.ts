@@ -647,6 +647,9 @@ export async function createConversation(
                 mode: options.collaboration.mode,
                 ...(options.collaboration.lead_role
                   ? { lead_role: options.collaboration.lead_role }
+                  : {}),
+                ...(options.collaboration.review_policy
+                  ? { review_policy: options.collaboration.review_policy }
                   : {})
               }
             }
