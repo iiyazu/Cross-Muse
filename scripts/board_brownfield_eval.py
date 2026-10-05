@@ -214,6 +214,20 @@ def export_green_head(root: Path, conversation_id: str) -> dict[str, Any]:
     return {"green_head": green, "result_repo": str(out), "reason": None}
 
 
+CLAUDE_ACP_DEFAULT_MODEL = "claude-acp-default"
+
+
+def reviewer_participant(reviewer: str, agy_model: str) -> ParticipantInit:
+    """The read-only cross-family reviewer; every non-codex participant names a model."""
+
+    return ParticipantInit(
+        role="reviewer",
+        display_name="Reviewer",
+        cli_kind=reviewer,  # type: ignore[arg-type]
+        model=agy_model if reviewer == "antigravity" else CLAUDE_ACP_DEFAULT_MODEL,
+    )
+
+
 def collect_board_rows(root: Path, conversation_id: str) -> dict[str, Any]:
     """Verification, review and done-claim rows straight from ``chat.db``."""
 
@@ -293,14 +307,7 @@ async def run_eval(
         ],
     ]
     if reviewer != "none":
-        participants.append(
-            ParticipantInit(
-                role="reviewer",
-                display_name="Reviewer",
-                cli_kind=reviewer,  # type: ignore[arg-type]
-                model=agy_model if reviewer == "antigravity" else None,
-            )
-        )
+        participants.append(reviewer_participant(reviewer, agy_model))
     setup = RoomSetupService(root).create_conversation(
         RoomConversationCreate(
             title=str(plan.get("title") or "Brownfield board eval"),

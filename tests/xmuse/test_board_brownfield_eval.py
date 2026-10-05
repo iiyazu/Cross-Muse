@@ -126,3 +126,26 @@ def test_collect_board_rows_reads_the_real_schema(tmp_path: Path) -> None:
         "verifications": [],
         "reviews": [],
     }
+
+
+@pytest.mark.parametrize("reviewer", ["claude", "antigravity"])
+def test_reviewer_participant_passes_room_setup(tmp_path: Path, reviewer: str) -> None:
+    RoomDatabase(tmp_path / "chat.db").initialize()
+    lead = brownfield.ParticipantInit(
+        role="lead", display_name="Lead", cli_kind="opencode", model="opencode-go/m"
+    )
+    setup = brownfield.RoomSetupService(tmp_path).create_conversation(
+        brownfield.RoomConversationCreate(
+            title="reviewer",
+            client_request_id=f"reviewer-{reviewer}",
+            collaboration=brownfield.RoomCollaborationInit(
+                mode="addressed", lead_role="lead", review_policy="cross_family"
+            ),
+            initial_participants=[
+                lead,
+                brownfield.reviewer_participant(reviewer, "gemini-3.8-flash-high"),
+            ],
+        )
+    )
+
+    assert setup["id"]
