@@ -23,6 +23,10 @@ Modes (``XMUSE_TEST_AGY_MODE``):
   stored outcome when the next (reminder) prompt arrives without context.
 - ``error``     end the turn with an ERROR result and no outcome.
 - ``exit``      exit mid-turn without printing a result.
+
+``XMUSE_TEST_AGY_START_FAILURES=N`` (needs the argv log) makes the first N
+process starts exit before ``init``, like agy's startup eligibility check
+failing on a lost network request.
 """
 
 from __future__ import annotations
@@ -194,6 +198,13 @@ def main() -> int:
                 json.dumps({"argv": argv, "conversation_id": conversation_id}, sort_keys=True)
                 + "\n"
             )
+        start_failures = int(os.environ.get("XMUSE_TEST_AGY_START_FAILURES", "0"))
+        with open(_ARGV_LOG_PATH, encoding="utf-8") as handle:
+            starts = sum(1 for _ in handle)
+        if starts <= start_failures:
+            _log("startup_failed", conversation_id=conversation_id, start=starts)
+            print("error: Eligibility check failed: EOF", file=sys.stderr, flush=True)
+            return 1
     _log(
         "startup",
         mode=_MODE,
