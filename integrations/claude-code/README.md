@@ -143,7 +143,7 @@ src/poll.ts                     tick, auto-bind, attach/detach
 src/pane.tsx                    pane nodes + tree
 types/index.d.ts                PluginState contract
 tests/*.test.ts                 claude plugin test suites
-tests/grant_fixtures.json       local grant payloads (schema-checked)
+tests/grant_golden.generated.ts backend plugin_grant_v1 golden (tools/sync_fixtures.py)
 tests/fixtures.generated.ts     generated fixtures (do not edit)
 tools/sync_fixtures.py          fixture generator (stdlib only)
 ```

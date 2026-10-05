@@ -1,12 +1,13 @@
 // Plugin grant tests: pairing validation, exchange, expiry, digest
 // confirm, decision outcomes, revoke and detach. One body run with explicit
 // options (pollSeconds 1s). All test hooks register before the first $ call.
-// Contract-shaped payloads below are local test data copied from the shapes
-// in docs/contracts/schemas/plugin_grant.v1.json (see grant_fixtures.json,
-// validated host-side against that schema).
+// The flows below build contract-shaped payloads inline; the backend golden
+// responses (docs/contracts/fixtures/plugin_grant_v1, copied into
+// grant_golden.generated.ts by tools/sync_fixtures.py) get their own test.
 import { expect, mock, test } from "claude-code/testing";
 import type { Engine, On } from "claude-code/testing";
 import * as fx from "./fixtures.generated";
+import { GRANT_GOLDEN } from "./grant_golden.generated";
 import { detailCodeOf, parseExchangePayload } from "../src/grant_api";
 import {
   checkConfirmInput,
@@ -252,6 +253,36 @@ test("exchange payload parsing keeps active grants only", OPTIONS, async () => {
   expect(parseExchangePayload({ schema_version: "plugin_grant_exchange/v1", grant: (raw["grant"] as object), secret: "bad" })).toBe(null);
   expect(detailCodeOf(JSON.parse(errorText("room_board_split_decided")))).toBe("room_board_split_decided");
   expect(detailCodeOf({})).toBe(null);
+});
+
+test("backend golden responses parse the way the mod reads them", OPTIONS, async () => {
+  const exchange = parseExchangePayload(GRANT_GOLDEN["exchange"]);
+  expect(exchange).not.toBe(null);
+  expect(exchange?.grant.conversationId).toBe(GRANT_GOLDEN["exchange"].grant.conversation_id);
+  expect(String(exchange?.token).startsWith("xpg_")).toBe(true);
+  expect(validatePairingCode(GRANT_GOLDEN["issue"].pairing_code).ok).toBe(true);
+  // the pending grant from issue and the revoked grant from revoke never authorize
+  expect(parseExchangePayload({ ...GRANT_GOLDEN["exchange"], grant: GRANT_GOLDEN["issue"].grant })).toBe(null);
+  expect(parseExchangePayload(GRANT_GOLDEN["plugin_revoke"])).toBe(null);
+  // every error golden is named by its code and is read back as that code
+  const codes = [
+    "plugin_content_type_invalid",
+    "plugin_grant_invalid",
+    "plugin_origin_forbidden",
+    "plugin_pairing_invalid",
+    "plugin_pairing_locked",
+    "room_board_split_decided",
+    "room_board_split_digest_mismatch",
+    "room_board_split_not_proposed",
+  ];
+  for (const code of codes) {
+    expect(detailCodeOf(GRANT_GOLDEN[code]), code).toBe(code);
+  }
+  expect(mapDecisionOutcome(409, detailCodeOf(GRANT_GOLDEN["room_board_split_decided"]), "approve").refetch).toBe(true);
+  expect(mapDecisionOutcome(409, detailCodeOf(GRANT_GOLDEN["room_board_split_digest_mismatch"]), "approve").toast).toBe(
+    "拆分已变化，请重新确认",
+  );
+  expect(mapDecisionOutcome(401, detailCodeOf(GRANT_GOLDEN["plugin_grant_invalid"]), "approve").clearGrant).toBe(true);
 });
 
 // --- engine flows ---

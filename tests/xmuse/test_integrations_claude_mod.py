@@ -6,7 +6,7 @@ Covers the hard rules that are statically verifiable:
   single pure grant writer, no operator token material, no write verbs
   except POST in src/grant_api.ts;
 - the grant write paths, bearer header placement and ui-arg hygiene;
-- tests/grant_fixtures.json validates against the plugin_grant/v1 schema;
+- the backend plugin_grant_v1 golden files validate against the plugin_grant/v1 schema;
 - plugin.json / hooks.json / marketplace.json parse and agree on the name.
 """
 
@@ -270,13 +270,17 @@ def test_grant_fixtures_match_schema() -> None:
     schema_path = REPO_ROOT / "docs" / "contracts" / "schemas" / "plugin_grant.v1.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
-    raw = (PLUGIN_ROOT / "tests" / "grant_fixtures.json").read_text(encoding="utf-8")
-    fixtures = json.loads(raw)
-    for key in ("issue", "list", "exchange"):
-        assert key in fixtures, f"grant_fixtures.json missing {key}"
+    golden_dir = REPO_ROOT / "docs" / "contracts" / "fixtures" / "plugin_grant_v1"
+    fixtures = {
+        p.stem: json.loads(p.read_text(encoding="utf-8")) for p in golden_dir.glob("*.json")
+    }
+    for key in ("issue", "list", "exchange", "operator_revoke", "plugin_revoke"):
+        assert key in fixtures, f"plugin_grant_v1 golden missing {key}"
         validator.validate(fixtures[key])
     assert fixtures["issue"]["grant"]["status"] == "pending"
     assert fixtures["exchange"]["grant"]["status"] == "active"
+    generated = (PLUGIN_ROOT / "tests" / "grant_golden.generated.ts").read_text(encoding="utf-8")
+    assert "GRANT_GOLDEN" in generated
 
 
 def test_grant_ts_suite_covers_contract() -> None:
