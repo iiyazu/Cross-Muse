@@ -965,6 +965,7 @@ function RoomInspectorTab({ onRequestCancel, onRequestMemoryRebuild }: Pick<Work
       actionError={boardActionError}
       actionPending={boardActionPending}
       cache={board}
+      roomId={roomId ?? undefined}
       onDecide={decideBoardSplit}
       onLoadContract={(contractId) => { void loadBoardContract(contractId); }}
     />

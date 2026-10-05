@@ -32,6 +32,10 @@ import {
   decideBoardSplit as requestBoardSplitDecision
 } from "@/lib/board-api";
 import {
+  listPluginGrants,
+  revokePluginGrant
+} from "@/lib/grant-api";
+import {
   normalizeRoomList,
   normalizeRoomMemoryProjection,
   normalizeRoomOperationsProjection,
@@ -79,6 +83,7 @@ import {
   createEmptyBoardCache,
   createEmptyCodexCache,
   createEmptyExecutionCache,
+  createEmptyGrantCache,
   createEmptyMemoryCache,
   createEmptyRoomCache
 } from "@/store/room-cache-factories";
@@ -116,6 +121,7 @@ const emptyExecutionCache = createEmptyExecutionCache;
 const emptyMemoryCache = createEmptyMemoryCache;
 const emptyBoardCache = createEmptyBoardCache;
 const emptyCodexCache = createEmptyCodexCache;
+const emptyGrantCache = createEmptyGrantCache;
 
 const syncCoordinator = createRoomSyncCoordinator();
 let lastSafeRefreshAt = 0;
@@ -131,6 +137,8 @@ const memoryControllers = new Map<string, AbortController>();
 const memoryRequests = new Map<string, Promise<void>>();
 const boardControllers = new Map<string, AbortController>();
 const boardRequests = new Map<string, Promise<void>>();
+const grantControllers = new Map<string, AbortController>();
+const grantRequests = new Map<string, Promise<void>>();
 const codexControllers = new Map<string, AbortController>();
 const codexRequests = new Map<string, Promise<void>>();
 let codexFocusHandler: (() => void) | null = null;
@@ -314,6 +322,12 @@ function abortBoardRequest(roomId: string) {
   boardRequests.delete(roomId);
 }
 
+function abortGrantsRequest(roomId: string) {
+  grantControllers.get(roomId)?.abort();
+  grantControllers.delete(roomId);
+  grantRequests.delete(roomId);
+}
+
 function abortCodexRequest(roomId: string) {
   codexControllers.get(roomId)?.abort();
   codexControllers.delete(roomId);
@@ -389,6 +403,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   boardByRoom: {},
   boardActionPending: null,
   boardActionError: null,
+  grantsByRoom: {},
   codexByRoom: {},
   codexPreferenceRevision: 0,
   executionActionPending: null,
@@ -470,6 +485,18 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       abortMemoryRequest(previous);
       abortBoardRequest(previous);
       abortCodexRequest(previous);
+      abortGrantsRequest(previous);
+      // A stale grants response for the previous room must not land after the switch.
+      set((state) => {
+        const cache = state.grantsByRoom[previous];
+        if (!cache) return {};
+        return {
+          grantsByRoom: {
+            ...state.grantsByRoom,
+            [previous]: { ...cache, requestGeneration: cache.requestGeneration + 1 }
+          }
+        };
+      });
     }
     const savedDraft = readRoomDraft(browserStorage("session"), roomId);
     set((state) => {
@@ -1191,6 +1218,116 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       }
       return false;
     }
+  },
+
+  async refreshGrants(roomId = get().selectedRoomId ?? "") {
+    if (!roomId) return;
+    const inFlight = grantRequests.get(roomId);
+    if (inFlight) return inFlight;
+    const current = get().grantsByRoom[roomId] ?? emptyGrantCache();
+    const generation = current.requestGeneration + 1;
+    const controller = new AbortController();
+    grantControllers.set(roomId, controller);
+    set((state) => ({
+      grantsByRoom: {
+        ...state.grantsByRoom,
+        [roomId]: {
+          ...(state.grantsByRoom[roomId] ?? emptyGrantCache()),
+          loading: true,
+          requestGeneration: generation
+        }
+      }
+    }));
+    let request!: Promise<void>;
+    request = (async () => {
+      try {
+        const list = await listPluginGrants(roomId, apiOptions(controller.signal));
+        if (
+          controller.signal.aborted ||
+          get().grantsByRoom[roomId]?.requestGeneration !== generation
+        ) return;
+        set((state) => {
+          const cache = state.grantsByRoom[roomId] ?? emptyGrantCache();
+          if (cache.requestGeneration !== generation) return {};
+          return {
+            grantsByRoom: {
+              ...state.grantsByRoom,
+              [roomId]: {
+                ...cache,
+                grants: list.grants,
+                loading: false,
+                consecutiveFailures: 0,
+                lastSyncedAt: Date.now(),
+                error: null
+              }
+            }
+          };
+        });
+      } catch (error) {
+        if (controller.signal.aborted || isCallerAbort(error)) return;
+        set((state) => {
+          const cache = state.grantsByRoom[roomId] ?? emptyGrantCache();
+          if (cache.requestGeneration !== generation) return {};
+          return {
+            grantsByRoom: {
+              ...state.grantsByRoom,
+              [roomId]: {
+                ...cache,
+                loading: false,
+                consecutiveFailures: cache.consecutiveFailures + 1,
+                error: describeError(error)
+              }
+            }
+          };
+        });
+      } finally {
+        if (grantControllers.get(roomId) === controller) grantControllers.delete(roomId);
+        if (grantRequests.get(roomId) === request) grantRequests.delete(roomId);
+      }
+    })();
+    grantRequests.set(roomId, request);
+    return request;
+  },
+
+  async revokeGrant(grantId, roomId = get().selectedRoomId ?? "") {
+    const actualRoomId = typeof roomId === "string" && roomId ? roomId : get().selectedRoomId ?? "";
+    if (!actualRoomId || !grantId) return false;
+    try {
+      await revokePluginGrant(grantId, actualRoomId, apiOptions());
+      abortGrantsRequest(actualRoomId);
+      await get().refreshGrants(actualRoomId);
+      return true;
+    } catch (error) {
+      if (isCallerAbort(error)) return false;
+      const failure = describeError(error);
+      set((state) => {
+        const cache = state.grantsByRoom[actualRoomId] ?? emptyGrantCache();
+        return {
+          grantsByRoom: {
+            ...state.grantsByRoom,
+            [actualRoomId]: { ...cache, error: failure }
+          }
+        };
+      });
+      return false;
+    }
+  },
+
+  startGrantsSync(roomId = get().selectedRoomId ?? "") {
+    const currentGrantsEpoch = syncCoordinator.restart("grants");
+    const targetRoomId = roomId;
+    const scheduleGrants = () => {
+      if (!syncCoordinator.isCurrent("grants", currentGrantsEpoch)) return;
+      syncCoordinator.schedule("grants", currentGrantsEpoch, 5_000, async () => {
+        if (targetRoomId) await get().refreshGrants(targetRoomId);
+        scheduleGrants();
+      });
+    };
+    scheduleGrants();
+  },
+
+  stopGrantsSync() {
+    syncCoordinator.restart("grants");
   },
 
   async refreshCodexAgents(roomId = get().selectedRoomId ?? "") {
@@ -1962,6 +2099,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     for (const controller of boardControllers.values()) controller.abort();
     boardControllers.clear();
     boardRequests.clear();
+    for (const controller of grantControllers.values()) controller.abort();
+    grantControllers.clear();
+    grantRequests.clear();
     for (const controller of codexControllers.values()) controller.abort();
     codexControllers.clear();
     codexRequests.clear();

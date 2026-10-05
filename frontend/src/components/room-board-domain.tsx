@@ -24,6 +24,8 @@ import type {
 import type { RoomBoardCache } from "@/store/domain/board";
 import { Check, Hourglass, TriangleAlert } from "lucide-react";
 
+import { RoomGrantsDomain } from "./room-grants-domain";
+
 export function AgentTextView({
   value,
   monospace = false
@@ -596,12 +598,14 @@ function EventLine({
 
 export function RoomBoardDomain({
   cache,
+  roomId,
   onLoadContract,
   actionPending = null,
   actionError = null,
   onDecide
 }: {
   cache: RoomBoardCache | null;
+  roomId?: string;
   onLoadContract: (contractId: string) => void;
   actionPending?: { kind: "approve" | "reject"; splitId: string } | null;
   actionError?: { code: string; message: string; status: number } | null;
@@ -696,6 +700,10 @@ export function RoomBoardDomain({
                   ) : null}
                 </div>
               ) : null}
+              <RoomGrantsDomain
+                conversationId={roomId ?? projection.conversation_id}
+                key={roomId ?? projection.conversation_id}
+              />
               {projection.contracts.length ? (
                 <div aria-label="契约列表" className="room-board-contracts">
                   {projection.contracts.map((contract) => {

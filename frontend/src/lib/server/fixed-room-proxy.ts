@@ -10,6 +10,14 @@ export type FixedRoomProxyConfig<T> = {
   upstreamMethod?: "POST" | "PUT";
 };
 
+export type FixedRoomProxyReadConfig = {
+  request: Request;
+  upstreamPath: string;
+  query: Record<string, string>;
+  timeoutMs: number;
+  codePrefix: string;
+};
+
 export function proxyJsonError(
   status: number,
   code: string,
@@ -47,6 +55,20 @@ function sameLoopbackOrigin(request: Request): boolean {
 
 function isJsonContentType(value: string | null): boolean {
   return value?.split(";", 1)[0].trim().toLowerCase() === "application/json";
+}
+
+function requestHostIsLoopback(request: Request): boolean {
+  const raw = request.headers.get("host")?.trim().toLowerCase();
+  if (!raw) return false;
+  let hostname = raw;
+  if (hostname.startsWith("[")) {
+    const end = hostname.indexOf("]");
+    if (end === -1) return false;
+    hostname = hostname.slice(0, end + 1);
+  } else {
+    hostname = hostname.split(":")[0] ?? "";
+  }
+  return loopbackHostname(hostname);
 }
 
 async function readBoundedBytes(
@@ -188,6 +210,103 @@ export async function proxyFixedRoomWrite<T>(
         "X-XMuse-Operator-Token": token
       },
       body: JSON.stringify(normalized),
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal
+    });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      return proxyJsonError(502, `${codePrefix}_upstream_redirect`, "upstream redirect was rejected");
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await readBoundedBytes(
+        response.body,
+        MAX_UPSTREAM_RESPONSE_BYTES,
+        response.headers.get("content-length")
+      );
+    } catch {
+      return proxyJsonError(502, `${codePrefix}_upstream_response_too_large`, "upstream response exceeds 1MiB");
+    }
+    return new Response(new TextDecoder().decode(bytes), {
+      status: response.status,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": safeContentType(response.headers.get("content-type"))
+      }
+    });
+  } catch {
+    if (deadlineExpired) {
+      return proxyJsonError(504, `${codePrefix}_upstream_timeout`, "Room API upstream timed out");
+    }
+    if (clientAborted) {
+      return proxyJsonError(499, `${codePrefix}_client_aborted`, "client closed the request");
+    }
+    return proxyJsonError(502, `${codePrefix}_upstream_unavailable`, "Room API upstream is unavailable");
+  } finally {
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
+  }
+}
+
+/**
+ * Fixed GET proxy for operator reads. A same-origin `fetch` GET carries no
+ * `Origin` header, so this variant requires a loopback `Host` **and**
+ * `Sec-Fetch-Site: same-origin` instead of the Origin check used by writes.
+ */
+export async function proxyFixedRoomRead(
+  config: FixedRoomProxyReadConfig
+): Promise<Response> {
+  const { request, codePrefix } = config;
+  if (!requestHostIsLoopback(request)) {
+    return proxyJsonError(403, `${codePrefix}_origin_forbidden`, "request Host is not a loopback name");
+  }
+  if (request.headers.get("sec-fetch-site")?.trim().toLowerCase() !== "same-origin") {
+    return proxyJsonError(403, `${codePrefix}_origin_forbidden`, "same-origin fetch metadata is required");
+  }
+
+  const token = process.env.XMUSE_OPERATOR_TOKEN?.trim();
+  if (!token) {
+    return proxyJsonError(503, "operator_auth_not_configured", "operator authentication is not configured");
+  }
+  const base = upstreamBaseUrl();
+  if (!base) {
+    return proxyJsonError(503, `${codePrefix}_upstream_invalid`, "Room API upstream is not a fixed loopback HTTP URL");
+  }
+  if (!config.upstreamPath || config.upstreamPath.startsWith("/") || config.upstreamPath.includes("?")) {
+    return proxyJsonError(500, `${codePrefix}_route_invalid`, "fixed upstream route is invalid");
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(config.query)) {
+    params.set(key, value);
+  }
+  const suffix = params.toString();
+  const target = `${base}/${config.upstreamPath}${suffix ? `?${suffix}` : ""}`;
+
+  const controller = new AbortController();
+  let deadlineExpired = false;
+  let clientAborted = request.signal.aborted;
+  const timeout = setTimeout(() => {
+    deadlineExpired = true;
+    controller.abort();
+  }, config.timeoutMs);
+  const abortFromClient = () => {
+    clientAborted = true;
+    controller.abort();
+  };
+  request.signal.addEventListener("abort", abortFromClient, { once: true });
+  if (clientAborted) {
+    controller.abort();
+    clearTimeout(timeout);
+    request.signal.removeEventListener("abort", abortFromClient);
+    return proxyJsonError(499, `${codePrefix}_client_aborted`, "client closed the request");
+  }
+  try {
+    const response = await fetch(target, {
+      method: "GET",
+      headers: {
+        "X-XMuse-Operator-Token": token
+      },
       cache: "no-store",
       redirect: "manual",
       signal: controller.signal
