@@ -103,6 +103,18 @@ DEFAULT_RUN_TIMEOUT_S = 3 * 3600.0
 MODULE_ID_PREFIX = "owner-"
 
 
+OWNER_CLIS = ("opencode", "antigravity")
+
+
+def module_owner_clis(plan: Mapping[str, Any], default: str) -> dict[str, str]:
+    """Module id -> owner provider; a module's ``owner_cli`` overrides the run default."""
+
+    return {
+        str(module["module_id"]): str(module.get("owner_cli") or default)
+        for module in plan["modules"]
+    }
+
+
 def load_plan(path: Path) -> dict[str, Any]:
     """Load and validate a plan file (module ids, paths and task text)."""
 
@@ -123,6 +135,8 @@ def load_plan(path: Path) -> dict[str, Any]:
             raise ValueError(f"plan module {module_id} needs paths")
         if not isinstance(task, str) or not task.strip():
             raise ValueError(f"plan module {module_id} needs task text")
+        if module.get("owner_cli", "opencode") not in OWNER_CLIS:
+            raise ValueError(f"plan module {module_id} owner_cli must be one of {OWNER_CLIS}")
         seen.add(module_id)
     return dict(raw)
 
@@ -283,7 +297,8 @@ async def run_eval(
     agy_model: str = smoke.AGY_DEFAULT_MODEL,
 ) -> dict[str, Any]:
     started = time.monotonic()
-    owner_cli_model = owner_model if owner_cli == "opencode" else agy_model
+    clis = module_owner_clis(plan, owner_cli)
+    models = {"opencode": owner_model, "antigravity": agy_model}
     source = root / "source-repo"
     seed_head = prepare_source_repo(seed, source, install)
     # Every owner clone gets the same offline install before its first turn.
@@ -299,8 +314,8 @@ async def run_eval(
             ParticipantInit(
                 role=role,
                 display_name=f"Owner {module['module_id']}",
-                cli_kind=owner_cli,  # type: ignore[arg-type]
-                model=owner_cli_model,
+                cli_kind=clis[str(module["module_id"])],  # type: ignore[arg-type]
+                model=models[clis[str(module["module_id"])]],
                 workspace_access="workspace_write",
             )
             for role, module in zip(roles, modules, strict=True)
@@ -338,7 +353,9 @@ async def run_eval(
         source_repo=source,
         mcp_url=mcp_url,
         owner_model=owner_model,
-        frontend_cli=owner_cli,
+        # agy owner settings are only resolved for an antigravity frontend; OpenCode
+        # owners are always available, so a mixed room resolves the agy side too.
+        frontend_cli="antigravity" if "antigravity" in clis.values() else "opencode",
         agy_model=agy_model,
     )
     created: list[RoomObservationTransport] = []
@@ -524,9 +541,10 @@ async def run_eval(
         "seed_head": seed_head,
         "reviewer": reviewer,
         "owner_cli": owner_cli,
+        "owner_clis": clis,
         "models": {
             "lead": lead_model,
-            "owners": owner_cli_model,
+            "owners": {cli: models[cli] for cli in sorted(set(clis.values()))},
             "reviewer": agy_model if reviewer == "antigravity" else None,
         },
         "phases": phases,
@@ -565,10 +583,10 @@ def main(argv: list[str] | None = None) -> int:
         lead_model = smoke.validate_model(args.lead_model)
         owner_model = smoke.validate_model(args.owner_model)
         agy_model = smoke.validate_agy_model(args.agy_model)
-        if args.owner_cli == "antigravity" and args.reviewer == "antigravity":
-            raise ValueError("an antigravity reviewer cannot review antigravity owners")
         profile = get_execution_gate_profile(args.profile)
         plan = load_plan(Path(args.plan))
+        if args.reviewer in module_owner_clis(plan, args.owner_cli).values():
+            raise ValueError(f"a {args.reviewer} reviewer cannot review {args.reviewer} owners")
     except ValueError as exc:
         print(f"brownfield eval unavailable: {exc}", flush=True)
         return 2

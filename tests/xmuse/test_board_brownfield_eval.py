@@ -51,6 +51,7 @@ def test_load_plan_validates_modules(tmp_path: Path) -> None:
                 {"module_id": "a", "paths": ["y/**"], "task": "t"},
             ]
         ),
+        _plan(modules=[{"module_id": "a", "paths": ["x/**"], "task": "t", "owner_cli": "codex"}]),
     ):
         path = tmp_path / "broken.json"
         path.write_text(json.dumps(broken), encoding="utf-8")
@@ -149,3 +150,25 @@ def test_reviewer_participant_passes_room_setup(tmp_path: Path, reviewer: str) -
     )
 
     assert setup["id"]
+
+
+def test_a_module_owner_cli_overrides_the_run_default() -> None:
+    plan = _plan()
+    plan["modules"][1]["owner_cli"] = "antigravity"  # type: ignore[index]
+
+    assert brownfield.module_owner_clis(plan, "opencode") == {"a": "opencode", "b": "antigravity"}
+    assert brownfield.module_owner_clis(_plan(), "antigravity") == {
+        "a": "antigravity",
+        "b": "antigravity",
+    }
+
+
+def test_a_reviewer_of_an_owner_family_is_refused(tmp_path: Path) -> None:
+    plan = _plan()
+    plan["modules"][0]["owner_cli"] = "antigravity"  # type: ignore[index]
+    path = tmp_path / "mixed.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    common = ["--seed", str(tmp_path), "--plan", str(path), "--root", str(tmp_path / "root")]
+
+    assert brownfield.main([*common, "--result", "r.json", "--reviewer", "antigravity"]) == 2
+    assert not (tmp_path / "root").exists()
