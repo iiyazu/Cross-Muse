@@ -27,11 +27,34 @@ from pathlib import Path, PurePosixPath
 from typing import IO
 
 from xmuse_core.chat.room_execution_profiles import (
+    REMIX_MONOREPO_PROFILE_ID,
+    REMIX_RUNNER_ENTRY,
+    REMIX_RUNNER_PATHS,
     ExecutionGateProfile,
     get_execution_gate_profile,
 )
 
 SANDBOX_SCHEMA = "room_execution_sandbox/v2"
+# Server-owned driver for the per-package remix gates, mounted read-only.
+REMIX_GATE_DRIVER = Path(__file__).resolve().parent / "gate_drivers" / "remix_monorepo_gate.mjs"
+REMIX_GATE_DRIVER_MOUNT = "/xmuse-gate/remix_monorepo_gate.mjs"
+REMIX_GATE_IDS = frozenset({"node_pnpm_remix_typecheck", "node_pnpm_remix_test"})
+_REMIX_PACKAGE_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
+_REMIX_SOURCE_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs")
+# Literal module loads in lexed code (strings replaced by placeholders, see
+# _lex_js): static import/export-from, side-effect imports, import() with
+# optional attributes, require() and createRequire(...)(...).
+_REMIX_LOAD_RE = re.compile(
+    r"(?<![\w$.])(?:import|export)\b[^;]*?\bfrom\s*\x00(\d+)\x00"
+    r"|(?<![\w$.])import\s*\x00(\d+)\x00"
+    r"|(?<![\w$.])import\s*\(\s*\x00(\d+)\x00\s*[,)]"
+    r"|(?<![\w$.])require\s*\(\s*\x00(\d+)\x00\s*\)"
+    r"|\)\s*\(\s*\x00(\d+)\x00\s*\)"
+)
+_REMIX_WORKSPACE_SPECIFIER_RE = re.compile(r"@remix-run/[^\s]*|remix(?:/[^\s]*)?")
+_JS_REGEX_PRECEDERS = frozenset("(,=:[!&|?{};+-*%<>~^")
+_JS_REGEX_KEYWORDS = frozenset({"return", "typeof", "case", "do", "else", "in", "of", "void"})
+_MAX_REMIX_RUNNER_FILES = 2_000
 SANDBOX_ACTIVE_ENV = "XMUSE_EXECUTION_SANDBOX_ACTIVE"
 DEFAULT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
 DEFAULT_CANCEL_POLL_S = 0.25
@@ -174,6 +197,11 @@ class SandboxLayout:
     node_modules_mount_path: str | None = None
     python_extension_artifacts: tuple[tuple[Path, str], ...] = ()
     artifact_snapshot_root: Path | None = None
+    # remix-monorepo/v1: the affected packages the driver gates, and each
+    # workspace package's installed node_modules (host path, sandbox path).
+    gate_packages: tuple[str, ...] = ()
+    package_node_modules: tuple[tuple[Path, str], ...] = ()
+    runner_mounts: tuple[tuple[Path, str], ...] = ()
 
     def close(self) -> None:
         if self.artifact_snapshot_root is None:
@@ -349,6 +377,18 @@ GATE_SPECS: Mapping[str, GateSpec] = {
         "/workspace",
         1_200.0,
     ),
+    "node_pnpm_remix_typecheck": GateSpec(
+        "node_pnpm_remix_typecheck",
+        ("/tools/node", REMIX_GATE_DRIVER_MOUNT, "typecheck"),
+        "/workspace",
+        1_800.0,
+    ),
+    "node_pnpm_remix_test": GateSpec(
+        "node_pnpm_remix_test",
+        ("/tools/node", REMIX_GATE_DRIVER_MOUNT, "test"),
+        "/workspace",
+        2_400.0,
+    ),
 }
 
 
@@ -360,8 +400,13 @@ def discover_sandbox_layout(
     bwrap_path: str | Path | None = None,
     profile: ExecutionGateProfile | None = None,
     expected_toolchain_capability_digest: str | None = None,
+    gate_packages: tuple[str, ...] = (),
 ) -> SandboxLayout:
-    """Resolve trusted dependency paths without consulting candidate content."""
+    """Resolve trusted dependency paths without consulting candidate content.
+
+    ``gate_packages`` is the host-derived affected package list for the
+    per-package remix gates (``affected_packages``); it must be empty otherwise.
+    """
 
     root = execution_root.resolve(strict=True)
     worktree = stage.resolve(strict=True)
@@ -433,6 +478,18 @@ def discover_sandbox_layout(
         profile_node_modules_mount_path = "/workspace/node_modules"
         if not profile_node_modules.is_dir():
             raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+    needs_remix = any(value in REMIX_GATE_IDS for value in selected)
+    if gate_packages and not needs_remix:
+        raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+    if any(_REMIX_PACKAGE_NAME_RE.match(name) is None for name in gate_packages):
+        raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+    package_node_modules: tuple[tuple[Path, str], ...] = ()
+    runner_mounts: tuple[tuple[Path, str], ...] = ()
+    if needs_remix:
+        if not REMIX_GATE_DRIVER.is_file():
+            raise RoomExecutionSandboxError("execution_toolchain_unavailable")
+        package_node_modules = _remix_package_node_modules(root, worktree)
+        runner_mounts = _remix_runner_mounts(root)
     layout = SandboxLayout(
         stage=worktree,
         git_common_dir=git_common,
@@ -447,6 +504,9 @@ def discover_sandbox_layout(
         node_modules_mount_path=profile_node_modules_mount_path,
         python_extension_artifacts=extension_artifacts,
         artifact_snapshot_root=artifact_snapshot_root,
+        gate_packages=tuple(gate_packages),
+        package_node_modules=package_node_modules,
+        runner_mounts=runner_mounts,
     )
     if profile is not None and expected_toolchain_capability_digest is not None:
         snapshot_evidence = tuple(
@@ -470,6 +530,285 @@ def discover_sandbox_layout(
             layout.close()
             raise RoomExecutionSandboxError("execution_toolchain_capability_drift")
     return layout
+
+
+def _remix_package_node_modules(root: Path, stage: Path) -> tuple[tuple[Path, str], ...]:
+    """Each workspace package's installed ``node_modules`` from the execution root.
+
+    pnpm installs one ``node_modules`` per workspace package (links into the
+    root store), and none of them is tracked, so the stage has none.  Only real
+    directories directly under ``packages/<name>/`` of a package the stage also
+    has are mounted, read-only, at the same place inside ``/workspace``.
+    """
+
+    packages_dir = root / "packages"
+    if not packages_dir.is_dir():
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    mounts: list[tuple[Path, str]] = []
+    runner_names = {path.split("/")[1] for path in REMIX_RUNNER_PATHS}
+    for package in sorted(packages_dir.iterdir()):
+        name = package.name
+        if _REMIX_PACKAGE_NAME_RE.match(name) is None or package.is_symlink():
+            continue
+        if name in runner_names:
+            # Mounted whole (with its node_modules) by _remix_runner_mounts.
+            continue
+        installed = package / "node_modules"
+        if installed.is_symlink() or not installed.is_dir():
+            continue
+        if not (stage / "packages" / name).is_dir():
+            continue
+        mounts.append((installed.resolve(strict=True), f"/workspace/packages/{name}/node_modules"))
+    return tuple(mounts)
+
+
+def _remix_runner_mounts(root: Path) -> tuple[tuple[Path, str], ...]:
+    """The frozen runner packages from the execution root, mounted read-only.
+
+    They replace the stage's copies inside the sandbox, so nothing that runs
+    during a gate (candidate tests included) can rewrite the runner mid-run.
+    """
+
+    mounts: list[tuple[Path, str]] = []
+    for relative in REMIX_RUNNER_PATHS:
+        source = root / relative.rstrip("/")
+        if source.is_symlink() or not source.is_dir():
+            raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+        mounts.append((source.resolve(strict=True), f"/workspace/{relative.rstrip('/')}"))
+    return tuple(mounts)
+
+
+def _remix_runner_node_modules(root: Path) -> tuple[tuple[Path, str], ...]:
+    """The runner packages' own installed links (mounted with the runner)."""
+
+    mounts: list[tuple[Path, str]] = []
+    for relative in REMIX_RUNNER_PATHS:
+        installed = root / relative / "node_modules"
+        if installed.is_symlink():
+            raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        if installed.is_dir():
+            mounts.append((installed.resolve(strict=True), f"/workspace/{relative}node_modules"))
+    return tuple(mounts)
+
+
+def _remix_dependency_digest(mounts: tuple[tuple[Path, str], ...]) -> str:
+    """Digest each package ``node_modules`` listing (pnpm links into the root store)."""
+
+    values: list[dict[str, object]] = []
+    for installed, mount in mounts:
+        entries: list[dict[str, str]] = []
+        for child in sorted(installed.iterdir()):
+            children = (
+                sorted(child.iterdir())
+                if child.name.startswith("@") and child.is_dir() and not child.is_symlink()
+                else [child]
+            )
+            for item in children:
+                relative = str(item.relative_to(installed))
+                if item.is_symlink():
+                    target = os.readlink(item)
+                else:
+                    target = "dir" if item.is_dir() else "file"
+                entries.append({"name": relative, "target": target})
+                if len(entries) > 4096:
+                    raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+        values.append({"mount": mount, "entries": entries})
+    return _canonical_digest(values)
+
+
+def _remix_runner_contract(root: Path) -> dict[str, object]:
+    """Freeze the repository's own test runner: every tracked file under it.
+
+    The profile executes this runner, so its exact bytes are marker evidence and
+    part of the toolchain capability re-proved before every gate run; candidates
+    can never change these paths (``remix_monorepo_paths/v1`` rejects them).
+    """
+
+    entry = root / REMIX_RUNNER_ENTRY
+    if entry.is_symlink() or not entry.is_file():
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--", *REMIX_RUNNER_PATHS],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=30.0,
+    )
+    if result.returncode != 0:
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    names = sorted(item for item in result.stdout.decode("utf-8").split("\0") if item)
+    if not names or len(names) > _MAX_REMIX_RUNNER_FILES:
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    files = [{"path": name, "digest": _trusted_file_digest(root / name)} for name in names]
+    _check_remix_runner_closure(root, names)
+    return {"runner_entry": REMIX_RUNNER_ENTRY, "runner_files": _canonical_digest(files)}
+
+
+def _lex_js(text: str) -> tuple[str, list[str]]:
+    """Strip comments and lift string literals out of JavaScript/TypeScript.
+
+    Returns the code with every comment removed and every string or template
+    literal replaced by ``\x00<index>\x00``, plus the literal values (template
+    ``${...}`` parts are lexed as code).  A ``/`` starts a regex literal only
+    where an expression may begin, so quotes or comment markers inside strings,
+    templates and regexes never hide or invent code.
+    """
+
+    out: list[str] = []
+    literals: list[str] = []
+    i, n = 0, len(text)
+    template_depth: list[int] = []  # brace depth at each open ${
+
+    def previous_significant() -> str:
+        joined = "".join(out[-40:]).rstrip()
+        return joined[-1:] if joined else ""
+
+    def previous_word() -> str:
+        match = re.search(r"([A-Za-z_$][\w$]*)\s*$", "".join(out[-40:]))
+        return match.group(1) if match else ""
+
+    def read_template(start: int) -> int:
+        # Reads from just after a backtick (or a closing brace of ${}) to the
+        # next ${ or the closing backtick; returns the index after it.
+        j = start
+        chunk: list[str] = []
+        while j < n:
+            ch = text[j]
+            if ch == "\\":
+                chunk.append(text[j : j + 2])
+                j += 2
+                continue
+            if ch == "`":
+                literals.append("".join(chunk))
+                out.append(f"\x00{len(literals) - 1}\x00")
+                return j + 1
+            if ch == "$" and text[j + 1 : j + 2] == "{":
+                literals.append("".join(chunk))
+                out.append(f"\x00{len(literals) - 1}\x00(")
+                template_depth.append(0)
+                return j + 2
+            chunk.append(ch)
+            j += 1
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1 : i + 2]
+        if ch == "/" and nxt == "/":
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if ch == "/" and nxt == "*":
+            end = text.find("*/", i + 2)
+            if end < 0:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            out.append(" ")
+            i = end + 2
+            continue
+        if ch in "'\"":
+            j = i + 1
+            chunk: list[str] = []
+            while j < n and text[j] != ch:
+                if text[j] == "\\":
+                    chunk.append(text[j + 1 : j + 2])
+                    j += 2
+                    continue
+                if text[j] == "\n":
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+                chunk.append(text[j])
+                j += 1
+            if j >= n:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            literals.append("".join(chunk))
+            out.append(f"\x00{len(literals) - 1}\x00")
+            i = j + 1
+            continue
+        if ch == "`":
+            i = read_template(i + 1)
+            continue
+        if template_depth and ch == "{":
+            template_depth[-1] += 1
+        elif template_depth and ch == "}":
+            if template_depth[-1] == 0:
+                template_depth.pop()
+                out.append(")")
+                i = read_template(i + 1)
+                continue
+            template_depth[-1] -= 1
+        if ch == "/" and (
+            previous_significant() in _JS_REGEX_PRECEDERS
+            or previous_significant() == ""
+            or previous_word() in _JS_REGEX_KEYWORDS
+        ):
+            j, in_class = i + 1, False
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "\n":
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+                if text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                elif text[j] == "/" and not in_class:
+                    break
+                j += 1
+            out.append(" /regex/ ")
+            i = j + 1
+            while i < n and (text[i].isalnum() or text[i] == "_"):
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    if template_depth:
+        raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+    return "".join(out), literals
+
+
+def _check_remix_runner_closure(root: Path, names: list[str]) -> None:
+    """Prove the frozen runner only imports itself and installed dependencies.
+
+    Every literal module load of a runner source (static and side-effect
+    imports, ``export ... from``, ``import()`` and ``require()``; comments
+    stripped; the runner's own tests and fixtures are never loaded for another
+    package, and production code may not import them) must
+    stay inside the frozen packages: a relative import may not leave them and a
+    workspace import (``@remix-run/<name>``, ``remix``) must name one of them.
+    Anything else would execute candidate-writable code inside the driver.
+    """
+
+    frozen = {relative.split("/")[1] for relative in REMIX_RUNNER_PATHS}
+    for name in names:
+        pure = PurePosixPath(name)
+        if pure.suffix not in _REMIX_SOURCE_SUFFIXES:
+            continue
+        if ".test." in pure.name or "test" in pure.parts[3:-1]:
+            continue
+        code, literals = _lex_js((root / name).read_text(encoding="utf-8", errors="replace"))
+        for match in _REMIX_LOAD_RE.finditer(code):
+            spec = literals[int(next(group for group in match.groups() if group))]
+            if spec.startswith("."):
+                target = PurePosixPath(os.path.normpath(str(pure.parent / spec)))
+                # Inside the frozen packages, and never into the skipped runner
+                # tests (that would load unscanned code at runtime).
+                if (
+                    not str(target).startswith(REMIX_RUNNER_PATHS)
+                    or ".test." in target.name
+                    or "test" in target.parts[3:-1]
+                ):
+                    raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            elif spec == "remix" or spec.startswith("remix/"):
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            elif spec.startswith("@remix-run/") and spec.split("/")[1] not in frozen:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+        for literal in literals:
+            if _REMIX_WORKSPACE_SPECIFIER_RE.fullmatch(literal) is None:
+                continue
+            if literal == "remix" or literal.startswith("remix/"):
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
+            if literal.split("/")[1] not in frozen:
+                raise RoomExecutionSandboxError("execution_gate_profile_marker_invalid")
 
 
 def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGateProfile) -> str:
@@ -501,6 +840,8 @@ def build_repository_manifest_digest(execution_root: Path, profile: ExecutionGat
             "packages/web/tsconfig.json",
             "packages/web/vitest.config.ts",
         )
+    elif trusted.profile_id == REMIX_MONOREPO_PROFILE_ID:
+        marker_names = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml")
     else:  # pragma: no cover - registry exhaustiveness fence
         raise RoomExecutionSandboxError("execution_gate_profile_unknown")
     marker_contract = _validated_repository_marker_contract(root, trusted)
@@ -593,6 +934,14 @@ def build_toolchain_capability_digest(
         installed_lock = node_modules / installed_lock_name
         facts["frontend_dependencies"] = _trusted_file_digest(installed_lock)
         facts["frontend_gate_entries"] = _node_gate_entry_digest(root, selected)
+        if any(value in REMIX_GATE_IDS for value in selected):
+            facts["remix_gate_driver"] = _trusted_file_digest(REMIX_GATE_DRIVER)
+            # Re-proved by discover_sandbox_layout before every run: the runner
+            # bytes and the installed dependency links of every package.
+            facts["remix_runner"] = _remix_runner_contract(root)
+            facts["remix_package_dependencies"] = _remix_dependency_digest(
+                _remix_package_node_modules(root, root) + _remix_runner_node_modules(root)
+            )
         facts["node"] = {
             "digest": _trusted_executable_digest(
                 node.resolve(strict=True),
@@ -673,6 +1022,8 @@ def run_gate(
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
     if spec.gate_id.startswith("node_pnpm_") and layout.node_modules is None:
         raise RoomExecutionSandboxError("execution_frontend_dependencies_unavailable")
+    if spec.gate_id in REMIX_GATE_IDS and not REMIX_GATE_DRIVER.is_file():
+        raise RoomExecutionSandboxError("execution_toolchain_unavailable")
 
     command = build_bwrap_command(layout, spec)
     limits = (
@@ -879,6 +1230,23 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
                 layout.node_modules_mount_path,
             )
         )
+    is_remix_gate = spec.gate_id in REMIX_GATE_IDS
+    if is_remix_gate:
+        command.extend(
+            (
+                "--dir",
+                "/xmuse-gate",
+                "--ro-bind",
+                str(REMIX_GATE_DRIVER),
+                REMIX_GATE_DRIVER_MOUNT,
+            )
+        )
+        if not layout.runner_mounts:
+            raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+        for source, mount in layout.runner_mounts:
+            command.extend(("--ro-bind", str(source), mount))
+        for installed, mount in layout.package_node_modules:
+            command.extend(("--dir", mount, "--ro-bind", str(installed), mount))
     command.extend(("--proc", "/proc"))
     git_dir_in_sandbox = _sandbox_git_dir(layout)
     safe_environment = {
@@ -901,6 +1269,10 @@ def build_bwrap_command(layout: SandboxLayout, spec: GateSpec) -> list[str]:
         "TZ": "UTC",
         SANDBOX_ACTIVE_ENV: "1",
     }
+    if is_remix_gate:
+        if any(_REMIX_PACKAGE_NAME_RE.match(name) is None for name in layout.gate_packages):
+            raise RoomExecutionSandboxError("execution_gate_plan_invalid")
+        safe_environment["XMUSE_GATE_PACKAGES"] = ",".join(layout.gate_packages)
     if spec.gate_id == "patch_diff_check":
         safe_environment.update(
             {
@@ -1667,6 +2039,10 @@ def _validated_repository_marker_contract(
         result["node"] = _node_pnpm_marker_contract(root)
         result["workspace"] = _node_pnpm_workspace_marker_contract(root)
         return result
+    if profile.profile_id == REMIX_MONOREPO_PROFILE_ID:
+        result["node"] = _node_pnpm_marker_contract(root)
+        result["runner"] = _remix_runner_contract(root)
+        return result
     raise RoomExecutionSandboxError("execution_gate_profile_unknown")
 
 
@@ -1694,6 +2070,8 @@ def _node_gate_entry_digest(root: Path, gate_ids: tuple[str, ...]) -> str:
         "node_pnpm_workspace_typecheck": "typescript/bin/tsc",
         "node_pnpm_workspace_vitest": "vitest/vitest.mjs",
         "node_pnpm_next_build": "next/dist/bin/next",
+        # The test gate's runner is repository code, frozen as markers instead.
+        "node_pnpm_remix_typecheck": "typescript/bin/tsc",
     }
     values: list[dict[str, str]] = []
     for gate_id in gate_ids:
