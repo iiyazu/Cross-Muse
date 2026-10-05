@@ -22,6 +22,7 @@ from xmuse.chat_api_foundation import (
     DEFAULT_RUNTIME_RECONCILE_INTERVAL_S,
     create_chat_api_foundation,
 )
+from xmuse.chat_api_grants import register_plugin_grant_routes
 from xmuse.chat_api_memory import register_room_memory_routes
 from xmuse.chat_api_operations import register_room_operations_routes
 from xmuse.chat_api_room_controls import register_room_control_routes
@@ -164,6 +165,11 @@ def create_app(
         ),
     )
     register_room_board_routes(
+        app,
+        root=context.root,
+        operator_token=operator_token,
+    )
+    register_plugin_grant_routes(
         app,
         root=context.root,
         operator_token=operator_token,

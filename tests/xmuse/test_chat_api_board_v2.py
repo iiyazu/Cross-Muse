@@ -83,6 +83,8 @@ def _fixture(name: str) -> dict[str, Any]:
 
 
 def _walk_privacy(value: Any, path: str) -> None:
+    if path.endswith(".patch.text") or path.endswith("patch.text"):
+        return
     if isinstance(value, dict):
         for key, item in value.items():
             assert key not in FORBIDDEN_KEYS, f"forbidden key {key} at {path}"
@@ -536,6 +538,20 @@ def test_board_contract_detail_unknown(tmp_path: Path) -> None:
     assert bad_version.json()["detail"]["code"] == "room_board_contract_unknown"
 
 
+def test_board_contract_detail_cross_conversation_404(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("contract_revised_stale_dependent", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+
+    other_conv = client.get(_board_url("conv_other_123") + "/contracts/api.backend")
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_contract_unknown"
+
+
 # ---------------------------------------------------------------------------
 # unknown conversation, privacy, host header
 # ---------------------------------------------------------------------------
@@ -699,6 +715,36 @@ def test_board_decide_split_fixture_provenance(tmp_path: Path) -> None:
     assert rejected["decided_via"] == "cli"
 
 
+def test_board_decide_split_cross_conversation_404(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("split_pending", tmp_path)
+    split_id = client.get(_board_url(conversation_id)).json()["splits"][0]["split_id"]
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+
+    other_conv = client.post(
+        f"/api/chat/operator/board-splits/{split_id}/decision",
+        json={"conversation_id": "conv_other_123", "decision": "approve"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_split_unknown"
+
+    unknown = client.post(
+        "/api/chat/operator/board-splits/split_unknown/decision",
+        json={"conversation_id": conversation_id, "decision": "approve"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "room_board_split_unknown"
+
+    # Nothing was decided by the failed attempts.
+    assert client.get(_board_url(conversation_id)).json()["splits"][0]["status"] == "proposed"
+
+
 # ---------------------------------------------------------------------------
 # performance
 # ---------------------------------------------------------------------------
@@ -776,3 +822,456 @@ def test_board_summary_with_10000_activities_answers_in_50ms(tmp_path: Path) -> 
 
     # Best of five: shared CI runners are noisy, a real regression slows every run.
     assert min(samples) < 50, f"summary samples ms: {samples}"
+
+
+# ---------------------------------------------------------------------------
+# review detail, verification detail, material, and decision routes
+# ---------------------------------------------------------------------------
+
+
+def test_board_reviews_detail_and_cache_control(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("review_endorsed", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            "select review_id from room_board_reviews where conversation_id = ? limit 1",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    review_id = str(row["review_id"])
+
+    url = f"/api/chat/conversations/{conversation_id}/board/reviews/{review_id}"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.json()
+    jsonschema.validate(body, _load_schema("room_board_review.v1.json"))
+    _walk_privacy(body, "$")
+    assert body["review"]["status"] == "endorsed"
+    assert body["summary"]["untrusted"] is True
+
+    # Cross-conversation 404
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+    other_conv = client.get(f"/api/chat/conversations/conv_other_123/board/reviews/{review_id}")
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_review_unknown"
+
+    unknown_conv = client.get(f"/api/chat/conversations/conv_nonexistent/board/reviews/{review_id}")
+    assert unknown_conv.status_code == 404
+    assert unknown_conv.json()["detail"]["code"] == "room_conversation_unknown"
+
+    # Unknown review in conversation
+    unknown = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/reviews/boardreview_unknown"
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "room_board_review_unknown"
+
+
+def test_board_verifications_detail_and_cache_control(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("verification_failed_rework", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            """select verification_id from room_board_verifications
+               where conversation_id = ? limit 1""",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    verification_id = str(row["verification_id"])
+
+    url = f"/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.json()
+    jsonschema.validate(body, _load_schema("room_board_verification.v1.json"))
+    _walk_privacy(body, "$")
+    assert body["status"] == "failed"
+    tail = body["gates"][0]["output_tail"]
+    assert tail["untrusted"] is True
+    assert "<host-path>" in tail["text"]
+
+    # Cross-conversation 404
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+    other_conv = client.get(
+        f"/api/chat/conversations/conv_other_123/board/verifications/{verification_id}"
+    )
+    assert other_conv.status_code == 404
+    assert other_conv.json()["detail"]["code"] == "room_board_verification_unknown"
+
+    unknown_conv = client.get(
+        f"/api/chat/conversations/conv_nonexistent/board/verifications/{verification_id}"
+    )
+    assert unknown_conv.status_code == 404
+    assert unknown_conv.json()["detail"]["code"] == "room_conversation_unknown"
+
+    # Unknown verification in conversation
+    unknown = client.get(
+        f"/api/chat/conversations/{conversation_id}/board/verifications/boardverify_unknown"
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "room_board_verification_unknown"
+
+
+def test_board_reviews_material_route_and_exclusion(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("review_operator_pending", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            """select review_id from room_board_reviews
+               where conversation_id = ? and reviewer_kind = 'operator'
+                 and status = 'pending' limit 1""",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    review_id = str(row["review_id"])
+
+    url = f"/api/chat/operator/board-reviews/{review_id}/material"
+
+    # Operator token required
+    no_auth = client.get(url, params={"conversation_id": conversation_id})
+    assert no_auth.status_code == 401
+    bad_auth = client.get(
+        url,
+        params={"conversation_id": conversation_id},
+        headers={"X-XMuse-Operator-Token": "wrong"},
+    )
+    assert bad_auth.status_code == 401
+
+    # Missing conversation_id query param
+    no_conv = client.get(url, headers=OPERATOR_HEADERS)
+    assert no_conv.status_code == 422
+
+    # Cross-conversation / unknown review
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into conversations (id, title, created_at)
+               values ('conv_other_123', 'Other', '2026-01-01T00:00:00Z')"""
+        )
+        conn.commit()
+    cross_conv = client.get(
+        url, params={"conversation_id": "conv_other_123"}, headers=OPERATOR_HEADERS
+    )
+    assert cross_conv.status_code == 404
+    assert cross_conv.json()["detail"]["code"] == "room_board_review_unknown"
+
+    unknown_rev = client.get(
+        "/api/chat/operator/board-reviews/boardreview_unknown/material",
+        params={"conversation_id": conversation_id},
+        headers=OPERATOR_HEADERS,
+    )
+    assert unknown_rev.status_code == 404
+    assert unknown_rev.json()["detail"]["code"] == "room_board_review_unknown"
+
+    # Success
+    response = client.get(
+        url, params={"conversation_id": conversation_id}, headers=OPERATOR_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.json()
+    jsonschema.validate(body, _load_schema("room_board_review_material.v1.json"))
+    _walk_privacy(body, "$")
+
+    # Excludes stacked patch (alpha) and only shows reviewed module (beta)
+    assert "src/beta/b.py" in body["patch"]["text"]
+    assert "src/alpha/a.py" not in body["patch"]["text"]
+
+    # Shows markers and hidden char count
+    assert "<U+202E>" in body["patch"]["text"]
+    assert "<U+001B>" in body["patch"]["text"]
+    assert body["patch"]["hidden_char_count"] == 3
+
+    # Review where reviewer_kind != operator returns 409 room_board_review_not_operator
+    p_client, p_conv, _p_ctx = _scenario("review_participant_pending", tmp_path / "part")
+    with RoomDatabase(tmp_path / "part" / "chat.db").connect(readonly=True) as conn:
+        p_row = conn.execute(
+            "select review_id from room_board_reviews where conversation_id = ? limit 1",
+            (p_conv,),
+        ).fetchone()
+    assert p_row is not None
+    p_rev_id = str(p_row["review_id"])
+    not_op = p_client.get(
+        f"/api/chat/operator/board-reviews/{p_rev_id}/material",
+        params={"conversation_id": p_conv},
+        headers=OPERATOR_HEADERS,
+    )
+    assert not_op.status_code == 409
+    assert not_op.json()["detail"]["code"] == "room_board_review_not_operator"
+
+
+REVIEW_SCENARIOS = [
+    "review_participant_pending",
+    "review_operator_pending",
+    "review_endorsed",
+    "review_objected",
+    "review_superseded",
+    "review_escalated",
+]
+
+
+@pytest.mark.parametrize("scenario_name", REVIEW_SCENARIOS)
+def test_board_review_route_privacy(tmp_path: Path, scenario_name: str) -> None:
+    client, conversation_id, _ctx = _scenario(scenario_name, tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        rows = conn.execute(
+            "select review_id from room_board_reviews where conversation_id = ?",
+            (conversation_id,),
+        ).fetchall()
+    assert rows
+    for row in rows:
+        rev_id = str(row["review_id"])
+        url = f"/api/chat/conversations/{conversation_id}/board/reviews/{rev_id}"
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        body = response.json()
+        jsonschema.validate(body, _load_schema("room_board_review.v1.json"))
+        _walk_privacy(body, "$")
+
+
+def test_board_reviews_decision_check_order_end_to_end(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("review_operator_pending", tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            """select review_id, verification_id from room_board_reviews
+               where conversation_id = ? and reviewer_kind = 'operator'
+                 and status = 'pending' limit 1""",
+            (conversation_id,),
+        ).fetchone()
+    assert row is not None
+    review_id = str(row["review_id"])
+
+    store = RoomBoardStore(tmp_path / "chat.db")
+    material = store.review_material(conversation_id, review_id)
+    expected_digest = material["digest"]
+
+    url = f"/api/chat/operator/board-reviews/{review_id}/decision"
+
+    valid_payload = {
+        "conversation_id": conversation_id,
+        "expected_digest": expected_digest,
+        "verdict": "object",
+        "summary": "blocking issue",
+        "findings": [{"severity": "blocker", "path": "src/beta/b.py", "text": "bad"}],
+    }
+
+    # Auth check
+    no_auth = client.post(url, json=valid_payload)
+    assert no_auth.status_code == 401
+
+    # Check 1: Body > 64 KiB -> 413 room_board_review_request_too_large
+    huge_data = json.dumps({**valid_payload, "summary": "x" * 70000}).encode()
+    r1 = client.post(
+        url, content=huge_data, headers={"Content-Type": "application/json", **OPERATOR_HEADERS}
+    )
+    assert r1.status_code == 413
+    assert r1.json()["detail"]["code"] == "room_board_review_request_too_large"
+
+    # Check 2: Invalid JSON -> 422 room_board_review_request_invalid
+    r2 = client.post(
+        url, content=b"{not json", headers={"Content-Type": "application/json", **OPERATOR_HEADERS}
+    )
+    assert r2.status_code == 422
+    assert r2.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    # Check 3: Body not object -> 422 room_board_review_request_invalid
+    r3 = client.post(url, json=[1, 2, 3], headers=OPERATOR_HEADERS)
+    assert r3.status_code == 422
+    assert r3.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    # Check 4: Unknown keys -> 422 room_board_review_request_invalid
+    r4 = client.post(url, json={**valid_payload, "extra": "forbidden"}, headers=OPERATOR_HEADERS)
+    assert r4.status_code == 422
+    assert r4.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    # Check 5: Missing required keys -> 422 room_board_review_request_invalid
+    no_sum = dict(valid_payload)
+    del no_sum["summary"]
+    r5 = client.post(url, json=no_sum, headers=OPERATOR_HEADERS)
+    assert r5.status_code == 422
+    assert r5.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    no_digest = dict(valid_payload)
+    del no_digest["expected_digest"]
+    r5b = client.post(url, json=no_digest, headers=OPERATOR_HEADERS)
+    assert r5b.status_code == 422
+    assert r5b.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    # Check 6: Bad verdict -> 422 room_board_review_request_invalid
+    r6 = client.post(url, json={**valid_payload, "verdict": "pass"}, headers=OPERATOR_HEADERS)
+    assert r6.status_code == 422
+    assert r6.json()["detail"]["code"] == "room_board_review_request_invalid"
+
+    # Check 7: Bad summary -> 422 room_board_review_summary_invalid
+    r7_empty = client.post(url, json={**valid_payload, "summary": "   "}, headers=OPERATOR_HEADERS)
+    assert r7_empty.status_code == 422
+    assert r7_empty.json()["detail"]["code"] == "room_board_review_summary_invalid"
+
+    r7_long = client.post(
+        url, json={**valid_payload, "summary": "x" * 4001}, headers=OPERATOR_HEADERS
+    )
+    assert r7_long.status_code == 422
+    assert r7_long.json()["detail"]["code"] == "room_board_review_summary_invalid"
+
+    # Check 8: Findings > 32 -> 422 room_board_review_findings_invalid
+    too_many = [{"severity": "minor", "path": None, "text": f"issue {i}"} for i in range(33)]
+    r8 = client.post(url, json={**valid_payload, "findings": too_many}, headers=OPERATOR_HEADERS)
+    assert r8.status_code == 422
+    assert r8.json()["detail"]["code"] == "room_board_review_findings_invalid"
+
+    # Check 9: Finding invalid path / severity / text -> 422 room_board_review_findings_invalid
+    r9_bidi = client.post(
+        url,
+        json={
+            **valid_payload,
+            "findings": [{"severity": "blocker", "path": "src/\u202etest.py", "text": "bad"}],
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    assert r9_bidi.status_code == 422
+    assert r9_bidi.json()["detail"]["code"] == "room_board_review_findings_invalid"
+
+    r9_sev = client.post(
+        url,
+        json={
+            **valid_payload,
+            "findings": [{"severity": "critical", "path": "src/a.py", "text": "bad"}],
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    assert r9_sev.status_code == 422
+    assert r9_sev.json()["detail"]["code"] == "room_board_review_findings_invalid"
+
+    # Check 10: Object verdict without blocker or major -> 422 room_board_review_findings_invalid
+    r10 = client.post(
+        url,
+        json={
+            **valid_payload,
+            "verdict": "object",
+            "findings": [{"severity": "minor", "path": "src/a.py", "text": "minor only"}],
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    assert r10.status_code == 422
+    assert r10.json()["detail"]["code"] == "room_board_review_findings_invalid"
+
+    # Check 11: decided_via not web -> 422 room_board_decided_via_invalid
+    r11_cli = client.post(
+        url, json={**valid_payload, "decided_via": "cli"}, headers=OPERATOR_HEADERS
+    )
+    assert r11_cli.status_code == 422
+    assert r11_cli.json()["detail"]["code"] == "room_board_decided_via_invalid"
+
+    r11_plugin = client.post(
+        url, json={**valid_payload, "decided_via": "plugin:claude-code"}, headers=OPERATOR_HEADERS
+    )
+    assert r11_plugin.status_code == 422
+    assert r11_plugin.json()["detail"]["code"] == "room_board_decided_via_invalid"
+
+    # Check 12: Review unknown or of another conversation -> 404 room_board_review_unknown
+    r12_other = client.post(
+        url,
+        json={**valid_payload, "conversation_id": "conv_other_123"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert r12_other.status_code == 404
+    assert r12_other.json()["detail"]["code"] == "room_board_review_unknown"
+
+    r12_unknown = client.post(
+        "/api/chat/operator/board-reviews/boardreview_unknown/decision",
+        json=valid_payload,
+        headers=OPERATOR_HEADERS,
+    )
+    assert r12_unknown.status_code == 404
+    assert r12_unknown.json()["detail"]["code"] == "room_board_review_unknown"
+
+    # Check 13: Review not pending with reviewer_kind == operator
+    # -> 409 room_board_review_not_pending
+    p_client, p_conv, _ = _scenario("review_participant_pending", tmp_path / "part2")
+    with RoomDatabase(tmp_path / "part2" / "chat.db").connect(readonly=True) as conn:
+        p_row = conn.execute(
+            "select review_id from room_board_reviews where conversation_id = ? limit 1",
+            (p_conv,),
+        ).fetchone()
+    assert p_row is not None
+    p_rev_id = str(p_row["review_id"])
+    r13 = p_client.post(
+        f"/api/chat/operator/board-reviews/{p_rev_id}/decision",
+        json={**valid_payload, "conversation_id": p_conv},
+        headers=OPERATOR_HEADERS,
+    )
+    assert r13.status_code == 409
+    assert r13.json()["detail"]["code"] == "room_board_review_not_pending"
+
+    # Check 14: Digest mismatch -> 409 room_board_review_digest_mismatch
+    r14 = client.post(
+        url,
+        json={**valid_payload, "expected_digest": "sha256:" + "0" * 64},
+        headers=OPERATOR_HEADERS,
+    )
+    assert r14.status_code == 409
+    assert r14.json()["detail"]["code"] == "room_board_review_digest_mismatch"
+
+    # Check 15: Material incomplete refuses endorse, allows object
+    # -> 409 room_board_review_material_incomplete
+    # Expand stored patch so marked text exceeds MAX_REVIEW_MATERIAL_PATCH_BYTES (262144 bytes)
+    # Each "\x1b[31m" becomes "<U+001B>[31m" (14 bytes replacing 5 bytes, growing by 9 bytes)
+    huge_patch = (
+        "--- a/src/beta/b.py\n+++ b/src/beta/b.py\n@@ -1 +1 @@\n" + "+\x1b[31mred\x1b[0m\n" * 20000
+    )
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            "update room_board_verifications set patch_text = ? where verification_id = ?",
+            (huge_patch, str(row["verification_id"])),
+        )
+        conn.commit()
+    huge_material = store.review_material(conversation_id, review_id)
+    assert huge_material["patch"]["truncated"] is True
+    huge_digest = huge_material["digest"]
+
+    # Endorse must be refused
+    r15_endorse = client.post(
+        url,
+        json={
+            "conversation_id": conversation_id,
+            "expected_digest": huge_digest,
+            "verdict": "endorse",
+            "summary": "ok",
+            "findings": [],
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    assert r15_endorse.status_code == 409
+    assert r15_endorse.json()["detail"]["code"] == "room_board_review_material_incomplete"
+
+    # But object remains allowed on incomplete material
+    r15_object = client.post(
+        url,
+        json={
+            "conversation_id": conversation_id,
+            "expected_digest": huge_digest,
+            "verdict": "object",
+            "summary": "objecting even on truncated",
+            "findings": [{"severity": "blocker", "path": "src/beta/b.py", "text": "bad"}],
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    assert r15_object.status_code == 200
+    assert r15_object.json()["status"] == "objected"
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        decided_row = conn.execute(
+            "select status, decided_via from room_board_reviews where review_id = ?",
+            (review_id,),
+        ).fetchone()
+        assert decided_row is not None
+        assert decided_row["status"] == "objected"
+        assert decided_row["decided_via"] == "web"

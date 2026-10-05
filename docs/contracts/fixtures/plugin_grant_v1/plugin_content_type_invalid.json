@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "plugin_content_type_invalid",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Plugin routes require a JSON body",
+    "retryable": false
+  }
+}

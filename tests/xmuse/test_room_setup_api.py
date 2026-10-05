@@ -126,6 +126,7 @@ def test_room_setup_options_are_safe_bounded_and_keep_builtin_when_custom_is_inv
     payload = response.json()
     assert payload["schema_version"] == "room_setup_options/v1"
     assert payload["default_roster_template_id"] == "builtin.development"
+    assert payload["review_policies"] == ["off", "cross_family"]
     assert [item["template_id"] for item in payload["roster_templates"]] == [
         "builtin.development",
         "builtin.heterogeneous-duo",
@@ -703,5 +704,15 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/conversations/{conversation_id}/board/events", "GET"),
         ("/api/chat/conversations/{conversation_id}/board/stream", "GET"),
         ("/api/chat/conversations/{conversation_id}/board/contracts/{contract_id}", "GET"),
+        ("/api/chat/conversations/{conversation_id}/board/reviews/{review_id}", "GET"),
+        ("/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}", "GET"),
         ("/api/chat/operator/board-splits/{split_id}/decision", "POST"),
+        ("/api/chat/operator/board-reviews/{review_id}/material", "GET"),
+        ("/api/chat/operator/board-reviews/{review_id}/decision", "POST"),
+        ("/api/chat/operator/plugin-grants", "POST"),
+        ("/api/chat/operator/plugin-grants", "GET"),
+        ("/api/chat/operator/plugin-grants/{grant_id}/revoke", "POST"),
+        ("/api/chat/plugin/grants/exchange", "POST"),
+        ("/api/chat/plugin/grants/revoke", "POST"),
+        ("/api/chat/plugin/board-splits/{split_id}/decision", "POST"),
     }

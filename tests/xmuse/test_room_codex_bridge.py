@@ -545,8 +545,10 @@ def test_ack_summary_rejects_provider_text_and_private_identifiers(tmp_path: Pat
         )
     assert error.value.code == "codex_native_ack_summary_invalid"
     with sqlite3.connect(path) as conn:
-        serialized = "\n".join(str(value) for row in conn.iterdump() for value in (row,))
-    assert "secret" not in serialized and "thread_id" not in serialized
+        # Rejected provider text must not persist in rows; static schema
+        # DDL (column names such as ``secret_digest``) is not provider text.
+        data = "\n".join(line for line in conn.iterdump() if line.startswith("INSERT"))
+    assert "secret" not in data and "thread_id" not in data
 
 
 def test_goal_intent_is_authoritative_and_commits_only_with_applied_action(tmp_path: Path) -> None:

@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "room_board_split_digest_mismatch",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Board split digest does not match",
+    "retryable": false
+  }
+}
