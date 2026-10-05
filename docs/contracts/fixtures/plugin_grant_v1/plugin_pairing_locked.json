@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "plugin_pairing_locked",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Too many failed pairing attempts",
+    "retryable": false
+  }
+}
