@@ -205,6 +205,11 @@ output). Entrypoints read exported environment variables and do not load `.env`.
   Curator is the only memory proposer besides Agents: MemoryOS' heuristic agent kernel and
   paging stay off, and any other MemoryOS advisory is rejected rather than attributed to the
   recalling participant.
+- Module memory (`docs/contracts/module_memory_v1.md`) is off unless `XMUSE_MODULE_MEMORY=on`
+  and the sidecar is configured. Then a Chat API loop of its own sends each module's failures,
+  review objections, progress and addressed messages to MemoryOS `POST /curate`, keeps the
+  versioned memories in `chat.db`, and renders them into the owner's read-only `.xmuse/memory.md`.
+  Off, it writes nothing and every owner view is unchanged; failures never block a Room.
 - The MemoryOS sidecar and Room Runner may receive the server-only MemoryOS API key. Room
   MCP, Codex sessions, the browser, Operations, commands, receipts, and logs must not.
 - The Workroom manager automatically restarts only its identity-confirmed-dead MemoryOS

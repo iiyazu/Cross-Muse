@@ -18,6 +18,7 @@ from xmuse_core.chat.room_codex_schema import create_room_codex_schema
 from xmuse_core.chat.room_execution_schema import create_room_execution_schema
 from xmuse_core.chat.room_kernel_schema import create_room_kernel_schema
 from xmuse_core.chat.room_memory_schema import create_room_memory_schema
+from xmuse_core.chat.room_module_memory import create_module_memory_schema
 from xmuse_core.chat.room_operations_schema import create_room_operations_schema
 from xmuse_core.chat.room_plugin_grants import create_plugin_grant_schema
 from xmuse_core.runtime.data_guard import assert_data_operation_complete
@@ -1022,6 +1023,7 @@ def initialize_room_schema_conn(conn: sqlite3.Connection) -> None:
     create_room_operations_schema(conn)
     create_room_codex_schema(conn)
     create_plugin_grant_schema(conn)
+    create_module_memory_schema(conn)
     _validate_room_schema(conn)
     conn.execute(
         """insert into chat_schema_meta(schema_id, version, updated_at)

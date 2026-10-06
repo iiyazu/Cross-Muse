@@ -12,6 +12,7 @@ from typing import Any
 
 from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_module_memory import ModuleMemoryStore, render_memory_md
 from xmuse_core.chat.room_owner_ids import owner_id_for_participant
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ def _render_charter_md(
     board_seq: int,
     my_modules: list[dict[str, Any]],
     other_modules: list[dict[str, Any]],
+    has_memory: bool = False,
 ) -> str:
     lines: list[str] = [f"# Board view for {participant_id}", ""]
     if not my_modules:
@@ -57,6 +59,13 @@ def _render_charter_md(
         return "\n".join(lines)
     lines.append(f"Board seq: {board_seq}")
     lines.append("")
+    if has_memory:
+        # Only with module memory on and at least one memory (module_memory_v1 section 5).
+        lines.append(
+            "Module memory: .xmuse/memory.md holds lessons and decisions from this "
+            "module's history. Read it before you start."
+        )
+        lines.append("")
     lines.append(f"## Owned modules ({len(my_modules)})")
     lines.append("")
     for entry in my_modules:
@@ -199,13 +208,31 @@ def materialize_owner_board_view(
     index_bytes = (json.dumps(index, sort_keys=True, indent=2) + "\n").encode("utf-8")
     _atomic_write_bytes(target / "INDEX.json", index_bytes)
 
+    memory_store = ModuleMemoryStore(Path(db_path))
+    memory_sections = [
+        section
+        for section in (
+            render_memory_md(
+                str(module.get("module_id", "")),
+                memory_store.memories(conversation_id, str(module.get("module_id", ""))),
+            )
+            for module in sorted(my_modules, key=lambda m: str(m.get("module_id", "")))
+        )
+        if section is not None
+    ]
     charter_md = _render_charter_md(
         participant_id=participant_id,
         board_seq=board_seq,
         my_modules=sorted(my_modules, key=lambda m: str(m.get("module_id", ""))),
         other_modules=sorted(other_modules, key=lambda m: str(m.get("module_id", ""))),
+        has_memory=bool(memory_sections),
     )
     _atomic_write_text(target / "charter.md", charter_md)
+    memory_path = target / "memory.md"
+    if memory_sections:
+        _atomic_write_text(memory_path, "\n".join(memory_sections))
+    elif memory_path.is_file() and not memory_path.is_symlink():
+        memory_path.unlink()
 
     contracts_dir = target / "contracts"
     if contracts_dir.is_symlink():
