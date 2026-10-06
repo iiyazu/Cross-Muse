@@ -1204,6 +1204,114 @@ def test_room_setup_replay_fingerprint_preserves_without_review_policy() -> None
     assert fp_off != fp_xfam
 
 
+def _claim_review_request(ctx, reviewer):
+    """End the reviewer's kickoff turn, then claim the delivery that carries the request."""
+
+    kernel = RoomKernelStore(ctx["db"])
+    kernel.submit_participant_outcome(
+        **_lease_kwargs(reviewer, ctx["leases"][reviewer.participant_id], request_id="kick"),
+        outcome_type="noop",
+    )
+    claimed = kernel.claim_next_observation_batch(
+        conversation_id=ctx["conversation_id"],
+        participant_id=reviewer.participant_id,
+        lease_owner="host-review",
+        lease_ttl_s=300.0,
+        now=NOW + timedelta(seconds=40),
+    )
+    assert claimed is not None
+    observation = claimed["observation"]
+    review = _review_row(ctx["db"], ctx["review_id"])
+    assert observation["activity_id"] == review["request_activity_id"]
+    return observation
+
+
+def _review_outcome(reviewer, observation, *, request_id: str) -> dict[str, Any]:
+    return {
+        **_lease_kwargs(reviewer, observation, request_id=request_id),
+        "now": NOW + timedelta(seconds=60),
+    }
+
+
+@pytest.mark.parametrize(
+    ("outcome_type", "payload"),
+    [("noop", None), ("respond", {"content": "ENDORSE: alpha looks correct"})],
+)
+def test_review_delivery_outcome_requires_verdict_first(
+    tmp_path: Path, outcome_type: str, payload: dict[str, Any] | None
+) -> None:
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
+    reviewer = ctx["members"][2]
+    observation = _claim_review_request(ctx, reviewer)
+    kernel = RoomKernelStore(ctx["db"])
+    attempt = {
+        **_review_outcome(reviewer, observation, request_id="out-1"),
+        "outcome_type": outcome_type,
+        "outcome_payload": payload,
+    }
+
+    # Prose is never a verdict: ending the review turn without ruling is refused, and the
+    # refusal names the tool and the review so the agent can correct itself in the same turn.
+    with pytest.raises(ValueError, match="room_outcome_review_verdict_required") as refused:
+        kernel.submit_participant_outcome(**attempt)
+    assert "chat_room_board_review" in str(refused.value)
+    assert result["review_id"] in str(refused.value)
+    assert _review_row(ctx["db"], result["review_id"])["status"] == "pending"
+
+    ctx["store"].review(
+        **_review_outcome(reviewer, observation, request_id="rev-1"),
+        review_id=result["review_id"],
+        verdict="endorse",
+        summary="looks good",
+        findings=[],
+    )
+    # The refusal consumed nothing: the same request id now commits, and replays it exactly.
+    completed = kernel.submit_participant_outcome(**attempt)
+    assert completed["observation"]["status"] == "completed"
+    assert kernel.submit_participant_outcome(**attempt) == completed
+
+
+def test_review_delivery_superseded_review_no_longer_blocks(tmp_path: Path) -> None:
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
+    reviewer, owner = ctx["members"][2], ctx["members"][1]
+    observation = _claim_review_request(ctx, reviewer)
+    ctx["store"].report_progress(
+        **_lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id="done-2"),
+        module_id="alpha",
+        status="done",
+        summary="again",
+        claims=[],
+    )
+    assert _review_row(ctx["db"], result["review_id"])["status"] == "superseded"
+
+    completed = RoomKernelStore(ctx["db"]).submit_participant_outcome(
+        **_review_outcome(reviewer, observation, request_id="out-1"), outcome_type="noop"
+    )
+
+    assert completed["observation"]["status"] == "completed"
+
+
+def test_review_delivery_defer_stays_available_without_verdict(tmp_path: Path) -> None:
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
+    reviewer = ctx["members"][2]
+    observation = _claim_review_request(ctx, reviewer)
+
+    deferred = RoomKernelStore(ctx["db"]).submit_participant_outcome(
+        **_review_outcome(reviewer, observation, request_id="out-defer"),
+        outcome_type="defer",
+        outcome_payload={"wake_condition": "need the owner to answer a question first"},
+    )
+
+    assert deferred["observation"]["status"] == "completed"
+    assert _review_row(ctx["db"], result["review_id"])["status"] == "pending"
+
+
 def test_cancelled_observation_escalates_as_reviewer_unavailable(tmp_path: Path) -> None:
     db, conversation_id, members = _mixed_room(tmp_path)
     store = RoomBoardStore(db)

@@ -164,7 +164,9 @@ output). Entrypoints read exported environment variables and do not load `.env`.
   never chooses its reviewer and never reviews its own work; only the assigned
   reviewer participant may rule with `chat_room_board_review`; when no other model
   family is present a Human reviews instead, never a same-family fallback; the
-  assignment inputs are persisted with the review.
+  assignment inputs are persisted with the review. The assigned reviewer cannot end a
+  delivery carrying its pending review request without ruling: every outcome except
+  `defer` is refused (`room_outcome_review_verdict_required`), and prose is never a verdict.
 - `room_context_envelope/v2` preserves the Human root, primary source and ancestry while
   bounding recent context to 64 KiB. Bundled roster personas are immutable Room snapshots and
   participate in provider session identity.

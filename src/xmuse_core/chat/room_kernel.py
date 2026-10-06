@@ -354,6 +354,39 @@ def _parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _assert_no_pending_review_verdict_conn(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    member_activity_ids: set[str],
+) -> None:
+    """Refuse to end a review delivery before the assigned reviewer has ruled.
+
+    A delivered ``board.review_requested`` whose review is still pending and assigned to
+    this participant must be ruled with the board review tool first; prose in the outcome
+    is never a verdict.  ``defer`` stays available as the explicit no-verdict outcome, which
+    the host escalates to the operator as before.
+    """
+
+    if not member_activity_ids:
+        return
+    placeholders = ",".join("?" for _ in member_activity_ids)
+    pending = conn.execute(
+        "select review_id, module_id from room_board_reviews "
+        "where conversation_id = ? and status = 'pending' and reviewer_kind = 'participant' "
+        f"and reviewer_participant_id = ? and request_activity_id in ({placeholders}) "
+        "order by created_at, rowid limit 1",
+        (conversation_id, participant_id, *sorted(member_activity_ids)),
+    ).fetchone()
+    if pending is not None:
+        raise ValueError(
+            "room_outcome_review_verdict_required: rule on module "
+            f"{pending['module_id']} with chat_room_board_review (review_id "
+            f"{pending['review_id']}) before submitting the outcome, or submit a defer outcome"
+        )
+
+
 def _outcome_policy_conn(
     conn: sqlite3.Connection,
     *,
@@ -1566,6 +1599,13 @@ class RoomKernelStore:
                     observation_id=observation_id,
                     lease_token=lease_token,
                 )
+                if outcome_type != "defer":
+                    _assert_no_pending_review_verdict_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        participant_id=participant_id,
+                        member_activity_ids=member_activity_ids,
+                    )
                 source = self._activity_from_conn(conn, row["activity_id"])
                 phase = (
                     str(batch["phase"])
