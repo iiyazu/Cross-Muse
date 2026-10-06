@@ -1220,7 +1220,10 @@ def _claim_review_request(ctx, reviewer):
         now=NOW + timedelta(seconds=40),
     )
     assert claimed is not None
-    return claimed["observation"]
+    observation = claimed["observation"]
+    review = _review_row(ctx["db"], ctx["review_id"])
+    assert observation["activity_id"] == review["request_activity_id"]
+    return observation
 
 
 def _review_outcome(reviewer, observation, *, request_id: str) -> dict[str, Any]:
@@ -1230,19 +1233,29 @@ def _review_outcome(reviewer, observation, *, request_id: str) -> dict[str, Any]
     }
 
 
-def test_review_delivery_outcome_requires_verdict_first(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("outcome_type", "payload"),
+    [("noop", None), ("respond", {"content": "ENDORSE: alpha looks correct"})],
+)
+def test_review_delivery_outcome_requires_verdict_first(
+    tmp_path: Path, outcome_type: str, payload: dict[str, Any] | None
+) -> None:
     ctx = _approved_board(tmp_path)
     _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
     reviewer = ctx["members"][2]
     observation = _claim_review_request(ctx, reviewer)
     kernel = RoomKernelStore(ctx["db"])
+    attempt = {
+        **_review_outcome(reviewer, observation, request_id="out-1"),
+        "outcome_type": outcome_type,
+        "outcome_payload": payload,
+    }
 
     # Prose is never a verdict: ending the review turn without ruling is refused, and the
     # refusal names the tool and the review so the agent can correct itself in the same turn.
     with pytest.raises(ValueError, match="room_outcome_review_verdict_required") as refused:
-        kernel.submit_participant_outcome(
-            **_review_outcome(reviewer, observation, request_id="out-1"), outcome_type="noop"
-        )
+        kernel.submit_participant_outcome(**attempt)
     assert "chat_room_board_review" in str(refused.value)
     assert result["review_id"] in str(refused.value)
     assert _review_row(ctx["db"], result["review_id"])["status"] == "pending"
@@ -1254,15 +1267,38 @@ def test_review_delivery_outcome_requires_verdict_first(tmp_path: Path) -> None:
         summary="looks good",
         findings=[],
     )
-    completed = kernel.submit_participant_outcome(
-        **_review_outcome(reviewer, observation, request_id="out-2"), outcome_type="noop"
+    # The refusal consumed nothing: the same request id now commits, and replays it exactly.
+    completed = kernel.submit_participant_outcome(**attempt)
+    assert completed["observation"]["status"] == "completed"
+    assert kernel.submit_participant_outcome(**attempt) == completed
+
+
+def test_review_delivery_superseded_review_no_longer_blocks(tmp_path: Path) -> None:
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
+    reviewer, owner = ctx["members"][2], ctx["members"][1]
+    observation = _claim_review_request(ctx, reviewer)
+    ctx["store"].report_progress(
+        **_lease_kwargs(owner, ctx["leases"][owner.participant_id], request_id="done-2"),
+        module_id="alpha",
+        status="done",
+        summary="again",
+        claims=[],
     )
+    assert _review_row(ctx["db"], result["review_id"])["status"] == "superseded"
+
+    completed = RoomKernelStore(ctx["db"]).submit_participant_outcome(
+        **_review_outcome(reviewer, observation, request_id="out-1"), outcome_type="noop"
+    )
+
     assert completed["observation"]["status"] == "completed"
 
 
 def test_review_delivery_defer_stays_available_without_verdict(tmp_path: Path) -> None:
     ctx = _approved_board(tmp_path)
     _reported, result = _pass_alpha(ctx, "done-1")
+    ctx["review_id"] = result["review_id"]
     reviewer = ctx["members"][2]
     observation = _claim_review_request(ctx, reviewer)
 
