@@ -18,7 +18,7 @@ describe("room UI persistence", () => {
     expect(readRoomUiState(null)).toEqual({
       readCursors: {},
       scrollAnchors: {},
-      theme: "dark",
+      theme: "system",
       sidebarOpen: true,
       inspectorOpen: false,
       dockTab: "room",
@@ -30,6 +30,13 @@ describe("room UI persistence", () => {
     });
     localStorage.setItem(LOCAL_STATE_KEY, "not-json");
     expect(readRoomUiState(localStorage).readCursors).toEqual({});
+  });
+
+  it("keeps an explicit theme choice and treats anything else as following the system", () => {
+    localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({ theme: "dark" }));
+    expect(readRoomUiState(localStorage).theme).toBe("dark");
+    localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify({ theme: "sepia" }));
+    expect(readRoomUiState(localStorage).theme).toBe("system");
   });
 
   it("keeps only the fifty rooms with the greatest read cursor and aligned anchors", () => {

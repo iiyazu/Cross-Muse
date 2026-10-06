@@ -387,7 +387,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   drafts: {},
   readCursors: {},
   scrollAnchors: {},
-  theme: "dark",
+  theme: "system",
   sidebarOpen: true,
   inspectorOpen: false,
   dockTab: "room",

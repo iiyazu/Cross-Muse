@@ -1,13 +1,222 @@
 /*
- * The presentation layer was removed on purpose; the new one starts from here.
- * Kept as a file because backend tooling (the execution profile acceptance script) names
- * frontend/src/app/globals.css as the frontend's canonical stylesheet path.
+ * xmuse design tokens. Backend tooling names this file as the frontend's canonical
+ * stylesheet path (scripts/room_execution_profile_acceptance.py), so it stays here.
+ *
+ * Colour carries meaning only: proof (host-verified), fail, attn (needs the human),
+ * live (in progress). Everything else is neutral. Shape and text are the primary
+ * channel; colour is redundant (see portfolio-notes/frontend-design-1006.md).
  */
-:root {
-  color-scheme: dark light;
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+  --text-stat: 1.75rem;
+  --text-stat--line-height: 2rem;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --animate-pulse-soft: pulse-soft 1.6s var(--ease-out-quart) infinite;
+
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
 }
 
-body {
-  margin: 0;
-  font-family: system-ui, sans-serif;
+@theme inline {
+  --font-sans: var(--font-geist-sans), "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC",
+    "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Cascadia Code",
+    Consolas, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-sunken: var(--sunken);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-fg-4: var(--fg-4);
+  --color-inverse: var(--inverse);
+  --color-on-inverse: var(--on-inverse);
+
+  --color-proof: var(--proof);
+  --color-proof-solid: var(--proof-solid);
+  --color-proof-soft: var(--proof-soft);
+  --color-proof-line: var(--proof-line);
+  --color-fail: var(--fail);
+  --color-fail-solid: var(--fail-solid);
+  --color-fail-soft: var(--fail-soft);
+  --color-fail-line: var(--fail-line);
+  --color-attn: var(--attn);
+  --color-attn-solid: var(--attn-solid);
+  --color-attn-soft: var(--attn-soft);
+  --color-attn-line: var(--attn-line);
+  --color-live: var(--live);
+  --color-live-solid: var(--live-solid);
+  --color-live-soft: var(--live-soft);
+  --color-live-line: var(--live-line);
+  --color-focus: var(--focus);
+
+  --color-fam-claude: var(--fam-claude);
+  --color-fam-opencode: var(--fam-opencode);
+  --color-fam-antigravity: var(--fam-antigravity);
+  --color-fam-codex: var(--fam-codex);
+  --color-fam-human: var(--fam-human);
+
+  --shadow-overlay: var(--shadow-overlay-value);
+}
+
+:root {
+  color-scheme: light;
+  --canvas: oklch(0.995 0.001 265);
+  --sunken: oklch(0.974 0.003 265);
+  --raised: oklch(0.962 0.004 265);
+  --overlay: oklch(1 0 0);
+  --hover: oklch(0.25 0.02 265 / 0.045);
+  --selected: oklch(0.25 0.02 265 / 0.08);
+  --line: oklch(0.25 0.02 265 / 0.1);
+  --line-strong: oklch(0.25 0.02 265 / 0.18);
+
+  --fg: oklch(0.21 0.012 265);
+  --fg-2: oklch(0.42 0.014 265);
+  --fg-3: oklch(0.52 0.014 265);
+  --fg-4: oklch(0.7 0.01 265);
+  --inverse: oklch(0.21 0.012 265);
+  --on-inverse: oklch(0.99 0 0);
+
+  --proof: oklch(0.5 0.13 158);
+  --proof-solid: oklch(0.6 0.15 158);
+  --proof-soft: oklch(0.6 0.15 158 / 0.12);
+  --proof-line: oklch(0.6 0.15 158 / 0.38);
+  --fail: oklch(0.53 0.19 25);
+  --fail-solid: oklch(0.6 0.21 25);
+  --fail-soft: oklch(0.6 0.21 25 / 0.1);
+  --fail-line: oklch(0.6 0.21 25 / 0.38);
+  --attn: oklch(0.53 0.12 62);
+  --attn-solid: oklch(0.76 0.16 72);
+  --attn-soft: oklch(0.76 0.16 72 / 0.16);
+  --attn-line: oklch(0.68 0.15 68 / 0.5);
+  --live: oklch(0.5 0.16 258);
+  --live-solid: oklch(0.57 0.18 258);
+  --live-soft: oklch(0.57 0.18 258 / 0.1);
+  --live-line: oklch(0.57 0.18 258 / 0.38);
+  --focus: oklch(0.57 0.18 258);
+
+  --fam-claude: oklch(0.66 0.13 45);
+  --fam-opencode: oklch(0.6 0.13 300);
+  --fam-antigravity: oklch(0.6 0.13 240);
+  --fam-codex: oklch(0.55 0.02 265);
+  --fam-human: oklch(0.21 0.012 265);
+
+  --shadow-overlay-value: 0 16px 40px -12px oklch(0.25 0.03 265 / 0.22),
+    0 0 0 1px oklch(0.25 0.02 265 / 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: oklch(0.168 0.005 265);
+  --sunken: oklch(0.148 0.005 265);
+  --raised: oklch(0.205 0.006 265);
+  --overlay: oklch(0.218 0.007 265);
+  --hover: oklch(1 0 0 / 0.045);
+  --selected: oklch(1 0 0 / 0.085);
+  --line: oklch(1 0 0 / 0.085);
+  --line-strong: oklch(1 0 0 / 0.16);
+
+  --fg: oklch(0.955 0.004 265);
+  --fg-2: oklch(0.79 0.008 265);
+  --fg-3: oklch(0.64 0.01 265);
+  --fg-4: oklch(0.47 0.01 265);
+  --inverse: oklch(0.955 0.004 265);
+  --on-inverse: oklch(0.17 0.005 265);
+
+  --proof: oklch(0.8 0.15 158);
+  --proof-solid: oklch(0.72 0.16 158);
+  --proof-soft: oklch(0.72 0.16 158 / 0.14);
+  --proof-line: oklch(0.72 0.16 158 / 0.38);
+  --fail: oklch(0.76 0.15 22);
+  --fail-solid: oklch(0.66 0.19 22);
+  --fail-soft: oklch(0.66 0.19 22 / 0.16);
+  --fail-line: oklch(0.66 0.19 22 / 0.42);
+  --attn: oklch(0.85 0.13 82);
+  --attn-solid: oklch(0.81 0.15 78);
+  --attn-soft: oklch(0.81 0.15 78 / 0.14);
+  --attn-line: oklch(0.81 0.15 78 / 0.4);
+  --live: oklch(0.78 0.11 250);
+  --live-solid: oklch(0.68 0.15 255);
+  --live-soft: oklch(0.68 0.15 255 / 0.16);
+  --live-line: oklch(0.68 0.15 255 / 0.42);
+  --focus: oklch(0.72 0.14 255);
+
+  --fam-claude: oklch(0.74 0.12 50);
+  --fam-opencode: oklch(0.72 0.12 300);
+  --fam-antigravity: oklch(0.72 0.12 240);
+  --fam-codex: oklch(0.7 0.02 265);
+  --fam-human: oklch(0.955 0.004 265);
+
+  --shadow-overlay-value: 0 16px 40px -12px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(1 0 0 / 0.09);
+}
+
+@layer base {
+  html {
+    background: var(--canvas);
+    color: var(--fg);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  *, ::before, ::after {
+    border-color: var(--line);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--live-soft);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .scrollbar-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
 }
