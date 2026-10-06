@@ -77,6 +77,9 @@ const cacheAtom = atom({ plugin: "xmuse", key: "cache" } as const, {
 
 const rt = {
   baseUrl: "http://127.0.0.1:8201",
+  // Kept for userConfig compatibility only: since main_window_control_v1
+  // the pane draws no Web links (split and review decisions happen in the
+  // pane under the grant), so nothing reads this anymore.
   webUrl: "http://127.0.0.1:3000",
   pollMs: 5000,
   timer: null as { cancel: () => void } | null,
@@ -826,7 +829,7 @@ export const register: Register = (on, options) => {
     void onSubmit;
     try {
       const cache = (await read($, cacheAtom)) as XmuseCache;
-      const nodes = buildPaneNodes(cache, rt.webUrl, at);
+      const nodes = buildPaneNodes(cache, at);
       return PaneTree({ els: els as never, nodes, onExpand, onControl, onSubmit: onSubmitKey }) as never;
     } catch {
       return PaneTree({

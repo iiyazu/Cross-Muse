@@ -218,12 +218,16 @@ def test_reviews_read_only_no_verdict_channel() -> None:
     assert not violations, "review write/material/digest material:\n" + "\n".join(violations)
 
 
-def test_readme_documents_reviews_read_only() -> None:
+def test_readme_documents_review_decisions() -> None:
+    """Reviews the Human must decide are decided from the pane under the
+    grant (main_window_control_v1 §4.4-§4.5): the README documents the
+    material flow, not a read-only posture and no Web round-trip."""
     readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
-    assert (
-        "Reviews are read-only here; verdicts belong to Room agents and the human in the Web"
-        in readme
-    ), "README missing the review read-only statement"
+    assert "decided from this pane under the grant" in readme, (
+        "README missing the pane review-decision statement"
+    )
+    assert "Reviews are read-only here" not in readme
+    assert "在 Web 复核" not in readme
     for needle in (
         "待复核",
         "待你复核",
@@ -232,7 +236,8 @@ def test_readme_documents_reviews_read_only() -> None:
         "已升级",
         "已验收",
         "已验证 · 待复核",
-        "在 Web 复核",
+        "查看复核材料",
+        "复核材料 · agent 撰写，未验证",
         "阻塞",
         "复核被驳回待返工",
         "accepted_total",

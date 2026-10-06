@@ -23,7 +23,7 @@ Options (`userConfig`, see `.claude-plugin/plugin.json`):
 | key | default | meaning |
 | --- | --- | --- |
 | `baseUrl` | `http://127.0.0.1:8201` | xmuse chat API (loopback only) |
-| `webUrl` | `http://127.0.0.1:3000` | Workroom web UI, for approval links |
+| `webUrl` | `http://127.0.0.1:3000` | Kept for compatibility; the pane no longer links to the Web UI |
 | `pollSeconds` | `5` | board summary poll interval |
 
 ## Commands and tool
@@ -58,20 +58,26 @@ Options (`userConfig`, see `.claude-plugin/plugin.json`):
 - The pane shows structured fields only. Agent-authored text appears solely in
   the expanded module detail as plain `Text` labelled `agent 自述 · 未验证`,
   never as Markdown or links. Split approvals happen in the pane once the
-  human pairs a grant (see 授权), otherwise the pane links
-  to the room page (`在 Web 审批`).
+  human pairs a grant (see 授权); without a grant the pane only shows
+  the `待审批` line.
 
-## 复核 (reviews, read-only)
+## 复核 (reviews, decided from this pane)
 
-Reviews are read-only here; verdicts belong to Room agents and the human in the Web.
+A review the Human must decide (no other model family present, or escalated
+to the operator) is decided from this pane under the grant — never blind:
+the row gains a `查看复核材料` button that fetches the material (`§4.5`)
+and draws the patch as plain `Text` labelled `复核材料 · agent 撰写，未验证`.
+`认可` / `反对` arm a confirm step; an objection first asks for the reason
+(`反对理由`), then both ask for the first 6 hex characters after `sha256:`
+of the material digest. `关闭材料` drops the material view.
 
 When the room runs cross-family reviews (`capabilities.reviews == 1`), each
 pane module row gains one fixed-word review part, counts only:
 
 - `待复核` — review pending with a participant reviewer.
-- `待你复核` — review pending with the operator (you). The row also gains a
-  `在 Web 复核` link to the room page, same style as the `在 Web 审批` link.
-  The link carries no review id and no patch reference.
+- `待你复核` — review pending with the operator (you). Under a live grant
+  covering this room with `board.review.decide` the row also gains the
+  `查看复核材料` decision flow described above.
 - `已背书` — review endorsed. The module is accepted and its state badge
   reads `✓ 已验收`.
 - `已驳回` — review objected; the owner reworks.
@@ -88,20 +94,24 @@ exactly as before, with no review part.
 
 What the mod never does with reviews:
 
-- No review summary or finding text is ever read, shown, toasted, or handed
-  to the model — only the structured state (`status`, `reviewer_kind`,
-  escalation presence, finding counts) and the attention reason codes.
-- No review verdict channel exists here: no command, no tool, no extra
-  Button or Input, no new HTTP method or URL. The mod only reads the board
-  summary and projection it already reads.
-- The short-lived plugin grant (`board.split.decide`) covers proposed splits
-  only and can never record a review verdict.
+- No review summary or finding text is ever read except through the
+  grant-scoped material route, and then it is shown only in the pane
+  (labelled untrusted), never toasted, never handed to the model — only the
+  structured state (`status`, `reviewer_kind`, escalation presence, finding
+  counts) and the attention reason codes travel elsewhere.
+- The review verdict channel is pane buttons plus the digest confirm only:
+  no command, no tool, no new HTTP method beyond the grant routes. The mod
+  only reads the board summary and projection it already reads, plus the
+  material of a review the Human must decide.
+- The short-lived plugin grant covers `room.create`, `room.message`,
+  `board.split.decide` and `board.review.decide` on the rooms in its set
+  (see 授权); a verdict is recorded only through `board.review.decide`.
 
 ## 授权 (pairing flow)
 
-1. In the Web board's "插件授权" panel, generate a pairing code for this
-   room. The code looks like `ABCD-EFGH` and expires 120 seconds after
-   issue; it is shown once, in the browser only.
+1. In a terminal, run `xmuse-workroom pair` for this room. It prints a
+   pairing code that looks like `ABCD-EFGH` and expires 120 seconds after
+   issue; it is shown once, in the terminal only.
 2. In the pane's 授权 section, type the code into the 配对码 field
    (Enter: 配对). The mod normalises it locally (trim, upper-case) and
    rejects anything outside the grant alphabet without a network call.
@@ -117,8 +127,11 @@ What the mod never does with reviews:
 
 What the authorization can and cannot do:
 
-- It covers exactly one scope, `board.split.decide`: approve or reject a
-  proposed split of the paired room. Nothing else.
+- It covers the four main-window scopes on the rooms in its set:
+  `room.create` (`/xmuse new`), `room.message` (`/xmuse say`), plus
+  `board.split.decide` (approve or reject a proposed split of a covered
+  room) and `board.review.decide` (rule on a review the Human must decide).
+  Nothing else.
 - It can never record review verdicts, touch any other operator route,
   memory, execution or runtime recovery; routes that need the operator
   token refuse a grant.
@@ -130,7 +143,8 @@ What the authorization can and cannot do:
 - Residual risk, accepted: anyone or anything that can drive this UI
   (accessibility tools, UI automation) can press the same buttons the human
   presses. The digest confirm and the short lifetime bound the damage; when
-  in doubt, revoke the grant in the Web panel and pair again.
+  in doubt, revoke the grant (the 撤销授权 button, or
+  `xmuse-workroom pair --revoke`) and pair again.
 
 ## Limits
 
