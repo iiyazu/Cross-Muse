@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tests.xmuse.board_scenarios import build_scenario
 from xmuse.memoryos_http_client import MemoryOSAdapterError
 from xmuse.room_module_memory_worker import (
@@ -20,6 +22,7 @@ from xmuse.room_module_memory_worker import (
 )
 from xmuse_core.chat.room_board_view import materialize_owner_board_view
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_module_memory import (
     MAX_ATTEMPTS,
     ModuleMemoryStore,
@@ -218,7 +221,8 @@ def test_board_view_unchanged_without_memories(tmp_path: Path) -> None:
     assert "memory.md" not in (target / "charter.md").read_text(encoding="utf-8")
 
 
-def test_worker_curates_stores_and_renders(tmp_path: Path) -> None:
+def test_worker_curates_stores_and_renders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XMUSE_MODULE_MEMORY", "on")
     db, conversation_id = _failed_board(tmp_path)
     owner = _owner_of_alpha(db, conversation_id)
 
@@ -257,3 +261,122 @@ def test_worker_records_sidecar_failures_without_raising(tmp_path: Path) -> None
     counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Down()).reconcile_once()
     assert counts["module_memory_failed"] >= 1
     assert ModuleMemoryStore(db).memories(conversation_id, "alpha") == []
+
+
+def test_switch_off_ignores_existing_memories_in_the_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    window = store.next_window(_alpha(db))
+    assert window is not None
+    store.store_result(window, _lesson(window.last_seq))
+    owner = _owner_of_alpha(db, conversation_id)
+    monkeypatch.delenv("XMUSE_MODULE_MEMORY", raising=False)
+    target = tmp_path / "view"
+    target.mkdir()
+    materialize_owner_board_view(db, conversation_id, owner, target)
+    assert not (target / "memory.md").exists()
+    assert "memory.md" not in (target / "charter.md").read_text(encoding="utf-8")
+
+
+def test_malformed_and_self_superseding_memories_are_rejected(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    window = store.next_window(_alpha(db))
+    assert window is not None
+    response = _lesson(window.last_seq)
+    response["memories"] += [
+        {"id": "mem_bad", "kind": "lesson", "statement": "x", "topic_key": "t", "version": "v"},
+        {"id": "mem_odd", "kind": "opinion", "statement": "x", "topic_key": "t"},
+        {
+            "id": "mem_self",
+            "kind": "fact",
+            "statement": "Self",
+            "topic_key": "t",
+            "version": 1,
+            "occurrences": 0,
+            "supersedes_id": "mem_self",
+        },
+        {
+            "id": "mem_ghost",
+            "kind": "fact",
+            "statement": "Ghost",
+            "topic_key": "t",
+            "version": 1,
+            "occurrences": 0,
+            "supersedes_id": "mem_missing",
+        },
+    ]
+    result = store.store_result(window, response)
+    assert result["stored"] == 4 and result["rejected"] == 2
+    rows = {row["memory_id"]: row for row in store.memories(conversation_id, "alpha")}
+    assert rows["mem_self"]["status"] == "active"
+    assert rows["mem_self"]["supersedes_id"] is None
+    assert rows["mem_ghost"]["supersedes_id"] is None
+
+
+def test_a_retry_resends_the_same_window(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    start = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
+    window = store.next_window(_alpha(db), now=start)
+    assert window is not None
+    store.record_failure(window, "memoryos_unavailable", now=start)
+    owner = _alpha(db).owner_participant_id
+    for index in range(3):
+        RoomKernelStore(db).post_human_activity(
+            conversation_id=conversation_id,
+            human_id="human",
+            content=f"note {index} for the owner",
+            client_request_id=f"retry-note-{index}",
+            mentions=[owner],
+        )
+    retry = store.next_window(_alpha(db), now=start + timedelta(seconds=31))
+    assert retry is not None
+    assert (retry.first_seq, retry.last_seq) == (window.first_seq, window.last_seq)
+
+
+def test_human_messages_to_the_owner_flush_after_twelve(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    # Drain the failure windows first.
+    while (window := store.next_window(_alpha(db))) is not None:
+        store.store_result(window, {"memories": []})
+    owner = _alpha(db).owner_participant_id
+    for index in range(11):
+        RoomKernelStore(db).post_human_activity(
+            conversation_id=conversation_id,
+            human_id="human",
+            content=f"Decision {index}: amounts are decimal strings",
+            client_request_id=f"flush-{index}",
+            mentions=[owner],
+        )
+    assert store.next_window(_alpha(db)) is None
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="Decision 11: amounts are decimal strings",
+        client_request_id="flush-11",
+        mentions=[owner],
+    )
+    window = store.next_window(_alpha(db))
+    assert window is not None
+    assert len(window.activities) == 12
+    assert {item["type"] for item in window.activities} == {"message"}
+    assert {item["speaker"] for item in window.activities} == {"human"}
+
+
+def test_review_objection_becomes_a_review_window(tmp_path: Path) -> None:
+    ctx = build_scenario("review_objected", tmp_path)
+    db = tmp_path / "chat.db"
+    if Path(ctx["db"]) != db:
+        shutil.copy(ctx["db"], db)
+    RoomDatabase(db).initialize()
+    store = ModuleMemoryStore(db)
+    types = set()
+    for module in store.active_modules():
+        while (window := store.next_window(module)) is not None:
+            types |= {item["type"] for item in window.activities}
+            store.store_result(window, {"memories": []})
+    assert "review_objection" in types

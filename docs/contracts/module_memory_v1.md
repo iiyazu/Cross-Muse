@@ -52,8 +52,15 @@ its cursor and builds windows of the module's activities:
   insert the new versions, mark the ones they supersede, advance the cursor.
 - `room_module_memory_runs`: one row per window (first and last seq, status `done`, `failed` or
   `skipped`, attempts, `unaccounted` activity ids, MemoryOS diagnostics, error code).
-- A failed call is retried with backoff (30 s × attempts); after 3 attempts the window is marked
-  `skipped` and the cursor moves on. Memory is derived: it never blocks a Room.
+- A failed call is retried with backoff (30 s × attempts); a retry resends the same window (it
+  never grows past the failed one). After 3 attempts the window is marked `skipped` and the
+  cursor moves past exactly that window. Memory is derived: it never blocks a Room.
+- Each returned memory is validated (id, kind among lesson/decision/fact/rule/preference, a
+  non-empty statement, integer version and occurrences; statement 1000, quotes 500, 8 sources).
+  An invalid one is dropped and counted, never the whole response. `supersedes_id` takes effect
+  only for an active memory of the same module other than itself.
+- When 500 activities pass without a ready window, what accumulated is flushed so the cursor
+  keeps moving; a scan with nothing of the module moves the cursor past it.
 
 ## 5. Rendering
 
@@ -64,7 +71,14 @@ its cursor and builds windows of the module's activities:
 3. Current decisions and facts.
 
 The owner's `charter.md` then gains one line pointing to it. Without memories neither file changes.
-The owner prompt is unchanged.
+With the switch off, memories left from an earlier run are ignored and neither file changes. The
+owner prompt is unchanged.
+
+Accepted residual (cross-family review, 2026-10-06): statements are LLM-distilled from agent and
+tool text, so a misleading statement can reach the next owner, as a misleading contract or review
+finding already can. Each memory must quote its sources verbatim (MemoryOS rejects ungrounded
+ones), the file states that the charter and contracts win on conflict, and every version is kept
+in `chat.db` for audit. Human approval of memories is not in v1 (§6).
 
 ## 6. Not in v1
 

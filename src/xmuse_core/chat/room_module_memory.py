@@ -31,6 +31,10 @@ CONTEXT_MAX = 8
 ACTIVE_MAX = 60
 MESSAGE_FLUSH = 12
 SCAN_LIMIT = 500
+STATEMENT_MAX = 1000
+QUOTE_MAX = 500
+SOURCES_MAX = 8
+MEMORY_KINDS = frozenset({"lesson", "decision", "fact", "rule", "preference"})
 TEXT_MAX = 8192
 MAX_ATTEMPTS = 3
 RETRY_BASE_S = 30
@@ -118,6 +122,61 @@ def _decode(raw: Any) -> Any:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _as_int(value: Any, *, minimum: int = 0) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= minimum else None
+    if value is None:
+        return 0
+    return None
+
+
+def _valid_memory(raw: Any) -> dict[str, Any] | None:
+    """A curate memory with the fields this store needs, bounded, or None."""
+
+    if not isinstance(raw, dict):
+        return None
+    memory_id = raw.get("id")
+    kind = raw.get("kind")
+    statement = raw.get("statement")
+    topic_key = raw.get("topic_key")
+    version = _as_int(raw.get("version"))
+    occurrences = _as_int(raw.get("occurrences"))
+    supersedes = raw.get("supersedes_id")
+    if (
+        not isinstance(memory_id, str)
+        or not 0 < len(memory_id) <= 200
+        or kind not in MEMORY_KINDS
+        or not isinstance(statement, str)
+        or not statement.strip()
+        or not isinstance(topic_key, str)
+        or len(topic_key) > 200
+        or version is None
+        or occurrences is None
+        or (supersedes is not None and not isinstance(supersedes, str))
+    ):
+        return None
+    sources = [
+        {
+            "activity_id": str(source.get("activity_id", ""))[:200],
+            "quote": str(source.get("quote", ""))[:QUOTE_MAX],
+        }
+        for source in _list(raw.get("sources"))[:SOURCES_MAX]
+        if isinstance(source, dict)
+    ]
+    return {
+        "id": memory_id,
+        "kind": str(kind),
+        "topic_key": topic_key,
+        "statement": statement.strip()[:STATEMENT_MAX],
+        "version": version,
+        "occurrences": occurrences,
+        "sources": sources,
+        "supersedes_id": supersedes or None,
+    }
 
 
 def _bounded(text: str) -> str:
@@ -299,15 +358,21 @@ class ModuleMemoryStore:
             "and status = 'active' order by version desc limit ?",
             (module.conversation_id, module.module_id, ACTIVE_MAX),
         ).fetchall()
+        # Bounded so 60 active memories plus a full window stay well under the
+        # curate request limit.
         return [
             {
                 "id": str(row["memory_id"]),
                 "kind": str(row["kind"]),
                 "topic_key": str(row["topic_key"]),
-                "statement": str(row["statement"]),
+                "statement": str(row["statement"])[:STATEMENT_MAX],
                 "version": int(row["version"]),
                 "occurrences": int(row["occurrences"]),
-                "sources": _decode(row["sources_json"]) or [],
+                "sources": [
+                    {**source, "quote": str(source.get("quote", ""))[:QUOTE_MAX]}
+                    for source in _list(_decode(row["sources_json"]))[:SOURCES_MAX]
+                    if isinstance(source, dict)
+                ],
             }
             for row in rows
         ]
@@ -323,18 +388,22 @@ class ModuleMemoryStore:
         current = now or _now()
         with self._connect() as conn:
             pending = conn.execute(
-                "select not_before from room_module_memory_runs where conversation_id = ? "
-                "and module_id = ? and status = 'failed' order by created_at desc limit 1",
+                "select not_before, last_seq from room_module_memory_runs "
+                "where conversation_id = ? and module_id = ? and status = 'failed' "
+                "order by created_at desc limit 1",
                 (module.conversation_id, module.module_id),
             ).fetchone()
             if pending is not None and pending["not_before"] is not None:
                 if _stamp(current) < str(pending["not_before"]):
                     return None
+            # A retry resends the same window: it never grows past the failed one, so a
+            # skip after the last attempt cannot jump over activities never sent.
+            upper = int(pending["last_seq"]) if pending is not None else None
             cursor = self._cursor_conn(conn, module)
             rows = conn.execute(
                 "select * from room_activities where conversation_id = ? and seq > ? "
-                "order by seq limit ?",
-                (module.conversation_id, cursor, SCAN_LIMIT),
+                "and (? is null or seq <= ?) order by seq limit ?",
+                (module.conversation_id, cursor, upper, upper, SCAN_LIMIT),
             ).fetchall()
             items: list[dict[str, Any]] = []
             last_seen = cursor
@@ -352,12 +421,16 @@ class ModuleMemoryStore:
                     ready = True
                     break
             if not ready and not items and rows:
-                # Nothing of this module in a full scan: move past it.
-                self._advance_cursor_conn(conn, module, last_seen, _stamp(current))
+                # Nothing of this module in a full scan: move past it, unless another
+                # writer moved the cursor meanwhile.
+                conn.execute("begin immediate")
+                if self._cursor_conn(conn, module) == cursor:
+                    self._advance_cursor_conn(conn, module, last_seen, _stamp(current))
                 conn.commit()
                 return None
-            if not ready and len(rows) >= SCAN_LIMIT:
-                # A long stretch of other activity: flush what accumulated.
+            if not ready and items and (upper is not None or len(rows) >= SCAN_LIMIT):
+                # A retried window, or a long stretch of other activity: flush what
+                # accumulated rather than wait.
                 ready = True
             if not ready:
                 return None
@@ -394,13 +467,17 @@ class ModuleMemoryStore:
         memories = _list(response.get("memories"))
         run_id = f"modmem_{uuid.uuid4().hex}"
         stored = 0
+        rejected = 0
         with self._connect() as conn:
             conn.execute("begin immediate")
             try:
-                for memory in memories:
-                    if not isinstance(memory, dict) or not memory.get("id"):
+                for raw in memories:
+                    memory = _valid_memory(raw)
+                    if memory is None:
+                        # One malformed memory never sinks the rest of the response.
+                        rejected += 1
                         continue
-                    memory_id = str(memory["id"])
+                    memory_id = memory["id"]
                     exists = conn.execute(
                         "select 1 from room_module_memories where conversation_id = ? "
                         "and module_id = ? and memory_id = ?",
@@ -408,7 +485,16 @@ class ModuleMemoryStore:
                     ).fetchone()
                     if exists is not None:
                         continue
-                    supersedes = memory.get("supersedes_id")
+                    supersedes = memory["supersedes_id"]
+                    if supersedes is not None:
+                        # Only an active memory of this module, never itself.
+                        target = conn.execute(
+                            "select 1 from room_module_memories where conversation_id = ? "
+                            "and module_id = ? and memory_id = ? and status = 'active'",
+                            (module.conversation_id, module.module_id, supersedes),
+                        ).fetchone()
+                        if supersedes == memory_id or target is None:
+                            supersedes = None
                     conn.execute(
                         """insert into room_module_memories
                            (memory_id, conversation_id, module_id, kind, topic_key, statement,
@@ -419,24 +505,24 @@ class ModuleMemoryStore:
                             memory_id,
                             module.conversation_id,
                             module.module_id,
-                            str(memory.get("kind") or "fact"),
-                            str(memory.get("topic_key") or ""),
-                            str(memory.get("statement") or ""),
-                            int(memory.get("version") or window.last_seq),
-                            int(memory.get("occurrences") or 0),
-                            json.dumps(memory.get("sources") or [], sort_keys=True),
-                            str(supersedes) if supersedes else None,
+                            memory["kind"],
+                            memory["topic_key"],
+                            memory["statement"],
+                            memory["version"] or window.last_seq,
+                            memory["occurrences"],
+                            json.dumps(memory["sources"], sort_keys=True),
+                            supersedes,
                             run_id,
                             stamp,
                         ),
                     )
                     stored += 1
-                    if supersedes:
+                    if supersedes is not None:
                         conn.execute(
                             "update room_module_memories set status = 'superseded', "
                             "superseded_by = ? where conversation_id = ? and module_id = ? "
                             "and memory_id = ?",
-                            (memory_id, module.conversation_id, module.module_id, str(supersedes)),
+                            (memory_id, module.conversation_id, module.module_id, supersedes),
                         )
                 self._finish_run_conn(
                     conn,
@@ -451,7 +537,7 @@ class ModuleMemoryStore:
             except Exception:
                 conn.rollback()
                 raise
-        return {"run_id": run_id, "stored": stored}
+        return {"run_id": run_id, "stored": stored, "rejected": rejected}
 
     def record_failure(
         self, window: Window, error_code: str, *, now: datetime | None = None

@@ -12,7 +12,11 @@ from typing import Any
 
 from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_module_memory import ModuleMemoryStore, render_memory_md
+from xmuse_core.chat.room_module_memory import (
+    ModuleMemoryStore,
+    module_memory_enabled,
+    render_memory_md,
+)
 from xmuse_core.chat.room_owner_ids import owner_id_for_participant
 
 logger = logging.getLogger(__name__)
@@ -208,18 +212,22 @@ def materialize_owner_board_view(
     index_bytes = (json.dumps(index, sort_keys=True, indent=2) + "\n").encode("utf-8")
     _atomic_write_bytes(target / "INDEX.json", index_bytes)
 
-    memory_store = ModuleMemoryStore(Path(db_path))
-    memory_sections = [
-        section
-        for section in (
-            render_memory_md(
-                str(module.get("module_id", "")),
-                memory_store.memories(conversation_id, str(module.get("module_id", ""))),
+    # With the switch off the view ignores any memories left from an earlier run with
+    # it on, so an off run is byte-identical (module_memory_v1 section 2).
+    memory_sections: list[str] = []
+    if module_memory_enabled(os.environ):
+        memory_store = ModuleMemoryStore(Path(db_path))
+        memory_sections = [
+            section
+            for section in (
+                render_memory_md(
+                    str(module.get("module_id", "")),
+                    memory_store.memories(conversation_id, str(module.get("module_id", ""))),
+                )
+                for module in sorted(my_modules, key=lambda m: str(m.get("module_id", "")))
             )
-            for module in sorted(my_modules, key=lambda m: str(m.get("module_id", "")))
-        )
-        if section is not None
-    ]
+            if section is not None
+        ]
     charter_md = _render_charter_md(
         participant_id=participant_id,
         board_seq=board_seq,
