@@ -23,6 +23,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
+
 MODULE_MEMORY_ENV = "XMUSE_MODULE_MEMORY"
 WINDOW_MAX = 32
 CONTEXT_MAX = 8
@@ -258,7 +260,9 @@ class ModuleMemoryStore:
         self._path = Path(db_path)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path, timeout=30)
+        # Every caller uses ``with self._connect() as conn:`` once; closing on exit
+        # keeps Python 3.13's warning-strict suite clean (#462).
+        conn = sqlite3.connect(self._path, timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("pragma busy_timeout = 30000")
         conn.execute("pragma foreign_keys = on")
