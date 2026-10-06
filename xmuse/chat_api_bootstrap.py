@@ -12,6 +12,7 @@ from fastapi import FastAPI
 
 from xmuse.memoryos_companion import MemoryOSCompanionError, discover_managed_companion
 from xmuse.provider_capabilities import ROOM_PROVIDER_KINDS, detect_provider_capabilities
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 BOOTSTRAP_SCHEMA = "xmuse_bootstrap_projection/v1"
 
@@ -42,7 +43,7 @@ def _has_rooms(root: Path) -> bool:
     if not db_path.is_file():
         return False
     try:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             return conn.execute("select 1 from conversations limit 1").fetchone() is not None
     except sqlite3.DatabaseError:
         return False

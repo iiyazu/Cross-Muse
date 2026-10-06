@@ -13,6 +13,7 @@ from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_host import RoomHostPolicy, RoomParticipantHost
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -96,7 +97,7 @@ def _bind_provider(
 
 
 def _attempt_row(db_path: Path, attempt_id: str) -> sqlite3.Row:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "select * from room_observation_attempts where attempt_id = ?",
@@ -114,10 +115,10 @@ def test_offline_fence_reopens_claim_and_rejects_late_lease(tmp_path: Path) -> N
     attempt_id = claim["attempt"]["attempt_id"]
 
     # initialize=False must not seed or migrate the validated staging database.
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.execute("drop table room_runtime_restore_fences")
     controls = RoomObservationControlStore(db_path, initialize=False)
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select 1 from sqlite_master where name = 'room_runtime_restore_fences'"
@@ -184,7 +185,7 @@ def test_pending_cancel_keeps_control_generation_until_host_settles_it(
         expected_control_seq=0,
         now=NOW + timedelta(seconds=1),
     )["projection"]
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         control_count = conn.execute("select count(*) from room_observation_controls").fetchone()[0]
 
     result = controls.fence_restored_runtime_generation(
@@ -202,7 +203,7 @@ def test_pending_cancel_keeps_control_generation_until_host_settles_it(
     assert pending["reconcile_binding"]["provider_cleanup_reason"] == (
         "restore_transport_generation_fenced"
     )
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         assert (
             conn.execute("select count(*) from room_observation_controls").fetchone()[0]
             == control_count
@@ -292,5 +293,5 @@ def test_restore_fence_materializes_attempt_budget_terminal_state(tmp_path: Path
 
 
 def _table_count(db_path: Path, table: str) -> int:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         return int(conn.execute(f"select count(*) from {table}").fetchone()[0])

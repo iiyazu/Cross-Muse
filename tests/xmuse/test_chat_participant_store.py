@@ -20,6 +20,7 @@ from xmuse_core.chat.participant_store import (
     PersonaSnapshot,
     prepare_participant,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -142,7 +143,7 @@ class TestParticipantStore:
         conv_id: str,
         cli_kind: str,
     ) -> None:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.execute(
                 """
                 insert into participants (
@@ -398,7 +399,7 @@ class TestParticipantStore:
     def test_unknown_legacy_participant_cli_kind_is_rejected(
         self, db_path: Path, conv_id: str
     ) -> None:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.execute(
                 """
                 insert into participants (
@@ -427,7 +428,7 @@ class TestParticipantStore:
     def test_legacy_codex_gpt54_participant_reads_as_gpt54(
         self, db_path: Path, conv_id: str
     ) -> None:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.execute(
                 """
                 insert into participants (
@@ -458,7 +459,7 @@ class TestParticipantStore:
     def test_legacy_codex_gpt55_participant_reads_as_ordinary_model(
         self, db_path: Path, conv_id: str
     ) -> None:
-        with sqlite3.connect(db_path) as conn:
+        with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
             conn.execute(
                 """
                 insert into participants (

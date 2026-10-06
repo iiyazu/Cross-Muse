@@ -13,6 +13,7 @@ from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_identity import verify_room_participant_identity
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def table_count(conn, table: str) -> int:
@@ -104,7 +105,7 @@ def test_flexible_participant_responses_have_no_role_order(tmp_path, responders)
         )
     store = RoomKernelStore(db)
     observations = store.list_observations(conversation_id)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_activities").fetchone()[0] == 1 + responders
         assert (
             conn.execute("select count(*) from messages where role = 'assistant'").fetchone()[0]
@@ -404,7 +405,7 @@ def test_concurrent_responses_share_frontier_causation_and_unique_seq(tmp_path):
         f"god:{session.god_session_id}:{participant.participant_id}"
         for participant, session in records[:2]
     }
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute("select count(*) from messages where role = 'assistant'").fetchone()[0]
             == 2
@@ -439,7 +440,7 @@ def test_noop_and_defer_materialize_nothing(tmp_path):
         assert result["downstream_observations"] == []
         assert result["observation"]["status"] == "completed"
         assert result["cursor"]["last_acknowledged_seq"] == 1
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_activities").fetchone()[0] == 1
         assert conn.execute("select count(*) from messages").fetchone()[0] == 1
         assert conn.execute("select count(*) from proposals").fetchone()[0] == 0
@@ -473,7 +474,7 @@ def test_handoff_priorities_every_other_participant(tmp_path):
     assert {
         item["participant_id"]: item["priority"] for item in result["downstream_observations"]
     } == {target[0].participant_id: 100, other[0].participant_id: 0}
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert_tables_absent(
             conn,
             "chat_inbox_items",
@@ -505,7 +506,7 @@ def test_any_persona_can_propose_without_acceptance_spine(tmp_path):
     assert result["produced_proposal"]["status"] == "open"
     assert result["produced_activity"]["activity_type"] == "proposal.created"
     assert {item["priority"] for item in result["downstream_observations"]} == {0}
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert_tables_absent(
             conn,
             "chat_inbox_items",
@@ -549,7 +550,7 @@ def test_exact_replay_and_conflict(tmp_path):
         "same",
         **args,
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         before = {
             table: conn.execute(f"select count(*) from {table}").fetchone()[0]
             for table in (
@@ -583,7 +584,7 @@ def test_exact_replay_and_conflict(tmp_path):
         )
         == first
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         after = {
             table: conn.execute(f"select count(*) from {table}").fetchone()[0] for table in before
         }
@@ -770,7 +771,7 @@ def test_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_path)
     participant, session = records[0]
     claim = claims[participant.participant_id]
     tables = ("messages", "room_activities", "room_observations", "chat_request_log")
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         before = {table: table_count(conn, table) for table in tables}
     with pytest.raises(RoomApplicationError, match="room_observation_payload_invalid"):
         submit(
@@ -791,7 +792,7 @@ def test_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_path)
                 "budget": 1,
             },
         )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         after = {table: table_count(conn, table) for table in tables}
     assert after == before
     observation = RoomKernelStore(db).get_observation(claim["observation"]["observation_id"])
@@ -835,7 +836,7 @@ def test_lifecycle_failure_rolls_back_and_retry_keeps_lease(tmp_path):
         store.get_participant_cursor(conversation_id, actor.participant_id)["last_acknowledged_seq"]
         == 0
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_observations").fetchone()[0] == 3
         assert conn.execute("select count(*) from room_activities").fetchone()[0] == 1
         assert conn.execute("select count(*) from messages").fetchone()[0] == 1
@@ -861,7 +862,7 @@ def test_lifecycle_failure_rolls_back_and_retry_keeps_lease(tmp_path):
         result["observation"]["produced_activity_id"] == result["produced_activity"]["activity_id"]
     )
     assert result["cursor"]["last_acknowledged_seq"] == 1
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_observations").fetchone()[0] == 5
         assert (
             conn.execute("select count(*) from messages where role = 'assistant'").fetchone()[0]
@@ -873,7 +874,7 @@ def test_registry_spoofing_cannot_close_observation(tmp_path):
     db, registry, conversation_id, records, _, claims = root_and_claims(tmp_path)
 
     def counts():
-        with sqlite3.connect(db) as conn:
+        with sqlite3.connect(db, factory=ClosingConnection) as conn:
             return tuple(
                 conn.execute(f"select count(*) from {table}").fetchone()[0]
                 for table in ("messages", "room_activities", "proposals", "chat_request_log")

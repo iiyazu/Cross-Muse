@@ -38,6 +38,7 @@ from xmuse_core.chat.room_execution_sandbox import (
     run_gate,
 )
 from xmuse_core.chat.room_runtime import read_process_start_identity
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _controller_store(config: ControllerConfig) -> RoomExecutionControllerStore:
@@ -282,7 +283,7 @@ def test_real_store_manual_run_promotes_exact_patch_with_real_bwrap(tmp_path: Pa
     if shutil.which("bwrap") is None:
         pytest.skip("bubblewrap unavailable")
     store, config, candidate, _diff = _authorized(tmp_path)
-    with sqlite3.connect(config.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(config.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """insert into participants (
                    participant_id, conversation_id, role, display_name, cli_kind, model,
@@ -302,7 +303,7 @@ def test_real_store_manual_run_promotes_exact_patch_with_real_bwrap(tmp_path: Pa
     assert durable is not None
     assert durable["promotion_journal"]["status"] == "applied"
     assert durable["gate_ids"] == ["patch_diff_check"]
-    with sqlite3.connect(config.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(config.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_observations where participant_id = ?",
@@ -535,7 +536,7 @@ def test_preimage_recovery_blocks_durable_profile_drift_before_write(
         )
     elif drift_kind == "policy":
         conversation_id = str(material["conversation_id"])
-        with sqlite3.connect(config.xmuse_root / "chat.db") as conn:
+        with sqlite3.connect(config.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
             conn.execute(
                 "update room_execution_policies set mode = 'consensus', "
                 "revision = revision + 1 where conversation_id = ?",
@@ -791,7 +792,10 @@ def test_real_bwrap_hides_secrets_home_runtime_and_network(tmp_path: Path) -> No
             layout,
             probe=GateSpec(
                 "privacy_probe",
-                ("/opt/python/bin/python3.11", "-c", code),
+                # /opt/python is the running interpreter's root, so name it by its
+                # version-free entrypoint as the gate profiles do (python3.11 does not
+                # exist on the Python 3.13 CI leg).
+                ("/opt/python/bin/python3", "-c", code),
                 "/workspace",
                 10.0,
             ),
