@@ -231,7 +231,7 @@ def _report_exchange(deps: PairDependencies, token: str, host: str, grant_id: st
         if grant is None:
             continue
         if grant.get("activated_at"):
-            _print(deps, f"exchanged by {host} at {grant['activated_at']}")
+            _print(deps, f"exchanged by {grant['host']} at {grant['activated_at']}")
             _print(deps, "not you? run: xmuse-workroom pair --revoke")
             return 0
         if grant.get("status") in ("expired", "revoked"):

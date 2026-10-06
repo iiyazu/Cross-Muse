@@ -420,15 +420,19 @@ async function pressControl(caller: any, key: string): Promise<void> {
   if (!live.grant.conversationIds.includes(live.binding)) return;
   if (grantExpired(live.grant.expiresAt, await caller.clock.now())) return;
   const modules = live.board !== null ? live.board.modules : [];
+  // Review and split scope checks stay independent: a missing review scope
+  // only drops review keys (the loop keeps scanning), never split keys.
+  const mayReview = live.grant.scopes.includes("board.review.decide");
   for (const m of modules) {
     const reviewId = m.review.review_id;
     if (reviewId === null || m.review.status !== "pending" || m.review.reviewer_kind !== "operator") continue;
-    if (!live.grant.scopes.includes("board.review.decide")) return;
     if (key === "xmuse-material-" + reviewId) {
+      if (!mayReview) return;
       await loadMaterial(caller, reviewId);
       return;
     }
     if (key === "xmuse-endorse-" + reviewId || key === "xmuse-object-" + reviewId) {
+      if (!mayReview) return;
       if (live.material === null || live.material.reviewId !== reviewId) return;
       const decision = key === "xmuse-object-" + reviewId ? "object" : "endorse";
       await update(caller, cacheAtom, (c) => ({

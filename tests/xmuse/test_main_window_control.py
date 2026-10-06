@@ -457,7 +457,14 @@ class _FakeApi:
             self.polls += 1
             activated = "2026-10-06T10:00:00Z" if self.polls >= self.activate_after else None
             return 200, {
-                "grants": [{"grant_id": "grant_1", "status": "active", "activated_at": activated}]
+                "grants": [
+                    {
+                        "grant_id": "grant_1",
+                        "host": "claude-code",
+                        "status": "active",
+                        "activated_at": activated,
+                    }
+                ]
             }
         return 404, None
 
@@ -533,6 +540,28 @@ def test_pair_reports_an_unused_code(tmp_path: Path) -> None:
     deps = _pair_deps(api)
     assert _run(deps, tmp_path) == 1
     assert deps.out is not None and "expired unused" in deps.out.getvalue()
+
+
+def test_pair_exchange_report_names_the_exchanging_host(tmp_path: Path) -> None:
+    """A code used by someone else names that host, not our CLI host arg."""
+
+    class _OtherHostApi(_FakeApi):
+        def __call__(
+            self, method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> tuple[int, Any]:
+            status, payload = super().__call__(method, url, headers, body)
+            if method == "GET" and isinstance(payload, dict):
+                for grant in payload.get("grants", []):
+                    grant["host"] = "opencode"
+            return status, payload
+
+    api = _OtherHostApi(activate_after=1)
+    deps = _pair_deps(api)
+    assert _run(deps, tmp_path) == 0
+    assert deps.out is not None
+    output = deps.out.getvalue()
+    assert "exchanged by opencode" in output
+    assert "exchanged by claude-code" not in output
 
 
 def test_pair_room_prefix_must_be_unique(tmp_path: Path) -> None:

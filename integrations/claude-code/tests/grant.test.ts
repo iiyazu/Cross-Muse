@@ -960,3 +960,37 @@ test("review buttons need the review scope", OPTIONS, async ($, on) => {
   expect(await ui.find({ type: "Text", text: /待你复核/ })).toBeDefined();
   await ui.unmount();
 });
+
+function reviewPlusSplitProjectionText(): string {
+  const board = JSON.parse(reviewProjectionText()) as {
+    conversation_id: string;
+    splits: unknown[];
+  };
+  const splits = JSON.parse(projectionFor(CID)) as { splits: unknown[] };
+  board["splits"] = splits["splits"];
+  return JSON.stringify(board);
+}
+
+test("split buttons work without the review scope on a mixed board", OPTIONS, async ($, on) => {
+  // A pending operator review must not swallow split keys when the grant
+  // covers splits only: the review/split scope checks are independent.
+  const token = tokenFor("mixedscopes");
+  const env = await bootGrant($, on, {
+    summaryText: reviewSummaryText,
+    projectionText: reviewPlusSplitProjectionText,
+    exchange: () => ({ status: 200, text: exchangeText(CID, token, "2999-01-01T00:00:00Z", ["board.split.decide"]) }),
+    decide: () => ({ status: 200, text: "{}" }),
+  });
+  const ui = await $.ui.mount({ plugin: "xmuse", surface: "terminal", component: "Pane", requestId: "xmuse", props: paneProps(80) as never });
+  await ui.input({ key: "xmuse-pairing", text: "ABCD-EFGH" });
+  expect(await ui.find({ key: "xmuse-material-" + REVIEW_ID })).toBeUndefined();
+  await ui.press({ key: "xmuse-approve-" + PENDING_SPLIT });
+  await env.clock.settle();
+  // NOTE: keyed ui.find/ui.input for xmuse-confirm is unreliable in review
+  // trees (harness quirk, see the endorse test); assert via findAll. Pressing
+  // only arms: nothing is sent until the digest confirm submit matches.
+  const inputs = (await ui.findAll({ type: "Input" })) as { key?: unknown }[];
+  expect(inputs.some((n) => n.key === "xmuse-confirm")).toBe(true);
+  expect(env.posts.filter((p) => p.url.includes("/board-splits/"))).toHaveLength(0);
+  await ui.unmount();
+});
