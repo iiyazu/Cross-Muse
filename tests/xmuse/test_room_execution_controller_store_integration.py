@@ -792,7 +792,10 @@ def test_real_bwrap_hides_secrets_home_runtime_and_network(tmp_path: Path) -> No
             layout,
             probe=GateSpec(
                 "privacy_probe",
-                ("/opt/python/bin/python3.11", "-c", code),
+                # /opt/python is the running interpreter's root, so name it by its
+                # version-free entrypoint as the gate profiles do (python3.11 does not
+                # exist on the Python 3.13 CI leg).
+                ("/opt/python/bin/python3", "-c", code),
                 "/workspace",
                 10.0,
             ),
