@@ -31,6 +31,7 @@ CONTEXT_MAX = 8
 ACTIVE_MAX = 60
 MESSAGE_FLUSH = 12
 SCAN_LIMIT = 500
+IDLE_FLUSH_S = 120
 STATEMENT_MAX = 1000
 QUOTE_MAX = 500
 SOURCES_MAX = 8
@@ -122,6 +123,18 @@ def _decode(raw: Any) -> Any:
 
 def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _quiet_since(created_at: str, now: datetime) -> bool:
+    """Whether the newest pending item is at least ``IDLE_FLUSH_S`` old."""
+
+    try:
+        stamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return now - stamp >= timedelta(seconds=IDLE_FLUSH_S)
 
 
 def _as_int(value: Any, *, minimum: int = 0) -> int | None:
@@ -407,6 +420,8 @@ class ModuleMemoryStore:
             ).fetchall()
             items: list[dict[str, Any]] = []
             last_seen = cursor
+            last_item_seq = cursor
+            newest_item_at = ""
             ready = False
             for row in rows:
                 last_seen = int(row["seq"])
@@ -414,6 +429,8 @@ class ModuleMemoryStore:
                 if item is None:
                     continue
                 items.append(item)
+                last_item_seq = last_seen
+                newest_item_at = str(row["created_at"])
                 if item["type"] in FAILURE_TYPES:
                     ready = True
                     break
@@ -432,6 +449,12 @@ class ModuleMemoryStore:
                 # A retried window, or a long stretch of other activity: flush what
                 # accumulated rather than wait.
                 ready = True
+            if not ready and items and _quiet_since(newest_item_at, current):
+                # The module went quiet: curate what it said rather than wait for
+                # twelve messages that may never come. The window ends at its last
+                # item, so later activity of other modules is scanned again.
+                ready = True
+                last_seen = last_item_seq
             if not ready:
                 return None
             context_rows = conn.execute(

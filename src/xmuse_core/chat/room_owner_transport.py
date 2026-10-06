@@ -507,6 +507,26 @@ class RoomOwnerTransportRouter(RoutingRoomObservationTransport):
             return True
         return bool(await hook(delivery, timeout_s=timeout_s))
 
+    async def restart_owner(self, conversation_id: str, participant_id: str) -> bool:
+        """Close one owner's dedicated transport; its clone and Room state stay.
+
+        The next delivery to that owner builds a new transport, so the provider
+        starts a fresh session without the previous conversation: the same state
+        a replaced or restarted owner is in (the module-memory handover case).
+        Returns whether a transport was closed. Call it only between deliveries.
+        """
+
+        key = (conversation_id, participant_id)
+        lock = self._owner_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            transport = self._owner_transports.pop(key, None)
+        if transport is None:
+            return False
+        aclose = getattr(transport, "aclose", None)
+        if callable(aclose):
+            await aclose()
+        return True
+
     async def _dedicated_transport(
         self, participant: Participant
     ) -> RoomObservationTransport | None:

@@ -38,8 +38,9 @@ its cursor and builds windows of the module's activities:
 | `board.question` asked by or to the owner | `message` | the question |
 | a Human message that mentions the owner, or the owner's own message | `message` | the text |
 
-- A window is flushed when it holds a `gate_failure` or `review_objection`, or 12 messages; at most 32
-  activities; up to 8 earlier activities go as read-only `context`.
+- A window is flushed when it holds a `gate_failure` or `review_objection`, or 12 messages, or when
+  the module has been quiet for 2 minutes since its newest pending item (the window then ends at that
+  item); at most 32 activities; up to 8 earlier activities go as read-only `context`.
 - `active` holds the module's active memories (at most 60, newest first).
 - Texts are bounded (8 KiB per activity). They are agent- and tool-authored and go only to the
   sidecar, which already holds the Room archive.

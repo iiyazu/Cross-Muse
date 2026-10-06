@@ -360,6 +360,43 @@ class TestRoomOwnerTransportRouter:
         assert dedicated.deliveries == [delivery, second]
         assert len(seen) == 1
 
+    async def test_restart_owner_starts_a_fresh_transport_on_the_same_clone(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "source"
+        _init_source(source)
+        settings = _settings(tmp_path, source)
+        wrapped = RoutingRoomObservationTransport({"claude": _RecordingTransport()})
+        built: list[_RecordingTransport] = []
+        closed: list[_RecordingTransport] = []
+        clones: list[Path] = []
+
+        class _Closing(_RecordingTransport):
+            async def aclose(self) -> None:
+                closed.append(self)
+
+        def _factory(participant: Participant, clone: OwnerClone) -> _RecordingTransport:
+            transport = _Closing()
+            built.append(transport)
+            clones.append(clone.path)
+            return transport
+
+        router = _router(wrapped, settings=settings, factory=_factory)
+        writer = _participant(
+            tmp_path, "writer", cli_kind="claude", workspace_access="workspace_write"
+        )
+        await router.deliver(_delivery(writer), timeout_s=5.0)
+        (clones[0] / "work.txt").write_text("draft", encoding="utf-8")
+
+        assert await router.restart_owner(writer.conversation_id, writer.participant_id)
+        assert closed == [built[0]]
+        assert not await router.restart_owner(writer.conversation_id, writer.participant_id)
+
+        await router.deliver(_delivery(writer), timeout_s=5.0)
+        assert len(built) == 2 and built[1] is not built[0]
+        assert clones[1] == clones[0]
+        assert (clones[1] / "work.txt").read_text(encoding="utf-8") == "draft"
+
     async def test_read_only_delivery_uses_wrapped_router(self, tmp_path: Path) -> None:
         source = tmp_path / "source"
         _init_source(source)
