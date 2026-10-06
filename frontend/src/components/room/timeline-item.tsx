@@ -122,7 +122,7 @@ export const TimelineItem = memo(function TimelineItem({
           <Avatar family={family} name={item.actor.display_name} />
         ) : (
           <time
-            className="block pt-0.5 text-right font-mono text-[10px] leading-5 text-fg-4 opacity-0 group-hover/item:opacity-100"
+            className="block pt-0.5 text-right font-mono text-[10px] leading-5 text-fg-3 opacity-0 group-hover/item:opacity-100"
             dateTime={item.created_at ?? undefined}
           >
             {formatClock(item.created_at).slice(-5)}

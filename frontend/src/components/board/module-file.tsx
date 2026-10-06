@@ -74,7 +74,7 @@ function ReviewBlock({
         <span>作者</span>
         <FamilyDot family={familyOf(review.author_family)} />
         <span className="text-fg">{people.name(module.owner_participant_id)}</span>
-        <span className="text-fg-4">→</span>
+        <span aria-hidden="true" className="text-fg-3">→</span>
         <span>复核人</span>
         {!operator ? <FamilyDot family={familyOf(review.reviewer_family)} /> : null}
         <span className="text-fg">{reviewer}</span>
@@ -226,7 +226,7 @@ export function ModuleFile({
           {COUNTERS.map(([key, label]) => (
             <div className="flex items-baseline justify-between gap-2" key={key}>
               <dt className="text-fg-3">{label}</dt>
-              <dd className={cx("m-0 font-mono tabular-nums", module.counters[key] ? "text-fg" : "text-fg-4")}>{module.counters[key]}</dd>
+              <dd className={cx("m-0 font-mono tabular-nums", module.counters[key] ? "text-fg" : "text-fg-3")}>{module.counters[key]}</dd>
             </div>
           ))}
         </dl>

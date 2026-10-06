@@ -29,4 +29,5 @@ export type PanelView =
   | { kind: "module"; moduleId: string }
   | { kind: "integration"; integrationId: string }
   | { kind: "contract"; contractId: string; version?: number }
-  | { kind: "split"; splitId: string };
+  | { kind: "split"; splitId: string }
+  | { kind: "execution"; candidateId: string };

@@ -44,12 +44,12 @@ export function StatusStrip({ roomId, onOpen }: { roomId: string; onOpen: () => 
       </span>
       {integrations ? (
         <span className="hidden shrink-0 tabular-nums text-fg-2 sm:inline">
-          <span className="text-fg-4">·</span> <span className="font-medium text-fg">{overview.integrated}</span> 已集成
+          <span aria-hidden="true" className="text-fg-4">·</span> <span className="font-medium text-fg">{overview.integrated}</span> 已集成
         </span>
       ) : null}
       {integrations && (greenHead || jobStatus) ? (
         <span className="hidden min-w-0 items-center gap-1.5 truncate text-fg-3 md:flex">
-          <span className="text-fg-4">·</span>
+          <span aria-hidden="true" className="text-fg-4">·</span>
           <GitCommitHorizontal aria-hidden="true" className="size-3.5 shrink-0" />
           {greenHead ? <code className="font-mono text-xs text-fg-2">{greenHead.slice(0, 7)}</code> : <span>尚无绿色提交</span>}
           {jobStatus ? (

@@ -2,7 +2,7 @@
 
 import { AlertDialog as AlertPrimitive, Dialog as DialogPrimitive } from "radix-ui";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { IconButton } from "./button";
 import { cx } from "./cx";
@@ -10,8 +10,29 @@ import { cx } from "./cx";
 const SCRIM = "fixed inset-0 z-40 bg-[oklch(0.1_0.01_265/0.45)]";
 
 /**
+ * Radix returns focus to its own Trigger on close, but these overlays are opened from state
+ * (no Trigger), so remember whatever had focus when they opened and give it back.
+ */
+function useFocusReturn() {
+  const returnTo = useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: () => {
+      returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    },
+    onCloseAutoFocus: (event: Event) => {
+      const target = returnTo.current;
+      returnTo.current = null;
+      if (target?.isConnected) {
+        event.preventDefault();
+        target.focus();
+      }
+    }
+  };
+}
+
+/**
  * Side sheet for progressive panels on narrow windows (room list, work panel). Radix owns
- * the focus trap, Escape and focus return.
+ * the focus trap and Escape; useFocusReturn hands focus back to the opener.
  */
 export function Sheet({
   open,
@@ -30,11 +51,13 @@ export function Sheet({
   children: ReactNode;
   widthClass?: string;
 }) {
+  const focus = useFocusReturn();
   return (
     <DialogPrimitive.Root onOpenChange={onOpenChange} open={open}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className={SCRIM} />
         <DialogPrimitive.Content
+          {...focus}
           className={cx(
             "fixed inset-y-0 z-50 flex flex-col bg-canvas shadow-overlay outline-none",
             side === "right" ? "right-0" : "left-0",
@@ -68,11 +91,13 @@ export function Dialog({
   footer?: ReactNode;
   widthClass?: string;
 }) {
+  const focus = useFocusReturn();
   return (
     <DialogPrimitive.Root onOpenChange={onOpenChange} open={open}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className={SCRIM} />
         <DialogPrimitive.Content
+          {...focus}
           className={cx(
             "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col",
             "rounded-lg bg-overlay shadow-overlay outline-none",
@@ -124,11 +149,13 @@ export function ConfirmDialog({
   tone?: "danger" | "primary";
   onConfirm: () => void;
 }) {
+  const focus = useFocusReturn();
   return (
     <AlertPrimitive.Root onOpenChange={(next) => { if (!pending) onOpenChange(next); }} open={open}>
       <AlertPrimitive.Portal>
         <AlertPrimitive.Overlay className={SCRIM} />
         <AlertPrimitive.Content
+          {...focus}
           className={cx(
             "fixed top-1/2 left-1/2 z-50 w-[min(calc(100vw-2rem),26rem)] -translate-x-1/2 -translate-y-1/2",
             "rounded-lg bg-overlay p-5 shadow-overlay outline-none"

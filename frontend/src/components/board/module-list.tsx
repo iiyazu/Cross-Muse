@@ -55,7 +55,7 @@ const ModuleRow = memo(function ModuleRow({
         <span className="flex min-w-0 items-center gap-1.5 text-xs">
           <FamilyDot family={people.family(module.owner_participant_id)} />
           <span className="shrink-0 text-fg-3">{owner}</span>
-          <span className="text-fg-4">·</span>
+          <span aria-hidden="true" className="text-fg-4">·</span>
           {phrase.who ? (
             <span className={cx("shrink-0", phrase.tone === "attn" ? "font-medium text-attn" : "text-fg-3")}>{phrase.who}</span>
           ) : null}

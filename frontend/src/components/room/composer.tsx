@@ -191,7 +191,7 @@ export function Composer({
         />
         <div className="flex items-center gap-3 px-2 pt-1 pb-2 pl-3.5">
           <span className="min-w-0 flex-1 truncate text-xs text-fg-3">{hint}</span>
-          <kbd className="hidden font-sans text-[11px] text-fg-4 sm:inline">Enter 发送 · Shift+Enter 换行</kbd>
+          <kbd className="hidden font-sans text-[11px] text-fg-3 sm:inline">Enter 发送 · Shift+Enter 换行</kbd>
           <button
             className="inline-flex h-7 items-center gap-1 rounded-md bg-inverse px-2.5 text-ui font-medium text-on-inverse transition-opacity hover:opacity-90 disabled:opacity-30"
             disabled={disabled || !draft.trim()}

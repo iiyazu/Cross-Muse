@@ -94,25 +94,25 @@
   --line-strong: oklch(0.25 0.02 265 / 0.18);
 
   --fg: oklch(0.21 0.012 265);
-  --fg-2: oklch(0.42 0.014 265);
-  --fg-3: oklch(0.52 0.014 265);
+  --fg-2: oklch(0.4 0.014 265);
+  --fg-3: oklch(0.47 0.014 265);
   --fg-4: oklch(0.7 0.01 265);
   --inverse: oklch(0.21 0.012 265);
   --on-inverse: oklch(0.99 0 0);
 
-  --proof: oklch(0.5 0.13 158);
+  --proof: oklch(0.46 0.12 158);
   --proof-solid: oklch(0.6 0.15 158);
   --proof-soft: oklch(0.6 0.15 158 / 0.12);
   --proof-line: oklch(0.6 0.15 158 / 0.38);
-  --fail: oklch(0.53 0.19 25);
+  --fail: oklch(0.5 0.19 25);
   --fail-solid: oklch(0.6 0.21 25);
   --fail-soft: oklch(0.6 0.21 25 / 0.1);
   --fail-line: oklch(0.6 0.21 25 / 0.38);
-  --attn: oklch(0.53 0.12 62);
+  --attn: oklch(0.47 0.11 62);
   --attn-solid: oklch(0.76 0.16 72);
   --attn-soft: oklch(0.76 0.16 72 / 0.16);
   --attn-line: oklch(0.68 0.15 68 / 0.5);
-  --live: oklch(0.5 0.16 258);
+  --live: oklch(0.47 0.16 258);
   --live-solid: oklch(0.57 0.18 258);
   --live-soft: oklch(0.57 0.18 258 / 0.1);
   --live-line: oklch(0.57 0.18 258 / 0.38);
@@ -141,7 +141,7 @@
 
   --fg: oklch(0.955 0.004 265);
   --fg-2: oklch(0.79 0.008 265);
-  --fg-3: oklch(0.64 0.01 265);
+  --fg-3: oklch(0.68 0.01 265);
   --fg-4: oklch(0.47 0.01 265);
   --inverse: oklch(0.955 0.004 265);
   --on-inverse: oklch(0.17 0.005 265);

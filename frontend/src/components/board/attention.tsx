@@ -65,14 +65,18 @@ export function DecisionCard({
   item,
   projection,
   people,
-  onNavigate
+  onNavigate,
+  onStartReview
 }: {
   item: BoardAttentionItem;
   projection: RoomBoardProjection | null;
   people: BoardPeople;
   onNavigate: (view: PanelView) => void;
+  /** Operator reviews open the review dialog directly instead of the module file. */
+  onStartReview?: (moduleId: string) => void;
 }) {
   const copy = operatorCopy(item, projection, people);
+  const review = item.reason_code === "board_attention_review_operator_pending" && item.module_id && onStartReview;
   return (
     <li className="flex items-start gap-3 rounded-md border border-attn-line bg-attn-soft px-3 py-2.5">
       <TrustGlyph className="mt-0.5" tone="attn" />
@@ -80,7 +84,11 @@ export function DecisionCard({
         <p className="m-0 text-ui font-medium text-fg">{copy.title}</p>
         {copy.detail ? <p className="m-0 mt-0.5 text-xs text-fg-2">{copy.detail}</p> : null}
       </div>
-      {copy.view ? (
+      {review ? (
+        <Button onClick={() => onStartReview(item.module_id!)} size="sm" variant="secondary">
+          {copy.action}
+        </Button>
+      ) : copy.view ? (
         <Button onClick={() => copy.view && onNavigate(copy.view)} size="sm" variant="secondary">
           {copy.action}
         </Button>

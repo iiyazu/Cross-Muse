@@ -3,12 +3,12 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Tooltip } from "radix-ui";
-import { Plus } from "lucide-react";
+import { PanelLeft, Plus } from "lucide-react";
 
 import { useNeedsYou } from "@/components/board/use-needs-you";
 import { WorkPanel } from "@/components/board/work-panel";
 import { SystemSheet } from "@/components/system/system-sheet";
-import { Button } from "@/components/ui/button";
+import { Button, IconButton } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/overlay";
 import { useRoomStore } from "@/store/room-store";
 
@@ -46,6 +46,7 @@ export function Workroom() {
   const selectedRoomId = useRoomStore((state) => state.selectedRoomId);
   const roomsLoaded = useRoomStore((state) => state.roomsLoaded);
   const roomCount = useRoomStore((state) => state.rooms.length);
+  const roomsError = useRoomStore((state) => state.roomsError);
   const panelOpen = useRoomStore((state) => state.inspectorOpen);
   const setPanelOpen = useRoomStore((state) => state.setInspectorOpen);
   const bootstrap = useRoomStore((state) => state.bootstrap);
@@ -90,6 +91,33 @@ export function Workroom() {
     void state.refreshMemory(selectedRoomId);
   }, [selectedRoomId]);
 
+  // The board sync loop only polls fast once a board is loaded; until the first read lands
+  // (an aborted or failed request), retry it here with backoff so the glance layer appears.
+  const boardLoaded = useRoomStore((state) => {
+    const cache = selectedRoomId ? state.boardByRoom[selectedRoomId] : undefined;
+    return Boolean(cache?.projection || cache?.summary);
+  });
+  useEffect(() => {
+    if (!selectedRoomId || boardLoaded) return;
+    let cancelled = false;
+    let timer = 0;
+    let attempt = 0;
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        if (cancelled) return;
+        // refreshBoard joins a request already in flight, so this never doubles traffic.
+        await useRoomStore.getState().refreshBoard(selectedRoomId);
+        attempt += 1;
+        if (!cancelled) schedule();
+      }, Math.min(15_000, 1_000 * 2 ** Math.min(attempt, 4)));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [selectedRoomId, boardLoaded]);
+
   useEffect(() => {
     const onFocus = () => {
       const state = useRoomStore.getState();
@@ -122,7 +150,13 @@ export function Workroom() {
 
   const rail = <RoomRail onCreate={() => { setRailSheetOpen(false); setCreateOpen(true); }} onNavigate={navigate} />;
   const panel = selectedRoomId ? (
-    <WorkPanel docked={panelDocked} key={selectedRoomId} onClose={() => setPanelOpen(false)} roomId={selectedRoomId} />
+    <WorkPanel
+      docked={panelDocked}
+      key={selectedRoomId}
+      onClose={() => setPanelOpen(false)}
+      onOpenSystem={() => setSystemOpen(true)}
+      roomId={selectedRoomId}
+    />
   ) : null;
 
   return (
@@ -149,7 +183,16 @@ export function Workroom() {
               roomId={selectedRoomId}
             />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <>
+            {!railDocked ? (
+              <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-2">
+                <IconButton label="打开房间列表" onClick={() => setRailSheetOpen(true)} size="sm">
+                  <PanelLeft aria-hidden="true" className="size-4" />
+                </IconButton>
+                <span className="text-sm font-semibold tracking-tight text-fg">xmuse</span>
+              </header>
+            ) : null}
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
               {bootstrapped && roomsLoaded && roomCount === 0 ? (
                 <div className="max-w-sm">
                   <p className="m-0 text-lg font-semibold text-fg">建一个房间，开始第一次协作</p>
@@ -160,10 +203,18 @@ export function Workroom() {
                     <Plus aria-hidden="true" className="size-4" /> 新建房间
                   </Button>
                 </div>
+              ) : roomsError && roomCount === 0 ? (
+                <div className="max-w-sm" role="alert">
+                  <p className="m-0 text-base font-semibold text-fg">连不上 xmuse</p>
+                  <p className="m-0 mt-2 text-ui text-fg-3">
+                    本机的 Chat API 没有响应。用 <code className="font-mono text-fg-2">xmuse-workroom status</code> 看看它是否在运行，页面会自动重试。
+                  </p>
+                </div>
               ) : (
                 <p className="m-0 text-ui text-fg-3" role="status">正在连接 xmuse…</p>
               )}
             </div>
+            </>
           )}
         </main>
         {panel && panelDocked && panelOpen ? (

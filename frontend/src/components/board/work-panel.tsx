@@ -11,8 +11,12 @@ import { boardContractKindLabel } from "@/lib/board-labels";
 import { boardReviewPolicyLabel } from "@/lib/board-review-labels";
 import { useRoomStore } from "@/store/room-store";
 
+import { ExecutionView } from "@/components/decisions/execution-view";
+import { ExecutionCard, IncidentCard, MemoryCard } from "@/components/decisions/needs-you-cards";
+import { ReviewDialog } from "@/components/decisions/review-dialog";
+
 import { attentionKey, DecisionCard, WaitingOnAgents } from "./attention";
-import { useBoardPeople, type PanelView } from "./board-context";
+import { useBoardPeople, type BoardPeople, type PanelView } from "./board-context";
 import { ContractView } from "./contract-view";
 import { EventList } from "./event-list";
 import { IntegrationDetail } from "./integration-detail";
@@ -21,12 +25,13 @@ import { ModuleFile } from "./module-file";
 import { ModuleList } from "./module-list";
 import { SplitView } from "./split-view";
 import { LevelSwatch, SegmentBar } from "./trust";
+import { useNeedsYou, type NeedsYou } from "./use-needs-you";
 
 function SectionHeading({ children, count }: { children: React.ReactNode; count?: number }) {
   return (
     <h3 className="m-0 flex items-baseline gap-1.5 px-4 pt-4 pb-2 text-xs font-medium tracking-wide text-fg-3">
       {children}
-      {typeof count === "number" ? <span className="font-normal text-fg-4">{count}</span> : null}
+      {typeof count === "number" ? <span className="font-normal text-fg-3">{count}</span> : null}
     </h3>
   );
 }
@@ -36,24 +41,88 @@ const VIEW_TITLES: Record<PanelView["kind"], string> = {
   module: "模块",
   integration: "集成详情",
   contract: "契约",
-  split: "拆分提案"
+  split: "拆分提案",
+  execution: "执行候选"
 };
+
+/** Decisions only the human can make, from every source, above everything else. */
+function NeedsYouSection({
+  needs,
+  projection,
+  people,
+  memoryProposer,
+  onNavigate,
+  onStartReview,
+  onOpenSystem
+}: {
+  needs: NeedsYou;
+  projection: Parameters<typeof DecisionCard>[0]["projection"];
+  people: BoardPeople;
+  memoryProposer: (participantId: string | null, label: string | null | undefined, kind: string | undefined) => string;
+  onNavigate: (view: PanelView) => void;
+  onStartReview: (moduleId: string) => void;
+  onOpenSystem: () => void;
+}) {
+  if (!needs.total) return null;
+  return (
+    <section aria-label="待你处理" className="border-b border-line pb-4">
+      <SectionHeading count={needs.total}>待你处理</SectionHeading>
+      <ul className="m-0 flex list-none flex-col gap-2 p-0 px-4">
+        {needs.incidents.map((incident) => (
+          <IncidentCard incident={incident} key={incident.incident_id} onOpenSystem={onOpenSystem} />
+        ))}
+        {needs.board.map((item) => (
+          <DecisionCard item={item} key={attentionKey(item)} onNavigate={onNavigate} onStartReview={onStartReview} people={people} projection={projection} />
+        ))}
+        {needs.executions.map((candidate) => (
+          <ExecutionCard candidate={candidate} key={candidate.candidate_id} onOpen={() => onNavigate({ kind: "execution", candidateId: candidate.candidate_id })} />
+        ))}
+        {needs.memories.map((candidate) => (
+          <MemoryCard
+            candidate={candidate}
+            key={candidate.candidate_id}
+            proposer={memoryProposer(candidate.author_participant_id, candidate.proposer_label, candidate.proposer_kind)}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 /**
  * The progressive work dock: decisions first, then the board, then history. Detail views
  * stack inside the panel with a back step, so the timeline never loses its place. Callers key
  * the panel by room, so the stack starts over in every room.
  */
-export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked: boolean; onClose: () => void }) {
-  const { projection, summary, error, loading } = useRoomStore(useShallow((state) => ({
+export function WorkPanel({
+  roomId,
+  docked,
+  onClose,
+  onOpenSystem
+}: {
+  roomId: string;
+  docked: boolean;
+  onClose: () => void;
+  onOpenSystem: () => void;
+}) {
+  const { projection, summary, error, loading, roomParticipants } = useRoomStore(useShallow((state) => ({
     projection: state.boardByRoom[roomId]?.projection ?? null,
     summary: state.boardByRoom[roomId]?.summary ?? null,
     error: state.boardByRoom[roomId]?.error ?? null,
-    loading: state.boardByRoom[roomId]?.loading ?? false
+    loading: state.boardByRoom[roomId]?.loading ?? false,
+    roomParticipants: state.roomsById[roomId]?.projection?.participants ?? null
   })));
   const people = useBoardPeople(projection);
+  const needs = useNeedsYou(roomId);
   const [stack, setStack] = useState<PanelView[]>([{ kind: "board" }]);
+  const [reviewModuleId, setReviewModuleId] = useState<string | null>(null);
   const view = stack[stack.length - 1];
+  const reviewModule = reviewModuleId ? projection?.modules.find((candidate) => candidate.module_id === reviewModuleId) ?? null : null;
+  const memoryProposer = (participantId: string | null, label: string | null | undefined, kind: string | undefined) => {
+    if (kind === "memoryos_curator") return label || "MemoryOS 整理器";
+    const participant = roomParticipants?.find((candidate) => candidate.participant_id === participantId);
+    return participant?.display_name ?? (participantId ? people.name(participantId) : "Agent");
+  };
 
   const navigate = (next: PanelView) => setStack((current) => [...current, next]);
   const back = () => setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
@@ -66,8 +135,10 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
   if (view.kind === "module") {
     const target = projection?.modules.find((candidate) => candidate.module_id === view.moduleId) ?? null;
     body = target && projection
-      ? <ModuleFile module={target} onNavigate={navigate} people={people} projection={projection} roomId={roomId} />
+      ? <ModuleFile module={target} onNavigate={navigate} onStartReview={setReviewModuleId} people={people} projection={projection} roomId={roomId} />
       : <p className="m-0 px-4 py-6 text-center text-ui text-fg-3">这个模块已不在当前章程里。</p>;
+  } else if (view.kind === "execution") {
+    body = <ExecutionView candidateId={view.candidateId} roomId={roomId} />;
   } else if (view.kind === "integration") {
     body = <IntegrationDetail integrationId={view.integrationId} onNavigate={navigate} roomId={roomId} />;
   } else if (view.kind === "contract") {
@@ -81,6 +152,16 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
       : <p className="m-0 px-4 py-6 text-center text-ui text-fg-3">找不到这个拆分提案。</p>;
   } else if (!visible) {
     body = (
+      <>
+        <NeedsYouSection
+          memoryProposer={memoryProposer}
+          needs={needs}
+          onNavigate={navigate}
+          onOpenSystem={onOpenSystem}
+          onStartReview={setReviewModuleId}
+          people={people}
+          projection={projection}
+        />
       <div className="px-6 py-10 text-center">
         <p className="m-0 text-ui font-medium text-fg">这个房间没有模块看板</p>
         <p className="m-0 mt-1.5 text-xs text-fg-3">
@@ -91,6 +172,7 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
               : "当 lead 提出拆分、宿主开始验证模块时，进度会出现在这里。"}
         </p>
       </div>
+      </>
     );
   } else {
     const capabilities = projection?.capabilities ?? summary!.capabilities;
@@ -101,6 +183,15 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
     const decidedSplits = projection?.splits.filter((split) => split.status !== "proposed") ?? [];
     body = (
       <>
+        <NeedsYouSection
+          memoryProposer={memoryProposer}
+          needs={needs}
+          onNavigate={navigate}
+          onOpenSystem={onOpenSystem}
+          onStartReview={setReviewModuleId}
+          people={people}
+          projection={projection}
+        />
         <section aria-label="完成度" className="px-4 pt-4 pb-4">
           <div className="flex items-end gap-3">
             <p className="m-0 tabular-nums">
@@ -150,21 +241,9 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
           ) : null}
         </section>
 
-        {attention.mine.length || attention.agents.length ? (
-          <section aria-label="待处理" className="border-t border-line">
-            {attention.mine.length ? (
-              <>
-                <SectionHeading count={attention.mine.length}>待你处理</SectionHeading>
-                <ul className="m-0 flex list-none flex-col gap-2 px-4 p-0">
-                  {attention.mine.map((item) => (
-                    <DecisionCard item={item} key={attentionKey(item)} onNavigate={navigate} people={people} projection={projection} />
-                  ))}
-                </ul>
-              </>
-            ) : null}
-            <div className={cx("px-4 pb-3", attention.mine.length ? "pt-2" : "pt-3")}>
-              <WaitingOnAgents items={attention.agents} onNavigate={navigate} people={people} projection={projection} />
-            </div>
+        {attention.agents.length ? (
+          <section aria-label="在等 Agent" className="border-t border-line px-4 py-3">
+            <WaitingOnAgents items={attention.agents} onNavigate={navigate} people={people} projection={projection} />
           </section>
         ) : null}
 
@@ -178,7 +257,7 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
         {projection?.contracts.length ? (
           <details className="group border-t border-line">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-3 text-xs font-medium tracking-wide text-fg-3 select-none hover:text-fg-2 [&::-webkit-details-marker]:hidden">
-              契约 <span className="font-normal text-fg-4">{projection.contracts.length}</span>
+              契约 <span className="font-normal text-fg-3">{projection.contracts.length}</span>
               <span className="flex-1" />
               <ChevronRight aria-hidden="true" className="size-3.5 text-fg-4 transition-transform group-open:rotate-90" />
             </summary>
@@ -200,7 +279,7 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
         {projection?.events.length ? (
           <details className="group border-t border-line">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-3 text-xs font-medium tracking-wide text-fg-3 select-none hover:text-fg-2 [&::-webkit-details-marker]:hidden">
-              最近动态 <span className="font-normal text-fg-4">{projection.events.length}</span>
+              最近动态 <span className="font-normal text-fg-3">{projection.events.length}</span>
               <span className="flex-1" />
               <ChevronRight aria-hidden="true" className="size-3.5 text-fg-4 transition-transform group-open:rotate-90" />
             </summary>
@@ -211,7 +290,7 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
         {decidedSplits.length ? (
           <details className="group border-t border-line">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-3 text-xs font-medium tracking-wide text-fg-3 select-none hover:text-fg-2 [&::-webkit-details-marker]:hidden">
-              拆分记录 <span className="font-normal text-fg-4">{decidedSplits.length}</span>
+              拆分记录 <span className="font-normal text-fg-3">{decidedSplits.length}</span>
               <span className="flex-1" />
               <ChevronRight aria-hidden="true" className="size-3.5 text-fg-4 transition-transform group-open:rotate-90" />
             </summary>
@@ -232,7 +311,7 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
         ) : null}
 
         {projection ? (
-          <p className="m-0 border-t border-line px-4 py-3 text-[11px] text-fg-4">{boardReviewPolicyLabel(projection.review_policy)}</p>
+          <p className="m-0 border-t border-line px-4 py-3 text-[11px] text-fg-3">{boardReviewPolicyLabel(projection.review_policy)}</p>
         ) : null}
       </>
     );
@@ -254,6 +333,15 @@ export function WorkPanel({ roomId, docked, onClose }: { roomId: string; docked:
       <div className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto" key={stack.length}>
         {body}
       </div>
+      {reviewModule ? (
+        <ReviewDialog
+          key={reviewModule.review.review_id ?? reviewModule.module_id}
+          module={reviewModule}
+          onOpenChange={(open) => { if (!open) setReviewModuleId(null); }}
+          open
+          roomId={roomId}
+        />
+      ) : null}
     </div>
   );
 }

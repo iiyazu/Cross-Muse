@@ -31,7 +31,7 @@ function ItemRow({ item, onOpenModule }: { item: BoardIntegrationItem; onOpenMod
   const tone = ITEM_TONE[item.status] ?? "empty";
   return (
     <li className="flex gap-3 px-4 py-2">
-      <span className="w-4 shrink-0 pt-0.5 text-right font-mono text-[11px] text-fg-4">{item.order}</span>
+      <span className="w-4 shrink-0 pt-0.5 text-right font-mono text-[11px] text-fg-3">{item.order}</span>
       <TrustGlyph className="mt-0.5" tone={tone} />
       <div className="min-w-0 flex-1">
         <p className="m-0 flex flex-wrap items-baseline gap-x-2 text-ui">
