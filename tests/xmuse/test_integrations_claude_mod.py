@@ -59,6 +59,12 @@ WRITE_VERBS = ["POST", "PUT", "DELETE"]
 ALLOWED_GRANT_PATHS = {
     "/api/chat/plugin/grants/exchange",
     "/api/chat/plugin/grants/revoke",
+    # main_window_control_v1 section 4.
+    "/api/chat/plugin/rooms",
+    "/api/chat/plugin/rooms/",
+    "/messages",
+    "/api/chat/plugin/board-reviews/",
+    "/material?conversation_id=",
 }
 DECISION_PREFIX = "/api/chat/plugin/board-splits/"
 DECISION_SUFFIX = "/decision"
@@ -138,7 +144,7 @@ def test_writes_only_in_grant_api() -> None:
     assert grant_text.count("Authorization") == 1, "Authorization must appear exactly once"
     holder = grant_text.rfind("function ", 0, grant_text.index("Authorization"))
     assert holder != -1
-    assert "pluginPost" in grant_text[holder : holder + 80]
+    assert "pluginRequest" in grant_text[holder : holder + 80]
     for path in _plugin_sources():
         if path == GRANT_API:
             continue

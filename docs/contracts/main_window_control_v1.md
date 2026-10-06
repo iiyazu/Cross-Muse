@@ -55,6 +55,11 @@ runtime recovery, memory candidates and rebuild, Codex actions, grant issue/list
 - Storage: v2 grants live in new tables (`plugin_grants_v2`, `plugin_grant_rooms`); the v1 table
   is no longer written. v1 grants are not migrated: they are short-lived, and a new Workroom
   generation invalidates them anyway.
+- HTTP: the issue route still accepts the v1 body (`{conversation_id, host, scope, ttl_seconds}`,
+  read as one Room and one scope), but every grant response is now v2-shaped
+  (`plugin_grant_issue/v2`, `…_list/v2`, `…_exchange/v2`, `…_revoke/v2`). The Web Workroom,
+  the only v1 issuer, has been removed; the host plugins move to v2 in the same change. The list
+  route takes `conversation_id` or `host`.
 
 ## 3. Issue from the terminal
 
@@ -113,11 +118,15 @@ POST /api/chat/plugin/rooms
   At most 8 participants (lead, owners and reviewer together).
 - The workspace is the Workroom's configured execution workspace and profile. The body names no
   path (T17).
-- Provider admission is the same as `POST /api/chat/conversations`. Validation is server-side:
-  `title` 1–200, owners 1–6, total participants ≤ 8, `cli_kind` among the enabled providers
-  (`422 plugin_room_request_invalid` otherwise).
+- Validation is server-side: `title` 1–200, owners 1–6 (`claude`, `opencode` or `antigravity`),
+  total participants ≤ 8, no other keys (`422 plugin_room_request_invalid`). Provider admission is
+  the same as `POST /api/chat/conversations`: a provider that is not enabled answers `422
+  room_provider_unavailable`.
 - Limits: at most one creation per 10 s per grant (`429 plugin_room_rate_limited`) and the 16-Room
-  set cap. The check, the insert and the append to `conversation_ids` are one transaction.
+  set cap (`409 plugin_grant_room_limit`). The cap check and the rate-limit stamp are one
+  transaction, which serializes creations per grant; the Room is then created and appended to
+  `conversation_ids`. A creation interrupted before the append is repaired by retrying the same
+  `client_request_id`: the replay skips the limits and appends the existing Room.
 - `201` returns `{conversation_id, participants: [{participant_id, role, cli_kind}],
   room_count}`: no grant object.
 

@@ -719,4 +719,9 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/plugin/grants/exchange", "POST"),
         ("/api/chat/plugin/grants/revoke", "POST"),
         ("/api/chat/plugin/board-splits/{split_id}/decision", "POST"),
+        ("/api/chat/operator/plugin-grants/revoke-host", "POST"),
+        ("/api/chat/plugin/rooms", "POST"),
+        ("/api/chat/plugin/rooms/{conversation_id}/messages", "POST"),
+        ("/api/chat/plugin/board-reviews/{review_id}/decision", "POST"),
+        ("/api/chat/plugin/board-reviews/{review_id}/material", "GET"),
     }

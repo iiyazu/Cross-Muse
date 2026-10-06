@@ -12,6 +12,7 @@ Error messages are static: they never echo request bodies or headers.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -199,8 +200,11 @@ def _review_waiting_for_human(root: Path, conversation_id: str, review_id: str) 
 
 def _scoped_request_id(grant_id: str, client_request_id: str) -> str:
     # Idempotency keys are per grant: the same key under another grant never
-    # replays another grant's object (main_window_control_v1 section 4).
-    return f"plugin:{grant_id}:{client_request_id}"
+    # replays another grant's object (main_window_control_v1 section 4). The
+    # caller's key is hashed so the scoped key stays within the 200-character
+    # limit of the setup and message idempotency columns.
+    digest = hashlib.sha256(client_request_id.encode("utf-8")).hexdigest()[:32]
+    return f"plugin:{grant_id}:{digest}"
 
 
 def _provenance(auth: Mapping[str, Any]) -> dict[str, str]:
@@ -590,11 +594,11 @@ def register_plugin_grant_routes(
             or not body["message"].strip()
         ):
             raise _deny("plugin_grant_request_invalid")
+        if not PluginGrantStore.has_room(auth, conversation_id):
+            raise _deny("room_conversation_unknown")
         mentions = body.get("mentions", [])
         if not isinstance(mentions, list) or any(not _valid_text(item) for item in mentions):
             raise _deny("plugin_message_mention_invalid")
-        if not PluginGrantStore.has_room(auth, conversation_id):
-            raise _deny("room_conversation_unknown")
         members = {
             item.participant_id
             for item in ParticipantStore(db_path).list_by_conversation(conversation_id)

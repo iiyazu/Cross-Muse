@@ -14,20 +14,33 @@ import {
 } from "../src/api";
 import { planStateToasts, planToast, statusBlock, statusText, toastableKeys } from "../src/board_state";
 import {
+  createRoom,
+  decideReview,
   decideSplit,
   detailCodeOf,
   exchangeGrant,
+  fetchReviewMaterial,
   parseExchangePayload,
+  parseMaterialPayload,
+  parseRoomCreatePayload,
+  postMessage,
   revokeGrant,
   type GrantHttp,
 } from "../src/grant_api";
 import {
+  ORIGIN_REFUSED,
+  REPAIR_TOAST,
   checkConfirmInput,
   exchangeToast,
   failureToast,
   grantExpired,
+  isHumanOrigin,
   mapDecisionOutcome,
+  mapReviewOutcome,
+  parseNewArgs,
+  parseSayArgs,
   validatePairingCode,
+  writeFailureText,
 } from "../src/grant_state";
 import { backoffMs, bindingKey, pickAttachTarget } from "../src/poll";
 import { PaneTree, buildPaneNodes } from "../src/pane";
@@ -58,6 +71,7 @@ const cacheAtom = atom({ plugin: "xmuse", key: "cache" } as const, {
   expanded: {},
   grant: null,
   confirming: null,
+  material: null,
   formEpoch: 0,
 } as XmuseCache);
 
@@ -206,7 +220,24 @@ async function refreshBoard(caller: any): Promise<void> {
 
 async function dropGrant(caller: any): Promise<void> {
   grantToken = null;
-  await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), grant: null, confirming: null }));
+  await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), grant: null, confirming: null, material: null }));
+}
+
+// The live token when the grant covers `scope` (and `room`, when given) and
+// has not expired; otherwise null. Never returns the token for display.
+async function liveToken(caller: any, scope: string, room: string | null): Promise<string | null> {
+  const live = (await read(caller, cacheAtom)) as XmuseCache;
+  const held = grantToken;
+  if (held === null || live.grant === null) return null;
+  if (grantExpired(live.grant.expiresAt, await caller.clock.now())) return null;
+  if (!live.grant.scopes.includes(scope)) return null;
+  if (room !== null && !live.grant.conversationIds.includes(room)) return null;
+  return held;
+}
+
+async function requestId(caller: any, tag: string): Promise<string> {
+  const now = await caller.clock.now();
+  return tag + "-" + String(now) + "-" + Math.random().toString(36).slice(2, 10);
 }
 
 async function revokeBestEffort(caller: any): Promise<void> {
@@ -242,7 +273,12 @@ async function submitPairing(caller: any, rawValue: string): Promise<void> {
       const meta = parsed.grant;
       await update(caller, cacheAtom, (c) => ({
         ...(c as XmuseCache),
-        grant: { grantId: meta.grantId, expiresAt: meta.expiresAt, conversationId: meta.conversationId },
+        grant: {
+          grantId: meta.grantId,
+          expiresAt: meta.expiresAt,
+          conversationIds: meta.conversationIds,
+          scopes: meta.scopes,
+        },
         confirming: null,
       }));
       const at = await caller.clock.now();
@@ -265,7 +301,11 @@ async function submitConfirm(caller: any, rawValue: string): Promise<void> {
   const held = grantToken;
   if (pending === null || held === null || live.binding === null) {
     await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), confirming: null }));
-    caller.ui.toast("授权已失效，请在 Web 重新授权");
+    caller.ui.toast(REPAIR_TOAST);
+    return;
+  }
+  if (pending.kind === "review") {
+    await submitReviewConfirm(caller, live, held, rawValue);
     return;
   }
   const rows = live.board !== null ? live.board.splits : [];
@@ -294,6 +334,69 @@ async function submitConfirm(caller: any, rawValue: string): Promise<void> {
   caller.ui.toast(outcome.toast);
 }
 
+// The review digest confirm (main_window_control_v1 §4.4). The digest comes
+// from the material the person was shown; an objection carries the reason
+// entered before. Confirming and material clear on every path.
+async function submitReviewConfirm(caller: any, live: XmuseCache, held: string, rawValue: string): Promise<void> {
+  const pending = live.confirming;
+  const material = live.material;
+  const boundId = live.binding;
+  const clear = async (): Promise<void> => {
+    await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), confirming: null, material: null }));
+  };
+  if (pending === null || material === null || boundId === null || material.reviewId !== pending.reviewId) {
+    await clear();
+    caller.ui.toast("复核材料已失效，请重新查看");
+    return;
+  }
+  const check = checkConfirmInput(material.digest, rawValue);
+  if (!check.ok) {
+    await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), confirming: null }));
+    caller.ui.toast(check.hint);
+    return;
+  }
+  const verdict = pending.decision === "object" ? "object" : "endorse";
+  const res = await decideReview(
+    pluginHttp(caller),
+    base(),
+    held,
+    pending.reviewId,
+    boundId,
+    verdict,
+    material.digest,
+    pending.reason,
+  );
+  const outcome = mapReviewOutcome(res.status, detailCodeOf(res.json), verdict);
+  if (outcome.clearGrant) await dropGrant(caller);
+  else await clear();
+  if (outcome.refetch) await refreshBoard(caller);
+  caller.ui.toast(outcome.toast);
+}
+
+// Runs only from a pane Button press: fetch the material of a review the
+// Human must decide and keep it for the pane only (§4.5).
+async function loadMaterial(caller: any, reviewId: string): Promise<void> {
+  const live = (await read(caller, cacheAtom)) as XmuseCache;
+  if (live.binding === null) return;
+  const held = await liveToken(caller, "board.review.decide", live.binding);
+  if (held === null) {
+    caller.ui.toast(REPAIR_TOAST);
+    return;
+  }
+  const res = await fetchReviewMaterial(pluginHttp(caller), base(), held, reviewId, live.binding);
+  const parsed = res.status === 200 ? parseMaterialPayload(res.json) : null;
+  if (parsed === null) {
+    caller.ui.toast(mapReviewOutcome(res.status, detailCodeOf(res.json), "endorse").toast);
+    if (res.status === 409) await refreshBoard(caller);
+    return;
+  }
+  await update(caller, cacheAtom, (c) => ({
+    ...(c as XmuseCache),
+    material: { reviewId, digest: parsed.digest, text: parsed.text, truncated: parsed.truncated },
+    confirming: null,
+  }));
+}
+
 // Runs only from pane Button presses. Setting confirming never acts:
 // the decision is sent only after the digest confirm submit matches.
 async function pressControl(caller: any, key: string): Promise<void> {
@@ -305,10 +408,34 @@ async function pressControl(caller: any, key: string): Promise<void> {
     await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), confirming: null }));
     return;
   }
+  if (key === "xmuse-close-material") {
+    await update(caller, cacheAtom, (c) => ({ ...(c as XmuseCache), confirming: null, material: null }));
+    return;
+  }
   const live = (await read(caller, cacheAtom)) as XmuseCache;
   if (live.grant === null || live.binding === null) return;
-  if (live.grant.conversationId !== live.binding) return;
+  if (!live.grant.conversationIds.includes(live.binding)) return;
   if (grantExpired(live.grant.expiresAt, await caller.clock.now())) return;
+  const modules = live.board !== null ? live.board.modules : [];
+  for (const m of modules) {
+    const reviewId = m.review.review_id;
+    if (reviewId === null || m.review.status !== "pending" || m.review.reviewer_kind !== "operator") continue;
+    if (!live.grant.scopes.includes("board.review.decide")) return;
+    if (key === "xmuse-material-" + reviewId) {
+      await loadMaterial(caller, reviewId);
+      return;
+    }
+    if (key === "xmuse-endorse-" + reviewId || key === "xmuse-object-" + reviewId) {
+      if (live.material === null || live.material.reviewId !== reviewId) return;
+      const decision = key === "xmuse-object-" + reviewId ? "object" : "endorse";
+      await update(caller, cacheAtom, (c) => ({
+        ...(c as XmuseCache),
+        confirming: { kind: "review", splitId: "", reviewId, decision, reason: null },
+      }));
+      return;
+    }
+  }
+  if (!live.grant.scopes.includes("board.split.decide")) return;
   const rows = live.board !== null ? live.board.splits : [];
   for (const row of rows) {
     if (key !== "xmuse-approve-" + row.split_id && key !== "xmuse-reject-" + row.split_id) continue;
@@ -316,7 +443,7 @@ async function pressControl(caller: any, key: string): Promise<void> {
     const decision = key === "xmuse-reject-" + row.split_id ? "reject" : "approve";
     await update(caller, cacheAtom, (c) => ({
       ...(c as XmuseCache),
-      confirming: { splitId: row.split_id, decision },
+      confirming: { kind: "split", splitId: row.split_id, reviewId: "", decision, reason: null },
     }));
     return;
   }
@@ -327,9 +454,73 @@ async function submitControl(caller: any, key: string, value: string): Promise<v
     await submitPairing(caller, value);
     return;
   }
+  if (key === "xmuse-review-reason") {
+    const reason = typeof value === "string" ? value.trim().slice(0, 1000) : "";
+    if (reason === "") {
+      caller.ui.toast("反对需要写明理由");
+      return;
+    }
+    await update(caller, cacheAtom, (c) => {
+      const cur = c as XmuseCache;
+      if (cur.confirming === null || cur.confirming.kind !== "review") return cur;
+      return { ...cur, confirming: { ...cur.confirming, reason } };
+    });
+    return;
+  }
   if (key === "xmuse-confirm") {
     await submitConfirm(caller, value);
   }
+}
+
+// `/xmuse new` (§4.1). Runs only from the person's own Enter; the result
+// text carries ids and counts only.
+async function commandNew(caller: any, rest: string): Promise<string> {
+  const parsed = parseNewArgs(rest);
+  if (!parsed.ok) return parsed.hint;
+  const held = await liveToken(caller, "room.create", null);
+  if (held === null) return REPAIR_TOAST;
+  const res = await createRoom(pluginHttp(caller), base(), held, {
+    clientRequestId: await requestId(caller, "new"),
+    title: parsed.value.title,
+    lead: parsed.value.lead,
+    owners: parsed.value.owners,
+    reviewer: parsed.value.reviewer,
+  });
+  const created = res.status === 201 ? parseRoomCreatePayload(res.json) : null;
+  if (created === null) {
+    if (res.status === 401) await dropGrant(caller);
+    return "xmuse 创建失败: " + writeFailureText(res.status, detailCodeOf(res.json));
+  }
+  await update(caller, cacheAtom, (c) => {
+    const cur = c as XmuseCache;
+    if (cur.grant === null || cur.grant.conversationIds.includes(created.conversationId)) return cur;
+    return { ...cur, grant: { ...cur.grant, conversationIds: [...cur.grant.conversationIds, created.conversationId] } };
+  });
+  await bindRoom(caller, created.conversationId);
+  return (
+    "xmuse 已创建房间 " +
+    shortRoom(created.conversationId) +
+    " · lead + " +
+    String(created.owners) +
+    " owner · 已绑定。下一步: /xmuse say <任务>（lead 会提出拆分，你在窗格里审批）"
+  );
+}
+
+// `/xmuse say` (§4.2) to the bound Room. @lead / @owner-N in the text
+// address participants; the server resolves them.
+async function commandSay(caller: any, rest: string): Promise<string> {
+  const parsed = parseSayArgs(rest);
+  if (!parsed.ok) return parsed.hint;
+  const live = (await read(caller, cacheAtom)) as XmuseCache;
+  if (live.binding === null) return "xmuse 未绑定房间：先 /xmuse new 或 /xmuse attach";
+  const held = await liveToken(caller, "room.message", live.binding);
+  if (held === null) return REPAIR_TOAST;
+  const res = await postMessage(pluginHttp(caller), base(), held, live.binding, await requestId(caller, "say"), parsed.message);
+  if (res.status !== 201) {
+    if (res.status === 401) await dropGrant(caller);
+    return "xmuse 发送失败: " + writeFailureText(res.status, detailCodeOf(res.json));
+  }
+  return "xmuse 已发送到 " + shortRoom(live.binding);
 }
 
 async function tick(caller: any): Promise<void> {
@@ -487,12 +678,13 @@ export const register: Register = (on, options) => {
       expanded: {},
       grant: null,
       confirming: null,
+      material: null,
       formEpoch: 0,
     }));
     await $.command.register({
       name: "xmuse",
-      description: "xmuse board status: attach, detach, status, pane",
-      argumentHint: "[attach|detach|status|pane]",
+      description: "xmuse: coordinate agents from this window (new, say, attach, detach, status, pane)",
+      argumentHint: "[new <title>|say <message>|attach|detach|status|pane]",
     });
     await $.tool.register({
       name: "status",
@@ -522,6 +714,12 @@ export const register: Register = (on, options) => {
     const first = args.split(/\s+/)[0] ?? "";
     const cache = (await read($, cacheAtom)) as XmuseCache;
     const sessionCwd = cache.cwd ?? "";
+    if (first === "new" || first === "say") {
+      // main_window_control_v1 §5: writes only from the person's own Enter.
+      if (!isHumanOrigin((e as { origin?: unknown }).origin)) return { text: ORIGIN_REFUSED };
+      const rest = args.slice(first.length);
+      return { text: first === "new" ? await commandNew($, rest) : await commandSay($, rest) };
+    }
     if (first === "status") return { text: statusBlock(cache) };
     if (first === "attach") {
       const roomsRes = await httpGet($, "/api/chat/rooms", null);
@@ -583,12 +781,15 @@ export const register: Register = (on, options) => {
           nextRetryAt: 0,
           grant: null,
           confirming: null,
+          material: null,
         };
       });
       $.ui.status("xmuse 未绑定房间");
       return { text: "xmuse 已解绑" };
     }
-    if (first !== "" && first !== "pane") return { text: "xmuse 用法: /xmuse [attach|detach|status|pane]" };
+    if (first !== "" && first !== "pane") {
+      return { text: "xmuse 用法: /xmuse [new <标题>|say <消息>|attach|detach|status|pane]" };
+    }
     await update($, cacheAtom, (c) => ({ ...(c as XmuseCache), paneOpen: true }));
     try {
       await $.ui.open({ id: PANE_ID, title: "xmuse 看板" });

@@ -53,17 +53,24 @@ def remove_operator_token(path: Path) -> None:
 
 
 def read_operator_token(path: Path) -> str:
-    """Read the token; refuse a symlink or a file other users can read."""
+    """Read the token; refuse a symlink or a file other users can read.
+
+    Opened with ``O_NOFOLLOW`` and checked with ``fstat`` on the open file, so
+    a symlink swapped in after a check is never followed.
+    """
 
     try:
-        if path.is_symlink():
-            raise OperatorTokenFileError("operator_token_file_unsafe")
-        info = path.stat()
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
         raise OperatorTokenFileError("workroom_not_running") from None
-    if info.st_mode & 0o077 or info.st_uid != os.getuid():
-        raise OperatorTokenFileError("operator_token_file_unsafe")
-    token = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        # ELOOP: the final component is a symlink.
+        raise OperatorTokenFileError("operator_token_file_unsafe") from None
+    with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        info = os.fstat(handle.fileno())
+        if info.st_mode & 0o077 or info.st_uid != os.getuid():
+            raise OperatorTokenFileError("operator_token_file_unsafe")
+        token = handle.read().strip()
     if not token:
         raise OperatorTokenFileError("workroom_not_running")
     return token

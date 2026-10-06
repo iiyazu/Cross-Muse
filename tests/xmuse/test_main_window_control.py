@@ -170,6 +170,15 @@ def test_room_create_idempotency_is_per_grant(tmp_path: Path) -> None:
     assert other.json()["conversation_id"] != created.json()["conversation_id"]
 
 
+def test_room_create_accepts_a_maximum_length_key(tmp_path: Path) -> None:
+    client = _app_client(tmp_path)
+    _grant, bearer = _pair(client)
+    created = client.post("/api/chat/plugin/rooms", json=_room_body("k" * 200), headers=bearer)
+    assert created.status_code == 201, created.text
+    too_long = client.post("/api/chat/plugin/rooms", json=_room_body("k" * 201), headers=bearer)
+    assert too_long.status_code == 422
+
+
 def test_room_create_rate_limit_and_room_cap(tmp_path: Path) -> None:
     client = _app_client(tmp_path)
     grant, bearer = _pair(client)
@@ -407,6 +416,13 @@ def test_operator_token_file_is_private_and_removable(tmp_path: Path) -> None:
     with pytest.raises(OperatorTokenFileError) as unsafe:
         read_operator_token(path)
     assert unsafe.value.code == "operator_token_file_unsafe"
+
+    os.chmod(path, 0o600)
+    link = tmp_path / "runtime" / "linked-token"
+    link.symlink_to(path)
+    with pytest.raises(OperatorTokenFileError) as linked:
+        read_operator_token(link)
+    assert linked.value.code == "operator_token_file_unsafe"
 
     remove_operator_token(path)
     remove_operator_token(path)
