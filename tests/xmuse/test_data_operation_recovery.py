@@ -8,6 +8,7 @@ import pytest
 
 from tests.xmuse.room_fixtures import CompatDataTestStore
 from xmuse import data_cli, data_mutation, data_restore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 _TARGET_NAMES = (
     data_cli.CHAT_DB_NAME,
@@ -83,7 +84,7 @@ def test_successful_restore_discards_stale_wal_and_shm_sidecars(tmp_path: Path) 
 
     assert not (root / f"{data_cli.CHAT_DB_NAME}-wal").exists()
     assert not (root / f"{data_cli.CHAT_DB_NAME}-shm").exists()
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         assert conn.execute("select id, title from conversations").fetchall() == [
             (conversation.id, "restored authority")
         ]

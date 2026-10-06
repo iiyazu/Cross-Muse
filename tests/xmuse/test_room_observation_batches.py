@@ -8,6 +8,7 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _room(tmp_path, count: int = 3):
@@ -106,7 +107,7 @@ def test_peer_batch_waits_for_root_barrier_and_completes_once_with_reply(tmp_pat
     )
     assert completed["downstream_observations"] == []
     member_ids = [item["observation"]["observation_id"] for item in peer["batch"]["members"]]
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 f"select count(*) from room_observations where observation_id in "
@@ -148,7 +149,7 @@ def test_peer_reply_validation_can_be_corrected_with_same_request_id(tmp_path):
     assert peer is not None
     valid_target = peer["batch"]["members"][0]["activity"]["activity_id"]
     before = {}
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         for table in ("chat_request_log", "messages", "room_activities"):
             before[table] = conn.execute(f"select count(*) from {table}").fetchone()[0]
 
@@ -163,7 +164,7 @@ def test_peer_reply_validation_can_be_corrected_with_same_request_id(tmp_path):
             {"content": "one durable follow-up"},
             reply_to_activity_id=human_root_id,
         )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         for table, count in before.items():
             assert conn.execute(f"select count(*) from {table}").fetchone()[0] == count
 
@@ -188,7 +189,7 @@ def test_peer_reply_validation_can_be_corrected_with_same_request_id(tmp_path):
         reply_to_activity_id=valid_target,
     )
     assert replay == corrected
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from chat_request_log").fetchone()[0] == (
             before["chat_request_log"] + 1
         )
@@ -294,7 +295,7 @@ def test_peer_observation_budget_is_capped_at_sixteen_per_participant_correlatio
     assert peer is not None
     assert peer["batch"]["member_count"] == 16
     assert len(peer["batch"]["members"]) == 16
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         active_peer_count = conn.execute(
             """select count(*) from room_observations o
                join room_activities a on a.activity_id = o.activity_id
@@ -345,7 +346,7 @@ def test_runner_boot_fence_canonicalizes_two_member_batch_once(tmp_path):
     assert {(item["status"], item["control_state"]) for item in observations} == {
         ("pending", "active")
     }
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         attempt = conn.execute(
             "select state, recovery_state from room_observation_attempts where attempt_id = ?",
             (peer["attempt"]["attempt_id"],),
@@ -479,7 +480,7 @@ def test_interleaved_human_root_holds_cursor_behind_later_batch_member(tmp_path)
         )
         is None
     )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         peer_output_id = peer_result["produced_activity"]["activity_id"]
         assert (
             conn.execute(

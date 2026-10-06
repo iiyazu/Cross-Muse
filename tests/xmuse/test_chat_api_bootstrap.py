@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from xmuse import chat_api_bootstrap
 from xmuse.chat_api_bootstrap import BOOTSTRAP_SCHEMA, register_bootstrap_route
 from xmuse.memoryos_companion import MemoryOSCompanion
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _endpoint(app: FastAPI):
@@ -21,7 +22,7 @@ def _endpoint(app: FastAPI):
 
 def test_bootstrap_is_safe_and_reports_companion(monkeypatch, tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute("create table conversations (conversation_id text primary key)")
         conn.execute("insert into conversations values ('room-1')")
     companion = MemoryOSCompanion(

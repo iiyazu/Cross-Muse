@@ -13,6 +13,7 @@ from xmuse_core.chat.room_database import (
     COMPAT_CHAT_SCHEMA_VERSION,
     RoomDatabase,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _stamp() -> str:
@@ -124,7 +125,7 @@ class CompatDataTestStore(RoomTestStore):
 
     def __init__(self, path: Path | str) -> None:
         super().__init__(path)
-        with sqlite3.connect(self.path) as conn:
+        with sqlite3.connect(self.path, factory=ClosingConnection) as conn:
             conn.execute(
                 """create table if not exists role_templates (
                        id text primary key, slug text not null, display_name text not null,

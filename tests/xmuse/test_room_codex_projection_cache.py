@@ -16,6 +16,7 @@ from xmuse_core.chat.room_codex_projection_cache import (
     RoomCodexProjectionCacheError,
     sanitize_native_notification,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 GUARD = "sha256:" + "a" * 64
 
@@ -295,7 +296,7 @@ def test_oldest_first_count_trimming_records_omission_and_independent_sequence(
     assert first["omitted_count"] == 1
     assert first["history_partial"] is True
     assert second["omitted_count"] == 0
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         row = conn.execute(
             """select count(*), min(participant_seq), max(participant_seq)
                from native_events where participant_id = 'participant-one'"""
@@ -311,7 +312,7 @@ def test_oldest_first_byte_trimming_uses_utf8_serialized_bytes(
     for index in range(5):
         _append(cache, index)
 
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         retained_count, retained_bytes = conn.execute(
             """select count(*), coalesce(sum(serialized_bytes), 0)
                from native_events where participant_id = 'participant-one'"""
@@ -407,7 +408,7 @@ def test_runtime_or_database_symlink_is_rejected(tmp_path: Path) -> None:
 def test_future_schema_rejected_before_other_tables_are_created(tmp_path: Path) -> None:
     cache = RoomCodexProjectionCache(tmp_path)
     cache.path.parent.mkdir(parents=True)
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         conn.execute(
             "create table projection_meta(schema_version text primary key, created_at text)"
         )
@@ -415,7 +416,7 @@ def test_future_schema_rejected_before_other_tables_are_created(tmp_path: Path) 
     with pytest.raises(RoomCodexProjectionCacheError) as raised:
         cache.initialize()
     assert raised.value.code == "codex_projection_schema_unsupported"
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         names = {
             row[0] for row in conn.execute("select name from sqlite_master where type = 'table'")
         }
@@ -426,7 +427,7 @@ def test_concurrent_writers_keep_unique_participant_and_cache_sequences(tmp_path
     cache = RoomCodexProjectionCache(tmp_path)
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda index: _append(cache, index), range(40)))
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         participant_sequences = [
             row[0]
             for row in conn.execute(
@@ -442,7 +443,7 @@ def test_concurrent_writers_keep_unique_participant_and_cache_sequences(tmp_path
 def test_event_payload_has_hard_database_and_encoder_bound(tmp_path: Path) -> None:
     cache = RoomCodexProjectionCache(tmp_path)
     _append(cache, 1)
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         maximum = conn.execute("select max(serialized_bytes) from native_events").fetchone()[0]
         encoded = conn.execute("select payload_json from native_events").fetchone()[0]
     assert maximum == len(encoded.encode("utf-8"))

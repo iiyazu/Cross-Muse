@@ -18,6 +18,7 @@ from xmuse_core.chat.room_controls import (
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 7, 11, tzinfo=UTC)
@@ -104,7 +105,7 @@ def _bind_provider(
 
 
 def _attempt_row(db_path: Path, attempt_id: str) -> dict:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "select * from room_observation_attempts where attempt_id = ?",
@@ -115,7 +116,7 @@ def _attempt_row(db_path: Path, attempt_id: str) -> dict:
 
 
 def _frontend_event_count(db_path: Path) -> int:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         return int(conn.execute("select count(*) from chat_frontend_events").fetchone()[0])
 
 
@@ -126,7 +127,7 @@ def _assert_old_lease_lost(
     attempt_id: str,
     lease_token: str,
 ) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         with pytest.raises(RoomControlError, match="room_observation_lease_lost"):
             assert_room_outcome_allowed(

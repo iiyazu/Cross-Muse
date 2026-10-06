@@ -16,6 +16,7 @@ from xmuse_core.chat.room_skill_decisions import (
     RoomAttemptSkillDecisionStore,
     RoomSkillDecisionError,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.models import RoomSkillActivation, SkillDecision
 
 NOW = datetime(2026, 7, 11, 3, 0, tzinfo=UTC)
@@ -77,7 +78,7 @@ def _claimed(
     )
     if activity_override is not None:
         actor_kind, activity_type, payload = activity_override
-        with sqlite3.connect(path) as conn:
+        with sqlite3.connect(path, factory=ClosingConnection) as conn:
             conn.execute(
                 "update room_activities set actor_kind = ?, activity_type = ?, "
                 "payload_json = ? where activity_id = ?",
@@ -101,7 +102,7 @@ def _claimed(
 
 
 def _skill_events(path) -> list[dict[str, object]]:
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         rows = conn.execute(
             "select payload_json from chat_frontend_events "
             "where source_authority = 'room_attempt_skill_decisions' order by seq"
@@ -128,7 +129,7 @@ def test_bind_joins_durable_authority_and_exact_replay_emits_one_event(tmp_path)
         }
     ]
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         row = conn.execute(
             "select * from room_attempt_skill_decisions where attempt_id = ?", (attempt_id,)
         ).fetchone()
@@ -156,7 +157,7 @@ def test_every_admitted_agent_kind_binds_skill_decisions(tmp_path, cli_kind):
 
 def test_stored_only_agent_kind_stays_fail_closed(tmp_path):
     path, _, participant, _, claim = _claimed(tmp_path, cli_kind="claude")
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set cli_kind = 'a2a' where participant_id = ?",
             (participant.participant_id,),

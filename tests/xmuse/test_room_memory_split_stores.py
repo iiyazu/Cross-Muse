@@ -11,6 +11,7 @@ from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
 from xmuse_core.chat.room_memory_recall_source_store import RoomMemoryRecallSourceStore
 from xmuse_core.chat.room_memory_source_conn import activity_source_conn
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _sha(value: str) -> str:
@@ -42,7 +43,7 @@ def test_source_request_store_keeps_connection_helpers_caller_owned(tmp_path: Pa
 
     assert request["schema_version"] == "room_memory_recall_request/v1"
     assert proof["source_activities"][0]["activity_id"] == activity_id
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("begin")
         assert (

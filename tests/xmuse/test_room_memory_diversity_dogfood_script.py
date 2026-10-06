@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from scripts import room_memory_diversity_dogfood as dogfood
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _evidence() -> dict[str, object]:
@@ -91,7 +92,7 @@ def _schema(conn: sqlite3.Connection) -> None:
 def _seed(root: Path) -> dict[str, object]:
     root.mkdir()
     db = root / "chat.db"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         _schema(conn)
         rooms = ("room-a", "room-b", "room-c")
         conn.executemany("insert into conversations values (?)", ((room,) for room in rooms))
@@ -305,7 +306,7 @@ def test_real_collector_rejects_manifest_attempt_aliasing(tmp_path: Path) -> Non
 
 def test_real_collector_rejects_missing_receipt_source(tmp_path: Path) -> None:
     manifest = _seed(tmp_path / "runtime")
-    with sqlite3.connect(tmp_path / "runtime" / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "runtime" / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             "update room_memory_attempt_receipts set source_activity_ids_json = ? where attempt_id = ?",
             (json.dumps(["source-missing"]), "attempt-project"),
@@ -321,7 +322,7 @@ def test_real_collector_rejects_missing_receipt_source(tmp_path: Path) -> None:
 
 def test_item_source_must_be_reproved_before_candidate_hit(tmp_path: Path) -> None:
     manifest = _seed(tmp_path / "runtime")
-    with sqlite3.connect(tmp_path / "runtime" / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "runtime" / "chat.db", factory=ClosingConnection) as conn:
         row = conn.execute(
             "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
             ("attempt-project",),
@@ -342,7 +343,7 @@ def test_item_source_must_be_reproved_before_candidate_hit(tmp_path: Path) -> No
 
 def test_real_collector_rejects_attempt_outside_manifest_rooms(tmp_path: Path) -> None:
     manifest = _seed(tmp_path / "runtime")
-    with sqlite3.connect(tmp_path / "runtime" / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "runtime" / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             "update room_observation_attempts set conversation_id = 'other-room' where attempt_id = ?",
             ("attempt-project",),

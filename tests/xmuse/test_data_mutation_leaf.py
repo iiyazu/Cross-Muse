@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from xmuse.data_mutation import DataMutationError, safe_operation_paths, vacuum_into
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _payload(operation_id: str = "restore-" + "a" * 32) -> dict[str, object]:
@@ -54,7 +55,7 @@ def test_operation_paths_are_rederived_and_reject_escape_or_symlink(tmp_path: Pa
 def test_vacuum_into_preserves_rows_without_replacing_source(tmp_path: Path) -> None:
     source = tmp_path / "chat.db"
     destination = tmp_path / "compacted.db"
-    with sqlite3.connect(source) as conn:
+    with sqlite3.connect(source, factory=ClosingConnection) as conn:
         conn.execute("create table facts(id integer primary key, value text)")
         conn.executemany("insert into facts(value) values (?)", [("a",), ("b",)])
     source_before = source.read_bytes()
@@ -62,5 +63,5 @@ def test_vacuum_into_preserves_rows_without_replacing_source(tmp_path: Path) -> 
     vacuum_into(source, destination)
 
     assert source.read_bytes() == source_before
-    with sqlite3.connect(destination) as conn:
+    with sqlite3.connect(destination, factory=ClosingConnection) as conn:
         assert conn.execute("select value from facts order by id").fetchall() == [("a",), ("b",)]

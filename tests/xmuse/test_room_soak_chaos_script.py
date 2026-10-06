@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from scripts import room_soak_chaos as soak
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 class _FakeProcess:
@@ -1570,7 +1571,7 @@ def test_provider_recovery_proof_keeps_private_identity_and_requires_exact_actio
     }
     assert "god-stable" not in json.dumps(identity)
 
-    with sqlite3.connect(runtime / "chat.db") as conn:
+    with sqlite3.connect(runtime / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """create table room_codex_bridge_actions(
                    conversation_id text, participant_id text,
@@ -1634,7 +1635,7 @@ def test_provider_recovery_proof_rejects_unchanged_guard_and_duplicate_action(
             ],
         )
 
-    with sqlite3.connect(runtime / "chat.db") as conn:
+    with sqlite3.connect(runtime / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """create table room_codex_bridge_actions(
                    conversation_id text, participant_id text,
@@ -2871,7 +2872,7 @@ def test_goal_hold_projection_waits_for_runner_recovery_snapshot(
 
 def test_goal_peer_delivery_requires_completed_attempt(tmp_path: Path) -> None:
     database = tmp_path / "chat.db"
-    with sqlite3.connect(database) as connection:
+    with sqlite3.connect(database, factory=ClosingConnection) as connection:
         connection.execute(
             """create table room_observations(
                    observation_id text primary key,
@@ -2907,7 +2908,7 @@ def test_goal_peer_delivery_requires_completed_attempt(tmp_path: Path) -> None:
         )
         == 0
     )
-    with sqlite3.connect(database) as connection:
+    with sqlite3.connect(database, factory=ClosingConnection) as connection:
         connection.execute(
             "update room_observation_attempts set state = 'completed' where attempt_id = ?",
             ("attempt-peer",),

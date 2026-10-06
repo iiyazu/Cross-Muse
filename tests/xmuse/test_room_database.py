@@ -24,6 +24,7 @@ from xmuse_core.chat.room_database import (
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_operations import RoomRuntimeOperatorActionStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 FORBIDDEN_COMPAT_TABLES = {
     "acceptance_spines",
@@ -44,7 +45,7 @@ FORBIDDEN_COMPAT_TABLES = {
 
 
 def _tables(path: Path) -> set[str]:
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         return {
             str(row[0])
             for row in conn.execute(
@@ -66,7 +67,7 @@ def test_fresh_room_database_has_only_room_authority_dependencies(tmp_path: Path
     tables = _tables(path)
     assert set(ROOM_REQUIRED_COLUMNS) <= tables
     assert not tables & FORBIDDEN_COMPAT_TABLES
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert conn.execute(
             "select version from chat_schema_meta where schema_id = ?",
             (ROOM_SCHEMA_ID,),
@@ -103,7 +104,7 @@ def test_repeated_room_initialization_does_not_rewrite_schema_marker(
     path = tmp_path / "chat.db"
     database = RoomDatabase(path)
     database.initialize()
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         marker_before = conn.execute(
             "select version, updated_at from chat_schema_meta where schema_id = ?",
             (ROOM_SCHEMA_ID,),
@@ -112,7 +113,7 @@ def test_repeated_room_initialization_does_not_rewrite_schema_marker(
     monkeypatch.setattr(room_database, "_utc_now", lambda: "2999-01-01T00:00:00Z")
     database.initialize()
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         marker_after = conn.execute(
             "select version, updated_at from chat_schema_meta where schema_id = ?",
             (ROOM_SCHEMA_ID,),
@@ -141,7 +142,7 @@ def test_two_processes_concurrently_initialize_one_current_room_schema(
 
     assert [process.exitcode for process in processes] == [0, 0]
     assert set(ROOM_REQUIRED_COLUMNS) <= _tables(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert conn.execute(
             "select schema_id, version from chat_schema_meta order by schema_id"
         ).fetchall() == [(ROOM_SCHEMA_ID, ROOM_SCHEMA_VERSION)]
@@ -214,7 +215,7 @@ def test_room_schema_initialization_rolls_back_every_stage_before_marker(
         RoomDatabase(path).initialize()
 
     assert _tables(path) == set()
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert conn.execute("pragma schema_version").fetchone()[0] == 0
 
 
@@ -231,7 +232,7 @@ def test_known_future_marker_fails_closed_with_schema_specific_error(
     expected_error: str,
 ) -> None:
     path = tmp_path / "chat.db"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "create table chat_schema_meta (schema_id text primary key, "
             "version integer not null, updated_at text not null)"
@@ -268,14 +269,14 @@ def test_legacy_full_database_gets_additive_room_setup_table_before_marker(
 ) -> None:
     path = tmp_path / "chat.db"
     CompatDataTestStore(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute("delete from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,))
         conn.execute("drop table room_setup_requests")
 
     RoomDatabase(path).initialize()
 
     assert "room_setup_requests" in _tables(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert conn.execute(
             "select version from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,)
         ).fetchone() == (ROOM_SCHEMA_VERSION,)
@@ -318,7 +319,7 @@ def test_legacy_candidate_table_upgrades_with_defaulted_proposer_columns(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "chat.db"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(LEGACY_CANDIDATE_TABLE)
         conn.execute(
             """insert into room_memory_candidates
@@ -336,7 +337,7 @@ def test_legacy_candidate_table_upgrades_with_defaulted_proposer_columns(
 
     RoomDatabase(path).initialize()
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         columns = {str(row[1]) for row in conn.execute("pragma table_info(room_memory_candidates)")}
         assert {"proposer_kind", "supersedes_candidate_id", "superseded_by_candidate_id"} <= columns
         assert conn.execute(

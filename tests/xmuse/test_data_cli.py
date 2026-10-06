@@ -23,6 +23,7 @@ from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
 from xmuse_core.chat.room_operations import RoomRuntimeOperatorActionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _json_output(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
@@ -254,7 +255,7 @@ def test_minimal_room_backup_restore_and_compact_preserve_schema_variant(
     manifest = json.loads((backup / data_cli.BACKUP_MANIFEST_NAME).read_text(encoding="utf-8"))
     assert manifest["database"]["schema_contract"] == data_cli.ROOM_SCHEMA_CONTRACT
     assert manifest["database"]["schema_contract_version"] == 1
-    with sqlite3.connect(backup / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(backup / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         markers = dict(conn.execute("select schema_id, version from chat_schema_meta"))
     assert markers == {ROOM_SCHEMA_ID: 1}
 
@@ -266,7 +267,7 @@ def test_minimal_room_backup_restore_and_compact_preserve_schema_variant(
 
     inspection = inspect_database(target / data_cli.CHAT_DB_NAME, require_current=True)
     assert inspection["schema"]["schema_contract"] == data_cli.ROOM_SCHEMA_CONTRACT
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         markers = dict(conn.execute("select schema_id, version from chat_schema_meta"))
         tables = {
             str(row[0])
@@ -284,7 +285,7 @@ def test_offline_room_v1_backup_restore_allows_additive_codex_action_migration(
     source = tmp_path / "pre-stage-room"
     conversation_id, participant_id = _build_root(source, with_session=False)
     database = source / data_cli.CHAT_DB_NAME
-    with sqlite3.connect(database) as conn:
+    with sqlite3.connect(database, factory=ClosingConnection) as conn:
         conn.execute(
             """insert into room_codex_delivery_holds
                (participant_id, conversation_id, hold_revision, next_control_seq, state,
@@ -319,13 +320,13 @@ def test_offline_room_v1_backup_restore_allows_additive_codex_action_migration(
     target = tmp_path / "restored-pre-stage-room"
     assert data_cli.run_cli(["restore", str(backup), "--root", str(target)]) == 0
     _json_output(capsys)
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         assert {
             str(row[1]) for row in conn.execute("pragma table_info(room_codex_bridge_actions)")
         }.isdisjoint({"execution_stage", "failure_stage"})
 
     RoomDatabase(target / data_cli.CHAT_DB_NAME).initialize()
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         rows = conn.execute(
             """select status, execution_stage, failure_stage
                from room_codex_bridge_actions order by control_seq"""
@@ -343,7 +344,7 @@ def test_backup_accepts_legacy_chat_v1_without_room_marker(
 ) -> None:
     root = tmp_path / "legacy-chat"
     _build_root(root, with_session=False)
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute("delete from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,))
 
     destination = tmp_path / "legacy-backup"
@@ -373,7 +374,7 @@ def test_backup_fails_closed_for_incomplete_compat_schema(
 ) -> None:
     root = tmp_path / "runtime"
     _build_root(root, with_session=False)
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute("drop table role_templates")
 
     destination = tmp_path / "backup"
@@ -390,7 +391,7 @@ def test_backup_fails_closed_for_future_room_marker(
 ) -> None:
     root = tmp_path / "future-room"
     RoomDatabase(root / data_cli.CHAT_DB_NAME).initialize()
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute(
             "update chat_schema_meta set version = 2 where schema_id = ?",
             (ROOM_SCHEMA_ID,),
@@ -410,7 +411,7 @@ def test_backup_fails_closed_for_future_compat_marker(
 ) -> None:
     root = tmp_path / "future-compat"
     _build_root(root, with_session=False)
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute(
             "update chat_schema_meta set version = 2 where schema_id = ?",
             (data_cli.CHAT_SCHEMA_ID,),
@@ -584,7 +585,7 @@ def test_restore_reopens_memory_index_and_clears_only_derived_cache(
     RoomMemoryBindingStore(source / data_cli.CHAT_DB_NAME).ensure_binding(
         conversation_id=conversation_id
     )
-    with sqlite3.connect(source / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(source / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings
                set session_id = 'old-memory-session', session_state = 'bound',
@@ -659,7 +660,7 @@ def test_restore_reopens_memory_index_and_clears_only_derived_cache(
     }
     assert not derived.exists()
     assert sibling.read_text(encoding="utf-8") == "preserve"
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         bindings = conn.execute(
             """select session_id, session_state, attachment_id, attachment_state
                from room_memory_bindings"""
@@ -707,7 +708,7 @@ def test_completed_peer_batch_survives_doctor_backup_and_restore(
     assert data_cli.run_cli(["restore", str(backup), "--root", str(target)]) == 0
     _json_output(capsys)
 
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         batch = conn.execute(
             "select phase, member_count from room_observation_batches where batch_id = ?",
             (peer_batch_id,),
@@ -738,7 +739,7 @@ def test_batch_authority_corruption_is_rejected(
 ) -> None:
     source = tmp_path / corruption
     _conversation_id, peer_batch_id = _build_completed_peer_batch(source)
-    with sqlite3.connect(source / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(source / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         if corruption == "digest":
             conn.execute(
                 "update room_observation_batches set digest = ? where batch_id = ?",
@@ -777,7 +778,7 @@ def test_backup_rejects_a_legacy_claim_without_a_durable_attempt(
 ) -> None:
     root = tmp_path / "source"
     _conversation_id, _participant_id = _build_root(root, with_session=False)
-    with sqlite3.connect(root / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_observations set status = 'claimed',
                    lease_owner = 'legacy-host', lease_token = 'legacy-token',
@@ -912,7 +913,7 @@ def test_compact_preserves_logical_authority_and_room_high_water(
         chat.add_message(conversation_id, "Human", "human", f"temporary-{index}").id
         for index in range(80)
     ]
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.executemany(
             "delete from messages where id = ?",
             [(message_id,) for message_id in disposable_ids[::2]],
@@ -935,7 +936,7 @@ def test_online_backup_captures_consistent_snapshot_during_wal_writes(
     root = tmp_path / "runtime"
     conversation_id, _participant_id = _build_root(root, with_session=False)
     db_path = root / data_cli.CHAT_DB_NAME
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         assert conn.execute("pragma journal_mode = wal").fetchone()[0] == "wal"
     stop = threading.Event()
     started = threading.Event()
@@ -943,7 +944,7 @@ def test_online_backup_captures_consistent_snapshot_during_wal_writes(
 
     def write_messages() -> None:
         try:
-            with sqlite3.connect(db_path, timeout=10) as conn:
+            with sqlite3.connect(db_path, timeout=10, factory=ClosingConnection) as conn:
                 index = 0
                 while not stop.is_set():
                     conn.execute(
@@ -983,7 +984,7 @@ def test_online_backup_captures_consistent_snapshot_during_wal_writes(
     }
     manifest, backup_db, _sessions, _records = data_cli.verify_backup(backup)
     assert manifest["database"]["source_journal_mode"] == "wal"
-    with sqlite3.connect(backup_db) as conn:
+    with sqlite3.connect(backup_db, factory=ClosingConnection) as conn:
         assert conn.execute("pragma integrity_check").fetchone()[0] == "ok"
         assert (
             conn.execute("select count(*) from messages where id like 'wal-message-%'").fetchone()[
@@ -1018,7 +1019,7 @@ def test_doctor_and_backup_remain_bounded_with_ten_thousand_room_activities(
         )
         for index in range(1, 10_001)
     ]
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.executemany(
             """insert into room_activities(
                    activity_id, conversation_id, seq, activity_type, actor_kind,

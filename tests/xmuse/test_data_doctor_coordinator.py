@@ -12,6 +12,7 @@ from tests.xmuse.room_fixtures import CompatDataTestStore
 from xmuse.data_doctor import doctor_data
 from xmuse_core.chat.room_database import ROOM_SCHEMA_ID
 from xmuse_core.runtime.root_contract import CHAT_DB_NAME
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _stopped_probe(_root: Path) -> dict[str, object]:
@@ -43,7 +44,7 @@ def test_doctor_reads_current_and_compat_v1_without_creating_files(
     database = root / CHAT_DB_NAME
     CompatDataTestStore(database).create_conversation("Doctor authority")
     if compat_only:
-        with sqlite3.connect(database) as conn:
+        with sqlite3.connect(database, factory=ClosingConnection) as conn:
             conn.execute("delete from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,))
     before = _files(root)
 
@@ -81,7 +82,7 @@ def test_doctor_remains_bounded_for_ten_thousand_activities(tmp_path: Path) -> N
         )
         for index in range(1, 10_001)
     ]
-    with sqlite3.connect(root / CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.executemany(
             """insert into room_activities(
                    activity_id, conversation_id, seq, activity_type, actor_kind,

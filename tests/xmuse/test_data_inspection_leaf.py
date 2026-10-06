@@ -14,10 +14,11 @@ from xmuse.data_inspection import (
     table_order_fingerprints,
     unique_keys,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _database(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.executescript(
             """
             create table items(id integer primary key, name text not null unique, payload blob);
@@ -65,6 +66,6 @@ def test_table_order_fingerprint_is_stable_and_content_sensitive(tmp_path: Path)
     first = table_order_fingerprints(path)
     assert first == table_order_fingerprints(path)
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute("update items set payload = x'ff' where name = 'beta'")
     assert table_order_fingerprints(path) != first

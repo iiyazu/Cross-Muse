@@ -17,6 +17,7 @@ from xmuse_core.chat.room_memory_rebuild_store import (
     reset_room_memory_index_conn,
     safe_memory_rebuild_action,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _reserve(
@@ -118,7 +119,7 @@ def test_concurrent_rebuild_reservations_leave_exactly_one_requested(
         statuses = list(pool.map(reserve, range(2)))
 
     assert sorted(statuses) == ["rejected", "requested"]
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_memory_rebuild_actions where status = 'requested'"
@@ -161,7 +162,7 @@ def _seed_rebuildable_memory(
     pending = next(item for item in candidates if item["approval_state"] == "pending")
     RoomMemoryBindingStore(db).ensure_binding(conversation_id=conversation_id)
     stamp = "2026-07-12T00:00:00.000000Z"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings
                set session_id = 'private-session', session_state = 'bound',
@@ -203,7 +204,7 @@ def _seed_rebuildable_memory(
 
 
 def _authority_snapshot(db: Path) -> tuple[list[tuple[object, ...]], ...]:
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         return (
             conn.execute(
                 """select binding_id, session_id, session_state, attachment_id,
@@ -266,7 +267,7 @@ def test_memory_index_reset_requires_caller_transaction_rolls_back_and_replays_o
         conn.commit()
     assert counts == rolled_back_counts
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         bindings = conn.execute(
             """select session_id, session_state, attachment_id, attachment_state
                from room_memory_bindings order by binding_id"""

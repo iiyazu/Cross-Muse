@@ -21,6 +21,7 @@ from xmuse_core.chat.room_host import (
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -175,7 +176,7 @@ def test_codex_delivery_persists_exact_reconcile_binding_without_projecting_it(t
     )
 
     assert result.status == "finished"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         binding = conn.execute(
             "select god_session_id, provider_session_id, provider_session_generation "
             "from room_observation_attempts where attempt_id = ?",

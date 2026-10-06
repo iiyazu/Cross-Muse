@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -77,15 +79,12 @@ def _host(db, transport, now=NOW, **kwargs):
 
 
 def _counts(db, cid):
-    return (
-        sqlite3.connect(db)
-        .execute(
+    with closing(sqlite3.connect(db)) as conn:
+        return conn.execute(
             "select (select count(*) from room_activities where conversation_id=?),"
             " (select count(*) from messages where conversation_id=?)",
             (cid, cid),
-        )
-        .fetchone()
-    )
+        ).fetchone()
 
 
 def test_failure_matrix_has_no_synthetic_truth_and_completion_wins(tmp_path):
@@ -403,7 +402,7 @@ def test_exhausted_infrastructure_frontier_does_not_starve_later_human_root(tmp_
     db, _registry, cid, people, _sessions = _room(tmp_path)
     participant_id = people[0].participant_id
     stamp = NOW.isoformat().replace("+00:00", "Z")
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """insert into room_activities
                (activity_id, conversation_id, seq, activity_type, actor_kind,

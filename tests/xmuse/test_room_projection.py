@@ -20,6 +20,7 @@ from xmuse_core.chat.room_projection import (
     build_room_chat_projection,
     build_room_list_projection,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 AVAILABLE_PROVIDER_CAPABILITIES = {
     "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
@@ -112,7 +113,7 @@ def _insert_skill_decision(
     matched_terms: list[str],
 ):
     now = "2026-07-10T10:00:00Z"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             """create table if not exists room_attempt_skill_decisions (
                    attempt_id text primary key references room_observation_attempts(attempt_id),
@@ -206,7 +207,7 @@ def test_room_projection_exposes_causal_timeline_frontiers_and_settlement(tmp_pa
         request_id="architect-downstream-noop",
         outcome_type="noop",
     )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set role = 'renamed', display_name = 'Renamed reviewer' "
             "where participant_id = ?",
@@ -258,7 +259,7 @@ def test_room_projection_v3_exposes_batch_counts_context_tail_and_reply_labels(t
     message_id = "msg_projection_context_tail"
     activity_id = "activity_projection_context_tail"
     stamp = "2026-07-10T10:00:00Z"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             """insert into messages
                (id, conversation_id, author, role, content, created_at,
@@ -371,7 +372,7 @@ def test_room_projection_v3_uses_singleton_evidence_without_batch_tables(tmp_pat
         content="旧数据库仍可读取",
         client_request_id="projection-v3-old-db",
     )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute("drop table room_observation_batch_members")
         conn.execute("drop table room_observation_batches")
 
@@ -560,7 +561,7 @@ def test_room_projection_exposes_only_safe_attempt_recovery_facts(tmp_path):
     assert claim is not None
     observation_id = claim["observation"]["observation_id"]
     attempt_id = claim["attempt"]["attempt_id"]
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_observation_attempts
                set runner_generation = 'private-runner-generation',
@@ -607,7 +608,7 @@ def test_room_projection_exposes_only_safe_attempt_recovery_facts(tmp_path):
     ):
         assert private_value not in encoded
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update room_observation_attempts set recovery_state = 'cleanup_pending' "
             "where attempt_id = ?",
@@ -625,7 +626,7 @@ def test_room_projection_exposes_only_safe_attempt_recovery_facts(tmp_path):
         == "cleanup_pending"
     )
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_observation_attempts
                set recovery_state = 'recovered',
@@ -647,7 +648,7 @@ def test_room_projection_exposes_only_safe_attempt_recovery_facts(tmp_path):
     )
     assert recovered_frontier["current_attempt"]["recovery"]["next_action"] == "will_retry"
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update room_observations set control_state = 'exhausted' where observation_id = ?",
             (observation_id,),
@@ -916,7 +917,7 @@ def test_room_read_routes_do_not_mutate_schema_or_authority(tmp_path):
     path = tmp_path / "chat.db"
 
     def snapshot():
-        with sqlite3.connect(path) as conn:
+        with sqlite3.connect(path, factory=ClosingConnection) as conn:
             return (
                 conn.execute("pragma schema_version").fetchone()[0],
                 tuple(
@@ -1149,7 +1150,7 @@ def test_retired_provider_history_is_visible_without_blocking_room_state(tmp_pat
         client_request_id="historical-provider",
     )
     ParticipantStore(path).update_status(current.participant_id, "stopped")
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set cli_kind = 'a2a', model = 'historical' "
             "where participant_id = ?",
@@ -1219,7 +1220,7 @@ def test_room_projection_is_bounded_for_ten_thousand_activities(tmp_path, monkey
                 created_at,
             )
         )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.executemany(
             """insert into messages
             (id, conversation_id, author, role, content, created_at, envelope_type,

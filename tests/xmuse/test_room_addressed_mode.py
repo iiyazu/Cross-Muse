@@ -32,6 +32,7 @@ from xmuse_core.chat.roster_templates import (
     template_to_participant_inits,
     validate_roster_template,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 OUTCOME_TOOL = "chat_room_submit_outcome"
 
@@ -141,7 +142,7 @@ def _observation_count(
         if peer_only
         else ""
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         return int(
             conn.execute(
                 f"""select count(*) from room_observations o
@@ -154,7 +155,7 @@ def _observation_count(
 
 
 def _activities(db: Path, conversation_id: str) -> list[tuple[str, str]]:
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         return [
             (row[0], row[1])
             for row in conn.execute(
@@ -628,7 +629,7 @@ def test_room_setup_writes_addressed_policy_and_replays_idempotently(tmp_path: P
     by_role = {item["role"]: item for item in first["participants"]}
     assert setup["collaboration"]["lead_participant_id"] == by_role["review"]["participant_id"]
 
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute(
             "select mode, lead_participant_id, revision from room_collaboration_policies "
             "where conversation_id = ?",
@@ -702,7 +703,7 @@ def test_room_setup_rejects_unknown_collaboration_lead_without_writes(tmp_path: 
         )
     assert excinfo.value.code == "room_participant_invalid"
 
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
         assert conn.execute("select count(*) from room_collaboration_policies").fetchone()[0] == 0
 
@@ -823,7 +824,7 @@ def test_collaboration_mode_is_broadcast_for_rooms_without_a_policy_row(tmp_path
     assert isinstance(RoomCollaborationInit(mode="broadcast").mode, str)
     projection = build_room_chat_projection(conversation_id, tmp_path)
     assert projection["collaboration"] == {"mode": "broadcast", "lead_participant_id": None}
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_collaboration_policies where conversation_id = ?",

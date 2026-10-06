@@ -17,6 +17,7 @@ from xmuse_core.chat.room_controls import (
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 
@@ -68,7 +69,7 @@ def test_schema_migrates_existing_observation_and_claim_helper_is_idempotent(tmp
     assert first["attempt_number"] == first["delivery_generation"] == 1
     assert first["effective_attempt_limit"] == 3
     assert "lease_token" not in first
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         create_room_control_schema(conn)
         row = conn.execute(
@@ -383,7 +384,7 @@ def test_conn_level_claim_and_outcome_helpers_share_the_authority_transaction(tm
     observation_id = claim["observation"]["observation_id"]
     lease_token = claim["observation"]["lease_token"]
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
         conn.execute("begin immediate")

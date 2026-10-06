@@ -14,6 +14,7 @@ from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_mcp_contract import ROOM_TOOL_NAMES, room_tool_schemas
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 TOOL = "chat_room_submit_outcome"
 REQUIRED = {
@@ -86,7 +87,7 @@ def _arguments(conversation_id, participant, session, claim, **extra):
 
 
 def _counts(db: Path) -> dict[str, int]:
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         tables = [
             "messages",
             "room_activities",

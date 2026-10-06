@@ -14,6 +14,7 @@ from xmuse_core.chat.room_projection import (
     build_room_chat_projection,
     build_room_list_projection,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _room(tmp_path: Path):
@@ -76,7 +77,7 @@ def test_human_post_fans_out_one_root_observation_per_provider_kind(tmp_path: Pa
         member.participant_id for member in members
     )
     assert all(item["status"] == "pending" for item in posted["observations"])
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         rows = conn.execute(
             "select participant_id from room_observations "
             "where conversation_id = ? and delivery_mode = 'active'",
@@ -184,7 +185,7 @@ def test_claude_participant_submits_bound_outcome_with_valid_lease(tmp_path: Pat
     observation = kernel.get_observation(claim["observation"]["observation_id"])
     assert observation["status"] == "completed"
     assert observation["lease_token"] is None
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         message = conn.execute(
             "select author, role, content from messages where id = ?",
             (completed["produced_message"]["id"],),

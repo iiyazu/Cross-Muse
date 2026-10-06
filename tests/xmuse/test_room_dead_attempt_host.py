@@ -19,6 +19,7 @@ from xmuse_core.chat.room_host import (
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_runtime import run_room_participant_host_loop
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 7, 11, tzinfo=UTC)
@@ -78,7 +79,7 @@ def test_runner_identity_is_paired_and_claim_is_boot_bound(tmp_path: Path) -> No
     )
     result = asyncio.run(host.pump_once(conversation_id=conversation_id))
     assert len(result.deliveries) == 1
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         assert conn.execute(
             "select runner_generation, runner_boot_id "
             "from room_observation_attempts order by attempt_number"

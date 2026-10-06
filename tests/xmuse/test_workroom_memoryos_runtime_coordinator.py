@@ -23,6 +23,7 @@ from xmuse_core.chat.memoryos_supervisor import (
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _executable(tmp_path: Path) -> Path:
@@ -474,7 +475,7 @@ def test_replaying_rebuild_is_finished_idempotently_after_runtime_recovery(
         expected_phase="restarting",
         phase="replaying",
     )
-    with sqlite3.connect(fixture.paths.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(fixture.paths.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings
                set session_state = 'bound', session_id = 'new-session',

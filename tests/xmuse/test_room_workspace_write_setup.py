@@ -38,6 +38,7 @@ from xmuse_core.chat.roster_templates import (
     template_to_participant_inits,
     validate_roster_template,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 @pytest.fixture()
@@ -53,7 +54,7 @@ def conv_id(db_path: Path) -> str:
 
 
 def _raw_workspace_access(db_path: Path, participant_id: str) -> object:
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "select workspace_access from participants where participant_id = ?",
@@ -113,7 +114,7 @@ class TestWorkspaceAccessStorage:
 
     def test_old_database_without_column_migrates_to_read_only(self, tmp_path: Path) -> None:
         path = tmp_path / "old-chat.db"
-        with sqlite3.connect(path) as conn:
+        with sqlite3.connect(path, factory=ClosingConnection) as conn:
             conn.execute(
                 """create table conversations (
                        id text primary key, title text not null, created_at text not null
@@ -436,7 +437,7 @@ def test_read_only_setup_result_matches_pre_change_shape(tmp_path: Path) -> None
         "last_seen_at",
         "created_at",
     }
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("select * from participants").fetchone()
     assert row["workspace_access"] is None

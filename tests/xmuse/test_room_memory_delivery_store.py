@@ -15,6 +15,7 @@ from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_common import RoomMemoryStoreError
 from xmuse_core.chat.room_memory_document_outbox_conn import queue_candidate_delivery_conn
 from xmuse_core.chat.room_memory_document_outbox_store import RoomMemoryDocumentOutboxStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 _RESPONSE_DIGEST = "sha256:" + "a" * 64
 
@@ -78,7 +79,7 @@ def test_connection_helpers_require_a_caller_owned_transaction(tmp_path: Path) -
             )
         assert delivery_error.value.code == "room_memory_delivery_transaction_required"
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_memory_bindings where conversation_id = ?",
@@ -93,14 +94,14 @@ def test_schema_reopen_backfills_all_bindings_without_rewriting_them(tmp_path: P
     conversation_id = RoomTestStore(db).create_conversation("legacy Room").id
 
     RoomDatabase(db).initialize()
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         first = conn.execute(
             """select binding_id, scope_type, scope_key, archive_id, revision
                from room_memory_bindings where conversation_id = ? order by scope_type""",
             (conversation_id,),
         ).fetchall()
     RoomDatabase(db).initialize()
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         replay = conn.execute(
             """select binding_id, scope_type, scope_key, archive_id, revision
                from room_memory_bindings where conversation_id = ? order by scope_type""",
@@ -152,7 +153,7 @@ def test_session_and_attachment_reservations_replay_and_share_one_session(
         session_id="shared-session",
         now=now,
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         session_rows = conn.execute(
             """select scope_type, session_id, session_state
                from room_memory_bindings where conversation_id = ? order by scope_type""",
@@ -240,7 +241,7 @@ def test_expired_delivery_is_reclaimed_and_late_ack_is_fenced(tmp_path: Path) ->
     }
     completed = store.complete_delivery(**arguments)
     assert store.complete_delivery(**arguments) == completed
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         first_attempt = conn.execute(
             """select state, reason_code from room_memory_deliveries
                where delivery_id = ?""",

@@ -19,6 +19,7 @@ from xmuse_core.chat.room_execution_contracts import (
 from xmuse_core.chat.room_execution_controller_store import RoomExecutionControllerStore
 from xmuse_core.chat.room_execution_runtime_store import RoomExecutionRuntimeStore
 from xmuse_core.runtime.processes import build_process_inventory
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -531,7 +532,7 @@ def test_restore_fences_nonterminal_execution_without_replaying_process_action(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "chat.db"
-    with sqlite3.connect(database) as conn:
+    with sqlite3.connect(database, factory=ClosingConnection) as conn:
         conn.executescript(
             """
             create table room_execution_authorizations (
@@ -586,7 +587,7 @@ def test_restore_fences_nonterminal_execution_without_replaying_process_action(
     )
 
     assert result == {"blocked": 2, "promotion_unverifiable": 1}
-    with sqlite3.connect(database) as conn:
+    with sqlite3.connect(database, factory=ClosingConnection) as conn:
         rows = {
             row[0]: row[1:]
             for row in conn.execute(

@@ -19,6 +19,7 @@ from xmuse_core.chat.room_attempt_ledger import (
     public_attempt_view,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _claimed_observation(path: Path) -> tuple[str, dict[str, object]]:
@@ -89,7 +90,7 @@ def _remove_kernel_attempt(conn: sqlite3.Connection, observation_id: str) -> sql
 def test_insert_and_queries_remain_in_caller_transaction(tmp_path: Path) -> None:
     path = tmp_path / "chat.db"
     observation_id, _claim = _claimed_observation(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
         conn.execute("begin immediate")
@@ -102,7 +103,7 @@ def test_insert_and_queries_remain_in_caller_transaction(tmp_path: Path) -> None
         )
         conn.rollback()
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         assert attempt_by_id_conn(conn, "attempt-1") is None
 
@@ -110,7 +111,7 @@ def test_insert_and_queries_remain_in_caller_transaction(tmp_path: Path) -> None
 def test_attempt_views_fence_authority_and_browser_fields(tmp_path: Path) -> None:
     path = tmp_path / "chat.db"
     observation_id, _claim = _claimed_observation(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         observation = _remove_kernel_attempt(conn, observation_id)
         row = insert_claim_attempt_conn(conn, _record(observation))
@@ -146,7 +147,7 @@ def test_attempt_views_fence_authority_and_browser_fields(tmp_path: Path) -> Non
 def test_pending_queries_preserve_cleanup_and_recovery_semantics(tmp_path: Path) -> None:
     path = tmp_path / "chat.db"
     observation_id, _claim = _claimed_observation(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         observation = _remove_kernel_attempt(conn, observation_id)
         insert_claim_attempt_conn(conn, _record(observation))

@@ -27,6 +27,7 @@ from xmuse_core.chat.room_execution_projection import (
     build_room_execution_candidate_projection,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 CROSS_FAMILY_MISSING = "room_execution_cross_family_review_missing"
 REVIEW_ROUND_LIMIT = "room_execution_review_round_limit"
@@ -378,7 +379,7 @@ def test_terminal_execution_activity_fans_out_to_every_vendor(tmp_path):
     )
     assert cancelled["state"] == "cancelled"
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         activity = conn.execute(
             "select activity_id from room_activities where conversation_id = ? "
             "and activity_type = 'execution.cancelled'",

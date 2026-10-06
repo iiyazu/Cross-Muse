@@ -11,6 +11,7 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_setup import RoomConversationCreate, RoomSetupService
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _room(tmp_path):
@@ -52,7 +53,7 @@ def _single_participant_room(path, title):
 
 
 def _counts(path, conversation_id):
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         return {
             table: conn.execute(
                 f"select count(*) from {table} where conversation_id = ?",
@@ -159,7 +160,7 @@ def test_historical_provider_cannot_receive_or_claim_room_work(tmp_path, cli_kin
         client_request_id="before-retirement",
     )
     assert len(first["observations"]) == 1
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set cli_kind = ?, model = ? where participant_id = ?",
             (cli_kind, "historical-model", participant.participant_id),
@@ -359,7 +360,7 @@ def test_four_rooms_accept_twenty_concurrent_human_posts_without_lock_errors(
         results = list(executor.map(post, range(20)))
 
     assert len(results) == 20
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         for conversation_id in conversation_ids:
             assert [
                 row[0]

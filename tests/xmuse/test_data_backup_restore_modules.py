@@ -25,6 +25,7 @@ from xmuse.data_mutation import (
 )
 from xmuse.data_restore import restore_data
 from xmuse_core.runtime.root_contract import CHAT_DB_NAME
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _root(path: Path) -> tuple[Path, str]:
@@ -58,7 +59,7 @@ def test_backup_and_verify_publish_the_existing_wire_contract(tmp_path: Path) ->
     }
     assert sessions == {"sessions": []}
     assert records == []
-    with sqlite3.connect(backup_db) as connection:
+    with sqlite3.connect(backup_db, factory=ClosingConnection) as connection:
         assert connection.execute(
             "select title from conversations where id = ?", (conversation_id,)
         ).fetchone() == ("Backup module room",)
@@ -120,7 +121,7 @@ def test_restore_uses_two_runtime_guards_and_publishes_fenced_authority(
     assert not (target / OPERATION_JOURNAL_NAME).exists()
     assert not list(target.glob(".xmuse-data-stage-*"))
     assert not list(target.glob(".xmuse-data-rollback-*"))
-    with sqlite3.connect(target / CHAT_DB_NAME) as connection:
+    with sqlite3.connect(target / CHAT_DB_NAME, factory=ClosingConnection) as connection:
         assert connection.execute(
             "select title from conversations where id = ?", (conversation_id,)
         ).fetchone() == ("Backup module room",)

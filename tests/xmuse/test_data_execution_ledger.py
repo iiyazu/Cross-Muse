@@ -15,6 +15,7 @@ from xmuse import data_cli, data_restore
 from xmuse.data_authority import authority_invariants
 from xmuse.data_inspection import readonly_connection
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 CONTROLLER = {
     "controller_id": "controller",
@@ -106,7 +107,7 @@ def test_restore_fences_nonterminal_execution_authority(
     result = data_restore.fence_restored_execution_runs(db, operation_id="restore-test")
 
     assert result == {"blocked": 1, "promotion_unverifiable": promotion_count}
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         run = conn.execute(
             "select * from room_execution_runs where run_id = ?", (run_id,)
@@ -132,7 +133,7 @@ def test_restore_fences_nonterminal_execution_authority(
 @pytest.mark.parametrize("state", ["cancelled", "succeeded", "failed", "blocked"])
 def test_restore_leaves_terminal_execution_rows_unchanged(tmp_path: Path, state: str) -> None:
     db, _execution, run_id = _authorized_run(tmp_path)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             "update room_execution_runs set state = ?, reason_code = 'existing-terminal' "
             "where run_id = ?",
@@ -153,7 +154,7 @@ def test_restore_leaves_terminal_execution_rows_unchanged(tmp_path: Path, state:
         "promotion_unverifiable": 0,
     }
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         after = conn.execute(
             "select * from room_execution_runs where run_id = ?", (run_id,)
         ).fetchone()
@@ -177,7 +178,7 @@ def test_data_authority_accepts_ledger_and_rejects_broken_authorization_binding(
     assert valid["execution_binding_mismatch_count"] == 0
     assert valid["execution_run_mismatch_count"] == 0
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_execution_authorizations set candidate_digest = ?
                where authorization_id = (
@@ -195,7 +196,7 @@ def test_backup_restore_preserves_the_private_gate_plan_binding(tmp_path: Path) 
     source = tmp_path / "source"
     source.mkdir()
     db, _execution, run_id = _authorized_run(source)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         before = conn.execute(
             "select * from room_execution_gate_plan_bindings where run_id = ?",
             (run_id,),
@@ -208,7 +209,7 @@ def test_backup_restore_preserves_the_private_gate_plan_binding(tmp_path: Path) 
     target = tmp_path / "target"
     data_cli.restore_data(target, backup, replace=False)
 
-    with sqlite3.connect(target / data_cli.CHAT_DB_NAME) as conn:
+    with sqlite3.connect(target / data_cli.CHAT_DB_NAME, factory=ClosingConnection) as conn:
         restored = conn.execute(
             "select * from room_execution_gate_plan_bindings where run_id = ?",
             (run_id,),
@@ -252,7 +253,7 @@ def test_doctor_blocks_tampered_gate_profile_authority(
             "update room_execution_gate_plan_bindings set gate_ids_json = ? where run_id = ?"
         ),
     }
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(statements[column], (value, run_id))
 
     status, report = data_cli.doctor_data(root)

@@ -19,6 +19,7 @@ from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
 from xmuse_core.chat.room_execution_read_store import RoomExecutionLedgerReader
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 class _ExecutionStore:
@@ -679,7 +680,7 @@ def test_real_store_secondary_replay_closes_context_provider_commit_race(
     assert response.json()["run_id"] is not None
     assert context_calls == 1
     assert starters == []
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         action_count = conn.execute(
             "select count(*) from room_execution_operator_actions"
         ).fetchone()[0]
