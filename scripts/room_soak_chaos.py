@@ -32,8 +32,9 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2989,10 +2990,14 @@ def _provider_cleanup_confirmed(database: Path, attempt_id: str) -> bool:
     )
 
 
-def _connect_readonly(database: Path) -> sqlite3.Connection:
+@contextmanager
+def _connect_readonly(database: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=5.0)
-    connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        yield connection
+    finally:
+        connection.close()
 
 
 def _correlation_ids(database: Path, correlations: Sequence[_Correlation]) -> dict[str, str]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 
 import pytest
 
@@ -19,7 +20,8 @@ OTHER = "sha256:" + "3" * 64
 STAMP = "2026-07-13T00:00:00.000000Z"
 
 
-def _connection() -> sqlite3.Connection:
+@pytest.fixture
+def conn() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
@@ -47,7 +49,8 @@ def _connection() -> sqlite3.Connection:
         insert into room_execution_runs values ('run-1', 'ready_to_promote', 4, 'old');
         """
     )
-    return conn
+    yield conn
+    conn.close()
 
 
 def _candidate(conn: sqlite3.Connection) -> sqlite3.Row:
@@ -89,8 +92,9 @@ def _prepare(conn: sqlite3.Connection) -> sqlite3.Row:
     )
 
 
-def test_normalizes_entries_in_path_order_and_requires_exact_candidate_files() -> None:
-    conn = _connection()
+def test_normalizes_entries_in_path_order_and_requires_exact_candidate_files(
+    conn: sqlite3.Connection,
+) -> None:
     normalized = json.loads(normalize_promotion_entries(_candidate(conn), _entries()))
     assert [entry["path"] for entry in normalized] == ["src/a.py", "src/b.py"]
 
@@ -105,8 +109,9 @@ def test_normalizes_entries_in_path_order_and_requires_exact_candidate_files() -
     assert raised.value.code == "room_execution_promotion_entries_mismatch"
 
 
-def test_prepare_and_mark_applying_change_only_journal_and_run_revision() -> None:
-    conn = _connection()
+def test_prepare_and_mark_applying_change_only_journal_and_run_revision(
+    conn: sqlite3.Connection,
+) -> None:
     prepared = _prepare(conn)
     assert (prepared["state"], prepared["revision"]) == ("promoting", 5)
     journal = conn.execute(
@@ -123,8 +128,9 @@ def test_prepare_and_mark_applying_change_only_journal_and_run_revision() -> Non
     )
 
 
-def test_prepare_rejects_duplicate_journal_and_applying_requires_prepared() -> None:
-    conn = _connection()
+def test_prepare_rejects_duplicate_journal_and_applying_requires_prepared(
+    conn: sqlite3.Connection,
+) -> None:
     _prepare(conn)
     with pytest.raises(RoomExecutionStoreError) as raised:
         _prepare(conn)
@@ -141,9 +147,8 @@ def test_prepare_rejects_duplicate_journal_and_applying_requires_prepared() -> N
     [(POST, "applied", "applied"), (PRE, "not_applied", "prepared")],
 )
 def test_resolves_exact_post_or_pre_image(
-    observed: str, resolution: str, journal_status: str
+    conn: sqlite3.Connection, observed: str, resolution: str, journal_status: str
 ) -> None:
-    conn = _connection()
     _prepare(conn)
     mark_promotion_applying_conn(conn, run_id="run-1", stamp=STAMP)
 
@@ -171,8 +176,9 @@ def test_resolves_exact_post_or_pre_image(
     assert (journal["applied_at"] is not None) is (resolution == "applied")
 
 
-def test_ambiguous_image_delegates_terminal_run_authority_to_callback() -> None:
-    conn = _connection()
+def test_ambiguous_image_delegates_terminal_run_authority_to_callback(
+    conn: sqlite3.Connection,
+) -> None:
     _prepare(conn)
     mark_promotion_applying_conn(conn, run_id="run-1", stamp=STAMP)
     callback_calls: list[tuple[str, str]] = []
@@ -210,8 +216,7 @@ def test_ambiguous_image_delegates_terminal_run_authority_to_callback() -> None:
     )
 
 
-def test_resolve_requires_an_applying_journal() -> None:
-    conn = _connection()
+def test_resolve_requires_an_applying_journal(conn: sqlite3.Connection) -> None:
     run = _prepare(conn)
     with pytest.raises(RoomExecutionStoreError) as raised:
         resolve_promotion_journal_conn(

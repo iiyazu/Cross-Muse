@@ -8,6 +8,7 @@ import pytest
 from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _room(tmp_path, count=3):
@@ -63,7 +64,7 @@ def _complete(
 
 
 def _counts(path, conversation_id):
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         return {
             table: conn.execute(
                 f"select count(*) from {table} where conversation_id = ?", (conversation_id,)
@@ -194,7 +195,7 @@ def test_completion_failure_rolls_back_and_retries(tmp_path, monkeypatch):
         ]
         == 0
     )
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 """select 1 from chat_request_log

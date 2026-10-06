@@ -25,6 +25,7 @@ from xmuse_core.runtime.root_contract import (
     DATA_OPERATION_JOURNAL_NAME,
     GOD_SESSIONS_NAME,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 _JOURNAL_PHASES = frozenset(
     {
@@ -217,7 +218,7 @@ def recover_existing_operation(root: Path) -> str | None:
 def vacuum_into(source: Path, destination: Path) -> None:
     """Build a compact copy; caller must prove stopped runtime and lock order."""
 
-    with sqlite3.connect(source, timeout=30) as conn:
+    with sqlite3.connect(source, timeout=30, factory=ClosingConnection) as conn:
         conn.execute("pragma foreign_keys = on")
         conn.execute("pragma wal_checkpoint(truncate)")
         conn.execute("vacuum into ?", (str(destination),))

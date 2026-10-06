@@ -31,6 +31,7 @@ from typing import Any
 from xmuse_core.chat.mentions import normalize_address
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_memory_governance_store import RoomMemoryGovernanceStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 TEMPLATE_ID = "builtin.heterogeneous-duo"
 DEFAULT_API = "http://127.0.0.1:8201"
@@ -157,7 +158,7 @@ def _approve_and_publish(
 
 
 def _recall_receipts(root: Path, conversation_id: str) -> list[dict[str, Any]]:
-    with sqlite3.connect(root / "chat.db") as conn:
+    with sqlite3.connect(root / "chat.db", factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(
