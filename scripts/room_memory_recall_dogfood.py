@@ -17,6 +17,7 @@ import os
 import sqlite3
 import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -329,7 +330,7 @@ def collect_recall_evidence(
     if not db_path.is_file() or db_path.is_symlink():
         raise RecallDogfoodCollectorError("recall_dogfood_chat_db_missing")
     uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
-    with sqlite3.connect(uri, uri=True) as conn:
+    with closing(sqlite3.connect(uri, uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma query_only = on")
         room_a = normalized["room_a_id"]

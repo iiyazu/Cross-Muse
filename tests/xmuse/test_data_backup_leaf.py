@@ -12,11 +12,12 @@ from xmuse.data_backup import (
     online_backup,
     verify_manifest_file,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def test_online_backup_is_consistent_and_normalized(tmp_path: Path) -> None:
     source = tmp_path / "chat.db"
-    with sqlite3.connect(source) as conn:
+    with sqlite3.connect(source, factory=ClosingConnection) as conn:
         conn.execute("pragma journal_mode = wal")
         conn.execute("create table facts(id integer primary key, value text)")
         conn.executemany("insert into facts(value) values (?)", [("a",), ("b",)])
@@ -25,7 +26,7 @@ def test_online_backup_is_consistent_and_normalized(tmp_path: Path) -> None:
     assert online_backup(source, destination) == "wal"
     normalize_artifact_database(destination)
 
-    with sqlite3.connect(destination) as conn:
+    with sqlite3.connect(destination, factory=ClosingConnection) as conn:
         assert conn.execute("select value from facts order by id").fetchall() == [("a",), ("b",)]
         assert conn.execute("pragma journal_mode").fetchone()[0] == "delete"
     assert not destination.with_name("backup.db-wal").exists()

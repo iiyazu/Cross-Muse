@@ -28,6 +28,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
+
 SCOPE_ROOM_CREATE = "room.create"
 SCOPE_ROOM_MESSAGE = "room.message"
 SCOPE_BOARD_SPLIT_DECIDE = "board.split.decide"
@@ -285,9 +287,10 @@ class PluginGrantStore:
                     f"{self._path.resolve().as_uri()}?mode=ro",
                     uri=True,
                     timeout=30,
+                    factory=ClosingConnection,
                 )
             else:
-                conn = sqlite3.connect(self._path, timeout=30)
+                conn = sqlite3.connect(self._path, timeout=30, factory=ClosingConnection)
         except sqlite3.Error as exc:
             raise PluginGrantError("room_database_unavailable") from exc
         conn.row_factory = sqlite3.Row

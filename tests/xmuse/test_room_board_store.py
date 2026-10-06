@@ -24,6 +24,7 @@ from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_c
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 NOW = T0 + timedelta(seconds=10)
@@ -1441,7 +1442,7 @@ def test_question_and_progress_payloads_stay_bounded_and_addressed(tmp_path):
             question="q",
             references=[f"ref-{index}" for index in range(17)],
         )
-    with sqlite3.connect(db) as raw:
+    with sqlite3.connect(db, factory=ClosingConnection) as raw:
         count = raw.execute(
             "select count(*) from room_observations where conversation_id = ? "
             "and activity_id = ? and status = 'pending'",

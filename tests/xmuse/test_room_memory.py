@@ -30,6 +30,7 @@ from xmuse_core.chat.room_memory_projection import build_room_memory_projection
 from xmuse_core.chat.room_memory_recall_receipt_store import RoomMemoryRecallReceiptStore
 from xmuse_core.chat.room_memory_recall_source_store import RoomMemoryRecallSourceStore
 from xmuse_core.chat.room_setup import RoomSetupService
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 DIGEST = "sha256:" + "1" * 64
 
@@ -185,7 +186,7 @@ def test_room_setup_prebuilds_bindings_for_pre_turn_pump_and_first_recall(
         "room",
     }
     assert all(item["session_state"] == "unbound" for item in bindings)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_memory_outbox where conversation_id = ?",
@@ -227,7 +228,7 @@ def test_room_setup_prebuilds_bindings_for_pre_turn_pump_and_first_recall(
 def test_schema_reopen_idempotently_backfills_existing_room_bindings(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     conversation_id = RoomTestStore(db).create_conversation("pre-memory Room").id
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_memory_bindings where conversation_id = ?",
@@ -237,14 +238,14 @@ def test_schema_reopen_idempotently_backfills_existing_room_bindings(tmp_path: P
         )
 
     RoomDatabase(db).initialize()
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         first = conn.execute(
             """select binding_id, scope_type, session_state, attachment_state
                from room_memory_bindings where conversation_id = ? order by scope_type""",
             (conversation_id,),
         ).fetchall()
     RoomDatabase(db).initialize()
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         replay = conn.execute(
             """select binding_id, scope_type, session_state, attachment_state
                from room_memory_bindings where conversation_id = ? order by scope_type""",
@@ -268,7 +269,7 @@ def test_visible_activity_outbox_trigger_backfill_and_idempotency(tmp_path: Path
         content="visible root",
         client_request_id="root",
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """insert into room_activities
                (activity_id, conversation_id, seq, activity_type, actor_kind,
@@ -290,7 +291,7 @@ def test_visible_activity_outbox_trigger_backfill_and_idempotency(tmp_path: Path
         )
     RoomDatabase(db).initialize()
     RoomDatabase(db).initialize()
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         rows = conn.execute(
             "select activity_id, document_id from room_memory_outbox order by activity_id"
         ).fetchall()
@@ -312,7 +313,7 @@ def test_message_outbox_is_atomic_and_excludes_infrastructure_activity(tmp_path:
         content="durable human speech",
         client_request_id="message-root",
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         message_rows = conn.execute(
             """select activity_id, external_id, state
@@ -506,7 +507,7 @@ def test_derived_receipt_reproves_message_delivery_and_binds_fitted_item(
             }
         ],
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         refs = json.loads(
             conn.execute(
                 "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
@@ -555,7 +556,7 @@ def test_candidate_authority_source_guards_approval_and_no_content_spread(
     )
     assert governance.count_candidates(conversation_id) == 2
     assert governance.count_candidates(conversation_id, approval_state="pending") == 1
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         values = conn.execute(
             """select 'candidate', content from room_memory_candidates
                union all select 'activity', payload_json from room_activities
@@ -598,7 +599,7 @@ def test_candidate_authority_source_guards_approval_and_no_content_spread(
         )
         == 1
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         leaked = conn.execute(
             """select count(*) from room_memory_candidate_actions
                where result_json like '%UNIQUE_PENDING_MEMORY%'"""
@@ -653,7 +654,7 @@ def test_candidate_unrelated_source_and_transaction_failure_roll_back(tmp_path, 
             ],
         )
     monkeypatch.setattr(RoomKernelStore, "_insert_lifecycle_request_log_conn", original)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_memory_candidates").fetchone()[0] == 0
         assert (
             conn.execute(
@@ -737,7 +738,7 @@ def test_recall_receipt_two_phase_and_false_text_fail_closed(tmp_path: Path) -> 
         ],
     )
     assert bound["context_submitted_at"] is not None
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         internal = json.loads(
             conn.execute(
                 "select item_refs_json from room_memory_attempt_receipts where attempt_id = ?",
@@ -787,7 +788,7 @@ def test_recall_request_separates_pending_bindings_from_unusable_authority(
     _setup_memory_session(binding, conversation_id)
     assert build()["session_id"] == f"session-{conversation_id}"
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings set session_id = ?
                where conversation_id = ? and scope_type = 'project'""",
@@ -799,7 +800,7 @@ def test_recall_request_separates_pending_bindings_from_unusable_authority(
     assert mismatch.value.code == "room_memory_recall_unavailable"
 
     # An uncertain binding is an error awaiting the pump's reopen, not progress.
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings set session_id = ?, attachment_state = 'uncertain'
                where conversation_id = ? and scope_type = 'project'""",
@@ -870,7 +871,7 @@ def test_heuristic_kernel_advisory_is_rejected_not_attributed_to_the_participant
     assert receipts[0]["reason_code"] == "room_memory_advisory_unattributed"
     assert receipts[0]["source_activity_ids"] == []
     assert second_root["activity"]["activity_id"]
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_memory_candidates").fetchone()[0] == 0
 
 
@@ -965,7 +966,7 @@ def test_uncertain_binding_reopens_only_after_durable_backoff(tmp_path: Path) ->
     assert reopened["session_state"] == "unbound"
     assert reopened["session_retry_count"] == 1
     assert reopened["session_retry_not_before"] is None
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         session_fields = conn.execute(
             "select session_id, session_request_id from room_memory_bindings where binding_id = ?",
             (room["binding_id"],),
@@ -1013,7 +1014,7 @@ def test_uncertain_binding_reopens_only_after_durable_backoff(tmp_path: Path) ->
     )
     assert attachment_reopened["attachment_state"] == "pending"
     assert attachment_reopened["attachment_retry_count"] == 1
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         attachment_fields = conn.execute(
             "select attachment_id, attachment_request_id from room_memory_bindings "
             "where binding_id = ?",
@@ -1060,7 +1061,7 @@ def test_failed_outbox_retry_is_durable_bounded_and_never_reopens_conflict(
     )
     assert conflict["state"] == "conflict"
     assert delivery.requeue_retryable_failed_outbox(now=start + timedelta(days=1), limit=100) == []
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         attempts = conn.execute(
             "select count(*) from room_memory_deliveries where outbox_id = ?",
             (first["outbox"]["outbox_id"],),
@@ -1270,7 +1271,7 @@ def test_curated_advisory_reproves_quotes_and_labels_external_proposer(tmp_path:
 
     governance = RoomMemoryGovernanceStore(db)
     assert governance.count_candidates(conversation_id) == 2
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         contents = {
             str(row[0])
             for row in conn.execute(
@@ -1415,7 +1416,7 @@ def test_curated_attempt_cap_is_eight_and_other_advisories_are_rejected(tmp_path
         "room_memory_advisory_over_cap": 1,
         "room_memory_advisory_unattributed": 4,
     }
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         stored_kinds = {
             str(row[0])
             for row in conn.execute(

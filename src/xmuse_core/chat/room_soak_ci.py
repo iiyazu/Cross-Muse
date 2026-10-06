@@ -31,6 +31,7 @@ from xmuse_core.chat.room_host import (
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_runtime import run_room_participant_host_loop
 from xmuse_core.chat.room_setup import RoomSetupService
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 CI_SOAK_EVIDENCE_SCHEMA = "room_soak_ci_evidence/v1"
 CI_SOAK_PROFILE_ID = "ci-sim"
@@ -489,7 +490,9 @@ def _latency_samples(evidence: _DeliveryEvidence) -> dict[str, list[dict[str, in
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30.0)
+    return sqlite3.connect(
+        f"file:{db_path}?mode=ro", uri=True, timeout=30.0, factory=ClosingConnection
+    )
 
 
 def _scalar(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) -> int:

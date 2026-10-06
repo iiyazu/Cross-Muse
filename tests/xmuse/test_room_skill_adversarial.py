@@ -18,6 +18,7 @@ from xmuse_core.chat.room_skill_decisions import (
     RoomAttemptSkillDecisionStore,
     RoomSkillDecisionError,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 7, 11, 5, 0, tzinfo=UTC)
@@ -52,7 +53,7 @@ def _claimed_review(tmp_path):
 
 
 def _skill_event_rows(path) -> list[sqlite3.Row]:
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             "select * from chat_frontend_events "

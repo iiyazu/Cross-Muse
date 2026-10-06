@@ -21,6 +21,7 @@ from xmuse_core.chat.room_memory_schema import create_room_memory_schema
 from xmuse_core.chat.room_operations_schema import create_room_operations_schema
 from xmuse_core.chat.room_plugin_grants import create_plugin_grant_schema
 from xmuse_core.runtime.data_guard import assert_data_operation_complete
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 ROOM_SCHEMA_ID = "xmuse.room_db"
 ROOM_SCHEMA_VERSION = 1
@@ -1067,9 +1068,10 @@ class RoomDatabase:
                     f"{self.path.resolve().as_uri()}?mode=ro",
                     uri=True,
                     timeout=30,
+                    factory=ClosingConnection,
                 )
             else:
-                conn = sqlite3.connect(self.path, timeout=30)
+                conn = sqlite3.connect(self.path, timeout=30, factory=ClosingConnection)
             _configure_connection(conn, readonly=readonly)
             return conn
         except sqlite3.Error as exc:
