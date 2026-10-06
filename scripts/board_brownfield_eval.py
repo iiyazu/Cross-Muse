@@ -50,6 +50,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import board_owners_smoke as smoke  # noqa: E402
+from xmuse.room_module_memory_worker import compose_module_memory_worker  # noqa: E402
 from xmuse.room_runner import _agy_config  # noqa: E402
 from xmuse_core.chat.participant_store import Participant, ParticipantStore  # noqa: E402
 from xmuse_core.chat.room_acp_transport import (  # noqa: E402
@@ -85,6 +86,7 @@ from xmuse_core.chat.room_host import (  # noqa: E402
     RoomParticipantHost,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore  # noqa: E402
+from xmuse_core.chat.room_module_memory import MODULE_MEMORY_ENV  # noqa: E402
 from xmuse_core.chat.room_owner_clones import OwnerClone  # noqa: E402
 from xmuse_core.chat.room_owner_transport import (  # noqa: E402
     OWNER_PREPARE_COMMAND_ENV,
@@ -279,6 +281,56 @@ def collect_board_rows(root: Path, conversation_id: str) -> dict[str, Any]:
     return {"verifications": verifications, "reviews": reviews}
 
 
+def start_module_memory_worker(root: Path) -> tuple[threading.Event, threading.Thread]:
+    """Run the module memory worker on a thread, as the Chat API's own loop would.
+
+    Requires an already running MemoryOS sidecar (``XMUSE_MEMORYOS_URL`` and
+    ``XMUSE_MEMORYOS_API_KEY``) whose profile can curate (an LLM key on its side).
+    """
+
+    os.environ[MODULE_MEMORY_ENV] = "on"
+    worker = compose_module_memory_worker(xmuse_root=root, environ=os.environ)
+    if worker is None:
+        raise RuntimeError(
+            "--module-memory needs XMUSE_MEMORYOS_URL and XMUSE_MEMORYOS_API_KEY "
+            "of a running MemoryOS sidecar"
+        )
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                counts = worker.reconcile_once()
+            except Exception as exc:  # pragma: no cover - logged and retried
+                smoke._mark("module_memory_error", error=f"{type(exc).__name__}: {exc}")
+            else:
+                if counts.get("module_memory_windows"):
+                    smoke._mark("module_memory_reconciled", **counts)
+            stop.wait(10.0)
+
+    thread = threading.Thread(target=_loop, name="module-memory-worker", daemon=True)
+    thread.start()
+    return stop, thread
+
+
+def module_memory_summary(root: Path, conversation_id: str) -> dict[str, Any]:
+    with RoomDatabase(root / "chat.db").connect(readonly=True) as conn:
+        runs = conn.execute(
+            "select status, count(*) as n from room_module_memory_runs "
+            "where conversation_id = ? group by status",
+            (conversation_id,),
+        ).fetchall()
+        memories = conn.execute(
+            "select kind, status, count(*) as n from room_module_memories "
+            "where conversation_id = ? group by kind, status",
+            (conversation_id,),
+        ).fetchall()
+    return {
+        "runs": {str(row["status"]): int(row["n"]) for row in runs},
+        "memories": {f"{row['kind']}:{row['status']}": int(row["n"]) for row in memories},
+    }
+
+
 async def run_eval(
     *,
     root: Path,
@@ -295,6 +347,7 @@ async def run_eval(
     max_turn_s: float,
     owner_cli: str = "opencode",
     agy_model: str = smoke.AGY_DEFAULT_MODEL,
+    module_memory: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     clis = module_owner_clis(plan, owner_cli)
@@ -459,6 +512,8 @@ async def run_eval(
                 root=root, execution_root=source, execution_profile_id=profile_id
             )
         )
+        if module_memory:
+            stops.append(start_module_memory_worker(root))
         spec = build_split_spec(
             plan, {module_id: owner.participant_id for module_id, owner in owner_of.items()}
         )
@@ -540,6 +595,7 @@ async def run_eval(
         "profile_id": profile_id,
         "seed_head": seed_head,
         "reviewer": reviewer,
+        "module_memory": module_memory_summary(root, conversation_id) if module_memory else None,
         "owner_cli": owner_cli,
         "owner_clis": clis,
         "models": {
@@ -578,6 +634,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-timeout-s", type=float, default=DEFAULT_RUN_TIMEOUT_S)
     parser.add_argument("--phase-timeout-s", type=float, default=smoke.DEFAULT_PHASE_TIMEOUT_S)
     parser.add_argument("--max-turn-s", type=float, default=3600.0)
+    parser.add_argument(
+        "--module-memory",
+        action="store_true",
+        help="curate module memory through the MemoryOS sidecar (XMUSE_MEMORYOS_URL/API_KEY)",
+    )
     args = parser.parse_args(argv)
     try:
         lead_model = smoke.validate_model(args.lead_model)
@@ -613,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_timeout_s=args.run_timeout_s,
                 phase_timeout_s=args.phase_timeout_s,
                 max_turn_s=args.max_turn_s,
+                module_memory=args.module_memory,
             )
         )
     result_path.parent.mkdir(parents=True, exist_ok=True)
