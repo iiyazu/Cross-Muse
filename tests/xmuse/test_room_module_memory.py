@@ -24,7 +24,6 @@ from xmuse_core.chat.room_board_view import materialize_owner_board_view
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_module_memory import (
-    IDLE_FLUSH_S,
     MAX_ATTEMPTS,
     ModuleMemoryStore,
     ModuleRef,
@@ -366,27 +365,6 @@ def test_human_messages_to_the_owner_flush_after_twelve(tmp_path: Path) -> None:
     assert len(window.activities) == 12
     assert {item["type"] for item in window.activities} == {"message"}
     assert {item["speaker"] for item in window.activities} == {"human"}
-
-
-def test_a_quiet_module_is_flushed_after_the_idle_period(tmp_path: Path) -> None:
-    db, conversation_id = _failed_board(tmp_path)
-    store = ModuleMemoryStore(db)
-    while (window := store.next_window(_alpha(db))) is not None:
-        store.store_result(window, {"memories": []})
-    owner = _alpha(db).owner_participant_id
-    for index in range(3):
-        RoomKernelStore(db).post_human_activity(
-            conversation_id=conversation_id,
-            human_id="human",
-            content=f"Decision {index}: amounts are decimal strings",
-            client_request_id=f"quiet-{index}",
-            mentions=[owner],
-        )
-    assert store.next_window(_alpha(db)) is None
-    later = datetime.now(UTC) + timedelta(seconds=IDLE_FLUSH_S + 5)
-    window = store.next_window(_alpha(db), now=later)
-    assert window is not None and len(window.activities) == 3
-    assert window.last_seq == window.activities[-1]["seq"]
 
 
 def test_review_objection_becomes_a_review_window(tmp_path: Path) -> None:

@@ -43,7 +43,6 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -88,9 +87,7 @@ from xmuse_core.chat.room_host import (  # noqa: E402
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore  # noqa: E402
 from xmuse_core.chat.room_module_memory import (  # noqa: E402
-    IDLE_FLUSH_S,
     MODULE_MEMORY_ENV,
-    ModuleMemoryStore,
 )
 from xmuse_core.chat.room_owner_clones import OwnerClone  # noqa: E402
 from xmuse_core.chat.room_owner_transport import (  # noqa: E402
@@ -203,26 +200,25 @@ def build_followup_message(module: Mapping[str, Any], text: str) -> str:
     return f"Next task for your module `{module['module_id']}`:\n\n{str(text).strip()}\n"
 
 
-async def settle_module_memory(root: Path, *, timeout_s: float = 900.0) -> dict[str, Any]:
-    """Wait until every module's pending activity has been curated.
+async def eval_restart_owner(
+    router: RoomOwnerTransportRouter, conversation_id: str, participant_id: str
+) -> bool:
+    """Evaluation only: close one owner's dedicated transport between rounds.
 
-    The worker thread flushes a quiet module after ``IDLE_FLUSH_S``; this only
-    waits (it never curates itself, so the two never race on one window).
+    The product router has no restart operation; this driver reaches into its
+    transport cache so the next delivery builds a new transport, and the provider
+    starts a fresh session on the same clone (the handover case). Call only
+    while the Room is idle.
     """
 
-    store = ModuleMemoryStore(root / "chat.db")
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        horizon = datetime.now(UTC) + timedelta(seconds=IDLE_FLUSH_S + 1)
-        pending = [
-            module.module_id
-            for module in store.active_modules()
-            if store.next_window(module, now=horizon) is not None
-        ]
-        if not pending:
-            return {"settled": True, "waited_s": round(timeout_s - (deadline - time.monotonic()))}
-        await asyncio.sleep(10.0)
-    return {"settled": False, "pending": pending}
+    key = (conversation_id, participant_id)
+    transport = router._owner_transports.pop(key, None)  # noqa: SLF001 - eval-only seam
+    if transport is None:
+        return False
+    aclose = getattr(transport, "aclose", None)
+    if callable(aclose):
+        await aclose()
+    return True
 
 
 def _run(argv: list[str], *, cwd: Path, timeout_s: float = 1800.0) -> str:
@@ -616,8 +612,6 @@ async def run_eval(
             phases["work"] = {"idle": work_idle}
             rounds = max((len(module.get("followups") or []) for module in modules), default=0)
             for round_index in range(rounds):
-                if module_memory:
-                    phases[f"memory_settle_{round_index + 1}"] = await settle_module_memory(root)
                 followers = [
                     module for module in modules if len(module.get("followups") or []) > round_index
                 ]
@@ -627,7 +621,7 @@ async def run_eval(
                         if not followup_restarts(module["followups"][round_index]):
                             continue
                         owner = owner_of[str(module["module_id"])]
-                        if await router.restart_owner(conversation_id, owner.participant_id):
+                        if await eval_restart_owner(router, conversation_id, owner.participant_id):
                             restarted.append(str(module["module_id"]))
                 for module in followers:
                     owner = owner_of[str(module["module_id"])]
@@ -726,7 +720,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--restart-owners",
         action="store_true",
-        help="restart owners (fresh provider session, same clone) before follow-up rounds marked restart",
+        help=(
+            "eval only: restart owners (fresh provider session, same clone) "
+            "before follow-up rounds marked restart"
+        ),
     )
     parser.add_argument(
         "--module-memory",
