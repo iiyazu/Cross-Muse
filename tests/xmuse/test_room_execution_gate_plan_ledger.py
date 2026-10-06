@@ -15,6 +15,7 @@ from xmuse_core.chat.room_execution_common import RoomExecutionStoreError
 from xmuse_core.chat.room_execution_contracts import ExecutionWorkspaceGuard
 from xmuse_core.chat.room_execution_profiles import build_execution_gate_plan
 from xmuse_core.chat.room_execution_schema import create_room_execution_schema
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 CONTROLLER = {
     "controller_id": "controller",
@@ -99,7 +100,7 @@ def test_manual_execute_requires_and_durably_freezes_complete_trusted_plan(tmp_p
     assert "toolchain_capability_digest" not in encoded
     assert "gate_plan_digest" not in encoded
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         binding = conn.execute(
             "select * from room_execution_gate_plan_bindings where run_id = ?",
@@ -149,7 +150,7 @@ def test_readonly_operator_replay_is_exact_and_never_reserves_an_action(tmp_path
     }
 
     assert execution.replay_operator_decision(**replay_kwargs) is None
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         before = conn.execute("select count(*) from room_execution_operator_actions").fetchone()[0]
     assert before == 0
 
@@ -158,7 +159,7 @@ def test_readonly_operator_replay_is_exact_and_never_reserves_an_action(tmp_path
     with pytest.raises(RoomExecutionStoreError) as conflict:
         execution.replay_operator_decision(**{**replay_kwargs, "expected_candidate_revision": 999})
     assert conflict.value.code == "room_execution_action_idempotency_conflict"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         after = conn.execute("select count(*) from room_execution_operator_actions").fetchone()[0]
     assert after == 1
 
@@ -179,7 +180,7 @@ def test_policy_update_winning_before_prepare_durably_blocks_promotion(tmp_path)
 
     assert blocked["state"] == "blocked"
     assert blocked["reason_code"] == "execution_policy_guard_changed"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         journal_count = conn.execute(
             "select count(*) from room_execution_promotion_journal"
         ).fetchone()[0]
@@ -206,7 +207,7 @@ def test_prepare_winning_before_policy_update_fences_the_update(tmp_path) -> Non
     policy = execution.get_policy(conversation_id)
     assert policy is not None
     assert policy["mode"] == "manual" and policy["revision"] == 0
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         action_count = conn.execute(
             "select count(*) from room_execution_operator_actions"
         ).fetchone()[0]
@@ -228,7 +229,7 @@ def test_additive_schema_fences_only_unbound_nonterminal_legacy_runs(
     db, _conversation_id, execution, _candidate, plan, kwargs = _authorize(tmp_path)
     result = execution.apply_operator_decision(**kwargs, gate_plan=plan)
     run_id = result["run"]["run_id"]
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute("delete from room_execution_gate_plan_bindings where run_id = ?", (run_id,))
         conn.execute(
             "update room_execution_runs set state = ? where run_id = ?",

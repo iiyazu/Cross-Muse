@@ -16,6 +16,7 @@ from xmuse_core.chat.memoryos_supervisor import (
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_memory_binding_store import RoomMemoryBindingStore
 from xmuse_core.chat.room_memory_rebuild_store import RoomMemoryRebuildActionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _executable(tmp_path: Path) -> Path:
@@ -68,7 +69,7 @@ def _fixture(
         content="durable source",
         client_request_id="source",
     )
-    with sqlite3.connect(root / "chat.db") as conn:
+    with sqlite3.connect(root / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings
                set session_state = 'bound', session_id = 'old-session',
@@ -210,7 +211,7 @@ def test_exact_live_identity_runs_every_durable_phase_and_restarts_same_generati
     assert current is not None
     # The action was reserved before the live identity existed; update only its
     # opaque guard to model the API's exact live-topology reservation.
-    with sqlite3.connect(paths.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(paths.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_rebuild_actions set incident_guard = ?
                where client_action_id = 'rebuild-one'""",
@@ -231,7 +232,7 @@ def test_exact_live_identity_runs_every_durable_phase_and_restarts_same_generati
         if phase != phases[-1]:
             phases.append(phase)
         if phase == "replaying":
-            with sqlite3.connect(paths.xmuse_root / "chat.db") as conn:
+            with sqlite3.connect(paths.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
                 conn.execute(
                     """update room_memory_bindings
                        set session_state = 'bound', session_id = 'new-session',
@@ -289,7 +290,7 @@ def test_replaying_action_is_idempotently_finished_after_manager_resume(
         expected_phase="restarting",
         phase="replaying",
     )
-    with sqlite3.connect(paths.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(paths.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         conn.execute(
             """update room_memory_bindings
                set session_state = 'bound', session_id = 'new-session',
@@ -349,7 +350,7 @@ def test_partial_rebuild_resumes_safely_across_workroom_generation(
 
     assert resumed is not None and resumed["phase"] == "authority_reset"
     assert runtime.group_signals == [(201, signal.SIGTERM)]
-    with sqlite3.connect(paths.xmuse_root / "chat.db") as conn:
+    with sqlite3.connect(paths.xmuse_root / "chat.db", factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_memory_bindings where session_state = 'unbound'"

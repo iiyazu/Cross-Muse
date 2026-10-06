@@ -24,6 +24,7 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_database import ROOM_SCHEMA_ID
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.runtime.root_contract import CHAT_DB_NAME
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _build_root(root: Path, *, with_session: bool = False) -> tuple[str, str]:
@@ -135,13 +136,13 @@ def test_schema_contract_accepts_current_and_legacy_and_rejects_future(
     assert current["schema"]["state"] == "current"
     assert current["schema"]["schema_contract"] == CHAT_SCHEMA_CONTRACT
 
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.execute("delete from chat_schema_meta where schema_id = ?", (ROOM_SCHEMA_ID,))
     legacy = inspect_database(db_path, require_current=True)
     assert legacy["schema"]["state"] == "current"
     assert legacy["schema"]["schema_contract"] == CHAT_SCHEMA_CONTRACT
 
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.execute(
             "insert into chat_schema_meta(schema_id, version, updated_at) values (?, 2, ?)",
             (ROOM_SCHEMA_ID, "2026-07-16T00:00:00Z"),
@@ -156,7 +157,7 @@ def test_inspection_rejects_corrupt_json_and_legacy_claim(tmp_path: Path) -> Non
     root = tmp_path / "runtime"
     _build_root(root)
     db_path = root / CHAT_DB_NAME
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.execute("update messages set envelope_json = '{'")
         conn.execute(
             """update room_observations set status = 'claimed',
@@ -178,7 +179,7 @@ def test_batch_authority_corruption_is_rejected(tmp_path: Path, corruption: str)
     root = tmp_path / corruption
     batch_id = _build_completed_peer_batch(root)
     db_path = root / CHAT_DB_NAME
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         if corruption == "digest":
             conn.execute(
                 "update room_observation_batches set digest = ? where batch_id = ?",
@@ -208,7 +209,7 @@ def test_batch_authority_corruption_is_rejected(tmp_path: Path, corruption: str)
 def test_connection_authority_functions_preserve_caller_transaction(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
     _build_root(root)
-    with sqlite3.connect(root / CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("begin")
         assert conn.in_transaction
@@ -268,7 +269,7 @@ def test_database_evidence_is_bounded_for_ten_thousand_activities(tmp_path: Path
         )
         for index in range(1, 10_001)
     ]
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, factory=ClosingConnection) as conn:
         conn.executemany(
             """insert into room_activities(
                    activity_id, conversation_id, seq, activity_type, actor_kind,

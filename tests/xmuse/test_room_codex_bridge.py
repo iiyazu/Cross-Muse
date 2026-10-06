@@ -12,6 +12,7 @@ from xmuse_core.chat.room_codex_bridge import (
 )
 from xmuse_core.chat.room_codex_schema import create_room_codex_schema
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _seed(path: Path, participant_ids: tuple[str, ...] = ("participant-1",)) -> None:
@@ -544,7 +545,7 @@ def test_ack_summary_rejects_provider_text_and_private_identifiers(tmp_path: Pat
             ack_summary={"provider_output": "secret", "thread_id": "private"},
         )
     assert error.value.code == "codex_native_ack_summary_invalid"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         # Rejected provider text must not persist in rows; static schema
         # DDL (column names such as ``secret_digest``) is not provider text.
         data = "\n".join(line for line in conn.iterdump() if line.startswith("INSERT"))
@@ -705,7 +706,7 @@ def test_goal_intent_schema_migrates_and_keeps_required_authority_columns(tmp_pa
 
 def test_legacy_goal_intent_additive_migration(tmp_path: Path) -> None:
     path = tmp_path / "legacy.db"
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         conn.execute(
             """create table room_codex_goal_intents (
                 intent_id text primary key,

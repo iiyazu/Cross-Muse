@@ -12,6 +12,7 @@ from xmuse_core.chat.room_codex_bridge import RoomCodexBridgeStore, opaque_guard
 from xmuse_core.chat.room_codex_projection import _action_descriptors
 from xmuse_core.chat.room_codex_projection_cache import RoomCodexProjectionCache
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _seed(root: Path) -> tuple[str, str, str, str]:
@@ -165,7 +166,7 @@ def test_missing_or_future_cache_is_non_authoritative_unavailable(
 
     cache = RoomCodexProjectionCache(tmp_path)
     cache.initialize()
-    with sqlite3.connect(cache.path) as conn:
+    with sqlite3.connect(cache.path, factory=ClosingConnection) as conn:
         conn.execute("update projection_meta set schema_version = 'future/v99'")
         conn.commit()
     with TestClient(create_app(tmp_path, auth_token="operator-secret")) as client:

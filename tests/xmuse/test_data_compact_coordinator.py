@@ -12,6 +12,7 @@ from xmuse import data_compact
 from xmuse.data_authority import database_evidence, inspect_database
 from xmuse.data_contracts import DataError
 from xmuse_core.runtime.root_contract import CHAT_DB_NAME, DATA_OPERATION_JOURNAL_NAME
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _build_root(root: Path) -> None:
@@ -21,7 +22,7 @@ def _build_root(root: Path) -> None:
         store.add_message(conversation.id, "Human", "human", f"temporary-{index}").id
         for index in range(32)
     ]
-    with sqlite3.connect(root / CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / CHAT_DB_NAME, factory=ClosingConnection) as conn:
         conn.executemany(
             "delete from messages where id = ?",
             [(message_id,) for message_id in message_ids[::2]],
@@ -63,7 +64,7 @@ def test_compact_preserves_authority_and_uses_lock_then_double_guard(
         "exit:.xmuse-workroom.lifecycle.lock",
     ]
     assert not (root / DATA_OPERATION_JOURNAL_NAME).exists()
-    with sqlite3.connect(root / CHAT_DB_NAME) as conn:
+    with sqlite3.connect(root / CHAT_DB_NAME, factory=ClosingConnection) as conn:
         assert conn.execute("pragma integrity_check").fetchone()[0] == "ok"
 
 
