@@ -357,6 +357,15 @@ server environment variable `XMUSE_BOARD_REVIEW_RESPONSE_SECONDS`). The `review_
 `infrastructure`, audience the room lead or `report_to`, waking nobody), so `board_seq` and
 `revision` change even though a timer triggered it.
 
+The assigned reviewer cannot end a delivery that carries its pending review request without
+ruling: the outcome tool refuses every outcome except `defer` with
+`room_outcome_review_verdict_required` (the error message names the review and
+`chat_room_board_review`), and prose in an outcome is never a verdict. `defer` is the explicit
+no-verdict outcome, so `board_review_reviewer_no_verdict` now follows only a deferred review
+turn; a turn that ends with no outcome at all retries and, once its attempts are exhausted,
+escalates as `board_review_reviewer_unavailable`. The projection shape and the reason codes
+are unchanged.
+
 `actions` (operator reviews only, Web only — §8.1, §8.2):
 
 ```jsonc
