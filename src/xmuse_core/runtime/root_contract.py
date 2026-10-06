@@ -20,6 +20,9 @@ DATA_LOCK_NAME = ".xmuse-data.lock"
 DATA_OPERATION_JOURNAL_NAME = ".xmuse-data-operation.json"
 CHAT_DB_NAME = "chat.db"
 GOD_SESSIONS_NAME = "god_sessions.json"
+# The running generation's operator token, for local operator clients such as
+# `xmuse-workroom pair` (contract main_window_control_v1 section 3).
+OPERATOR_TOKEN_NAME = "operator-token"
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class RuntimeRootPaths:
     room_runner_status: Path
     memoryos_status: Path
     memoryos_derived: Path
+    operator_token: Path
 
     @classmethod
     def resolve(
@@ -63,6 +67,7 @@ class RuntimeRootPaths:
             room_runner_status=root / "room-runner-status.json",
             memoryos_status=root / "memoryos-status.json",
             memoryos_derived=root / "runtime" / "memoryos-derived",
+            operator_token=root / "runtime" / OPERATOR_TOKEN_NAME,
         )
 
 
@@ -84,6 +89,7 @@ __all__ = [
     "DATA_LOCK_NAME",
     "DATA_OPERATION_JOURNAL_NAME",
     "GOD_SESSIONS_NAME",
+    "OPERATOR_TOKEN_NAME",
     "RuntimeRootPaths",
     "WORKROOM_LIFECYCLE_LOCK_NAME",
     "WORKROOM_MANIFEST_NAME",

@@ -186,25 +186,39 @@ def register_room_setup_routes(
     @app.post("/api/chat/conversations", status_code=status.HTTP_201_CREATED)
     def create_room(request: RoomConversationCreate) -> dict[str, object]:
         try:
-            service = RoomSetupService(root)
-            # A retried create replays (or conflicts) as before; admission applies only to
-            # a Room that does not exist yet.
-            if not service.has_setup_request(request.client_request_id):
-                _reject_unavailable_roster_providers(
-                    root,
-                    request,
-                    provider_capabilities_provider,
-                )
-            return service.create_conversation(request)
+            return create_admitted_room(root, request, provider_capabilities_provider)
         except RoomSetupError as exc:
-            http_status = (
-                404
-                if exc.code == "room_roster_not_found"
-                else 409
-                if exc.code == "room_setup_idempotency_conflict"
-                else 422
-            )
-            raise HTTPException(
-                status_code=http_status,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
+            raise room_setup_http_error(exc) from exc
+
+
+def create_admitted_room(
+    root: Path,
+    request: RoomConversationCreate,
+    provider_capabilities_provider: ProviderCapabilitiesProvider | None,
+) -> dict[str, object]:
+    """Create a Room after provider admission; shared by the operator and plugin routes."""
+
+    service = RoomSetupService(root)
+    # A retried create replays (or conflicts) as before; admission applies only to
+    # a Room that does not exist yet.
+    if not service.has_setup_request(request.client_request_id):
+        _reject_unavailable_roster_providers(
+            root,
+            request,
+            provider_capabilities_provider,
+        )
+    return service.create_conversation(request)
+
+
+def room_setup_http_error(exc: RoomSetupError) -> HTTPException:
+    http_status = (
+        404
+        if exc.code == "room_roster_not_found"
+        else 409
+        if exc.code == "room_setup_idempotency_conflict"
+        else 422
+    )
+    return HTTPException(
+        status_code=http_status,
+        detail={"code": exc.code, "message": exc.message},
+    )

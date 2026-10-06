@@ -188,6 +188,10 @@ def create_app(
         app,
         root=context.root,
         operator_token=operator_token,
+        execution_root=context.execution_root,
+        runtime_starter=context.runtime_starter,
+        explicit_runtime_starter=context.explicit_runtime_starter,
+        provider_capabilities_provider=provider_capabilities_provider,
     )
     register_room_message_routes(
         app,

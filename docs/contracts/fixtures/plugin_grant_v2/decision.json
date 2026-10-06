@@ -1,0 +1,16 @@
+{
+  "activity_ids": [
+    "activity_000000000000000000000000000f4246"
+  ],
+  "contracts": [
+    {
+      "contract_id": "api.gamma",
+      "version": 1
+    }
+  ],
+  "modules": [
+    "gamma"
+  ],
+  "split_id": "split_000000000000000000000000000f4243",
+  "status": "approved"
+}
