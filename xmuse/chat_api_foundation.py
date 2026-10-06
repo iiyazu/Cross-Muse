@@ -39,6 +39,7 @@ from xmuse_core.runtime.frontend_api import (
 
 DEFAULT_RUNTIME_RECONCILE_INTERVAL_S = 5.0
 DEFAULT_EXECUTION_RECONCILE_INTERVAL_S = 1.0
+MODULE_MEMORY_RECONCILE_INTERVAL_S = 10.0
 # Plugin routes authenticate with scoped grant bearer tokens, never with the
 # operator token (contract plugin_grant_v1 section 4), so the write-auth
 # middleware below must let them through to their own checks.
@@ -130,6 +131,7 @@ def create_chat_api_foundation(
     execution_stopper: Callable[[], Any] | None = None,
     execution_reconcile_interval_s: float = DEFAULT_EXECUTION_RECONCILE_INTERVAL_S,
     board_verification_reconciler: Callable[[], Any] | None = None,
+    module_memory_reconciler: Callable[[], Any] | None = None,
 ) -> tuple[FastAPI, ChatApiContext]:
     root = Path(base_dir)
     assert_data_operation_complete(root)
@@ -168,6 +170,7 @@ def create_chat_api_foundation(
         execution_stop = asyncio.Event()
         execution_task: asyncio.Task[None] | None = None
         verification_task: asyncio.Task[None] | None = None
+        memory_task: asyncio.Task[None] | None = None
         try:
             if managed:
                 app.state.workroom_runtime_reclaimed = await asyncio.to_thread(
@@ -217,6 +220,18 @@ def create_chat_api_foundation(
                     ),
                     name="xmuse-board-verification-reconcile",
                 )
+            if module_memory_reconciler is not None:
+                # Curation waits on LLM calls, so it never shares a loop with
+                # verification or integration (module_memory_v1 section 3).
+                memory_task = asyncio.create_task(
+                    _reconcile_execution_runtime(
+                        reconcile=module_memory_reconciler,
+                        interval_s=MODULE_MEMORY_RECONCILE_INTERVAL_S,
+                        stop=execution_stop,
+                        label="Module memory",
+                    ),
+                    name="xmuse-module-memory-reconcile",
+                )
             yield
         finally:
             execution_stop.set()
@@ -224,6 +239,8 @@ def create_chat_api_foundation(
                 await asyncio.gather(execution_task, return_exceptions=True)
             if verification_task is not None:
                 await asyncio.gather(verification_task, return_exceptions=True)
+            if memory_task is not None:
+                await asyncio.gather(memory_task, return_exceptions=True)
             if execution_stopper is not None:
                 try:
                     app.state.execution_runtime_stop = await asyncio.to_thread(execution_stopper)
