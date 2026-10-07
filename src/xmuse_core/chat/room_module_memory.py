@@ -76,7 +76,9 @@ def create_module_memory_schema(conn: sqlite3.Connection) -> None:
                first_seq integer not null,
                last_seq integer not null,
                activity_ids_json text not null,
-               status text not null check (status in ('pending', 'done', 'failed', 'skipped')),
+               status text not null check (
+                   status in ('pending', 'done', 'failed', 'skipped', 'empty')
+               ),
                attempts integer not null default 0,
                error_code text,
                unaccounted_json text,
@@ -524,12 +526,17 @@ class ModuleMemoryStore:
                             "and memory_id = ?",
                             (memory_id, module.conversation_id, module.module_id, supersedes),
                         )
+                # An empty success is a violation, not a silent pass: the window
+                # is marked empty so missing memories stay visible. The cursor
+                # still advances past exactly this window.
+                empty = stored == 0
                 self._finish_run_conn(
                     conn,
                     window,
                     run_id=run_id,
-                    status="done",
+                    status="empty" if empty else "done",
                     stamp=stamp,
+                    error_code="curate_empty" if empty else None,
                     unaccounted=response.get("unaccounted"),
                     diagnostics=response.get("diagnostics"),
                 )
