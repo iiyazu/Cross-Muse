@@ -1,4 +1,4 @@
-from src.ledger.reports import line_total, order_summary
+from src.ledger.reports import line_total, order_summary, shipping_label, tax_line
 
 
 def test_line_total() -> None:
@@ -7,3 +7,8 @@ def test_line_total() -> None:
 
 def test_order_summary() -> None:
     assert order_summary([(1.0, 2), (3.5, 1)]).endswith("Subtotal: 5.50")
+
+
+def test_shipping_and_tax() -> None:
+    assert shipping_label(4.0) == "Shipping: 4.00"
+    assert tax_line(10.0, 0.2) == "Tax: 2.00"

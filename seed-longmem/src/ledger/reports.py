@@ -15,3 +15,13 @@ def order_summary(lines: list[Line]) -> str:
     rows = [f"{quantity} x {format_amount(price)}" for price, quantity in lines]
     subtotal = sum(price * quantity for price, quantity in lines)
     return "\n".join([*rows, "Subtotal: " + format_amount(subtotal)])
+
+
+def shipping_label(amount: float) -> str:
+    """The shipping row of an invoice."""
+    return "Shipping: " + format_amount(amount)
+
+
+def tax_line(subtotal: float, rate: float) -> str:
+    """The tax row of an invoice."""
+    return "Tax: " + format_amount(subtotal * rate)
