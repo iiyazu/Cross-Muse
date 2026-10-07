@@ -678,8 +678,7 @@ def _failure_template(db: Path) -> dict[str, Any]:
     try:
         cols = [d[0] for d in conn.execute("select * from room_activities limit 0").description]
         row = conn.execute(
-            "select * from room_activities where activity_type = 'board.verification'"
-            " limit 1"
+            "select * from room_activities where activity_type = 'board.verification' limit 1"
         ).fetchone()
         assert row is not None
         return dict(zip(cols, row, strict=True))
