@@ -1,8 +1,6 @@
 """Report lines for invoices and orders."""
 
 from decimal import Decimal
-from pathlib import Path
-
 from ledger.money import format_amount, to_decimal_str
 
 Line = tuple[float, int]
@@ -38,4 +36,4 @@ def invoice_total(lines: list[Line]) -> str:
 
 def packing_list_path(order_id: str) -> str:
     """Where the packing list for an order is written."""
-    return str((Path("reports") / f"pack-{order_id}.txt").resolve())
+    return f"reports/pack-{order_id}.txt"
