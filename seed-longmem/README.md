@@ -1,6 +1,6 @@
 # ledger
 
-Small invoicing helpers.
+Small invoicing helpers — ledger 系.
 
 Invoice and order rows share the money helpers in src/ledger/money.py.
 
