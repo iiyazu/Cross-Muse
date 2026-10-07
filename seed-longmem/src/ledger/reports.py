@@ -42,4 +42,4 @@ def packing_list_path(order_id: str) -> str:
 
 def fee_total(subtotal: float, rate: float) -> str:
     """The formatted fee for a subtotal and rate."""
-    return to_decimal_str(subtotal * rate)  # type: ignore[arg-type]
+    return to_decimal_str(Decimal(str(subtotal)) * Decimal(str(rate)))
