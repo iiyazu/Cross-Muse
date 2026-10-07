@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from src.ledger.money import format_amount, to_decimal_str
+from ledger.money import format_amount, to_decimal_str
 
 Line = tuple[float, int]
 
