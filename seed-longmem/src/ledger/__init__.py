@@ -1,1 +1,1 @@
-"""Ledger invoicing helpers."""
+"""Ledger invoicing helpers (module scope: src/ledger/**)."""
