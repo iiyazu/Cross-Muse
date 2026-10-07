@@ -86,7 +86,9 @@ from xmuse_core.chat.room_host import (  # noqa: E402
     RoomParticipantHost,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore  # noqa: E402
-from xmuse_core.chat.room_module_memory import MODULE_MEMORY_ENV  # noqa: E402
+from xmuse_core.chat.room_module_memory import (  # noqa: E402
+    MODULE_MEMORY_ENV,
+)
 from xmuse_core.chat.room_owner_clones import OwnerClone  # noqa: E402
 from xmuse_core.chat.room_owner_transport import (  # noqa: E402
     OWNER_PREPARE_COMMAND_ENV,
@@ -180,6 +182,43 @@ def build_task_message(module: Mapping[str, Any]) -> str:
         f"Requirements for your module `{module['module_id']}` "
         f"({module.get('title') or module['module_id']}):\n\n{str(module['task']).strip()}\n"
     )
+
+
+def followup_text(item: Any) -> str:
+    """A follow-up is a task string or `{"text": ..., "restart": bool}`."""
+
+    return str(item["text"] if isinstance(item, Mapping) else item)
+
+
+def followup_restarts(item: Any) -> bool:
+    """With `--restart-owners`, owners restart before rounds marked `restart`."""
+
+    return isinstance(item, Mapping) and bool(item.get("restart"))
+
+
+def build_followup_message(module: Mapping[str, Any], text: str) -> str:
+    return f"Next task for your module `{module['module_id']}`:\n\n{str(text).strip()}\n"
+
+
+async def eval_restart_owner(
+    router: RoomOwnerTransportRouter, conversation_id: str, participant_id: str
+) -> bool:
+    """Evaluation only: close one owner's dedicated transport between rounds.
+
+    The product router has no restart operation; this driver reaches into its
+    transport cache so the next delivery builds a new transport, and the provider
+    starts a fresh session on the same clone (the handover case). Call only
+    while the Room is idle.
+    """
+
+    key = (conversation_id, participant_id)
+    transport = router._owner_transports.pop(key, None)  # noqa: SLF001 - eval-only seam
+    if transport is None:
+        return False
+    aclose = getattr(transport, "aclose", None)
+    if callable(aclose):
+        await aclose()
+    return True
 
 
 def _run(argv: list[str], *, cwd: Path, timeout_s: float = 1800.0) -> str:
@@ -348,6 +387,7 @@ async def run_eval(
     owner_cli: str = "opencode",
     agy_model: str = smoke.AGY_DEFAULT_MODEL,
     module_memory: bool = False,
+    restart_owners: bool = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     clis = module_owner_clis(plan, owner_cli)
@@ -476,9 +516,10 @@ async def run_eval(
         )
         readonly["antigravity"] = agy_transport
         created.append(agy_transport)
+    router = RoomOwnerTransportRouter(readonly, settings=settings, transport_factory=_factory)
     host = RoomParticipantHost(
         root / "chat.db",
-        RoomOwnerTransportRouter(readonly, settings=settings, transport_factory=_factory),
+        router,
         policy=RoomHostPolicy(
             delivery_timeout_s=smoke.DELIVERY_TIMEOUT_S,
             cleanup_grace_s=smoke.CLEANUP_GRACE_S,
@@ -569,6 +610,47 @@ async def run_eval(
                 wait_for_integration=True,
             )
             phases["work"] = {"idle": work_idle}
+            rounds = max((len(module.get("followups") or []) for module in modules), default=0)
+            for round_index in range(rounds):
+                followers = [
+                    module for module in modules if len(module.get("followups") or []) > round_index
+                ]
+                restarted = []
+                if restart_owners:
+                    for module in followers:
+                        if not followup_restarts(module["followups"][round_index]):
+                            continue
+                        owner = owner_of[str(module["module_id"])]
+                        if await eval_restart_owner(router, conversation_id, owner.participant_id):
+                            restarted.append(str(module["module_id"]))
+                for module in followers:
+                    owner = owner_of[str(module["module_id"])]
+                    kernel.post_human_activity(
+                        conversation_id=conversation_id,
+                        human_id="human",
+                        content=build_followup_message(
+                            module, followup_text(module["followups"][round_index])
+                        ),
+                        client_request_id=f"brownfield-followup-{uuid.uuid4().hex}",
+                        mentions=[owner.participant_id],
+                    )
+                    human_messages += 1
+                smoke._mark("followups_sent", round=round_index + 1, restarted=restarted)
+                remaining = max(60.0, run_timeout_s - (time.monotonic() - started))
+                followup_idle = await smoke._pump_until_idle(
+                    host=host,
+                    kernel=kernel,
+                    conversation_id=conversation_id,
+                    timeout_s=remaining,
+                    label=f"followup-{round_index + 1}",
+                    root=root,
+                    wait_for_reviews=reviewer != "none",
+                    wait_for_integration=True,
+                )
+                phases[f"followup_{round_index + 1}"] = {
+                    "idle": followup_idle,
+                    "restarted": restarted,
+                }
     finally:
         for stop, thread in stops:
             smoke._stop_verification_worker(stop, thread)
@@ -596,6 +678,7 @@ async def run_eval(
         "seed_head": seed_head,
         "reviewer": reviewer,
         "module_memory": module_memory_summary(root, conversation_id) if module_memory else None,
+        "restart_owners": restart_owners,
         "owner_cli": owner_cli,
         "owner_clis": clis,
         "models": {
@@ -634,6 +717,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-timeout-s", type=float, default=DEFAULT_RUN_TIMEOUT_S)
     parser.add_argument("--phase-timeout-s", type=float, default=smoke.DEFAULT_PHASE_TIMEOUT_S)
     parser.add_argument("--max-turn-s", type=float, default=3600.0)
+    parser.add_argument(
+        "--restart-owners",
+        action="store_true",
+        help=(
+            "eval only: restart owners (fresh provider session, same clone) "
+            "before follow-up rounds marked restart"
+        ),
+    )
     parser.add_argument(
         "--module-memory",
         action="store_true",
@@ -675,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
                 phase_timeout_s=args.phase_timeout_s,
                 max_turn_s=args.max_turn_s,
                 module_memory=args.module_memory,
+                restart_owners=args.restart_owners,
             )
         )
     result_path.parent.mkdir(parents=True, exist_ok=True)
