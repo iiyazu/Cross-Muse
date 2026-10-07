@@ -1,6 +1,8 @@
 """Report lines for invoices and orders."""
 
-from src.ledger.money import format_amount
+from decimal import Decimal
+
+from src.ledger.money import format_amount, to_decimal_str
 
 Line = tuple[float, int]
 
@@ -29,5 +31,5 @@ def tax_line(subtotal: float, rate: float) -> str:
 
 def invoice_total(lines: list[Line]) -> str:
     """The formatted grand total of all invoice lines."""
-    subtotal = sum(price * quantity for price, quantity in lines)
-    return format_amount(subtotal)
+    subtotal = sum(Decimal(str(price)) * quantity for price, quantity in lines)
+    return to_decimal_str(subtotal)
