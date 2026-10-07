@@ -29,6 +29,7 @@ from xmuse_core.runtime.sqlite_connection import ClosingConnection
 MODULE_MEMORY_ENV = "XMUSE_MODULE_MEMORY"
 WINDOW_MAX = 32
 CONTEXT_MAX = 8
+ESCALATED_CONTEXT_MAX = 16
 ACTIVE_MAX = 60
 MESSAGE_FLUSH = 12
 SCAN_LIMIT = 500
@@ -393,7 +394,9 @@ class ModuleMemoryStore:
             for row in rows
         ]
 
-    def next_window(self, module: ModuleRef, *, now: datetime | None = None) -> Window | None:
+    def next_window(
+        self, module: ModuleRef, *, now: datetime | None = None, context_max: int = CONTEXT_MAX
+    ) -> Window | None:
         """The next window to curate, or None when nothing is ready.
 
         A window is ready when it holds a failure (gate or review) or
@@ -460,7 +463,7 @@ class ModuleMemoryStore:
                 item = _activity_item(row, module)
                 if item is not None:
                     context.append(item)
-                if len(context) >= CONTEXT_MAX:
+                if len(context) >= context_max:
                     break
             context.reverse()
             return Window(
@@ -688,6 +691,23 @@ class ModuleMemoryStore:
                set last_seq = excluded.last_seq, updated_at = excluded.updated_at""",
             (module.conversation_id, module.module_id, last_seq, stamp),
         )
+
+    def consecutive_empty_windows(self, conversation_id: str, module_id: str) -> int:
+        """Trailing run of `empty` windows for one module (0 when none)."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select status from room_module_memory_runs "
+                "where conversation_id = ? and module_id = ? "
+                "order by created_at desc, rowid desc limit 10",
+                (conversation_id, module_id),
+            ).fetchall()
+        count = 0
+        for row in rows:
+            if str(row[0]) != "empty":
+                break
+            count += 1
+        return count
 
     def memories(self, conversation_id: str, module_id: str) -> list[dict[str, Any]]:
         try:

@@ -64,6 +64,10 @@ its cursor and builds windows of the module's activities:
   sampling varies); the first storable response wins, otherwise the last empty one is
   recorded as `empty`. A transport failure during a retry follows the failed-call path
   above. One runs row per window either way.
+- After exactly two consecutive empty windows for one module, the next window goes out
+  with more context (16 read-only items instead of 8), once; a further empty is
+  recorded without another escalation. The 12-message threshold and failure-driven
+  flush never change.
 - Each returned memory is validated (id, kind among lesson/decision/fact/rule/preference, a
   non-empty statement, integer version and occurrences; statement 1000, quotes 500, 8 sources).
   An invalid one is dropped and counted, never the whole response. `supersedes_id` takes effect
@@ -108,3 +112,5 @@ switch off writes nothing and calls nothing.
   a store failure is recorded, never raised.
 - 2026-10-07 — empty successes resent up to twice with the identical payload
   (backlog-2); one runs row per window.
+- 2026-10-07 — context escalation after exactly two consecutive empty windows
+  (backlog-3); no repeated escalation.
