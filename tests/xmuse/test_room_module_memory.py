@@ -7,6 +7,8 @@ view, and the switch: off writes nothing and calls nothing.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -380,3 +382,139 @@ def test_review_objection_becomes_a_review_window(tmp_path: Path) -> None:
             types |= {item["type"] for item in window.activities}
             store.store_result(window, {"memories": []})
     assert "review_objection" in types
+
+
+# --- backlog-1: an empty success is a violation, not a silent pass ---
+
+
+def _runs_rows(db: Path, conversation_id: str) -> list[dict[str, Any]]:
+    with RoomDatabase(db).connect() as conn:
+        return [
+            dict(row)
+            for row in conn.execute(
+                "select * from room_module_memory_runs where conversation_id = ?"
+                " order by created_at",
+                (conversation_id,),
+            )
+        ]
+
+
+def _cursor_last_seq(db: Path, conversation_id: str, module_id: str) -> int | None:
+    with RoomDatabase(db).connect() as conn:
+        row = conn.execute(
+            "select last_seq from room_module_memory_cursors"
+            " where conversation_id = ? and module_id = ?",
+            (conversation_id, module_id),
+        ).fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def test_empty_response_marks_run_empty_and_advances_cursor(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    module = _alpha(db)
+    window = store.next_window(module)
+    assert window is not None
+    result = store.store_result(window, {"memories": []})
+    assert result["stored"] == 0 and result["rejected"] == 0
+    rows = _runs_rows(db, conversation_id)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "empty"
+    assert rows[0]["error_code"] == "curate_empty"
+    assert rows[0]["first_seq"] == window.first_seq
+    assert rows[0]["last_seq"] == window.last_seq
+    assert ModuleMemoryStore(db).memories(conversation_id, "alpha") == []
+    # The cursor still advances past exactly this window.
+    assert _cursor_last_seq(db, conversation_id, "alpha") == window.last_seq
+
+
+def test_empty_window_warns_and_never_raises(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+
+    class _Empty:
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            return {"memories": []}
+
+    with caplog.at_level("WARNING", logger="xmuse.room_module_memory_worker"):
+        counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Empty()).reconcile_once()
+    assert counts["module_memory_failed"] == 0
+    assert any("recorded as empty" in record.message for record in caplog.records)
+    rows = _runs_rows(db, conversation_id)
+    assert rows and all(row["status"] == "empty" for row in rows)
+    assert all(row["error_code"] == "curate_empty" for row in rows)
+
+
+def test_store_exception_is_recorded_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+
+    def _boom(self: ModuleMemoryStore, window: Any, response: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(ModuleMemoryStore, "store_result", _boom)
+
+    class _Ok:
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            return _lesson(6)
+
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Ok()).reconcile_once()
+    assert counts["module_memory_failed"] >= 1
+    rows = _runs_rows(db, conversation_id)
+    assert rows and rows[0]["status"] == "failed"
+
+
+def _canned_lesson(request: dict[str, Any]) -> dict[str, Any]:
+    last = request["window"][-1]
+    return {
+        "schema_version": "memoryos_curate/v1",
+        "scope_id": request.get("scope_id", "replay"),
+        "memories": [
+            {
+                "id": f"mem_replay_{int(last['seq'])}",
+                "kind": "lesson",
+                "topic_key": "replay.probe",
+                "statement": f"Replayed lesson for the window ending at seq {int(last['seq'])}.",
+                "version": int(last["seq"]),
+                "occurrences": 1,
+                "sources": [{"activity_id": str(last["id"]), "quote": str(last["text"])[:200]}],
+                "supersedes_id": None,
+            }
+        ],
+        "assignments": [],
+        "unaccounted": [],
+        "diagnostics": {"llm_calls": 0},
+    }
+
+
+def test_recorded_fixture_requests_replay_and_land(tmp_path: Path) -> None:
+    fixture_dir = os.environ.get("CURATE_FIXTURE_DIR", "")
+    if not fixture_dir or not Path(fixture_dir).is_dir():
+        pytest.skip("CURATE_FIXTURE_DIR not set")
+    files = sorted(
+        p
+        for p in Path(fixture_dir).glob("*.json")
+        if p.name != "MANIFEST.json" and p.name != "SHA256SUMS"
+    )
+    assert files, "no recorded fixtures to replay"
+    for path in files:
+        request = json.loads(path.read_text(encoding="utf-8"))
+        assert request.get("profile") == "module"
+        assert isinstance(request.get("scope_id"), str) and request["scope_id"]
+        items = request.get("window")
+        assert isinstance(items, list) and items
+        for item in items:
+            for key in ("id", "seq", "type", "speaker", "text"):
+                assert key in item, f"{path.name} item misses {key}"
+        # One scratch board per fixture: the scenario builder uses
+        # deterministic ids and must not share a directory.
+        sub = tmp_path / path.stem
+        sub.mkdir()
+        db, _conversation_id = _failed_board(sub)
+        store = ModuleMemoryStore(db)
+        window = store.next_window(_alpha(db))
+        assert window is not None
+        result = store.store_result(window, _canned_lesson(request))
+        assert result["stored"] == 1, path.name

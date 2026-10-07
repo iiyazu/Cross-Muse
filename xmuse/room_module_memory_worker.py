@@ -54,7 +54,21 @@ class RoomModuleMemoryWorker:
                 counts["module_memory_failed"] += 1
                 logger.exception("module memory curate %s", status)
                 continue
-            result = store.store_result(window, dict(response))
+            try:
+                result = store.store_result(window, dict(response))
+            except Exception:
+                # Storing never raises into the Room either: a broken store is
+                # recorded like a failed call and retried, then skipped.
+                status = store.record_failure(window, "module_memory_error")
+                counts["module_memory_failed"] += 1
+                logger.exception("module memory store %s", status)
+                continue
+            if int(result.get("stored", 0)) == 0:
+                logger.warning(
+                    "module memory empty window %s..%s recorded as empty",
+                    window.first_seq,
+                    window.last_seq,
+                )
             counts["module_memory_stored"] += int(result["stored"])
             touched.add(module.conversation_id)
         for conversation_id in sorted(touched):

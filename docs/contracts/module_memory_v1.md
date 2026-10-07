@@ -50,8 +50,13 @@ its cursor and builds windows of the module's activities:
   `topic_key`, `statement`, `version`, `occurrences`, cited `sources`, `supersedes_id`) with
   `status` `active` or `superseded` (and `superseded_by`). Storing a response is one transaction:
   insert the new versions, mark the ones they supersede, advance the cursor.
-- `room_module_memory_runs`: one row per window (first and last seq, status `done`, `failed` or
-  `skipped`, attempts, `unaccounted` activity ids, MemoryOS diagnostics, error code).
+- `room_module_memory_runs`: one row per window (first and last seq, status `done`,
+  `failed`, `skipped` or `empty`, attempts, `unaccounted` activity ids, MemoryOS
+  diagnostics, error code). An empty success (zero stored memories, no error) is
+  recorded as `empty` with error code `curate_empty`, never as a silent `done`;
+  the cursor still advances past exactly that window, and the reconcile loop
+  warns. A store failure is recorded like a failed call (see below), never
+  raised into the Room.
 - A failed call is retried with backoff (30 s × attempts); a retry resends the same window (it
   never grows past the failed one). After 3 attempts the window is marked `skipped` and the
   cursor moves past exactly that window. Memory is derived: it never blocks a Room.
@@ -92,3 +97,8 @@ in `chat.db` for audit. Human approval of memories is not in v1 (§6).
 Window building per activity type, the flush rule and bounds; storing a response with supersession
 and cursor in one transaction; retry, backoff and skip; rendering with and without memories; the
 switch off writes nothing and calls nothing.
+
+## 8. Changelog
+
+- 2026-10-07 — empty successes recorded as `empty`/`curate_empty` (backlog-1);
+  a store failure is recorded, never raised.
