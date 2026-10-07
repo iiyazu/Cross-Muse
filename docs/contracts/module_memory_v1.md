@@ -60,6 +60,10 @@ its cursor and builds windows of the module's activities:
 - A failed call is retried with backoff (30 s × attempts); a retry resends the same window (it
   never grows past the failed one). After 3 attempts the window is marked `skipped` and the
   cursor moves past exactly that window. Memory is derived: it never blocks a Room.
+- An empty success is resent with the identical payload, at most twice more (provider
+  sampling varies); the first storable response wins, otherwise the last empty one is
+  recorded as `empty`. A transport failure during a retry follows the failed-call path
+  above. One runs row per window either way.
 - Each returned memory is validated (id, kind among lesson/decision/fact/rule/preference, a
   non-empty statement, integer version and occurrences; statement 1000, quotes 500, 8 sources).
   An invalid one is dropped and counted, never the whole response. `supersedes_id` takes effect
@@ -102,3 +106,5 @@ switch off writes nothing and calls nothing.
 
 - 2026-10-07 — empty successes recorded as `empty`/`curate_empty` (backlog-1);
   a store failure is recorded, never raised.
+- 2026-10-07 — empty successes resent up to twice with the identical payload
+  (backlog-2); one runs row per window.

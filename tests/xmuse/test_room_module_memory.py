@@ -518,3 +518,88 @@ def test_recorded_fixture_requests_replay_and_land(tmp_path: Path) -> None:
         assert window is not None
         result = store.store_result(window, _canned_lesson(request))
         assert result["stored"] == 1, path.name
+
+
+# --- backlog-2: empty successes are resent up to twice, then recorded ---
+
+
+def _scripted_client(script: list[str], lesson_seq: int = 6) -> Any:
+    """Fake curate client following a script of 'empty' and 'lesson' sends."""
+
+    calls: list[dict[str, Any]] = []
+
+    class _Scripted:
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            calls.append(request)
+            kind = script[min(len(calls) - 1, len(script) - 1)]
+            if kind == "lesson":
+                window = request["window"]
+                return _lesson_for_seq(window)
+            return {"memories": []}
+
+    client = _Scripted()
+    client.calls = calls  # type: ignore[attr-defined]
+    return client
+
+
+def _lesson_for_seq(window: list[dict[str, Any]]) -> dict[str, Any]:
+    last = window[-1]
+    base = _lesson(int(last["seq"]))
+    base["memories"][0]["sources"] = [
+        {"activity_id": str(last["id"]), "quote": str(last["text"])[:200]}
+    ]
+    return base
+
+
+def test_empty_window_resent_twice_then_recorded_empty(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    client = _scripted_client(["empty", "empty", "empty"])
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=client).reconcile_once()
+    assert len(client.calls) == 3
+    assert counts["module_memory_stored"] == 0
+    rows = _runs_rows(db, conversation_id)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "empty"
+    assert rows[0]["error_code"] == "curate_empty"
+
+
+def test_retry_stops_at_first_storable_response(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    client = _scripted_client(["empty", "empty", "lesson"])
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=client).reconcile_once()
+    assert len(client.calls) == 3
+    assert counts["module_memory_stored"] >= 1
+    rows = _runs_rows(db, conversation_id)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "done"
+
+
+def test_first_try_success_sends_once(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    void = _runs_rows(db, conversation_id)
+    assert void == []
+    client = _scripted_client(["lesson"])
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=client).reconcile_once()
+    assert len(client.calls) == 1
+    assert counts["module_memory_stored"] >= 1
+
+
+def test_transport_failure_during_retry_uses_backoff_path(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+
+    class _Flaky:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            self.calls += 1
+            if self.calls == 1:
+                return {"memories": []}
+            raise MemoryOSAdapterError("memoryos_unavailable")
+
+    client = _Flaky()
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=client).reconcile_once()
+    assert client.calls == 2
+    assert counts["module_memory_failed"] >= 1
+    rows = _runs_rows(db, conversation_id)
+    assert rows and rows[0]["status"] == "failed"

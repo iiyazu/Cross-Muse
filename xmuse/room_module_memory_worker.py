@@ -17,7 +17,12 @@ from typing import Any, Protocol, cast
 from xmuse.memoryos_http_client import MemoryOSAdapterError, MemoryOSHTTPClient
 from xmuse_core.chat.memoryos_supervisor import MemoryOSProfile
 from xmuse_core.chat.room_board_view import refresh_board_views
-from xmuse_core.chat.room_module_memory import ModuleMemoryStore, module_memory_enabled
+from xmuse_core.chat.room_module_memory import (
+    EMPTY_MAX_SENDS,
+    ModuleMemoryStore,
+    module_memory_enabled,
+    response_has_storable_memory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +47,30 @@ class RoomModuleMemoryWorker:
             if window is None:
                 continue
             counts["module_memory_windows"] += 1
-            try:
-                response = self._client.curate(window.curate_request())
-            except MemoryOSAdapterError as exc:
-                status = store.record_failure(window, exc.code)
-                counts["module_memory_failed"] += 1
-                logger.warning("module memory curate %s: %s", status, exc.code)
-                continue
-            except Exception:
-                status = store.record_failure(window, "module_memory_error")
-                counts["module_memory_failed"] += 1
-                logger.exception("module memory curate %s", status)
+            # Empty successes are resent with the identical payload (provider
+            # sampling varies) up to the retry budget; the first storable
+            # response wins, otherwise the last empty one is recorded. A
+            # transport failure anywhere in the sends follows the failed-call
+            # path above. One runs row per window either way.
+            response: Mapping[str, Any] | None = None
+            for _ in range(EMPTY_MAX_SENDS):
+                try:
+                    response = self._client.curate(window.curate_request())
+                except MemoryOSAdapterError as exc:
+                    status = store.record_failure(window, exc.code)
+                    counts["module_memory_failed"] += 1
+                    logger.warning("module memory curate %s: %s", status, exc.code)
+                    response = None
+                    break
+                except Exception:
+                    status = store.record_failure(window, "module_memory_error")
+                    counts["module_memory_failed"] += 1
+                    logger.exception("module memory curate %s", status)
+                    response = None
+                    break
+                if response_has_storable_memory(response):
+                    break
+            if response is None:
                 continue
             try:
                 result = store.store_result(window, dict(response))
