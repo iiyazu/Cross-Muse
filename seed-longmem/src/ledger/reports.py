@@ -1,6 +1,7 @@
 """Report lines for invoices and orders."""
 
 from decimal import Decimal
+from pathlib import Path
 
 from ledger.money import format_amount, to_decimal_str
 
@@ -33,3 +34,8 @@ def invoice_total(lines: list[Line]) -> str:
     """The formatted grand total of all invoice lines."""
     subtotal = sum(Decimal(str(price)) * quantity for price, quantity in lines)
     return to_decimal_str(subtotal)
+
+
+def packing_list_path(order_id: str) -> str:
+    """Where the packing list for an order is written."""
+    return str((Path("reports") / f"pack-{order_id}.txt").resolve())

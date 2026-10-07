@@ -2,6 +2,7 @@ from ledger.reports import (
     invoice_total,
     line_total,
     order_summary,
+    packing_list_path,
     shipping_label,
     tax_line,
 )
@@ -22,3 +23,7 @@ def test_shipping_and_tax() -> None:
 
 def test_invoice_total() -> None:
     assert invoice_total([(2.675, 1)]) == "2.68"
+
+
+def test_packing_list_path() -> None:
+    assert packing_list_path("001") == "reports/pack-001.txt"
