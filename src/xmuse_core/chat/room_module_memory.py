@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -38,6 +39,7 @@ MEMORY_KINDS = frozenset({"lesson", "decision", "fact", "rule", "preference"})
 TEXT_MAX = 8192
 MAX_ATTEMPTS = 3
 RETRY_BASE_S = 30
+EMPTY_MAX_SENDS = 3
 FAILURE_TYPES = frozenset({"gate_failure", "review_objection"})
 
 
@@ -183,6 +185,18 @@ def _valid_memory(raw: Any) -> dict[str, Any] | None:
 
 def _bounded(text: str) -> str:
     return text if len(text) <= TEXT_MAX else text[: TEXT_MAX - 1] + "…"
+
+
+def response_has_storable_memory(response: Mapping[str, Any] | Any) -> bool:
+    """Whether a curate response holds at least one valid memory.
+
+    The worker peeks with this before storing so an empty success can be
+    resent under the retry budget without moving the cursor first.
+    """
+
+    if not isinstance(response, Mapping):
+        return False
+    return any(_valid_memory(raw) is not None for raw in _list(response.get("memories")))
 
 
 @dataclass(frozen=True)
@@ -741,4 +755,5 @@ __all__ = [
     "create_module_memory_schema",
     "module_memory_enabled",
     "render_memory_md",
+    "response_has_storable_memory",
 ]
