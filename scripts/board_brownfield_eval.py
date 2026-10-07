@@ -184,6 +184,52 @@ def build_task_message(module: Mapping[str, Any]) -> str:
     )
 
 
+def load_probe_history(path: Path) -> list[dict[str, Any]]:
+    """Pre-run assembly: read the frozen activity list (a JSON list of acts)."""
+
+    items = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(items, list):
+        raise ValueError("probe history file must hold a JSON list")
+    return [dict(item) for item in items]
+
+
+def history_line(item: Mapping[str, Any]) -> str:
+    text = str(item.get("text") or "").strip()
+    if str(item.get("kind") or "") == "gate":
+        return f"[gate] {text}"
+    return f"- {text}"
+
+
+def build_probe_context(
+    *,
+    history: list[Mapping[str, Any]],
+    max_history: int | None,
+    preload_memory: str,
+) -> str:
+    """Pre-run assembly only: recent-K history block plus prebuilt memory text.
+
+    Pure string concatenation for the initial task message; Room semantics
+    untouched. Returns "" when neither flag is set.
+    """
+
+    parts: list[str] = []
+    if max_history is not None:
+        recent = list(history)[-max_history:] if max_history > 0 else []
+        lines = [history_line(item) for item in recent]
+        parts.append(
+            "Recent history for your module (K most recent acts, context only):\n"
+            + "\n".join(lines)
+        )
+    if preload_memory.strip():
+        parts.append(
+            "Module memory (curated earlier from this module's history; "
+            "your charter and contracts win on any conflict):\n" + preload_memory.strip()
+        )
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n\n"
+
+
 def followup_text(item: Any) -> str:
     """A follow-up is a task string or `{"text": ..., "restart": bool}`."""
 
@@ -388,6 +434,9 @@ async def run_eval(
     agy_model: str = smoke.AGY_DEFAULT_MODEL,
     module_memory: bool = False,
     restart_owners: bool = False,
+    history: list[dict[str, Any]] | None = None,
+    max_history: int | None = None,
+    preload_memory: str = "",
 ) -> dict[str, Any]:
     started = time.monotonic()
     clis = module_owner_clis(plan, owner_cli)
@@ -592,7 +641,12 @@ async def run_eval(
                 kernel.post_human_activity(
                     conversation_id=conversation_id,
                     human_id="human",
-                    content=build_task_message(module),
+                    content=build_task_message(module)
+                    + build_probe_context(
+                        history=list(history or []),
+                        max_history=max_history,
+                        preload_memory=preload_memory,
+                    ),
                     client_request_id=f"brownfield-task-{uuid.uuid4().hex}",
                     mentions=[owner.participant_id],
                 )
@@ -679,6 +733,11 @@ async def run_eval(
         "reviewer": reviewer,
         "module_memory": module_memory_summary(root, conversation_id) if module_memory else None,
         "restart_owners": restart_owners,
+        "probe_context": {
+            "max_history": max_history,
+            "history_acts": len(history or []),
+            "preload_memory_chars": len(preload_memory),
+        },
         "owner_cli": owner_cli,
         "owner_clis": clis,
         "models": {
@@ -730,6 +789,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="curate module memory through the MemoryOS sidecar (XMUSE_MEMORYOS_URL/API_KEY)",
     )
+    parser.add_argument(
+        "--history-file",
+        default=None,
+        help="eval only: JSON list of frozen history acts for the probe context block",
+    )
+    parser.add_argument(
+        "--max-history",
+        type=int,
+        default=None,
+        help="eval only: recent-K history acts in the probe context (needs --history-file)",
+    )
+    parser.add_argument(
+        "--preload-memory",
+        default=None,
+        help="eval only: prebuilt memory.md text file injected into the probe context (on-arm)",
+    )
     args = parser.parse_args(argv)
     try:
         lead_model = smoke.validate_model(args.lead_model)
@@ -739,6 +814,14 @@ def main(argv: list[str] | None = None) -> int:
         plan = load_plan(Path(args.plan))
         if args.reviewer in module_owner_clis(plan, args.owner_cli).values():
             raise ValueError(f"a {args.reviewer} reviewer cannot review {args.reviewer} owners")
+        history = load_probe_history(Path(args.history_file)) if args.history_file else []
+        if args.max_history is not None and not args.history_file:
+            raise ValueError("--max-history needs --history-file")
+        if args.max_history is not None and args.max_history < 0:
+            raise ValueError("--max-history must be >= 0")
+        preload_memory = (
+            Path(args.preload_memory).read_text(encoding="utf-8") if args.preload_memory else ""
+        )
     except ValueError as exc:
         print(f"brownfield eval unavailable: {exc}", flush=True)
         return 2
@@ -767,6 +850,9 @@ def main(argv: list[str] | None = None) -> int:
                 max_turn_s=args.max_turn_s,
                 module_memory=args.module_memory,
                 restart_owners=args.restart_owners,
+                history=history,
+                max_history=args.max_history,
+                preload_memory=preload_memory,
             )
         )
     result_path.parent.mkdir(parents=True, exist_ok=True)

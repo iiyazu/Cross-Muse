@@ -172,3 +172,52 @@ def test_a_reviewer_of_an_owner_family_is_refused(tmp_path: Path) -> None:
 
     assert brownfield.main([*common, "--result", "r.json", "--reviewer", "antigravity"]) == 2
     assert not (tmp_path / "root").exists()
+
+
+def _history() -> list[dict[str, object]]:
+    return [
+        {"act": "ACT01", "kind": "message", "text": "act-one"},
+        {"act": "ACT02", "kind": "gate", "text": "red-flag"},
+        {"act": "ACT03", "kind": "message", "text": "act-three"},
+    ]
+
+
+def test_probe_context_is_empty_without_flags() -> None:
+    assert (
+        brownfield.build_probe_context(history=_history(), max_history=None, preload_memory="")
+        == ""
+    )
+
+
+def test_probe_context_takes_the_recent_k_acts() -> None:
+    context = brownfield.build_probe_context(history=_history(), max_history=2, preload_memory="")
+
+    assert "act-one" not in context
+    assert "[gate] red-flag" in context
+    assert "act-three" in context
+
+
+def test_probe_context_appends_preloaded_memory_verbatim() -> None:
+    context = brownfield.build_probe_context(
+        history=_history(), max_history=None, preload_memory="# Module memory: x"
+    )
+
+    assert "act-one" not in context
+    assert "# Module memory: x" in context
+
+
+def test_load_probe_history_rejects_non_lists(tmp_path: Path) -> None:
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps({"acts": []}), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        brownfield.load_probe_history(path)
+
+
+def test_max_history_needs_a_history_file(tmp_path: Path) -> None:
+    plan = _plan()
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    common = ["--seed", str(tmp_path), "--plan", str(path), "--root", str(tmp_path / "root")]
+
+    assert brownfield.main([*common, "--result", "r.json", "--max-history", "8"]) == 2
