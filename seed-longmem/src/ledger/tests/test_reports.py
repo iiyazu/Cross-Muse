@@ -1,4 +1,5 @@
 from ledger.reports import (
+    fee_total,
     invoice_total,
     line_total,
     order_summary,
@@ -27,3 +28,7 @@ def test_invoice_total() -> None:
 
 def test_packing_list_path() -> None:
     assert packing_list_path("001") == "reports/pack-001.txt"
+
+
+def test_fee_total() -> None:
+    assert fee_total(19.99, 0.15) == "3.00"

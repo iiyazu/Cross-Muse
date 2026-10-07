@@ -1,6 +1,7 @@
 """Report lines for invoices and orders."""
 
 from decimal import Decimal
+
 from ledger.money import format_amount, to_decimal_str
 
 Line = tuple[float, int]
@@ -37,3 +38,8 @@ def invoice_total(lines: list[Line]) -> str:
 def packing_list_path(order_id: str) -> str:
     """Where the packing list for an order is written."""
     return f"reports/pack-{order_id}.txt"
+
+
+def fee_total(subtotal: float, rate: float) -> str:
+    """The formatted fee for a subtotal and rate."""
+    return to_decimal_str(subtotal * rate)  # type: ignore[arg-type]
