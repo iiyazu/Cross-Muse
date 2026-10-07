@@ -603,3 +603,149 @@ def test_transport_failure_during_retry_uses_backoff_path(tmp_path: Path) -> Non
     assert counts["module_memory_failed"] >= 1
     rows = _runs_rows(db, conversation_id)
     assert rows and rows[0]["status"] == "failed"
+
+
+# --- backlog-3: after two consecutive empty windows the next one escalates ---
+
+
+def _hand_window(conversation_id: str, module_id: str, owner: str, first: int, last: int) -> Any:
+    from xmuse_core.chat.room_module_memory import ModuleRef, Window
+
+    return Window(
+        module=ModuleRef(conversation_id, module_id, owner),
+        activities=[{"id": f"a{seq}"} for seq in range(first, last + 1)],
+        context=[],
+        first_seq=first,
+        last_seq=last,
+        active=[],
+    )
+
+
+def test_consecutive_empty_windows_counts_and_resets(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    owner = _alpha(db).owner_participant_id
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 0
+    store.store_result(_hand_window(conversation_id, "alpha", owner, 1, 5), {"memories": []})
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 1
+    store.store_result(_hand_window(conversation_id, "alpha", owner, 6, 10), {"memories": []})
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 2
+    window = _hand_window(conversation_id, "alpha", owner, 11, 15)
+    store.store_result(window, _lesson(15))
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 0
+    store.store_result(_hand_window(conversation_id, "alpha", owner, 16, 20), {"memories": []})
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 1
+    store.record_failure(_hand_window(conversation_id, "alpha", owner, 21, 25), "x")
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 0
+
+
+def _post_humans(db: Path, conversation_id: str, owner: str, start: int, count: int) -> None:
+    for index in range(count):
+        RoomKernelStore(db).post_human_activity(
+            conversation_id=conversation_id,
+            human_id="human",
+            content=f"Note {start + index}: keep the Decimal migration in mind",
+            client_request_id=f"esc-{start + index}",
+            mentions=[owner],
+        )
+
+
+def _insert_failure(
+    db: Path, tmpl: dict[str, Any], conversation_id: str, seq: int, aid: str
+) -> None:
+    import sqlite3 as _sqlite3
+
+    row = dict(tmpl)
+    row.update(activity_id=aid, conversation_id=conversation_id, seq=seq)
+    conn = _sqlite3.connect(db)
+    try:
+        cols = [d[0] for d in conn.execute("select * from room_activities limit 0").description]
+        conn.execute(
+            "insert into room_activities ({}) values ({})".format(
+                ",".join(cols), ",".join("?" * len(cols))
+            ),
+            [row[k] for k in cols],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _failure_template(db: Path) -> dict[str, Any]:
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(db)
+    try:
+        cols = [d[0] for d in conn.execute("select * from room_activities limit 0").description]
+        row = conn.execute(
+            "select * from room_activities where activity_type = 'board.verification'"
+            " limit 1"
+        ).fetchone()
+        assert row is not None
+        return dict(zip(cols, row, strict=True))
+    finally:
+        conn.close()
+
+
+def _wipe_activities(db: Path, conversation_id: str) -> None:
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(db)
+    try:
+        conn.execute("delete from room_activities where conversation_id = ?", (conversation_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_escalated_context_at_two_not_after(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    owner = _alpha(db).owner_participant_id
+    tmpl = _failure_template(db)
+    _wipe_activities(db, conversation_id)
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 0
+    # Streak 1: twelve human messages flush by count, stored empty.
+    _post_humans(db, conversation_id, owner, 0, 12)
+    first = store.next_window(_alpha(db))
+    assert first is not None and len(first.activities) == 12
+    store.store_result(first, {"memories": []})
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 1
+    # Streak 2: one failure after the cursor, stored empty.
+    _insert_failure(db, tmpl, conversation_id, first.last_seq + 1, "act_esc_2")
+    second = store.next_window(_alpha(db))
+    assert second is not None and second.activities[-1]["type"] == "gate_failure"
+    store.store_result(second, {"memories": []})
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 2
+
+    requests: list[dict[str, Any]] = []
+
+    class _Empty:
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            requests.append(request)
+            if request.get("scope_id") != "alpha":
+                return _lesson(1)
+            return {"memories": []}
+
+    def _alpha_requests() -> list[dict[str, Any]]:
+        return [r for r in requests if r.get("scope_id") == "alpha"]
+
+    _insert_failure(db, tmpl, conversation_id, second.last_seq + 1, "act_esc_3")
+    with caplog.at_level("WARNING", logger="xmuse.room_module_memory_worker"):
+        RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Empty()).reconcile_once()
+    assert any("escalating context" in r.message for r in caplog.records)
+    # The empty budget resends the same window up to three times; every send
+    # carries the escalated context.
+    assert len(_alpha_requests()) == 3
+    assert all(len(r["context"]) > 8 for r in _alpha_requests())
+    assert store.consecutive_empty_windows(conversation_id, "alpha") == 3
+    # A third consecutive empty does not escalate again: default cap returns.
+    with RoomDatabase(db).connect() as conn:
+        top = conn.execute("select max(seq) from room_activities").fetchone()[0]
+    _insert_failure(db, tmpl, conversation_id, int(top) + 1, "act_esc_4")
+    requests.clear()
+    RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Empty()).reconcile_once()
+    assert len(_alpha_requests()) == 3
+    assert all(len(r["context"]) == 8 for r in _alpha_requests())

@@ -18,7 +18,9 @@ from xmuse.memoryos_http_client import MemoryOSAdapterError, MemoryOSHTTPClient
 from xmuse_core.chat.memoryos_supervisor import MemoryOSProfile
 from xmuse_core.chat.room_board_view import refresh_board_views
 from xmuse_core.chat.room_module_memory import (
+    CONTEXT_MAX,
     EMPTY_MAX_SENDS,
+    ESCALATED_CONTEXT_MAX,
     ModuleMemoryStore,
     module_memory_enabled,
     response_has_storable_memory,
@@ -43,7 +45,18 @@ class RoomModuleMemoryWorker:
         counts = {"module_memory_windows": 0, "module_memory_stored": 0, "module_memory_failed": 0}
         touched: set[str] = set()
         for module in store.active_modules():
-            window = store.next_window(module)
+            # After exactly two consecutive empty windows the next window goes
+            # out with more context, once; a further empty is recorded without
+            # another escalation. Window building is otherwise unchanged.
+            context_max = CONTEXT_MAX
+            if store.consecutive_empty_windows(module.conversation_id, module.module_id) == 2:
+                context_max = ESCALATED_CONTEXT_MAX
+                logger.warning(
+                    "module memory escalating context for %s:%s after 2 empty windows",
+                    module.conversation_id,
+                    module.module_id,
+                )
+            window = store.next_window(module, context_max=context_max)
             if window is None:
                 continue
             counts["module_memory_windows"] += 1
