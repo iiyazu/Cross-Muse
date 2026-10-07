@@ -1,9 +1,11 @@
+from ledger.contracts import mark_settled
 from ledger.reports import (
     fee_total,
     invoice_total,
     line_total,
     order_summary,
     packing_list_path,
+    settled_label,
     shipping_label,
     tax_line,
 )
@@ -32,3 +34,9 @@ def test_packing_list_path() -> None:
 
 def test_fee_total() -> None:
     assert fee_total(19.99, 0.15) == "3.00"
+
+
+def test_settled_label() -> None:
+    assert settled_label("no-such-order") == "open"
+    mark_settled("o-1")
+    assert settled_label("o-1") == "settled"

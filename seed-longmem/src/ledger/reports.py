@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from ledger.contracts import is_settled
 from ledger.money import format_amount, to_decimal_str
 
 Line = tuple[float, int]
@@ -43,3 +44,8 @@ def packing_list_path(order_id: str) -> str:
 def fee_total(subtotal: float, rate: float) -> str:
     """The formatted fee for a subtotal and rate."""
     return to_decimal_str(Decimal(str(subtotal)) * Decimal(str(rate)))
+
+
+def settled_label(order_id: str) -> str:
+    """One-word settlement state for an order."""
+    return "settled" if is_settled(order_id) else "open"
