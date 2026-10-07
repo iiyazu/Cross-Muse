@@ -25,3 +25,9 @@ def shipping_label(amount: float) -> str:
 def tax_line(subtotal: float, rate: float) -> str:
     """The tax row of an invoice."""
     return "Tax: " + format_amount(subtotal * rate)
+
+
+def invoice_total(lines: list[Line]) -> str:
+    """The formatted grand total of all invoice lines."""
+    subtotal = sum(price * quantity for price, quantity in lines)
+    return format_amount(subtotal)
