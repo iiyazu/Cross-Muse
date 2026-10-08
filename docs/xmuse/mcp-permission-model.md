@@ -37,9 +37,11 @@ there are no drvfs mounts and the confinement is unchanged.
 | `chat_room_board_ask` | any participant | Question to one peer; wakes that peer, who answers with a normal outcome reply. |
 | `chat_room_board_review` | assigned reviewer | Rules on a pending review: `endorse`, or `object` with at least one `blocker` or `major` finding. |
 
-A call whose argument breaks an enum in the tool schema fails with `invalid_arguments`, and
-the message names the argument and its allowed values; some providers reach the tools through
-a generic wrapper and learn the allowed values only from that message.
+A call whose argument breaks an enum in the tool schema, or puts an unknown field into a
+closed object (`additionalProperties: false`, at any depth), fails with `invalid_arguments`.
+The message names the argument path and what is allowed, and says when an unknown nested
+field is a top-level argument; some providers reach the tools through a generic wrapper and
+learn the schema only from these messages.
 
 Every board call carries the same conversation, participant, GOD session, observation,
 lease token and client request identifiers as the outcome tool and fails closed on a lost
