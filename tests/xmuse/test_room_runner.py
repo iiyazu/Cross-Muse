@@ -18,6 +18,7 @@ from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_host import RoomParticipantHost, RoomTransportResult
+from xmuse_core.chat.room_mcp_contract import room_tool_schemas
 from xmuse_core.chat.room_runtime import (
     ROOM_RUNNER_PROOF_BOUNDARY,
     ROOM_RUNNER_READINESS_KEYS,
@@ -827,7 +828,7 @@ def test_startup_failure_publishes_failed_not_ready_receipt(tmp_path: Path) -> N
     )
 
 
-def test_room_mcp_probe_requires_room_health_and_exact_outcome_tool(monkeypatch) -> None:
+def _mcp_probe_with_tools(monkeypatch, tools: Any) -> tuple[bool, bool]:
     class _Response:
         def __init__(self, payload: Any) -> None:
             self._raw = json.dumps(payload).encode("utf-8")
@@ -856,12 +857,32 @@ def test_room_mcp_probe_requires_room_health_and_exact_outcome_tool(monkeypatch)
             {
                 "jsonrpc": "2.0",
                 "id": "room-runner-readiness",
-                "result": {"tools": [{"name": "chat_room_submit_outcome"}]},
+                "result": {"tools": tools},
             }
         )
 
     monkeypatch.setattr(room_runner.urllib.request, "urlopen", urlopen)
-    assert room_runner._probe_room_mcp_once("127.0.0.1", 8100) == (True, True)
+    return room_runner._probe_room_mcp_once("127.0.0.1", 8100)
+
+
+def test_room_mcp_probe_accepts_the_surface_the_room_mcp_server_lists(monkeypatch) -> None:
+    # The probe and the server must agree: the outcome tool plus every board tool.
+    assert _mcp_probe_with_tools(monkeypatch, room_tool_schemas()) == (True, True)
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        pytest.param([{"name": "chat_room_submit_outcome"}], id="outcome-only"),
+        pytest.param(room_tool_schemas()[:-1], id="missing-board-tool"),
+        pytest.param([*room_tool_schemas(), {"name": "shell_exec"}], id="extra-tool"),
+        pytest.param([*room_tool_schemas(), room_tool_schemas()[0]], id="duplicate"),
+        pytest.param([*room_tool_schemas()[1:], "chat_room_submit_outcome"], id="non-object"),
+        pytest.param(None, id="no-list"),
+    ],
+)
+def test_room_mcp_probe_refuses_any_other_tool_surface(monkeypatch, tools: Any) -> None:
+    assert _mcp_probe_with_tools(monkeypatch, tools) == (True, False)
 
 
 def test_cli_has_no_artificial_runtime_deadline(monkeypatch) -> None:
