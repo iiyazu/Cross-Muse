@@ -14,7 +14,7 @@
 | **可靠的房间** | `chat.db` 是唯一权威；agent 的每次发言都绑定身份、尝试次数和租约，带幂等键；平台负责投递、因果和恢复，永远不替 agent 发言 | 12 房间 × 4 agent × 20 轮并发测试：1680 次尝试，**重复结果 0、跨房间串号 0**；45 分钟故障注入（SIGKILL）后 18/18 全部恢复 → [可靠性](docs/evidence/reliability.md) |
 | **协作要有价值** | 广播模式和点名模式；lead 只是兜底收件人，不是路由器 | 预注册 7 个任务、盲评：两种模式质量持平（2.2 对 2.1），点名模式 agent 轮次从 28 降到 8 → [协作评测](docs/xmuse/evaluation.md) |
 | **"做完了"不等于完成** | 看板：拆分 → owner 在自己的克隆里实现 → 主机按门禁验证 → **跨厂家 agent 复核** → `accepted` → 主机集成 | 真实运行案例：一轮暴露的问题逐个诊断和修复，复核从"3 次各 7 分钟超时后转人工"变成 **1 分 52 秒自动通过** → [真实运行](docs/evidence/real-run-2026-10-08.md) |
-| **记忆防止重犯旧错** | 姊妹项目 [MemryOS-lite](https://github.com/iiyazu/MemryOS-lite)：来源可追溯的记忆，把模块历史整理成"续命包" | 真实仓库、真实编码 agent：照抄技术债的任务 **0/60（有记忆）对 10/60（无记忆）**；产品路径上，经人审批的规则让另一家的 agent 照做 **3/3**（未审批 0/2，泄漏 0）；**短任务、任意性事实交接上没有测出增益**，照实写 → [记忆](docs/evidence/memory.md) |
+| **记忆防止重犯旧错** | 姊妹项目 [MemryOS-lite](https://github.com/iiyazu/MemryOS-lite)：来源可追溯的记忆，把模块历史整理成"续命包" | 真实仓库、真实编码 agent：照抄技术债的任务 **0/60（有记忆）对 10/60（无记忆）**；产品路径上，经人审批的规则让另一家的 agent 照做 **3/3**（未审批 0/2）；**短任务、任意性事实交接上没有测出增益**，照实写 → [记忆](docs/evidence/memory.md) |
 
 **技术栈**：Python 3.11/3.13 · FastAPI · SQLite（单一权威库，`begin immediate` 事务）· asyncio · MCP · ACP · bubblewrap 沙箱 · LangGraph（MemoryOS）· uv / ruff / mypy · pytest（2500+ 用例，`PYTHONWARNINGS=error`）· Next.js 16 / React 18 / zustand / Playwright · GitHub Actions（6 项 CI，含每个 PR 都跑的并发混沌测试）。
 
