@@ -506,16 +506,17 @@ async function openRoom(page: Page, state: BrowserState): Promise<void> {
 
 async function recoverRuntime(page: Page, state: BrowserState): Promise<void> {
   await openRoom(page, state);
-  await page.getByRole("button", { name: /工作台/ }).click();
-  const inspector = page.getByRole("complementary", { name: "房间检查器" });
-  await expect(inspector.getByRole("region", { name: "运行与恢复" })).toBeVisible();
-  const recover = inspector.getByRole("button", { name: /恢复 Room Runtime|启动 Room Runtime/ });
+  // Runtime health and guarded recovery live in the System sheet, opened from the header dot.
+  await page.getByRole("button", { name: /^系统/ }).click();
+  const system = page.getByRole("dialog", { name: "系统" });
+  const operations = system.getByRole("region", { name: "运行与恢复" });
+  await expect(operations).toBeVisible();
+  const recover = operations.getByRole("button", { name: /恢复 Room Runtime|启动 Room Runtime/ });
   await expect(recover).toBeVisible({ timeout: 90_000 });
   await recover.click();
   const dialog = page.getByRole("alertdialog");
-  await expect(dialog).toContainText("未完成工作将由耐久 observation attempt");
+  await expect(dialog).toContainText("中断正在进行的 Agent 投递");
   await dialog.getByRole("button", { name: "确认中断并恢复" }).click();
-  const operations = inspector.getByRole("region", { name: "运行与恢复" });
   await expect(operations).toContainText("Runner正常", { timeout: 90_000 });
   await expect(operations).toContainText("Room MCP正常", { timeout: 90_000 });
 }

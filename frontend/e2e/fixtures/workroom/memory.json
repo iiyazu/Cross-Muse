@@ -1,0 +1,39 @@
+{
+  "advisory_receipts": [],
+  "binding": {
+    "attachment_state": "pending",
+    "present": true,
+    "revision": 0,
+    "session_state": "unbound",
+    "updated_at": "2026-10-06T04:29:43.618342Z"
+  },
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "degraded": false,
+  "enabled": false,
+  "generated_at": "2026-10-06T04:40:04.630Z",
+  "pending_candidate_total": 0,
+  "pending_candidates": [],
+  "projection_only": true,
+  "proof_boundary": "memory_projection_not_room_or_memory_index_authority",
+  "recent_recalls": [],
+  "runtime": {
+    "code": "memoryos_disabled",
+    "consecutive_restart_count": 0,
+    "degraded": false,
+    "enabled": false,
+    "last_healthy_at": null,
+    "next_retry_at": null,
+    "started_at": null,
+    "state": "disabled",
+    "updated_at": null
+  },
+  "schema_version": "room_memory_projection/v1",
+  "sync": {
+    "backlog": 13,
+    "conflict": 0,
+    "delivered": 0,
+    "failed": 0,
+    "pending": 13,
+    "processing": 0
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "default_roster_template_id": "builtin.development",
+  "review_policies": [
+    "off",
+    "cross_family"
+  ],
+  "roster_templates": [
+    {
+      "available": false,
+      "collaboration": null,
+      "description": "Default software-development role group.",
+      "display_name": "Development Workroom",
+      "participants": [
+        {
+          "collaboration_focus": "Connect peer evidence into a decision-complete direction; avoid taking over implementation or repeating another participant's answer.",
+          "description": "Frames the problem, identifies constraints, and plans coherent work.",
+          "display_name": "Architect",
+          "role": "architect",
+          "role_id": "architect"
+        },
+        {
+          "collaboration_focus": "Contribute implementation-specific evidence, feasibility, and exact changes; when a durable handoff targets you, perform the bounded read-only work now and report evidence or an exact-patch candidate; surface blockers instead of restating the plan or promising future work.",
+          "description": "Turns agreed direction into concrete, bounded implementation work.",
+          "display_name": "Builder",
+          "role": "execute",
+          "role_id": "builder"
+        },
+        {
+          "collaboration_focus": "Independently verify correctness, regressions, and proof gaps; respond only when review adds information the Room does not already have.",
+          "description": "Reviews claims and results against durable evidence and invariants.",
+          "display_name": "Reviewer",
+          "role": "review",
+          "role_id": "reviewer"
+        },
+        {
+          "collaboration_focus": "Stress-test consensus with distinct counterevidence and bounded alternatives; do not manufacture objections after concerns are already resolved.",
+          "description": "Challenges assumptions, proposals, and hidden failure modes.",
+          "display_name": "Critic",
+          "role": "critic",
+          "role_id": "critic"
+        }
+      ],
+      "template_id": "builtin.development",
+      "unavailable_providers": [
+        "codex"
+      ]
+    },
+    {
+      "available": true,
+      "collaboration": {
+        "lead_role": "architect",
+        "mode": "addressed"
+      },
+      "description": "Cross-vendor pair: Claude leads product judgment and synthesis while Antigravity researches broadly; no Codex login required.",
+      "display_name": "Heterogeneous Duo",
+      "participants": [
+        {
+          "collaboration_focus": "Use when framing the problem, shaping the user-facing experience, or synthesizing the Room decision; not for exhaustive verification.",
+          "description": "Owns product judgment, frontend and UX taste, and final synthesis of the Room's work.",
+          "display_name": "Product Lead",
+          "role": "architect",
+          "role_id": "product_lead"
+        },
+        {
+          "collaboration_focus": "Use for breadth, speed, and long-context reading; not for final decisions.",
+          "description": "Runs fast, broad research and long-context reading to surface relevant evidence early.",
+          "display_name": "Researcher",
+          "role": "research",
+          "role_id": "researcher"
+        }
+      ],
+      "template_id": "builtin.heterogeneous-duo",
+      "unavailable_providers": []
+    },
+    {
+      "available": false,
+      "collaboration": {
+        "lead_role": "architect",
+        "mode": "addressed"
+      },
+      "description": "Cross-vendor trio: Claude leads product judgment, Antigravity researches broadly, and Codex implements and reviews rigorously.",
+      "display_name": "Heterogeneous Trio",
+      "participants": [
+        {
+          "collaboration_focus": "Use when framing the problem, shaping the user-facing experience, or synthesizing the Room decision; not for exhaustive verification.",
+          "description": "Owns product judgment, frontend and UX taste, and final synthesis of the Room's work.",
+          "display_name": "Product Lead",
+          "role": "architect",
+          "role_id": "product_lead"
+        },
+        {
+          "collaboration_focus": "Use for breadth, speed, and long-context reading; not for final decisions.",
+          "description": "Runs fast, broad research and long-context reading to surface relevant evidence early.",
+          "display_name": "Researcher",
+          "role": "research",
+          "role_id": "researcher"
+        },
+        {
+          "collaboration_focus": "Use for rigorous backend implementation and critical review; not for UI taste or product synthesis.",
+          "description": "Implements and critically reviews backend work with rigorous verification discipline.",
+          "display_name": "Backend Reviewer",
+          "role": "review",
+          "role_id": "backend_reviewer"
+        }
+      ],
+      "template_id": "builtin.heterogeneous-trio",
+      "unavailable_providers": [
+        "codex"
+      ]
+    },
+    {
+      "available": true,
+      "collaboration": {
+        "lead_role": "architect",
+        "mode": "addressed"
+      },
+      "description": "Cost-aware trio: Claude leads product judgment, Antigravity researches broadly, and a low-cost OpenCode Agent verifies results; no Codex login required.",
+      "display_name": "Heterogeneous Trio (OpenCode verifier)",
+      "participants": [
+        {
+          "collaboration_focus": "Use when framing the problem, shaping the user-facing experience, or synthesizing the Room decision; not for exhaustive verification.",
+          "description": "Owns product judgment, frontend and UX taste, and final synthesis of the Room's work.",
+          "display_name": "Product Lead",
+          "role": "architect",
+          "role_id": "product_lead"
+        },
+        {
+          "collaboration_focus": "Use for breadth, speed, and long-context reading; not for final decisions.",
+          "description": "Runs fast, broad research and long-context reading to surface relevant evidence early.",
+          "display_name": "Researcher",
+          "role": "research",
+          "role_id": "researcher"
+        },
+        {
+          "collaboration_focus": "Use for repeated checklist-style review, fact-checking a summary or plan against its source, and audits of a handed-off result; prefer it over a costlier participant for routine checks. Back each pass or fail with the exact source line or the read-only check you ran, then hand the findings to whoever owns the next step. Not for product judgment or open-ended design.",
+          "description": "Low-cost participant for high-volume, mechanical verification: checks claims, steps, and results item by item against the source material and the stated requirements, and reports concrete gaps.",
+          "display_name": "Verifier",
+          "role": "review",
+          "role_id": "verifier"
+        }
+      ],
+      "template_id": "builtin.heterogeneous-trio-opencode",
+      "unavailable_providers": []
+    }
+  ],
+  "schema_version": "room_setup_options/v1"
+}

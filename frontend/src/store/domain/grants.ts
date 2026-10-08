@@ -4,7 +4,10 @@ import type { XmuseApiErrorShape } from "@/lib/types";
 import type { DomainCapability, DomainSelector } from "./shared";
 
 export type RoomGrantCache = {
+  /** Grants whose `conversation_ids` include this Room. */
   grants: PluginGrant[];
+  /** Live grants of a known host that leave this Room out (main_window_control_v1 §3). */
+  elsewhere: PluginGrant[];
   loading: boolean;
   requestGeneration: number;
   consecutiveFailures: number;

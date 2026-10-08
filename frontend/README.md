@@ -3,22 +3,44 @@
 The browser Workroom consumes bounded Room projections and durable invalidation events. It
 is never authority for messages, Agent outcomes, attempts, or controls.
 
-## Status: the presentation layer was removed on purpose
+## Status
 
-The components, the styles and the UI end-to-end specs were deleted (last commit that still has
-them: `1eb3337`) so the presentation can be rebuilt from a clean base. `/` and
-`/rooms/{conversation_id}` serve a placeholder (`src/app/reset-notice.tsx`). What stays is the
-adaptation layer, and it is the contract the new UI builds on:
+The presentation layer was rebuilt (design: timeline first, trust-first board, one decision
+queue). Its place in the product is the **evidence layer**: the human glances and decides in a
+pane inside the agent app (the Claude Code mod's status line and `/xmuse pane`, the OpenCode
+plugin), and that pane links here for what only the Web reads: review material, integration
+and verification detail, the full timeline, runtime recovery.
 
 | Path | Role |
 | --- | --- |
-| `src/lib` | API clients, projection normalizers (defence-in-depth sanitising of `AgentText`), view models, label tables, the board/review/integration/grant types |
+| `src/components/ui` | primitives: `cx`, buttons, `AgentQuote`, avatars, Sheet/Dialog/ConfirmDialog, diff view |
+| `src/components/shell` | the persistent shell (root layout): room rail, header, room view, new-room dialog, theme |
+| `src/components/room` | timeline, composer, turn status, agent preview, plain-text-safe Markdown |
+| `src/components/board` | status strip, work panel (view stack), module rows and file, integration, verification gates, contracts, splits, events, deep links |
+| `src/components/decisions` | review dialog, execution view, decision-queue cards |
+| `src/components/system` | system sheet (runtime and recovery, execution policy, plugin grants) |
+| `src/lib` | API clients, projection normalizers (defence-in-depth sanitising of `AgentText`), view models, label tables, the board/review/integration/verification/grant types |
 | `src/store` | the zustand store, sync coordination, persistence, caches |
 | `src/app/api` | fixed same-origin routes that add the server-only operator token; the browser never holds it |
-| `e2e/room-first-real.spec.ts`, `room-soak-real.spec.ts`, `playwright*.config.ts` | the backend's real-acceptance harness: keep the prompts and the acceptance contract; the selectors encode the removed UI and must be rewritten with the new one |
-| `src/app/globals.css` | kept as a path (backend tooling names it); its content is a placeholder |
+| `e2e/` | `workroom.spec.ts` and `smoke.spec.ts` run against fixtures (`e2e/fixtures/workroom`, captured from the chat API, and `docs/contracts/fixtures/board_v2`); `room-first-real.spec.ts` and `room-soak-real.spec.ts` are the backend's real-acceptance harness |
 
-Rules the rebuilt UI must keep (they are product invariants, not styling):
+UI copy lives in the components that show it; status words come from the `src/lib/*-labels.ts`
+tables shared with the Claude Code mod and `xmuse-ctl`. Styling is Tailwind v4, CSS-first:
+the tokens are in `src/app/globals.css` (`@theme`, OKLCH, light and dark under `data-theme`).
+
+Deep links: `/rooms/{conversation_id}?module=…` (or `split`, `integration`, `execution`,
+`contract` with an optional `v`) opens the work panel on that view; `?review={module_id}` opens
+the operator review while it is still pending. The address follows the panel.
+
+Plugin grants are listed and revoked here; pairing is terminal-only
+(`xmuse-workroom pair --host … --room …`, `main_window_control_v1.md` §3), so no pairing code
+reaches the browser.
+
+Not built yet: the native Codex Agent Console (`room-soak-real.spec.ts` lines 324–330 wait for
+it), a command palette, board event cards in the timeline, the lessons view (waits for
+`capabilities.lessons`).
+
+Rules the UI keeps (they are product invariants, not styling):
 
 - `accepted` is the only completion value. A module the owner calls `done` is a claim and must
   never look like a verified one; verification, review and integration are separate axes.
@@ -30,10 +52,8 @@ Rules the rebuilt UI must keep (they are product invariants, not styling):
   Web only; plugins and the CLI never read them.
 - The shared timeline stays primary; the Workbench is a progressive dock, not a Dashboard.
 - Capability gating comes from `capabilities.*` of the projection, never from display hints.
-- Keep the accessibility behaviour the previous UI had: focus return after dialogs, `aria-live`
-  that never announces secrets (pairing codes), axe-clean pages.
-
-`npm run test:e2e` currently runs one smoke spec; the Room flows return with the new UI.
+- Accessibility: focus returns after dialogs, `aria-live` never announces secrets, pages are
+  axe-clean (the e2e specs check both themes).
 
 The unified local lifecycle currently supports Linux and WSL and requires Node.js 20.9+ and
 npm. Backend setup is in
@@ -85,17 +105,6 @@ Console actions, and Runtime recovery go through fixed same-origin Next routes t
 Origin/Host, JSON type and size, fixed
 upstream paths, timeouts, response bounds, and redirect behavior before adding the token
 server-side.
-
-The right-side Workbench separates three evidence domains instead of combining them in one
-Inspector: `Agent` presents one participant-bound Codex App Server session, `Room` presents
-shared turn/execution/memory evidence, and `Runtime` presents process-level health and guarded
-recovery. The Agent tab exposes discovered Goal lifecycle, model/effort, one-turn Plan mode,
-steer, interrupt, compact, review, bounded native events, and Room observation-frontier
-evidence. Sending from its Console is not Room speech, although actions such as Goal and
-interrupt can still affect that participant's runtime state.
-`/goal`, `/plan`, and the other listed aliases are shortcuts for those descriptors, not a raw
-CLI or RPC surface. Shared Room messages never parse slash commands, and native progress never
-becomes Agent speech in the Room timeline.
 
 New Room setup choices come from the bounded, read-only
 `GET /api/chat/room-setup-options` projection. The browser displays server-authored roster

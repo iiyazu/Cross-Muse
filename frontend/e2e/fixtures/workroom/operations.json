@@ -1,0 +1,76 @@
+{
+  "actions": {
+    "rebuild_memory_index": {
+      "available": false,
+      "confirmation_required": true,
+      "expected_incident_id": null,
+      "href": "/api/chat/operator/memory-runtime/rebuild",
+      "method": "POST",
+      "pending": false,
+      "phase": null,
+      "status": null
+    },
+    "recover_runtime": {
+      "available": true,
+      "confirmation_required": true,
+      "expected_incident_id": "incident_182e38e736d58cad1cfa5c996b04d231",
+      "href": "/api/chat/operator/room-runtime/recover",
+      "method": "POST",
+      "mode": "start"
+    }
+  },
+  "counts": {
+    "active_delivery": 0,
+    "cancel_pending": 0,
+    "exhausted": 0,
+    "provider_cleanup_pending": 0,
+    "recovery_pending": 0,
+    "retained_cleanup": 0
+  },
+  "generated_at": "2026-10-06T04:40:03.899847Z",
+  "incident_total": 1,
+  "incidents": [
+    {
+      "code": "room_runtime_stopped",
+      "conversation_id": null,
+      "conversation_title": null,
+      "detail": "The local Room runtime is not ready.",
+      "incident_id": "incident_182e38e736d58cad1cfa5c996b04d231",
+      "kind": "runtime",
+      "next_action": "recover_runtime",
+      "observation_id": null,
+      "participant_display_name": null,
+      "participant_id": null,
+      "severity": "blocked",
+      "started_at": null,
+      "title": "Room runtime needs attention"
+    }
+  ],
+  "overall": "blocked",
+  "proof_boundary": "derived_from_room_runtime_and_chat_db_not_authority",
+  "runtime": {
+    "host": {
+      "active_delivery_count": 0,
+      "code": "room_runner_host_health_unknown",
+      "retained_cleanup_count": 0,
+      "state": "unknown"
+    },
+    "mcp": {
+      "code": "room_mcp_stopped",
+      "state": "stopped"
+    },
+    "memory": {
+      "code": "memoryos_disabled",
+      "consecutive_restart_count": 0,
+      "enabled": false,
+      "last_healthy_at": null,
+      "next_retry_at": null,
+      "state": "disabled"
+    },
+    "runner": {
+      "code": "room_runner_stopped",
+      "state": "stopped"
+    }
+  },
+  "schema_version": "room_operations_projection/v2"
+}
