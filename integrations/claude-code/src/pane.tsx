@@ -5,7 +5,7 @@
 
 import type { XmuseBoard, XmuseCache, XmuseGrantMeta, XmuseModule } from "../types/index";
 import { attentionTarget, statusText } from "./board_state";
-import { grantExpired, remainingMmSs } from "./grant_state";
+import { grantExpired, remainingMmSs, roomNotCoveredText } from "./grant_state";
 import {
   ACCEPTED_BADGE,
   displayState,
@@ -194,20 +194,28 @@ export function buildPaneNodes(cache: XmuseCache, nowMs: number = Date.now()): P
   const boundId = cache.binding;
   const grantLive = grant !== null && boundId !== null && !grantExpired(grant.expiresAt, nowMs);
   const liveGrant = grantLive ? grant : null;
+  const pairingInput: PaneNode = {
+    type: "input",
+    key: "xmuse-pairing",
+    label: "配对码",
+    placeholder: "ABCD-EFGH",
+    submitLabel: "配对",
+    value: "",
+  };
   if (liveGrant === null) {
     nodes.push({ type: "text", text: "在终端运行 xmuse-workroom pair 生成配对码，然后输入这里。" });
     if (boundId !== null) {
       // A new grant covers only the Rooms named at pairing; name the bound one.
       nodes.push({ type: "text", text: "继续当前房间: xmuse-workroom pair --room " + safe(boundId, 64), dim: true });
     }
-    nodes.push({
-      type: "input",
-      key: "xmuse-pairing",
-      label: "配对码",
-      placeholder: "ABCD-EFGH",
-      submitLabel: "配对",
-      value: "",
-    });
+    nodes.push(pairingInput);
+  } else if (boundId !== null && !liveGrant.conversationIds.includes(boundId)) {
+    // A re-pair without --room leaves the bound Room out; a bare "authorized"
+    // with no buttons reads as broken, so say why and take the new code here.
+    nodes.push({ type: "text", text: "已授权（不含当前房间） · 剩余 " + remainingMmSs(liveGrant.expiresAt, nowMs) });
+    nodes.push({ type: "text", text: roomNotCoveredText(boundId), dim: true });
+    nodes.push(pairingInput);
+    nodes.push({ type: "button", key: "xmuse-revoke", label: "撤销授权" });
   } else {
     nodes.push({ type: "text", text: "已授权 · 剩余 " + remainingMmSs(liveGrant.expiresAt, nowMs) });
     nodes.push({ type: "button", key: "xmuse-revoke", label: "撤销授权" });

@@ -833,6 +833,21 @@ test("pairing copy names the bound room for a re-pair", OPTIONS, async () => {
   expect(texts.some((t) => t.includes("xmuse-workroom pair --room " + MWC_CID))).toBe(true);
 });
 
+test("a live grant that leaves the bound room out says so and takes a new code", OPTIONS, async () => {
+  const at = Date.parse("2026-01-01T00:00:00Z");
+  const otherRoom = buildPaneNodes(mwcCache({ ...MWC_GRANT, conversationIds: ["conv_other_room"] }), at);
+  const texts = nodeTexts(otherRoom);
+  expect(texts.some((t) => t.startsWith("已授权（不含当前房间）"))).toBe(true);
+  expect(texts.some((t) => t.startsWith("已授权 · "))).toBe(false);
+  expect(texts.some((t) => t.includes("xmuse-workroom pair --room " + MWC_CID))).toBe(true);
+  expect(nodeKeys(otherRoom)).toContain("xmuse-pairing");
+  expect(nodeKeys(otherRoom)).toContain("xmuse-revoke");
+
+  const covered = buildPaneNodes(mwcCache({ ...MWC_GRANT }), at);
+  expect(nodeTexts(covered).some((t) => t.startsWith("已授权 · "))).toBe(true);
+  expect(nodeKeys(covered)).not.toContain("xmuse-pairing");
+});
+
 test("object without a reason asks for the reason first", OPTIONS, async () => {
   const nodes = buildPaneNodes(
     mwcCache(

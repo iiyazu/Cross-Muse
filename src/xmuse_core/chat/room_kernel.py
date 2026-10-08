@@ -145,9 +145,13 @@ def normalize_participant_outcome(
         raise ValueError("room_max_causal_depth_invalid")
     payload = {} if outcome_payload is None else outcome_payload
     if not isinstance(payload, dict):
-        raise ValueError("room_observation_payload_invalid")
-    if set(payload) - OUTCOME_PAYLOAD_FIELDS:
-        raise ValueError("room_observation_payload_invalid")
+        raise ValueError("room_observation_payload_invalid: outcome_payload must be an object")
+    unknown = sorted(str(key) for key in set(payload) - OUTCOME_PAYLOAD_FIELDS)
+    if unknown:
+        raise ValueError(
+            "room_observation_payload_invalid: unknown outcome_payload fields "
+            f"{', '.join(unknown)}; allowed: {', '.join(sorted(OUTCOME_PAYLOAD_FIELDS))}"
+        )
 
     def text_field(name: str) -> str:
         value = payload.get(name)
