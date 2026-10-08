@@ -1397,3 +1397,73 @@ def test_room_list_query_count_does_not_grow_with_rooms(tmp_path, monkeypatch):
     assert {room["latest_visible_room_seq"] for room in projection["rooms"]} == {1}
     assert len(many_reads) == len(first_reads)
     assert len(many_reads) <= 6
+
+
+def test_participant_state_follows_work_completed_after_an_exhausted_observation(tmp_path):
+    path, conversation_id, reviewer, _ = _room(tmp_path)
+    store = RoomKernelStore(path)
+    store.post_human_activity(
+        conversation_id=conversation_id,
+        human_id="alice",
+        content="first request, whose deliveries all fail",
+        client_request_id="exhausted-first",
+    )
+    claim = store.claim_next_observation(
+        conversation_id=conversation_id,
+        participant_id=reviewer.participant_id,
+        lease_owner="host-1",
+    )
+    assert claim is not None
+    dead_observation_id = claim["observation"]["observation_id"]
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
+        conn.execute(
+            "update room_observation_attempts set state = 'failed', "
+            "finished_at = '2026-07-10T10:00:00Z', updated_at = '2026-07-10T10:00:00Z' "
+            "where attempt_id = ?",
+            (claim["attempt"]["attempt_id"],),
+        )
+        conn.execute(
+            "update room_observations set control_state = 'exhausted' where observation_id = ?",
+            (dead_observation_id,),
+        )
+
+    def reviewer_view():
+        projection = build_room_chat_projection(conversation_id, tmp_path)
+        return next(
+            item
+            for item in projection["participants"]
+            if item["participant_id"] == reviewer.participant_id
+        )
+
+    assert reviewer_view()["state"] == "exhausted"
+
+    store.post_human_activity(
+        conversation_id=conversation_id,
+        human_id="alice",
+        content="second request, answered",
+        client_request_id="exhausted-second",
+    )
+    _complete(
+        store,
+        conversation_id=conversation_id,
+        participant_id=reviewer.participant_id,
+        lease_owner="host-1",
+        request_id="answer-second",
+        outcome_type="respond",
+        payload={"content": "done"},
+    )
+    later = reviewer_view()
+    assert later["state"] == "responded"
+    # The dead observation stays the frontier with its retry, until the operator acts.
+    assert later["frontier"]["observation_id"] == dead_observation_id
+    assert later["frontier"]["control_state"] == "exhausted"
+    assert later["frontier"]["actions"]["retry"]["available"] is True
+
+    # An outcome older than the failure does not hide it.
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
+        conn.execute(
+            "update room_observation_attempts set finished_at = '2999-01-01T00:00:00Z' "
+            "where attempt_id = ?",
+            (claim["attempt"]["attempt_id"],),
+        )
+    assert reviewer_view()["state"] == "exhausted"
