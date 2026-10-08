@@ -55,6 +55,7 @@ from xmuse_core.chat.room_codex_native_runtime import (
 from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
+from xmuse_core.chat.room_mcp_contract import ROOM_TOOL_NAMES
 from xmuse_core.chat.room_opencode_sandbox import (
     build_opencode_sandbox_command,
     resolve_bwrap_executable,
@@ -91,7 +92,6 @@ DEFAULT_DELIVERY_TIMEOUT_S = 180.0
 DEFAULT_CLEANUP_GRACE_S = 8.0
 MCP_STARTUP_PROBE_TIMEOUT_S = 10.0
 MCP_REQUEST_TIMEOUT_S = 1.0
-ROOM_OUTCOME_TOOL = "chat_room_submit_outcome"
 ROOM_CODEX_HOME_RELATIVE = Path("runtime") / "room-codex-home"
 CODEX_AUTH_FILE_NAME = "auth.json"
 CLAUDE_ACP_FLAG_ENV = "XMUSE_CLAUDE_ACP"
@@ -788,11 +788,17 @@ def _probe_room_mcp_once(host: str, port: int) -> tuple[bool, bool]:
         with urllib.request.urlopen(request, timeout=MCP_REQUEST_TIMEOUT_S) as response:  # noqa: S310
             tools_payload = _read_bounded_json(response)
         tools = tools_payload.get("result", {}).get("tools")
+        names = (
+            [tool.get("name") for tool in tools if isinstance(tool, dict)]
+            if isinstance(tools, list)
+            else []
+        )
+        # The exact published surface: the outcome tool plus the board tools, nothing else.
         tools_ok = (
             isinstance(tools, list)
-            and len(tools) == 1
-            and isinstance(tools[0], dict)
-            and tools[0].get("name") == ROOM_OUTCOME_TOOL
+            and len(names) == len(tools)
+            and len(names) == len(set(names))
+            and set(names) == set(ROOM_TOOL_NAMES)
         )
     except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError, AttributeError):
         tools_ok = False
