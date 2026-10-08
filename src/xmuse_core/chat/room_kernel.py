@@ -480,7 +480,14 @@ class RoomKernelStore:
         mentions: list[str] | None = None,
         display_mentions: list[str] | None = None,
         delivery_mode: str = "active",
+        provenance: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        """Post one Human message.
+
+        ``provenance`` (``{"via": "plugin:<host>", "grant_id": ...}``) records a
+        message sent from a host plugin (main_window_control_v1 section 4.2) in
+        the activity payload; Web messages carry none.
+        """
         if not isinstance(human_id, str) or not human_id.strip():
             raise ValueError("room_human_id_required")
         if not isinstance(content, str) or not content.strip():
@@ -524,6 +531,10 @@ class RoomKernelStore:
             "causation_id": causation_id,
             "correlation_id": correlation_id,
         }
+        if provenance:
+            # Only when present, so replays of requests stored before provenance existed
+            # keep their fingerprint.
+            semantic["provenance"] = dict(provenance)
         fingerprint = sha256(_json(semantic).encode()).hexdigest()
         now = _now()
         with self._connect() as conn:
@@ -599,6 +610,8 @@ class RoomKernelStore:
                 addressed = policy is not None and str(policy["mode"]) == "addressed"
                 lead_participant_id = policy["lead_participant_id"] if policy is not None else None
                 payload = {"content": content, "mentions": effective_mentions}
+                if provenance:
+                    payload.update(provenance)
                 if addressed:
                     mentioned_rows = [
                         participant

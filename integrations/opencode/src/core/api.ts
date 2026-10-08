@@ -247,6 +247,8 @@ export function collectSnippets(data: unknown, cap = 6): { field: string; text: 
 function normalizeReview(v: unknown): XmuseReviewInfo {
   const none: XmuseReviewInfo = {
     status: "none",
+    review_id: null,
+    digest: null,
     reviewer_kind: null,
     escalated_from_present: false,
     findings_count: { blocker: 0, major: 0, minor: 0 },
@@ -258,8 +260,12 @@ function normalizeReview(v: unknown): XmuseReviewInfo {
   const reviewer_kind = asString(r["reviewer_kind"]);
   const esc = r["escalated_from"];
   const fc = asRecord(r["findings_count"]);
+  const reviewId = asString(r["review_id"]);
+  const digest = asString(r["digest"]);
   return {
     status,
+    review_id: reviewId !== null && reviewId !== "" ? reviewId : null,
+    digest: digest !== null && /^sha256:[0-9a-f]{64}$/.test(digest) ? digest : null,
     reviewer_kind,
     escalated_from_present: esc !== null && esc !== undefined,
     findings_count: {

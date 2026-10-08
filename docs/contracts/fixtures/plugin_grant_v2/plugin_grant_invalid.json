@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "plugin_grant_invalid",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Plugin grant is missing or invalid",
+    "retryable": false
+  }
+}

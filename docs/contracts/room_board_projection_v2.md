@@ -963,6 +963,11 @@ the bounded `error` retries; the invariants above; and the user's checkout is ne
 
 ## 12. Changelog
 
+- 2026-10-06 — main-window control, compatible addition: `review.decided_via` and the `review`
+  event's `decided_via` may also be `plugin:<host>` (a Human review decided from a host plugin
+  under a grant, `main_window_control_v1.md` §4.4). Consumers render an unknown value as a
+  fixed word.
+
 - 2026-10-05 — integration (M2b), compatible additions: `capabilities.integrations: 1`, the
   host-owned integration branch rebuilt from accepted candidates (incumbents first, fallback to
   the integrated version on conflict, bounded automatic retry of `error`), `RoomIntegration`,

@@ -409,6 +409,7 @@ class RoomApplicationService:
         expected_digest: str | None = None,
         operator_identity: str,
         decided_via: str = "web",
+        grant_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         # The digest is the human's proof of what they were shown; the server never
@@ -423,6 +424,7 @@ class RoomApplicationService:
                 expected_digest=expected_digest or "",
                 operator_identity=operator_identity,
                 decided_via=decided_via,
+                grant_id=grant_id,
                 now=now,
             )
         except RoomApplicationError:

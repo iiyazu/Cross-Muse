@@ -151,6 +151,7 @@ class WorkroomPaths:
     legacy_mcp_pid_file: Path
     memoryos_status_file: Path
     memoryos_derived_dir: Path
+    operator_token_file: Path
 
     @classmethod
     def resolve(
@@ -186,6 +187,7 @@ class WorkroomPaths:
             legacy_mcp_pid_file=root / "workroom_mcp_server.pid.json",
             memoryos_status_file=authority.memoryos_status,
             memoryos_derived_dir=authority.memoryos_derived,
+            operator_token_file=authority.operator_token,
         )
 
 

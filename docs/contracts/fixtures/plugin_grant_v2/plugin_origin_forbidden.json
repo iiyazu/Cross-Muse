@@ -1,0 +1,10 @@
+{
+  "detail": {
+    "code": "plugin_origin_forbidden",
+    "correlation_id": null,
+    "details": {},
+    "field_errors": {},
+    "message": "Cross-origin plugin requests are forbidden",
+    "retryable": false
+  }
+}

@@ -3752,6 +3752,7 @@ class RoomBoardStore:
         expected_digest: str,
         operator_identity: str,
         decided_via: str = "web",
+        grant_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if not isinstance(operator_identity, str) or not operator_identity.strip():
@@ -3762,9 +3763,20 @@ class RoomBoardStore:
         clean_findings = normalize_review_findings(findings)
         clean_verdict = normalize_review_verdict(verdict, clean_findings)
 
-        # 2. decided_via must be exactly "web"
-        if decided_via != "web":
+        # 2. decided_via is "web" or "plugin:<host>" (main_window_control_v1 section 4.4);
+        # a plugin decision carries its grant id, a web decision none.
+        if decided_via != "web" and not (
+            DECIDED_VIA_RE.match(decided_via) and decided_via.startswith("plugin:")
+        ):
             raise ValueError("room_board_decided_via_invalid")
+        if decided_via.startswith("plugin:"):
+            if not isinstance(grant_id, str) or not grant_id:
+                raise ValueError(
+                    "room_board_grant_id_invalid: grant_id required for plugin decisions"
+                )
+        elif grant_id is not None:
+            raise ValueError("room_board_grant_id_invalid: grant_id only for plugin decisions")
+        provenance: dict[str, Any] = {} if grant_id is None else {"grant_id": grant_id}
 
         if not isinstance(review_id, str) or not review_id.strip():
             raise ValueError("room_board_review_unknown")
@@ -3864,6 +3876,7 @@ class RoomBoardStore:
                         "author_participant_id": author_id,
                         "decided_via": decided_via,
                         "operator_identity": operator_identity,
+                        **provenance,
                     },
                     stamp=stamp,
                 )
@@ -3874,6 +3887,7 @@ class RoomBoardStore:
                         "findings": clean_findings,
                         "decided_via": decided_via,
                         "operator_identity": operator_identity,
+                        **provenance,
                     }
                 )
                 conn.execute(

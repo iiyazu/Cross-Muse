@@ -114,6 +114,11 @@ print(
         "/api/chat/plugin/grants/exchange",
         "/api/chat/plugin/grants/revoke",
         "/api/chat/plugin/board-splits/{split_id}/decision",
+        "/api/chat/operator/plugin-grants/revoke-host",
+        "/api/chat/plugin/rooms",
+        "/api/chat/plugin/rooms/{conversation_id}/messages",
+        "/api/chat/plugin/board-reviews/{review_id}/decision",
+        "/api/chat/plugin/board-reviews/{review_id}/material",
     }
 
 

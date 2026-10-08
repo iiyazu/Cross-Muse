@@ -3,7 +3,7 @@
 // labelled, re-sanitized client-side and truncated — and only after the
 // person pressed the expand Button.
 
-import type { XmuseBoard, XmuseCache, XmuseModule } from "../types/index";
+import type { XmuseBoard, XmuseCache, XmuseGrantMeta, XmuseModule } from "../types/index";
 import { attentionTarget, statusText } from "./board_state";
 import { grantExpired, remainingMmSs } from "./grant_state";
 import {
@@ -16,7 +16,7 @@ import {
   reviewStatusWord,
   shortGreenHead,
 } from "./labels";
-import { roomLink, safe, safeId, shortRev, shortRoom } from "./text";
+import { safe, safeId, shortRev, shortRoom } from "./text";
 
 export type PaneEnv = {
   ui: {
@@ -105,7 +105,78 @@ export type PaneNode =
   | { type: "link"; key: string; label: string; href: string }
   | { type: "input"; key: string; label: string; placeholder?: string; submitLabel?: string; value?: string };
 
-export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number = Date.now()): PaneNode[] {
+// The grant covers `scope` on `room`: the Room is in conversation_ids and
+// the scope is granted (main_window_control_v1 §2, §4 check order).
+function grantCovers(grant: XmuseGrantMeta, room: string, scope: string): boolean {
+  return grant.conversationIds.includes(room) && grant.scopes.includes(scope);
+}
+
+// Review decision block for one module (main_window_control_v1 §4.4–§4.5).
+// Only for a review the Human must decide, only under a live grant covering
+// this Room with board.review.decide. Control labels are fixed words; the
+// review id lives only in button keys, never in a label. The patch is
+// agent-authored: drawn as plain Text, labelled untrusted, sanitized.
+function reviewDecisionNodes(
+  cache: XmuseCache,
+  grant: XmuseGrantMeta,
+  room: string,
+  reviewsOn: boolean,
+  m: XmuseModule,
+): PaneNode[] {
+  if (!reviewsOn) return [];
+  const reviewId = m.review.review_id;
+  if (
+    m.review.status !== "pending" ||
+    m.review.reviewer_kind !== "operator" ||
+    reviewId === null ||
+    reviewId === "" ||
+    !grantCovers(grant, room, "board.review.decide")
+  ) {
+    return [];
+  }
+  const pending = cache.confirming;
+  // An objection first collects the human's reason, then the digest guard;
+  // an endorsement goes straight to the digest guard.
+  if (pending !== null && pending.kind === "review" && pending.reviewId === reviewId) {
+    if (pending.decision === "object" && pending.reason === null) {
+      return [
+        {
+          type: "input",
+          key: "xmuse-review-reason",
+          label: "反对理由",
+          placeholder: "写明反对的理由",
+          value: "",
+        },
+      ];
+    }
+    return [
+      {
+        type: "input",
+        key: "xmuse-confirm",
+        label: "输入摘要前 6 位以确认",
+        placeholder: "请输入前 6 位",
+        value: "",
+      },
+      { type: "button", key: "xmuse-cancel-confirm", label: "取消" },
+    ];
+  }
+  const material = cache.material;
+  if (material !== null && material.reviewId === reviewId) {
+    return [
+      {
+        type: "text",
+        text: material.truncated ? "复核材料 · agent 撰写，未验证（有截断）" : "复核材料 · agent 撰写，未验证",
+      },
+      { type: "text", text: safe(material.text, 2000) },
+      { type: "button", key: "xmuse-endorse-" + reviewId, label: "认可" },
+      { type: "button", key: "xmuse-object-" + reviewId, label: "反对" },
+      { type: "button", key: "xmuse-close-material", label: "关闭材料" },
+    ];
+  }
+  return [{ type: "button", key: "xmuse-material-" + reviewId, label: "查看复核材料" }];
+}
+
+export function buildPaneNodes(cache: XmuseCache, nowMs: number = Date.now()): PaneNode[] {
   const nodes: PaneNode[] = [];
   nodes.push({ type: "text", text: headerLine(cache) });
   nodes.push({ type: "text", text: statusText(cache), dim: true });
@@ -118,7 +189,7 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
   const grantLive = grant !== null && boundId !== null && !grantExpired(grant.expiresAt, nowMs);
   const liveGrant = grantLive ? grant : null;
   if (liveGrant === null) {
-    nodes.push({ type: "text", text: "在 Web 看板的“插件授权”生成配对码，然后输入这里。" });
+    nodes.push({ type: "text", text: "在终端运行 xmuse-workroom pair 生成配对码，然后输入这里。" });
     nodes.push({
       type: "input",
       key: "xmuse-pairing",
@@ -154,12 +225,10 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
   if (roomLine !== "") nodes.push({ type: "text", text: roomLine });
   for (const m of board.modules.slice(0, 100)) {
     nodes.push({ type: "text", text: moduleLine(m, board.reviews === 1, integrationsOn) });
-    // An operator-pending review links to the room page, same style as
-    // the proposed-split link. Room page only: no review id and no patch
-    // reference anywhere in the pane.
-    if (board.reviews === 1 && m.review.status === "pending" && m.review.reviewer_kind === "operator") {
-      const reviewHref = roomLink(webUrl, summary.conversation_id);
-      if (reviewHref !== "") nodes.push({ type: "link", key: "review-" + safeId(m.module_id), label: "在 Web 复核", href: reviewHref });
+    // A review the Human must decide is decided from this pane under the
+    // grant (§4.4–§4.5): no Web round-trip, no blind decision.
+    if (liveGrant !== null && boundId !== null) {
+      for (const n of reviewDecisionNodes(cache, liveGrant, boundId, board.reviews === 1, m)) nodes.push(n);
     }
     if (m.failed > 0 && m.gate_ids.length > 0) {
       nodes.push({ type: "text", text: "门禁: " + m.gate_ids.slice(0, 6).join(" ") });
@@ -184,13 +253,12 @@ export function buildPaneNodes(cache: XmuseCache, webUrl: string, nowMs: number 
 
   for (const row of board.splits.slice(0, 10)) {
     if (row.status !== "proposed") continue;
-    const href = roomLink(webUrl, summary.conversation_id);
     nodes.push({ type: "text", text: "待审批 " + safe(row.split_id, 64) });
-    if (href !== "") nodes.push({ type: "link", key: "split-" + safe(row.split_id, 64), label: "在 Web 审批", href });
-    // Decision buttons appear only for a live grant bound to this room and
-    // a split that carries a digest guard. Labels stay fixed words.
+    // Decision buttons appear only for a live grant covering this Room with
+    // board.split.decide and a split that carries a digest guard. Labels
+    // stay fixed words.
     const eligible =
-      grantLive && grant !== null && boundId !== null && grant.conversationId === boundId && row.digest !== "";
+      grantLive && grant !== null && boundId !== null && grantCovers(grant, boundId, "board.split.decide") && row.digest !== "";
     if (!eligible) continue;
     const pending = cache.confirming;
     if (pending !== null && pending.splitId === row.split_id) {

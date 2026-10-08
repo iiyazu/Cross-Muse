@@ -238,7 +238,12 @@
         "reviewer_family": { "type": ["string", "null"] },
         "escalated_from": { "$ref": "#/$defs/nullableEscalation" },
         "findings_count": { "$ref": "#/$defs/findingsCount" },
-        "decided_via": { "enum": ["board_tool", "web", null] },
+        "decided_via": {
+          "anyOf": [
+            { "enum": ["board_tool", "web", null] },
+            { "type": "string", "pattern": "^plugin:[a-z0-9][a-z0-9_-]{0,31}$" }
+          ]
+        },
         "updated_at": { "type": ["string", "null"] },
         "actions": {
           "type": "object",
@@ -737,7 +742,12 @@
                 },
                 "findings_total": { "type": "integer", "minimum": 0 },
                 "summary": { "$ref": "#/$defs/agentText" },
-                "decided_via": { "enum": ["board_tool", "web"] }
+                "decided_via": {
+                  "anyOf": [
+                    { "enum": ["board_tool", "web"] },
+                    { "type": "string", "pattern": "^plugin:[a-z0-9][a-z0-9_-]{0,31}$" }
+                  ]
+                }
               },
               "required": [
                 "review_id",

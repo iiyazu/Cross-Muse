@@ -1,14 +1,15 @@
-"""Plugin grant backend tests (``docs/contracts/plugin_grant_v1.md``, threats T1-T15).
+"""Plugin grant backend tests (``plugin_grant_v1.md`` + ``main_window_control_v1.md``).
 
 Threat-to-test map (the ``p3`` threat-model rows are named by the contract):
-T1 privilege confusion both directions; T2 cross-conversation confusion;
+T1 privilege confusion both directions; T2 cross-conversation confusion (Room set);
 T3 split-decision rules and provenance; T4 clock rollback; T5 operator-token
-rotation/absence; T6 scope confinement (only ``board.split.decide``);
+rotation/absence; T6 scope confinement (403, not a failed bearer);
 T7 secrets never in logs or payloads; T8 indistinguishable 401s plus five
 strikes; T9/T15 Origin and content-type refusal; T10 credential strength and
 digest-only storage; T11 structured responses only; T12 provenance and
-accounting; T13 one live grant per room and host; T14 pairing-channel
-handling and no echo in errors; T15 global pairing limiter.
+accounting; T13 live grants per host and v1 revocation; T14 pairing-channel
+handling and no echo in errors; T15 global pairing limiter. The new plugin
+routes (Rooms, messages, reviews) are covered in ``test_main_window_control.py``.
 """
 
 from __future__ import annotations
@@ -49,15 +50,15 @@ OPERATOR_HEADERS = {"X-XMuse-Operator-Token": OPERATOR_TOKEN}
 OTHER_TOKEN = "operator-rotated"
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = json.loads((ROOT / "docs/contracts/schemas/plugin_grant.v1.json").read_text())
-FIXTURE_DIR = ROOT / "docs/contracts/fixtures/plugin_grant_v1"
+SCHEMA = json.loads((ROOT / "docs/contracts/schemas/plugin_grant.v2.json").read_text())
+FIXTURE_DIR = ROOT / "docs/contracts/fixtures/plugin_grant_v2"
 
 GRANT_KEYS = frozenset(
     {
         "grant_id",
-        "conversation_id",
+        "conversation_ids",
         "host",
-        "scope",
+        "scopes",
         "status",
         "created_at",
         "activated_at",
@@ -151,7 +152,9 @@ def _decide(
 
 def _grant_row(db: Path, grant_id: str) -> dict[str, Any]:
     with RoomDatabase(db).connect(readonly=True) as conn:
-        row = conn.execute("select * from plugin_grants where grant_id = ?", (grant_id,)).fetchone()
+        row = conn.execute(
+            "select * from plugin_grants_v2 where grant_id = ?", (grant_id,)
+        ).fetchone()
     assert row is not None
     return dict(row)
 
@@ -326,6 +329,8 @@ def test_t2_cross_conversation_confusion(tmp_path: Path) -> None:
     assert foreign.status_code == 404
     assert foreign.json()["detail"]["code"] == "plugin_grant_unknown"
 
+    # main_window_control_v1 section 2: a Room outside the grant's set answers the
+    # object's own unknown code; a valid bearer is not a failed attempt.
     wrong_room = _decide(
         client,
         split["split_id"],
@@ -333,8 +338,9 @@ def test_t2_cross_conversation_confusion(tmp_path: Path) -> None:
         conversation_id=other.id,
         digest=split["digest"],
     )
-    assert wrong_room.status_code == 401
-    assert wrong_room.json()["detail"]["code"] == "plugin_grant_invalid"
+    assert wrong_room.status_code == 404
+    assert wrong_room.json()["detail"]["code"] == "room_board_split_unknown"
+    assert _grant_row(tmp_path / "chat.db", grant["grant_id"])["failed_attempts"] == 0
 
     missing_split = _decide(
         client, "split_missing", secret=secret, conversation_id=conversation_id, digest="x"
@@ -565,7 +571,7 @@ def test_t4_clock_rollback_invalidates_grant(
     )
     assert approved.status_code == 200
 
-    used = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id)[0]
+    used = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id=conversation_id)[0]
     last_used = datetime.fromisoformat(used["last_used_at"].replace("Z", "+00:00"))
     monkeypatch.setattr(grants_mod, "_utcnow", lambda: last_used - timedelta(seconds=10))
     stale_use = client.post(
@@ -635,7 +641,7 @@ def test_t5_token_rotation_and_absence(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_t6_only_board_split_decide_scope(tmp_path: Path) -> None:
+def test_t6_scope_confinement(tmp_path: Path) -> None:
     client, conversation_id, split, _ctx = _room(tmp_path)
 
     bad_scope = _issue(client, conversation_id, scope="board.split.approve")
@@ -645,9 +651,10 @@ def test_t6_only_board_split_decide_scope(tmp_path: Path) -> None:
     grant, secret, _code = _activate(client, conversation_id)
     with RoomDatabase(tmp_path / "chat.db").connect() as conn:
         conn.execute(
-            "update plugin_grants set scope = ? where grant_id = ?",
-            ("board.split.approve", grant["grant_id"]),
+            "update plugin_grants_v2 set scopes_json = ? where grant_id = ?",
+            ('["room.message"]', grant["grant_id"]),
         )
+        conn.commit()
     denied = _decide(
         client,
         split["split_id"],
@@ -655,8 +662,10 @@ def test_t6_only_board_split_decide_scope(tmp_path: Path) -> None:
         conversation_id=conversation_id,
         digest=split["digest"],
     )
-    assert denied.status_code == 401
-    assert denied.json()["detail"]["code"] == "plugin_grant_invalid"
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "plugin_grant_scope_denied"
+    # A scope miss is not a failed bearer.
+    assert _grant_row(tmp_path / "chat.db", grant["grant_id"])["failed_attempts"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +801,7 @@ def test_t8_indistinguishable_401_and_five_strikes(tmp_path: Path) -> None:
     expired_grant, expired_secret, _c = _activate(client, conversation_id, host="x-code")
     with RoomDatabase(tmp_path / "chat.db").connect() as conn:
         conn.execute(
-            "update plugin_grants set expires_at = ? where grant_id = ?",
+            "update plugin_grants_v2 set expires_at = ? where grant_id = ?",
             ("2020-01-01T00:00:00.000000Z", expired_grant["grant_id"]),
         )
     expired = _decide(
@@ -891,7 +900,7 @@ def test_t10_secret_strength_and_digest_only_storage(tmp_path: Path) -> None:
     with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
         dump = "\n".join(
             str(value)
-            for grant_row in conn.execute("select * from plugin_grants").fetchall()
+            for grant_row in conn.execute("select * from plugin_grants_v2").fetchall()
             for value in dict(grant_row).values()
         )
         failures = conn.execute("select * from plugin_grant_exchange_failures").fetchall()
@@ -915,7 +924,7 @@ def test_t11_responses_carry_only_structured_fields(tmp_path: Path) -> None:
         "pairing_expires_at",
     }
     assert set(issued.json()["grant"]) == GRANT_KEYS
-    assert issued.json()["schema_version"] == "plugin_grant_issue/v1"
+    assert issued.json()["schema_version"] == "plugin_grant_issue/v2"
 
     listed = client.get(
         "/api/chat/operator/plugin-grants",
@@ -956,7 +965,7 @@ def test_t12_provenance_and_accounting(tmp_path: Path) -> None:
     client, conversation_id, split, _ctx = _room(tmp_path)
     grant, secret, _code = _activate(client, conversation_id)
 
-    before = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id)
+    before = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id=conversation_id)
     assert before[0]["use_count"] == 0
     assert before[0]["last_used_at"] is None
 
@@ -969,7 +978,12 @@ def test_t12_provenance_and_accounting(tmp_path: Path) -> None:
         digest=split["digest"],
     )
     assert denied.status_code == 401
-    assert PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id)[0]["use_count"] == 0
+    assert (
+        PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id=conversation_id)[0][
+            "use_count"
+        ]
+        == 0
+    )
 
     decided = _decide(
         client,
@@ -980,7 +994,7 @@ def test_t12_provenance_and_accounting(tmp_path: Path) -> None:
     )
     assert decided.status_code == 200
 
-    after = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id)
+    after = PluginGrantStore(tmp_path / "chat.db").list_grants(conversation_id=conversation_id)
     assert after[0]["use_count"] == 1
     assert after[0]["last_used_at"] is not None
     listed = client.get(
@@ -994,19 +1008,23 @@ def test_t12_provenance_and_accounting(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# T13: one live grant per room and host
+# T13: live grants per host (main_window_control_v1 section 2)
 # ---------------------------------------------------------------------------
 
 
-def test_t13_second_issue_revokes_first(tmp_path: Path) -> None:
+def test_t13_fifth_live_grant_revokes_the_oldest(tmp_path: Path) -> None:
     client, conversation_id, split, _ctx = _room(tmp_path)
-    first_grant, first_secret, first_code = _activate(client, conversation_id)
-    _other_grant, _other_secret, _other_code = _activate(client, conversation_id, host="opencode")
+    first_grant, first_secret, _first_code = _activate(client, conversation_id)
+    _other_grant, other_secret, _other_code = _activate(client, conversation_id, host="opencode")
 
-    second = _issue(client, conversation_id)
-    assert second.status_code == 201
-    assert second.json()["grant"]["grant_id"] != first_grant["grant_id"]
+    # Two main windows each pair on their own: a second grant leaves the first live.
+    _second_grant, second_secret, _c2 = _activate(client, conversation_id)
+    assert _grant_row(tmp_path / "chat.db", first_grant["grant_id"])["revoked_at"] is None
+    for _ in range(3):
+        assert _issue(client, conversation_id).status_code == 201
 
+    row = _grant_row(tmp_path / "chat.db", first_grant["grant_id"])
+    assert row["revoked_at"] is not None
     stale_secret = _decide(
         client,
         split["split_id"],
@@ -1015,19 +1033,55 @@ def test_t13_second_issue_revokes_first(tmp_path: Path) -> None:
         digest=split["digest"],
     )
     assert stale_secret.status_code == 401
-    assert _exchange(client, first_code, "claude-code").status_code == 401
-
-    row = _grant_row(tmp_path / "chat.db", first_grant["grant_id"])
-    assert row["revoked_at"] is not None
 
     other_ok = _decide(
         client,
         split["split_id"],
-        secret=_other_secret,
+        secret=other_secret,
         conversation_id=conversation_id,
         digest=split["digest"],
     )
     assert other_ok.status_code == 200
+    assert second_secret != first_secret
+
+
+def test_t13_v2_issue_revokes_live_v1_grants_of_the_host(tmp_path: Path) -> None:
+    client, conversation_id, _split, _ctx = _room(tmp_path)
+    with RoomDatabase(tmp_path / "chat.db").connect() as conn:
+        conn.execute(
+            """insert into plugin_grants
+               (grant_id, conversation_id, host, scope, ttl_seconds, created_at, activated_at,
+                expires_at, pairing_expires_at, operator_token_fingerprint)
+               values ('grant_v1live', ?, 'claude-code', 'board.split.decide', 600,
+                       '2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z',
+                       '2999-01-01T00:00:00.000000Z', '2026-01-01T00:02:00.000000Z', 'f')""",
+            (conversation_id,),
+        )
+        conn.commit()
+    assert _issue(client, conversation_id).status_code == 201
+    with RoomDatabase(tmp_path / "chat.db").connect(readonly=True) as conn:
+        row = conn.execute(
+            "select revoked_at from plugin_grants where grant_id = 'grant_v1live'"
+        ).fetchone()
+    assert row is not None and row["revoked_at"] is not None
+
+
+def test_revoke_host_revokes_every_grant_of_the_host(tmp_path: Path) -> None:
+    client, conversation_id, _split, _ctx = _room(tmp_path)
+    first, _s1, _c1 = _activate(client, conversation_id)
+    second, _s2, _c2 = _activate(client, conversation_id)
+    other, _s3, _c3 = _activate(client, conversation_id, host="opencode")
+    revoked = client.post(
+        "/api/chat/operator/plugin-grants/revoke-host",
+        json={"host": "claude-code"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert revoked.status_code == 200
+    assert {item["grant_id"] for item in revoked.json()["grants"]} == {
+        first["grant_id"],
+        second["grant_id"],
+    }
+    assert _grant_row(tmp_path / "chat.db", other["grant_id"])["revoked_at"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -1407,7 +1461,7 @@ def test_plugin_grant_golden_fixtures(tmp_path: Path, monkeypatch: pytest.Monkey
     expired_grant_id = str(expired_issue.json()["grant"]["grant_id"])
     with RoomDatabase(tmp_path / "chat.db").connect() as conn:
         conn.execute(
-            "update plugin_grants set pairing_expires_at = ?, expires_at = ? where grant_id = ?",
+            "update plugin_grants_v2 set pairing_expires_at = ?, expires_at = ? where grant_id = ?",
             (PAST, PAST, expired_grant_id),
         )
         conn.commit()
