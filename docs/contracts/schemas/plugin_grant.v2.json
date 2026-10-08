@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plugin_grant/v2",
+  "title": "Plugin grant (main_window_control_v1): issue, list, exchange, revoke, revoke-host and plugin Room create responses",
+  "oneOf": [
+    { "$ref": "#/$defs/issue" },
+    { "$ref": "#/$defs/list" },
+    { "$ref": "#/$defs/exchange" },
+    { "$ref": "#/$defs/revoke" },
+    { "$ref": "#/$defs/revokeHost" },
+    { "$ref": "#/$defs/roomCreate" }
+  ],
+  "$defs": {
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" },
+    "nullableTimestamp": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "host": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
+    "scope": { "enum": ["room.create", "room.message", "board.split.decide", "board.review.decide"] },
+    "grant": {
+      "type": "object",
+      "properties": {
+        "grant_id": { "type": "string", "minLength": 1 },
+        "host": { "$ref": "#/$defs/host" },
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scope" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "conversation_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "status": { "enum": ["pending", "active", "expired", "revoked"] },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "activated_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "expires_at": { "$ref": "#/$defs/timestamp" },
+        "revoked_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "last_used_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "use_count": { "type": "integer", "minimum": 0 }
+      },
+      "required": [
+        "grant_id",
+        "host",
+        "scopes",
+        "conversation_ids",
+        "status",
+        "created_at",
+        "activated_at",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "use_count"
+      ],
+      "additionalProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_issue/v2" },
+        "grant": { "$ref": "#/$defs/grant" },
+        "pairing_code": { "type": "string", "pattern": "^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}$" },
+        "pairing_expires_at": { "$ref": "#/$defs/timestamp" }
+      },
+      "required": ["schema_version", "grant", "pairing_code", "pairing_expires_at"],
+      "additionalProperties": false
+    },
+    "list": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_list/v2" },
+        "conversation_id": { "type": "string", "minLength": 1 },
+        "host": { "$ref": "#/$defs/host" },
+        "grants": { "type": "array", "items": { "$ref": "#/$defs/grant" }, "maxItems": 50 }
+      },
+      "required": ["schema_version", "grants"],
+      "oneOf": [{ "required": ["conversation_id"] }, { "required": ["host"] }],
+      "additionalProperties": false
+    },
+    "exchange": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_exchange/v2" },
+        "grant": { "$ref": "#/$defs/grant" },
+        "secret": { "type": "string", "pattern": "^xpg_[A-Za-z0-9_-]+_[A-Za-z0-9_-]{43}$" }
+      },
+      "required": ["schema_version", "grant", "secret"],
+      "additionalProperties": false
+    },
+    "revoke": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_revoke/v2" },
+        "grant": { "$ref": "#/$defs/grant" }
+      },
+      "required": ["schema_version", "grant"],
+      "additionalProperties": false
+    },
+    "revokeHost": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_grant_revoke_host/v1" },
+        "grants": { "type": "array", "items": { "$ref": "#/$defs/grant" } }
+      },
+      "required": ["schema_version", "grants"],
+      "additionalProperties": false
+    },
+    "roomCreate": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": "plugin_room_create/v1" },
+        "conversation_id": { "type": "string", "minLength": 1 },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "participant_id": { "type": "string", "minLength": 1 },
+              "role": { "type": "string", "minLength": 1 },
+              "cli_kind": { "enum": ["claude", "opencode", "antigravity", "codex"] }
+            },
+            "required": ["participant_id", "role", "cli_kind"],
+            "additionalProperties": false
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "room_count": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "replayed": { "type": "boolean" }
+      },
+      "required": ["schema_version", "conversation_id", "participants", "room_count", "replayed"],
+      "additionalProperties": false
+    }
+  }
+}

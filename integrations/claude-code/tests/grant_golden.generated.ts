@@ -1,4 +1,4 @@
-// GENERATED from docs/contracts/fixtures/plugin_grant_v1/*.json by
+// GENERATED from docs/contracts/fixtures/plugin_grant_v2/*.json by
 // tools/sync_fixtures.py. Do not edit by hand.
 export const GRANT_GOLDEN: Record<string, any> = {
   "decision": {
@@ -20,124 +20,156 @@ export const GRANT_GOLDEN: Record<string, any> = {
   "exchange": {
     "grant": {
       "activated_at": "2026-10-05T12:00:00.000000Z",
-      "conversation_id": "conv_00000000000000000000000000000001",
+      "conversation_ids": [
+        "conv_00000000000000000000000000000001"
+      ],
       "created_at": "2026-10-05T12:00:00.000000Z",
-      "expires_at": "2026-10-05T12:10:00.000000Z",
+      "expires_at": "2026-10-05T13:00:00.000000Z",
       "grant_id": "grant_fixture00000000000000000000000001",
       "host": "claude-code",
       "last_used_at": null,
       "revoked_at": null,
-      "scope": "board.split.decide",
+      "scopes": [
+        "board.split.decide"
+      ],
       "status": "active",
       "use_count": 0
     },
-    "schema_version": "plugin_grant_exchange/v1",
+    "schema_version": "plugin_grant_exchange/v2",
     "secret": "xpg_grant_fixture00000000000000000000000001_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   },
   "issue": {
     "grant": {
       "activated_at": null,
-      "conversation_id": "conv_00000000000000000000000000000001",
+      "conversation_ids": [
+        "conv_00000000000000000000000000000001"
+      ],
       "created_at": "2026-10-05T12:00:00.000000Z",
       "expires_at": "2026-10-05T12:02:00.000000Z",
       "grant_id": "grant_fixture00000000000000000000000001",
       "host": "claude-code",
       "last_used_at": null,
       "revoked_at": null,
-      "scope": "board.split.decide",
+      "scopes": [
+        "board.split.decide"
+      ],
       "status": "pending",
       "use_count": 0
     },
     "pairing_code": "AAAA-AAAA",
     "pairing_expires_at": "2026-10-05T12:02:00.000000Z",
-    "schema_version": "plugin_grant_issue/v1"
+    "schema_version": "plugin_grant_issue/v2"
   },
   "list": {
     "conversation_id": "conv_00000000000000000000000000000001",
     "grants": [
       {
         "activated_at": null,
-        "conversation_id": "conv_00000000000000000000000000000001",
+        "conversation_ids": [
+          "conv_00000000000000000000000000000001"
+        ],
         "created_at": "2026-10-05T12:00:00.000000Z",
         "expires_at": "2026-10-05T12:02:00.000000Z",
         "grant_id": "grant_fixture00000000000000000000000005",
         "host": "host-revoked",
         "last_used_at": null,
         "revoked_at": "2026-10-05T12:00:00.000000Z",
-        "scope": "board.split.decide",
+        "scopes": [
+          "board.split.decide"
+        ],
         "status": "revoked",
         "use_count": 0
       },
       {
         "activated_at": null,
-        "conversation_id": "conv_00000000000000000000000000000001",
+        "conversation_ids": [
+          "conv_00000000000000000000000000000001"
+        ],
         "created_at": "2026-10-05T12:00:00.000000Z",
         "expires_at": "2026-01-01T00:00:00.000000Z",
         "grant_id": "grant_fixture00000000000000000000000004",
         "host": "host-expired",
         "last_used_at": null,
         "revoked_at": null,
-        "scope": "board.split.decide",
+        "scopes": [
+          "board.split.decide"
+        ],
         "status": "expired",
         "use_count": 0
       },
       {
         "activated_at": "2026-10-05T12:00:00.000000Z",
-        "conversation_id": "conv_00000000000000000000000000000001",
+        "conversation_ids": [
+          "conv_00000000000000000000000000000001"
+        ],
         "created_at": "2026-10-05T12:00:00.000000Z",
-        "expires_at": "2026-10-05T12:10:00.000000Z",
+        "expires_at": "2026-10-05T13:00:00.000000Z",
         "grant_id": "grant_fixture00000000000000000000000003",
         "host": "host-active",
         "last_used_at": null,
         "revoked_at": null,
-        "scope": "board.split.decide",
+        "scopes": [
+          "board.split.decide"
+        ],
         "status": "active",
         "use_count": 0
       },
       {
         "activated_at": null,
-        "conversation_id": "conv_00000000000000000000000000000001",
+        "conversation_ids": [
+          "conv_00000000000000000000000000000001"
+        ],
         "created_at": "2026-10-05T12:00:00.000000Z",
         "expires_at": "2026-10-05T12:02:00.000000Z",
         "grant_id": "grant_fixture00000000000000000000000002",
         "host": "host-pending",
         "last_used_at": null,
         "revoked_at": null,
-        "scope": "board.split.decide",
+        "scopes": [
+          "board.split.decide"
+        ],
         "status": "pending",
         "use_count": 0
       },
       {
         "activated_at": "2026-10-05T12:00:00.000000Z",
-        "conversation_id": "conv_00000000000000000000000000000001",
+        "conversation_ids": [
+          "conv_00000000000000000000000000000001"
+        ],
         "created_at": "2026-10-05T12:00:00.000000Z",
-        "expires_at": "2026-10-05T12:10:00.000000Z",
+        "expires_at": "2026-10-05T13:00:00.000000Z",
         "grant_id": "grant_fixture00000000000000000000000001",
         "host": "claude-code",
         "last_used_at": "2026-10-05T12:00:00.000000Z",
         "revoked_at": null,
-        "scope": "board.split.decide",
+        "scopes": [
+          "board.split.decide"
+        ],
         "status": "active",
         "use_count": 1
       }
     ],
-    "schema_version": "plugin_grant_list/v1"
+    "schema_version": "plugin_grant_list/v2"
   },
   "operator_revoke": {
     "grant": {
       "activated_at": null,
-      "conversation_id": "conv_00000000000000000000000000000001",
+      "conversation_ids": [
+        "conv_00000000000000000000000000000001"
+      ],
       "created_at": "2026-10-05T12:00:00.000000Z",
       "expires_at": "2026-10-05T12:02:00.000000Z",
       "grant_id": "grant_fixture00000000000000000000000006",
       "host": "opencode",
       "last_used_at": null,
       "revoked_at": "2026-10-05T12:00:00.000000Z",
-      "scope": "board.split.decide",
+      "scopes": [
+        "board.split.decide"
+      ],
       "status": "revoked",
       "use_count": 0
     },
-    "schema_version": "plugin_grant_revoke/v1"
+    "schema_version": "plugin_grant_revoke/v2"
   },
   "plugin_content_type_invalid": {
     "detail": {
@@ -192,18 +224,22 @@ export const GRANT_GOLDEN: Record<string, any> = {
   "plugin_revoke": {
     "grant": {
       "activated_at": "2026-10-05T12:00:00.000000Z",
-      "conversation_id": "conv_00000000000000000000000000000001",
+      "conversation_ids": [
+        "conv_00000000000000000000000000000001"
+      ],
       "created_at": "2026-10-05T12:00:00.000000Z",
-      "expires_at": "2026-10-05T12:10:00.000000Z",
+      "expires_at": "2026-10-05T13:00:00.000000Z",
       "grant_id": "grant_fixture00000000000000000000000001",
       "host": "claude-code",
       "last_used_at": "2026-10-05T12:00:00.000000Z",
       "revoked_at": "2026-10-05T12:00:00.000000Z",
-      "scope": "board.split.decide",
+      "scopes": [
+        "board.split.decide"
+      ],
       "status": "revoked",
       "use_count": 1
     },
-    "schema_version": "plugin_grant_revoke/v1"
+    "schema_version": "plugin_grant_revoke/v2"
   },
   "room_board_split_decided": {
     "detail": {

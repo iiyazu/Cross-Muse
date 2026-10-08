@@ -29,6 +29,8 @@ def _post_human_message(
     conversation_id: str,
     payload: ThreadMessageCreate,
     client_request_id: str,
+    extra_mentions: list[str] | None = None,
+    provenance: dict[str, str] | None = None,
 ) -> dict[str, object]:
     participants = ParticipantStore(root / "chat.db")
     mentions = MentionResolver(participants).resolve_content(
@@ -36,14 +38,21 @@ def _post_human_message(
         payload.message,
         strict=False,
     )
+    mention_ids = [item.participant.participant_id for item in mentions]
+    display_mentions = [item.normalized for item in mentions]
+    for participant_id in extra_mentions or []:
+        if participant_id not in mention_ids:
+            mention_ids.append(participant_id)
+            display_mentions.append(participant_id)
     try:
         return RoomKernelStore(root / "chat.db").post_human_activity(
             conversation_id=conversation_id,
             human_id="Human operator",
             content=payload.message,
             client_request_id=client_request_id,
-            mentions=[item.participant.participant_id for item in mentions],
-            display_mentions=[item.normalized for item in mentions],
+            mentions=mention_ids,
+            display_mentions=display_mentions,
+            provenance=provenance,
         )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
@@ -101,30 +110,58 @@ def register_room_message_routes(
         payload: ThreadMessageCreate,
         request: Request,
     ) -> dict[str, object]:
-        client_request_id = _request_id(payload.client_request_id)
-        result = _post_human_message(
+        return post_room_human_message(
             root=root,
+            execution_root=execution_root,
+            runtime_starter=runtime_starter,
+            explicit_runtime_starter=explicit_runtime_starter,
+            request=request,
             conversation_id=conversation_id,
             payload=payload,
-            client_request_id=client_request_id,
+            client_request_id=_request_id(payload.client_request_id),
         )
-        observations = result.get("observations")
-        has_pending = isinstance(observations, list) and any(
-            isinstance(item, dict) and item.get("status") == "pending" for item in observations
+
+
+def post_room_human_message(
+    *,
+    root: Path,
+    execution_root: Path,
+    runtime_starter: WorkroomRuntimeStarter,
+    explicit_runtime_starter: bool,
+    request: Request,
+    conversation_id: str,
+    payload: ThreadMessageCreate,
+    client_request_id: str,
+    extra_mentions: list[str] | None = None,
+    provenance: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """The single Human write path; shared by the Web route and the plugin route."""
+
+    result = _post_human_message(
+        root=root,
+        conversation_id=conversation_id,
+        payload=payload,
+        client_request_id=client_request_id,
+        extra_mentions=extra_mentions,
+        provenance=provenance,
+    )
+    observations = result.get("observations")
+    has_pending = isinstance(observations, list) and any(
+        isinstance(item, dict) and item.get("status") == "pending" for item in observations
+    )
+    runtime = None
+    if has_pending and should_autostart_workroom_runtime(
+        request,
+        explicit_runtime_starter=explicit_runtime_starter,
+    ):
+        runtime = start_workroom_runtime_for_message(
+            runtime_starter,
+            root,
+            execution_root,
         )
-        runtime = None
-        if has_pending and should_autostart_workroom_runtime(
-            request,
-            explicit_runtime_starter=explicit_runtime_starter,
-        ):
-            runtime = start_workroom_runtime_for_message(
-                runtime_starter,
-                root,
-                execution_root,
-            )
-        return _receipt(
-            conversation_id=conversation_id,
-            result=result,
-            client_request_id=client_request_id,
-            runtime=runtime,
-        )
+    return _receipt(
+        conversation_id=conversation_id,
+        result=result,
+        client_request_id=client_request_id,
+        runtime=runtime,
+    )

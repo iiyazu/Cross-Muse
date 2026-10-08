@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from xmuse.workroom_launcher import (
     _prepare_managed_memoryos_cache,
     launch_workroom,
 )
+from xmuse.workroom_pair import PairDependencies, run_pair
 
 
 def _add_start_options(parser: argparse.ArgumentParser) -> None:
@@ -135,6 +137,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor", help="check local Workroom prerequisites")
     doctor.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
+
+    pair = subparsers.add_parser(
+        "pair", help="pair a host plugin (main window) with this Workroom; terminal only"
+    )
+    pair.add_argument("--root", type=Path, default=DEFAULT_XMUSE_ROOT)
+    pair.add_argument("--host", default="claude-code")
+    pair.add_argument("--room", action="append", default=[], help="Room id prefix (repeatable)")
+    pair.add_argument("--scope", action="append", default=[], help="grant scope (repeatable)")
+    pair.add_argument("--ttl", type=int, default=None, help="grant lifetime in seconds")
+    pair_mode = pair.add_mutually_exclusive_group()
+    pair_mode.add_argument("--revoke", action="store_true", help="revoke every grant of the host")
+    pair_mode.add_argument("--list", action="store_true", help="list the host's live grants")
     return parser
 
 
@@ -151,6 +165,7 @@ def run_cli(
     *,
     dependencies: WorkroomDependencies | None = None,
     launch_dependencies: WorkroomLaunchDependencies | None = None,
+    pair_dependencies: PairDependencies | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
     deps = dependencies or WorkroomDependencies()
@@ -267,6 +282,21 @@ def run_cli(
         return stop_workroom(paths, deps, timeout_s=args.timeout_s)
     if args.command == "doctor":
         return doctor_workroom(paths, deps)
+    if args.command == "pair":
+        return run_pair(
+            root=args.root,
+            host=args.host,
+            room_prefixes=args.room,
+            scopes=args.scope or None,
+            ttl_seconds=args.ttl,
+            revoke=args.revoke,
+            list_only=args.list,
+            deps=pair_dependencies
+            or PairDependencies(
+                stdin_isatty=sys.stdin.isatty,
+                stdout_isatty=sys.stdout.isatty,
+            ),
+        )
     raise AssertionError(f"unhandled command: {args.command}")
 
 

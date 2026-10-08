@@ -21,10 +21,10 @@ HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
 FIXTURE_DIR = PLUGIN_ROOT / ".." / ".." / "docs" / "contracts" / "fixtures" / "board_v2"
 OUT_PATH = PLUGIN_ROOT / "tests" / "fixtures.generated.ts"
-GRANT_GOLDEN_DIR = PLUGIN_ROOT / ".." / ".." / "docs" / "contracts" / "fixtures" / "plugin_grant_v1"
+GRANT_GOLDEN_DIR = PLUGIN_ROOT / ".." / ".." / "docs" / "contracts" / "fixtures" / "plugin_grant_v2"
 GRANT_OUT_PATH = PLUGIN_ROOT / "tests" / "grant_golden.generated.ts"
 
-GRANT_HEADER = """// GENERATED from docs/contracts/fixtures/plugin_grant_v1/*.json by
+GRANT_HEADER = """// GENERATED from docs/contracts/fixtures/plugin_grant_v2/*.json by
 // tools/sync_fixtures.py. Do not edit by hand.
 """
 
