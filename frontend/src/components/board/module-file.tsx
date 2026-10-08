@@ -239,9 +239,9 @@ export function ModuleFile({
         </dl>
       </Section>
 
-      <section className="border-t border-line pt-3">
+      <section aria-label="证据" className="border-t border-line pt-3">
         <h4 className="m-0 mb-2 px-4 text-xs font-medium tracking-wide text-fg-3">证据</h4>
-        <EventList events={events} people={people} />
+        <EventList events={events} people={people} roomId={roomId} />
       </section>
     </div>
   );

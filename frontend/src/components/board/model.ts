@@ -46,7 +46,11 @@ function verifyStep(module: BoardModule): TrustStep {
     case "waiting_for_provider": return step("wait", "等待上游");
     case "pending": return step("running", "等待验证");
     case "running": return step("running", "验证中");
-    case "passed": return step("pass", "已通过");
+    case "passed": {
+      // `rework_rounds` is the contract's own count of failed rounds before the first pass (§6).
+      const rounds = module.counters.rework_rounds;
+      return step("pass", "已通过", rounds > 0 ? `返工 ${rounds} 次后通过` : null);
+    }
     case "failed": {
       const gates = verification.gate_ids.length ? `门禁 ${verification.gate_ids.join("、")}` : null;
       const escalated = verification.escalated ? "已升级给 lead" : null;

@@ -121,3 +121,15 @@ describe("board view model", () => {
     expect(boardVisible(null, null)).toBe(false);
   });
 });
+
+describe("rework on the verification step", () => {
+  it("says how many rounds of rework came before the first pass, from the contract counter", () => {
+    const { projection } = load("review_endorsed");
+    const passed = projection.modules.find((module) => module.verification.status === "passed");
+    if (!passed) throw new Error("fixture has no verified module");
+    const name = () => null;
+    const verify = (module: typeof passed) => trustSteps(module, projection.capabilities, name).find((step) => step.axis === "verify");
+    expect(verify({ ...passed, counters: { ...passed.counters, rework_rounds: 0 } })?.detail).toBeNull();
+    expect(verify({ ...passed, counters: { ...passed.counters, rework_rounds: 2 } })?.detail).toBe("返工 2 次后通过");
+  });
+});

@@ -73,6 +73,9 @@ test.describe("board", () => {
     const rework = panel.getByRole("region", { name: "返工：为什么没通过" });
     await expect(rework).toContainText("patch_diff_check");
     await expect(rework.locator("pre")).toContainText("Diff check failed");
+    const evidence = panel.getByRole("region", { name: "证据" });
+    await evidence.getByText("看门禁和输出").first().click();
+    await expect(evidence.locator("pre").first()).toContainText("Diff check failed");
     await axeClean(page);
   });
 
