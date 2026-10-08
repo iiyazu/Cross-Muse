@@ -574,7 +574,11 @@ def test_handoff_note_round_trips_through_mcp_tool_activity_and_projection(
 
     rejected = call({**note, "budget": 1})
     assert rejected["isError"] is True
-    assert rejected["structuredContent"]["error"]["code"] == "room_handoff_note_invalid"
+    assert rejected["structuredContent"]["error"] == {
+        "code": "invalid_arguments",
+        "message": "chat_room_submit_outcome argument outcome_payload.handoff_note got "
+        "unknown fields: budget; allowed: what, why, tradeoffs, open_questions, next_action",
+    }
     observation = kernel.get_observation(claim["observation"]["observation_id"])
     assert observation["status"] == "claimed"
     assert observation["lease_token"] == claim["observation"]["lease_token"]
