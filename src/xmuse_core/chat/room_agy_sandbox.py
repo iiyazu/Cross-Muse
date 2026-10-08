@@ -24,7 +24,7 @@ import shutil
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
-from xmuse_core.chat.room_opencode_sandbox import drive_masks
+from xmuse_core.chat.room_opencode_sandbox import SANDBOX_TEMP_ENV_ARGS, drive_masks
 from xmuse_core.chat.room_workspace_sandbox import (
     ROOM_WORKSPACE_WRITE_CONFINEMENT as ROOM_AGY_OWNER_CONFINEMENT,
 )
@@ -60,17 +60,26 @@ def resolve_agy_python3(
     environ: Mapping[str, str] | None = None,
     which: Callable[[str], str | None] = shutil.which,
 ) -> Path | None:
-    """Locate a system python3 outside $HOME for the Room MCP stdio bridge."""
+    """Locate a system python3 outside $HOME for the Room MCP stdio bridge.
+
+    The sandbox masks $HOME, so a python3 under it cannot run inside. The first
+    one on PATH is often a virtualenv under $HOME (``uv run`` puts the project
+    ``.venv/bin`` first), so the rest of PATH is searched too.
+    """
 
     source = os.environ if environ is None else environ
     home = Path(str(source.get("HOME") or Path.home())).expanduser().resolve()
     found = which("python3")
-    if not found:
-        return None
-    candidate = Path(found).expanduser().resolve()
-    if candidate == home or candidate.is_relative_to(home):
-        return None
-    return candidate
+    candidates = [Path(found)] if found else []
+    for entry in str(source.get("PATH") or "").split(os.pathsep):
+        path = Path(entry) / "python3"
+        if entry and path.is_file() and os.access(path, os.X_OK):
+            candidates.append(path)
+    for path in candidates:
+        candidate = path.expanduser().resolve()
+        if candidate != home and not candidate.is_relative_to(home):
+            return candidate
+    return None
 
 
 def resolve_agy_model(environ: Mapping[str, str] | None = None) -> str:
@@ -221,6 +230,7 @@ def build_agy_sandbox_command(
         argv.extend(["--ro-bind", str(source_resolved), str(destination_path)])
     for path in others:
         argv.extend(_mask(path))
+    argv.extend(SANDBOX_TEMP_ENV_ARGS)
     argv.extend(
         [
             "--setenv",

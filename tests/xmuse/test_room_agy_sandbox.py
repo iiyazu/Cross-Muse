@@ -13,6 +13,7 @@ from tests.xmuse.sandbox_support import bwrap_usable
 from xmuse_core.chat.room_agy_sandbox import (
     ROOM_AGY_READ_ONLY_CONFINEMENT,
     build_agy_sandbox_command,
+    resolve_agy_python3,
     write_agy_mcp_config,
 )
 from xmuse_core.chat.room_workspace_sandbox import ROOM_WORKSPACE_WRITE_CONFINEMENT
@@ -54,6 +55,27 @@ def _base_kwargs(tmp_path: Path, *, workspace: Path | None = None) -> dict[str, 
         "python3": Path("/usr/bin/python3"),
         "agy_args": ("--model", "gemini-3.8-flash-high", "-p="),
     }
+
+
+def _executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_python3_skips_a_virtualenv_under_home_for_one_later_on_path(tmp_path: Path) -> None:
+    # `uv run` puts the project's .venv/bin (under $HOME) first on PATH.
+    home = tmp_path / "home"
+    venv_python = _executable(home / "repo" / ".venv" / "bin" / "python3")
+    system_python = _executable(tmp_path / "usr" / "bin" / "python3")
+    environ = {"HOME": str(home), "PATH": f"{venv_python.parent}:{system_python.parent}"}
+
+    found = resolve_agy_python3(environ, lambda name: str(venv_python))
+    assert found == system_python.resolve()
+
+    only_home = {"HOME": str(home), "PATH": str(venv_python.parent)}
+    assert resolve_agy_python3(only_home, lambda name: str(venv_python)) is None
 
 
 def test_confinement_levels() -> None:
@@ -108,7 +130,8 @@ def test_argv_allowlists_home_and_mounts_config_and_bridge(tmp_path: Path) -> No
     assert (home / ".gemini" / "antigravity-cli").is_dir()
     binds = {dest for _, dest in _bind_mounts(argv, "--bind")}
     assert str(home / ".gemini" / "antigravity-cli") in binds
-    assert argv[argv.index("--setenv") + 1 : argv.index("--setenv") + 3] == ("HOME", str(home))
+    setenv = {argv[i + 1]: argv[i + 2] for i, item in enumerate(argv) if item == "--setenv"}
+    assert setenv == {"HOME": str(home), "TMPDIR": "/tmp", "TMP": "/tmp", "TEMP": "/tmp"}
     assert argv[argv.index("--chdir") + 1] == str((tmp_path / "repo").resolve())
     assert "--die-with-parent" in argv and "--new-session" in argv
 
