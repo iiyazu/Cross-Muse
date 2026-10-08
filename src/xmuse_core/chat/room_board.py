@@ -741,8 +741,9 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
             f"Module {payload.get('module_id')} passed verification "
             f"({payload.get('verification_id')}); {reviewer} must review it: read the "
             f"material with chat_room_board_read using review_id "
-            f"{payload.get('review_id')}, judge it against the charter and contracts, "
-            "and answer with chat_room_board_review."
+            f"{payload.get('review_id')}, judge it against the charter and contracts "
+            "(object to copies of, or import fallbacks for, code another module "
+            "provides), and answer with chat_room_board_review."
         )
     if activity_type == "board.review":
         findings = payload.get("findings") or []

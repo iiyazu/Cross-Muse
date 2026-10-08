@@ -622,7 +622,10 @@ ADDRESSED_OWNER_BOARD_GUIDANCE = (
     "(chat_room_board_read shows the charters). If you are asked to change the workspace "
     "without one, hand off to the lead and ask for a split instead of starting. Report "
     "progress and completion with chat_room_board_report_progress (status done when "
-    "finished); a message alone never counts as done."
+    "finished); a message alone never counts as done. When your module depends on "
+    "another module's contract, use it as the contract states, even if that code is not "
+    "in your clone yet: do not copy it or add an import fallback, because verification "
+    "stacks the provider's verified code under yours."
 )
 
 
