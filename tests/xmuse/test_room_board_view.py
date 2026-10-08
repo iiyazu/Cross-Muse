@@ -711,3 +711,26 @@ def test_charter_lists_host_gates_when_the_profile_is_known(
         ctx["db"], ctx["conversation_id"], ctx["members"][1].participant_id, target
     )
     assert "Host verification gates" not in (target / "charter.md").read_text()
+
+
+def test_board_module_reassign_route(tmp_path: Path) -> None:
+    ctx = _approved_board(tmp_path)
+    conversation_id, members = ctx["conversation_id"], ctx["members"]
+    client = _api_client(tmp_path)
+    path = "/api/chat/operator/board-modules/alpha/reassign"
+    body = {
+        "conversation_id": conversation_id,
+        "owner_participant_id": members[2].participant_id,
+        "expected_version": 1,
+    }
+
+    assert client.post(path, json=body).status_code == 401
+    moved = client.post(path, json=body, headers=_headers())
+    assert moved.status_code == 200
+    assert moved.json()["version"] == 2
+    stale = client.post(path, json=body, headers=_headers())
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "room_board_charter_version_mismatch"
+    board = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
+    alpha = next(m for m in board["modules"] if m["module_id"] == "alpha")
+    assert alpha["owner_participant_id"] == members[2].participant_id

@@ -188,6 +188,19 @@ class ModuleRef:
     conversation_id: str
     module_id: str
     owner_participant_id: str
+    # Earlier owners of the module (a reassignment): their history stays the module's.
+    former_owner_ids: tuple[str, ...] = ()
+
+
+def _is_reassignment(row: sqlite3.Row, module: ModuleRef) -> bool:
+    if str(row["activity_type"]) != "board.charter_assigned":
+        return False
+    payload = _decode(row["payload_json"])
+    return (
+        isinstance(payload, dict)
+        and payload.get("module_id") == module.module_id
+        and bool(payload.get("reassigned_from"))
+    )
 
 
 @dataclass
@@ -218,7 +231,7 @@ def _activity_item(row: sqlite3.Row, module: ModuleRef) -> dict[str, Any] | None
     if not isinstance(payload, dict):
         return None
     actor = row["actor_participant_id"]
-    owner = module.owner_participant_id
+    owners = {module.owner_participant_id, *module.former_owner_ids}
     item_type: str | None = None
     speaker = "host"
     text = ""
@@ -278,7 +291,7 @@ def _activity_item(row: sqlite3.Row, module: ModuleRef) -> dict[str, Any] | None
             f"gates: {', '.join(str(gate) for gate in gate_ids) or 'none'}"
         )
     elif kind == "board.progress":
-        if payload.get("module_id") != module.module_id or actor != owner:
+        if payload.get("module_id") != module.module_id or actor not in owners:
             return None
         item_type, speaker = "message", "owner"
         claims = _list(payload.get("claims"))
@@ -287,16 +300,16 @@ def _activity_item(row: sqlite3.Row, module: ModuleRef) -> dict[str, Any] | None
         )
     elif kind == "board.question":
         target = payload.get("target_participant_id")
-        if owner not in (actor, target):
+        if actor not in owners and target not in owners:
             return None
         item_type = "message"
-        speaker = "owner" if actor == owner else "peer"
+        speaker = "owner" if actor in owners else "peer"
         text = f"question: {payload.get('question') or ''}"
     elif kind == "message.posted":
         mentions = _list(payload.get("mentions"))
         mentioned = {str(item).removeprefix("@participant:") for item in mentions}
         is_human = str(row["actor_kind"]) == "human"
-        if not ((is_human and owner in mentioned) or actor == owner):
+        if not ((is_human and mentioned & owners) or actor in owners):
             return None
         item_type = "message"
         speaker = "human" if is_human else "owner"
@@ -340,9 +353,21 @@ class ModuleMemoryStore:
                          and c2.module_id = c.module_id)
                    order by c.conversation_id, c.module_id"""
             ).fetchall()
-        return [
-            ModuleRef(str(row[0]), str(row[1]), str(row[2])) for row in rows if row[2] is not None
-        ]
+            modules: list[ModuleRef] = []
+            for row in rows:
+                if row[2] is None:
+                    continue
+                former = tuple(
+                    str(item[0])
+                    for item in conn.execute(
+                        "select distinct owner_participant_id from room_board_charters "
+                        "where conversation_id = ? and module_id = ? "
+                        "and owner_participant_id != ? order by owner_participant_id",
+                        (row[0], row[1], row[2]),
+                    ).fetchall()
+                )
+                modules.append(ModuleRef(str(row[0]), str(row[1]), str(row[2]), former))
+        return modules
 
     def _cursor_conn(self, conn: sqlite3.Connection, module: ModuleRef) -> int:
         row = conn.execute(
@@ -409,6 +434,11 @@ class ModuleMemoryStore:
             last_seen = cursor
             ready = False
             for row in rows:
+                if items and _is_reassignment(row, module):
+                    # The owner changed: curate what the previous owner left now, so the
+                    # next owner's notebook holds it from the start (module_memory_v1 §1).
+                    ready = True
+                    break
                 last_seen = int(row["seq"])
                 item = _activity_item(row, module)
                 if item is None:

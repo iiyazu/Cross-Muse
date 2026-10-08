@@ -20,6 +20,7 @@ from xmuse.room_module_memory_worker import (
     RoomModuleMemoryWorker,
     compose_module_memory_worker,
 )
+from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_board_view import materialize_owner_board_view
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
@@ -380,3 +381,54 @@ def test_review_objection_becomes_a_review_window(tmp_path: Path) -> None:
             types |= {item["type"] for item in window.activities}
             store.store_result(window, {"memories": []})
     assert "review_objection" in types
+
+
+def test_reassignment_keeps_the_former_owner_history_and_flushes_it(tmp_path: Path) -> None:
+    """The notebook exists for the moment an owner is replaced (module_memory_v1 §1).
+
+    What the Human told the previous owner stays the module's history, and the
+    reassignment curates it at once instead of waiting for a failure or twelve
+    messages that the new owner would never produce for the old owner.
+    """
+
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    while (window := store.next_window(_alpha(db))) is not None:
+        store.store_result(window, {"memories": []})
+    old_owner = _alpha(db).owner_participant_id
+    for index in range(2):
+        RoomKernelStore(db).post_human_activity(
+            conversation_id=conversation_id,
+            human_id="human",
+            content=f"Rule {index}: report done only after ruff and pytest pass",
+            client_request_id=f"rule-{index}",
+            mentions=[old_owner],
+        )
+    assert store.next_window(_alpha(db)) is None
+
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        version = conn.execute(
+            "select max(version) from room_board_charters where conversation_id = ? "
+            "and module_id = 'alpha'",
+            (conversation_id,),
+        ).fetchone()[0]
+        new_owner = conn.execute(
+            "select participant_id from participants where conversation_id = ? "
+            "and participant_id != ? and status = 'active' order by participant_id limit 1",
+            (conversation_id, old_owner),
+        ).fetchone()[0]
+    RoomBoardStore(db).reassign_module(
+        conversation_id=conversation_id,
+        module_id="alpha",
+        owner_participant_id=new_owner,
+        expected_version=int(version),
+        operator_identity="operator:host",
+    )
+
+    module = _alpha(db)
+    assert module.owner_participant_id == new_owner
+    assert old_owner in module.former_owner_ids
+    window = store.next_window(module)
+    assert window is not None
+    assert [item["speaker"] for item in window.activities] == ["human", "human"]
+    assert "Rule 1" in window.activities[-1]["text"]

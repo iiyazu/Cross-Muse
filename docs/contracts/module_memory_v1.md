@@ -40,6 +40,11 @@ its cursor and builds windows of the module's activities:
 
 - A window is flushed when it holds a `gate_failure` or `review_objection`, or 12 messages; at most 32
   activities; up to 8 earlier activities go as read-only `context`.
+- A reassignment of the module (a `board.charter_assigned` carrying `reassigned_from`, see
+  `room_board_projection_v2.md` §8) also flushes what accumulated before it, so the next owner's
+  notebook holds the previous owner's history from the start.
+- "The owner" in the table above means every owner the module has had: the history of a
+  previous owner stays the module's history after a reassignment.
 - `active` holds the module's active memories (at most 60, newest first).
 - Texts are bounded (8 KiB per activity). They are agent- and tool-authored and go only to the
   sidecar, which already holds the Room archive.

@@ -663,6 +663,17 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
             f"{item.get('contract_id')}@v{item.get('version')}"
             for item in payload.get("contracts", [])
         )
+        if payload.get("reassigned_from"):
+            return (
+                f"The operator reassigned module {payload.get('module_id')} to you "
+                f"(charter v{payload.get('version')}, paths "
+                f"{', '.join(charter.get('paths', []))}); its previous owner's unintegrated "
+                "work does not carry over. Your charter and contracts are in .xmuse/; if "
+                ".xmuse/memory.md exists, read it first: it holds the module's lessons and "
+                "decisions so far. Claim the module, implement it inside its paths against "
+                "the contracts, run its checks, commit, report progress, and submit your "
+                "outcome."
+            )
         return (
             f"The operator approved the split: you now own module {payload.get('module_id')} "
             f"(charter v{payload.get('version')}, paths {', '.join(charter.get('paths', []))}; "
@@ -1107,6 +1118,166 @@ class RoomBoardStore:
                order by version desc limit 1""",
             (conversation_id, module_id),
         ).fetchone()
+
+    def reassign_module(
+        self,
+        *,
+        conversation_id: str,
+        module_id: str,
+        owner_participant_id: str,
+        expected_version: int,
+        operator_identity: str,
+        decided_via: str = "web",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Hand a module that has not been integrated to another owner (operator only).
+
+        The current charter version is retired and the same charter is written again
+        as version+1 for the new owner, who is woken. Verifications and reviews from
+        before the new version never become integration candidates (candidates start
+        at the current charter), and pending ones are superseded now. An integrated
+        module is refused: replacing its owner would also have to retract code.
+        """
+
+        if decided_via not in ("web", "cli"):
+            raise ValueError("room_board_decided_via_invalid")
+        _current, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                charter = self._current_charter_conn(
+                    conn, conversation_id=conversation_id, module_id=module_id
+                )
+                if charter is None:
+                    raise ValueError("room_board_module_unknown")
+                if str(charter["status"]) != "active":
+                    raise ValueError("room_board_charter_not_active")
+                version = int(charter["version"])
+                if version != int(expected_version):
+                    raise ValueError(
+                        f"room_board_charter_version_mismatch: module {module_id} is at "
+                        f"charter v{version}"
+                    )
+                previous_owner = str(charter["owner_participant_id"])
+                if owner_participant_id == previous_owner:
+                    raise ValueError("room_board_reassign_same_owner")
+                row = conn.execute(
+                    "select * from participants where conversation_id = ? and participant_id = ?",
+                    (conversation_id, owner_participant_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("room_board_assignee_unknown")
+                # The same admission as a split assignment (propose_split).
+                if row["status"] != "active" or row["cli_kind"] not in ROOM_AGENT_CLI_KINDS:
+                    raise ValueError("room_board_assignee_inactive")
+                green = self._green_head_conn(conn, conversation_id=conversation_id)
+                if green is not None and module_id in green["applied"]:
+                    raise ValueError(
+                        f"room_board_reassign_integrated: module {module_id} is integrated; "
+                        "follow-up work goes through a new split"
+                    )
+                body = _decode(str(charter["charter_json"]))
+                body = body if isinstance(body, dict) else {}
+                conn.execute(
+                    "update room_board_charters set status = 'retired' "
+                    "where conversation_id = ? and module_id = ? and version = ?",
+                    (conversation_id, module_id, version),
+                )
+                conn.execute(
+                    """insert into room_board_charters
+                       (conversation_id, module_id, version, split_id,
+                        owner_participant_id, status, charter_json, claimed_at, created_at)
+                       values (?, ?, ?, ?, ?, 'active', ?, null, ?)""",
+                    (
+                        conversation_id,
+                        module_id,
+                        version + 1,
+                        str(charter["split_id"]),
+                        owner_participant_id,
+                        str(charter["charter_json"]),
+                        stamp,
+                    ),
+                )
+                conn.execute(
+                    "update room_board_verifications set status = 'superseded', "
+                    "lease_owner = null, lease_token = null, lease_expires_at = null, "
+                    "updated_at = ? where conversation_id = ? and module_id = ? "
+                    "and status = 'pending'",
+                    (stamp, conversation_id, module_id),
+                )
+                conn.execute(
+                    "update room_board_reviews set status = 'superseded', "
+                    "updated_at = ? where conversation_id = ? and module_id = ? "
+                    "and status = 'pending'",
+                    (stamp, conversation_id, module_id),
+                )
+                split = conn.execute(
+                    "select activity_id from room_board_splits where split_id = ?",
+                    (str(charter["split_id"]),),
+                ).fetchone()
+                source = (
+                    self._activity_from_conn(conn, str(split["activity_id"]))
+                    if split is not None and split["activity_id"]
+                    else None
+                )
+                contracts = conn.execute(
+                    "select contract_id, max(version) as version, kind, digest "
+                    "from room_board_contracts where conversation_id = ? "
+                    "and provider_module_id = ? group by contract_id",
+                    (conversation_id, module_id),
+                ).fetchall()
+                activity = self._insert_board_activity_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_type="board.charter_assigned",
+                    actor_kind="operator",
+                    actor_identity=operator_identity,
+                    actor_participant_id=None,
+                    causation_id=str(source["activity_id"]) if source is not None else None,
+                    causal_depth=int(source["causal_depth"]) + 1 if source is not None else 0,
+                    audience_participant_ids=[owner_participant_id],
+                    payload={
+                        "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
+                        "split_id": str(charter["split_id"]),
+                        "module_id": module_id,
+                        "version": version + 1,
+                        "owner_participant_id": owner_participant_id,
+                        "reassigned_from": previous_owner,
+                        "decided_via": decided_via,
+                        "grant_id": None,
+                        "charter": body,
+                        "contracts": [
+                            {
+                                "contract_id": str(item["contract_id"]),
+                                "version": int(item["version"]),
+                                "digest": str(item["digest"]),
+                                "kind": str(item["kind"]),
+                                "provider_module_id": module_id,
+                            }
+                            for item in contracts
+                        ],
+                    },
+                    stamp=stamp,
+                )
+                self._wake_participants_conn(
+                    conn,
+                    conversation_id=conversation_id,
+                    activity_id=str(activity["activity_id"]),
+                    participant_ids=[owner_participant_id],
+                    stamp=stamp,
+                )
+                conn.commit()
+                return {
+                    "module_id": module_id,
+                    "version": version + 1,
+                    "owner_participant_id": owner_participant_id,
+                    "reassigned_from": previous_owner,
+                    "activity_id": str(activity["activity_id"]),
+                    "activity_seq": int(activity["seq"]),
+                }
+            except Exception:
+                conn.rollback()
+                raise
 
     @staticmethod
     def _active_charter_owner_map(

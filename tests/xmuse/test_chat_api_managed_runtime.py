@@ -107,6 +107,7 @@ print(
         "/api/chat/conversations/{conversation_id}/board/verifications/{verification_id}",
         "/api/chat/conversations/{conversation_id}/board/integrations/{integration_id}",
         "/api/chat/operator/board-splits/{split_id}/decision",
+        "/api/chat/operator/board-modules/{module_id}/reassign",
         "/api/chat/operator/board-reviews/{review_id}/material",
         "/api/chat/operator/board-reviews/{review_id}/decision",
         "/api/chat/operator/plugin-grants",
