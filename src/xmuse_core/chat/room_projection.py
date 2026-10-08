@@ -321,6 +321,28 @@ def _skill_decision_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _completed_after(outcome: dict[str, Any] | None, frontier: dict[str, Any]) -> bool:
+    """Whether the outcome completed after the frontier's last attempt ended."""
+
+    if outcome is None:
+        return False
+    attempt = frontier.get("current_attempt") or {}
+    ended = _timestamp(attempt.get("finished_at") or attempt.get("updated_at")) or _timestamp(
+        frontier.get("created_at")
+    )
+    completed = _timestamp(outcome.get("completed_at"))
+    return ended is not None and completed is not None and completed > ended
+
+
 def _participant_state(
     *, participant_status: str, frontier: dict[str, Any] | None, outcome: dict[str, Any] | None
 ) -> str:
@@ -336,10 +358,15 @@ def _participant_state(
         if control_state in {"cancel_requested", "cancel_pending"}:
             return "cancel_pending"
         if control_state in {"cancelled", "exhausted"}:
-            return control_state
-        if frontier["status"] == "pending":
+            # A dead observation stays the frontier (its retry action lives
+            # there) until the operator acts, but once the participant has
+            # completed work after it, its state is that later outcome.
+            if not _completed_after(outcome, frontier):
+                return control_state
+        elif frontier["status"] == "pending":
             return "pending"
-        return "runtime_recovery" if frontier["expired"] else "thinking"
+        else:
+            return "runtime_recovery" if frontier["expired"] else "thinking"
     outcome_type = outcome.get("outcome_type") if outcome else None
     outcome_key = outcome_type if isinstance(outcome_type, str) else ""
     return {
