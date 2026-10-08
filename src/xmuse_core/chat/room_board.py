@@ -783,6 +783,44 @@ def _current_stamp(now: datetime | None) -> tuple[datetime, str]:
     return current, _timestamp(current)
 
 
+def _assert_split_ids_free_conn(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    module_ids: Sequence[str],
+    contract_ids: Sequence[str],
+) -> None:
+    """Refuse module ids with an active charter and contract ids already published.
+
+    Contract ids are unique per Room across every split (``room_board_contracts``
+    keys on them), so a reused id would otherwise surface as a database error
+    when the operator approves.
+    """
+
+    for module_id in module_ids:
+        if conn.execute(
+            """select 1 from room_board_charters
+               where conversation_id = ? and module_id = ? and status = 'active'
+               limit 1""",
+            (conversation_id, module_id),
+        ).fetchone():
+            raise ValueError(
+                f"room_board_charter_active: module {module_id} already has an active "
+                "charter; choose a new module_id"
+            )
+    for contract_id in contract_ids:
+        row = conn.execute(
+            """select provider_module_id from room_board_contracts
+               where conversation_id = ? and contract_id = ? limit 1""",
+            (conversation_id, contract_id),
+        ).fetchone()
+        if row is not None:
+            raise ValueError(
+                f"room_board_contract_exists: contract {contract_id} is already "
+                f"published by module {row[0]}; choose a new contract_id"
+            )
+
+
 class RoomBoardStore:
     def __init__(self, path: Path | str) -> None:
         self._path = Path(path)
@@ -1349,6 +1387,14 @@ class RoomBoardStore:
                 )
                 if self._lead_participant_id(conn, conversation_id) != participant_id:
                     raise ValueError("room_board_lead_required")
+                # Refuse now what approval would refuse later, so the lead learns
+                # it from its own tool call instead of the operator's decision.
+                _assert_split_ids_free_conn(
+                    conn,
+                    conversation_id,
+                    module_ids=list(module_ids),
+                    contract_ids=contract_ids,
+                )
                 report_targets = [
                     str(item["report_to"]) for item in normalized_modules if item["report_to"]
                 ]
@@ -1519,15 +1565,12 @@ class RoomBoardStore:
                         "activity_id": str(activity["activity_id"]),
                         "activity_seq": int(activity["seq"]),
                     }
-                for charter in normalized_modules:
-                    existing = conn.execute(
-                        """select 1 from room_board_charters
-                           where conversation_id = ? and module_id = ?
-                             and status = 'active' limit 1""",
-                        (conversation_id, charter["module_id"]),
-                    ).fetchone()
-                    if existing is not None:
-                        raise ValueError("room_board_charter_active")
+                _assert_split_ids_free_conn(
+                    conn,
+                    conversation_id,
+                    module_ids=[str(item["module_id"]) for item in normalized_modules],
+                    contract_ids=[str(spec["contract_id"]) for spec in normalized_contracts],
+                )
                 activity_ids: list[str] = []
                 for charter in normalized_modules:
                     module_id = str(charter["module_id"])

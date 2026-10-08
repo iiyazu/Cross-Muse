@@ -76,6 +76,7 @@ _MESSAGES = {
     "room_board_split_not_proposed": "Board split can no longer be decided",
     "room_board_split_digest_mismatch": "Board split digest does not match",
     "room_board_charter_active": "Board charter is already active",
+    "room_board_contract_exists": "Board contract id is already published",
     "room_board_review_unknown": "Board review is unknown",
     "room_board_review_digest_mismatch": "Board review digest does not match",
     "room_board_review_material_incomplete": "Review material is incomplete",
@@ -104,6 +105,7 @@ _STATUS = {
     "room_board_split_not_proposed": status.HTTP_409_CONFLICT,
     "room_board_split_digest_mismatch": status.HTTP_409_CONFLICT,
     "room_board_charter_active": status.HTTP_409_CONFLICT,
+    "room_board_contract_exists": status.HTTP_409_CONFLICT,
     "room_board_review_unknown": status.HTTP_404_NOT_FOUND,
     "room_board_review_digest_mismatch": status.HTTP_409_CONFLICT,
     "room_board_review_material_incomplete": status.HTTP_409_CONFLICT,
@@ -494,8 +496,8 @@ def register_plugin_grant_routes(
                 if _split_status(root, split_id) == "superseded":
                     raise _deny("room_board_split_not_proposed") from exc
                 raise _deny("room_board_split_decided") from exc
-            if code == "room_board_charter_active":
-                raise _deny("room_board_charter_active") from exc
+            if code in ("room_board_charter_active", "room_board_contract_exists"):
+                raise _deny(code) from exc
             raise _deny("plugin_grant_request_invalid") from exc
         _record_use(auth["grant_id"])
         _refresh(conversation_id)
