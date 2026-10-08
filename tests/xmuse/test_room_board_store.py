@@ -392,7 +392,8 @@ def test_every_write_is_idempotent_with_conflict_detection(tmp_path):
 
     before = _board_activity_count(ctx["db"], ctx["conversation_id"])
     propose_kwargs = _lease_kwargs(lead, leases[lead.participant_id], request_id="idem-propose")
-    modules, assignments, contracts = _split_payload(members)
+    # The board already holds alpha/beta, so the re-proposal uses fresh ids.
+    modules, assignments, contracts = _renamed_split(*_split_payload(members), suffix="2")
     first = store.propose_split(
         **propose_kwargs, modules=modules, assignments=assignments, contracts=contracts
     )
@@ -613,11 +614,14 @@ def test_decide_split_approve_reject_and_double_decide(tmp_path):
             operator_identity="operator:host",
         )
 
+    fresh_modules, fresh_assignments, fresh_contracts = _renamed_split(
+        modules, assignments, contracts, suffix="2"
+    )
     second = store.propose_split(
         **_lease_kwargs(members[0], lead_obs, request_id="decide-propose-2"),
-        modules=modules,
-        assignments=assignments,
-        contracts=contracts,
+        modules=fresh_modules,
+        assignments=fresh_assignments,
+        contracts=fresh_contracts,
     )
     rejected = store.decide_split(
         conversation_id=conversation_id,
@@ -650,18 +654,125 @@ def test_decide_split_approve_reject_and_double_decide(tmp_path):
             == 1
         )
 
-    third = store.propose_split(
-        **_lease_kwargs(members[0], lead_obs, request_id="decide-propose-3"),
+    # An active module id is refused when the lead proposes, not at approval.
+    with pytest.raises(ValueError, match="room_board_charter_active: module alpha"):
+        store.propose_split(
+            **_lease_kwargs(members[0], lead_obs, request_id="decide-propose-3"),
+            modules=modules,
+            assignments=assignments,
+            contracts=contracts,
+        )
+
+
+def _renamed_split(modules, assignments, contracts, *, suffix: str, keep_contract_ids=()):
+    """The split with new module ids and, except ``keep_contract_ids``, new contract ids."""
+
+    def module_name(name: str) -> str:
+        return f"{name}{suffix}"
+
+    def contract_name(name: str) -> str:
+        return name if name in keep_contract_ids else f"{name}{suffix}"
+
+    renamed_modules = [
+        {
+            **item,
+            "module_id": module_name(item["module_id"]),
+            "provides": [contract_name(c) for c in item["provides"]],
+            "depends": [contract_name(c) for c in item["depends"]],
+        }
+        for item in modules
+    ]
+    renamed_assignments = {module_name(k): v for k, v in assignments.items()}
+    renamed_contracts = [
+        {
+            **spec,
+            "contract_id": contract_name(spec["contract_id"]),
+            "provider_module_id": module_name(spec["provider_module_id"]),
+        }
+        for spec in contracts
+    ]
+    return renamed_modules, renamed_assignments, renamed_contracts
+
+
+def test_propose_split_refuses_a_published_contract_id(tmp_path):
+    db, conversation_id, members = _board_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    first = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="contract-1"),
         modules=modules,
         assignments=assignments,
         contracts=contracts,
     )
-    with pytest.raises(ValueError, match="room_board_charter_active"):
+    store.decide_split(
+        conversation_id=conversation_id,
+        split_id=first["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+    # New module ids, but api.alpha is reused: the follow-up the real run hit.
+    reused = _renamed_split(
+        modules, assignments, contracts, suffix="2", keep_contract_ids=("api.alpha",)
+    )
+    with pytest.raises(
+        ValueError,
+        match="room_board_contract_exists: contract api.alpha is already published by module alpha",
+    ):
+        store.propose_split(
+            **_lease_kwargs(members[0], lead_obs, request_id="contract-2"),
+            modules=reused[0],
+            assignments=reused[1],
+            contracts=reused[2],
+        )
+
+
+def test_decide_split_refuses_a_contract_id_published_after_the_proposal(tmp_path):
+    db, conversation_id, members = _board_room(tmp_path)
+    store = RoomBoardStore(db)
+    lead_obs = _claim(db, conversation_id, members[0], owner="host-lead")
+    modules, assignments, contracts = _split_payload(members)
+    proposed = store.propose_split(
+        **_lease_kwargs(members[0], lead_obs, request_id="race-1"),
+        modules=modules,
+        assignments=assignments,
+        contracts=contracts,
+    )
+    with RoomDatabase(db).connect() as conn:
+        conn.execute(
+            """insert into room_board_contracts
+               (conversation_id, contract_id, version, provider_module_id, kind, content,
+                digest, author_participant_id, rationale, activity_id, created_at)
+               values (?, 'api.beta', 1, 'elsewhere', 'text', 'x', ?, ?, 'r', null, ?)""",
+            (
+                conversation_id,
+                contract_digest("x"),
+                members[1].participant_id,
+                "2026-01-01T00:00:00.000000Z",
+            ),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match="room_board_contract_exists: contract api.beta"):
         store.decide_split(
             conversation_id=conversation_id,
-            split_id=third["split_id"],
+            split_id=proposed["split_id"],
             decision="approve",
             operator_identity="operator:host",
+        )
+    with RoomDatabase(db).connect() as conn:
+        assert (
+            conn.execute(
+                "select count(*) from room_board_charters where conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "select status from room_board_splits where split_id = ?",
+                (proposed["split_id"],),
+            ).fetchone()[0]
+            == "proposed"
         )
 
 
