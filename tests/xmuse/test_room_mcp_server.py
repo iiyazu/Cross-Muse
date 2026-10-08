@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import sys
@@ -7,10 +8,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from xmuse.room_mcp_server import create_app
+from xmuse.room_mcp_server import _BOARD_METHODS, create_app
+from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_mcp_contract import (
     ROOM_OUTCOME_TOOL_NAME,
     ROOM_TOOL_NAMES,
+    room_tool_schema,
     room_tool_schemas,
 )
 
@@ -42,6 +45,16 @@ def test_default_room_mcp_has_bounded_room_surface(tmp_path: Path) -> None:
         assert client.post(path, json=rpc).status_code == 404
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404
+
+
+def test_board_tools_expose_every_service_argument() -> None:
+    # The MCP gate rejects arguments missing from the schema, so a service
+    # parameter left out of it is unreachable for every agent.
+    for tool, method in _BOARD_METHODS.items():
+        parameters = set(inspect.signature(getattr(RoomApplicationService, method)).parameters)
+        schema = room_tool_schema(tool)
+        assert schema is not None
+        assert set(schema["inputSchema"]["properties"]) == parameters - {"self", "now"}, tool
 
 
 def test_room_mcp_import_does_not_load_compatibility_graph(tmp_path: Path) -> None:
