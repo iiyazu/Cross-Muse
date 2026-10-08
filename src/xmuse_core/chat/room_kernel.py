@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -384,6 +385,51 @@ def _assert_no_pending_review_verdict_conn(
             "room_outcome_review_verdict_required: rule on module "
             f"{pending['module_id']} with chat_room_board_review (review_id "
             f"{pending['review_id']}) before submitting the outcome, or submit a defer outcome"
+        )
+
+
+def _assert_split_on_board_conn(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    proposal_type: Any,
+) -> None:
+    """Refuse a lead's prose split in a Room whose owners work from the board.
+
+    Only a board split reaches the operator's approval and the owners' charters; a split
+    written into a propose outcome reaches nobody.  A lead that already proposed the
+    split with the board tool may still summarise it in its outcome.
+    """
+
+    if not isinstance(proposal_type, str) or "split" not in re.split(
+        r"[^a-z]+", proposal_type.lower()
+    ):
+        return
+    lead = conn.execute(
+        "select 1 from room_collaboration_policies "
+        "where conversation_id = ? and lead_participant_id = ?",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if lead is None:
+        return
+    owner = conn.execute(
+        "select 1 from participants where conversation_id = ? and status = 'active' "
+        "and workspace_access = 'workspace_write' limit 1",
+        (conversation_id,),
+    ).fetchone()
+    if owner is None:
+        return
+    proposed = conn.execute(
+        "select 1 from room_board_splits where conversation_id = ? "
+        "and proposed_by_participant_id = ? and status = 'proposed' limit 1",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if proposed is None:
+        raise ValueError(
+            "room_outcome_board_split_required: this Room's owners work from the board; "
+            "propose the split with chat_room_board_propose_split (modules, assignments, "
+            "contracts) so the operator can approve it, then submit the outcome"
         )
 
 
@@ -1618,6 +1664,13 @@ class RoomKernelStore:
                         conversation_id=conversation_id,
                         participant_id=participant_id,
                         member_activity_ids=member_activity_ids,
+                    )
+                if outcome_type == "propose":
+                    _assert_split_on_board_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        participant_id=participant_id,
+                        proposal_type=normalized.get("proposal_type"),
                     )
                 source = self._activity_from_conn(conn, row["activity_id"])
                 phase = (
