@@ -273,7 +273,8 @@ function normalizeIntegrationItem(value: unknown): BoardIntegrationItem | null {
   };
 }
 
-function normalizeIntegrationGate(value: unknown): BoardIntegrationGate | null {
+/** One gate result: shared by §5.3 integration detail and §5.2 verification detail. */
+export function normalizeBoardGate(value: unknown): BoardIntegrationGate | null {
   if (!isRecord(value)) return null;
   const gateId = asOptionalString(value.gate_id);
   if (!gateId) return null;
@@ -307,7 +308,7 @@ export function normalizeBoardIntegrationDetail(payload: unknown): BoardIntegrat
     : [];
   const gates = Array.isArray(payload.gates)
     ? payload.gates.flatMap((item) => {
-        const parsed = normalizeIntegrationGate(item);
+        const parsed = normalizeBoardGate(item);
         return parsed ? [parsed] : [];
       })
     : [];

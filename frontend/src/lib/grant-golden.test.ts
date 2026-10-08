@@ -3,13 +3,9 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  normalizePluginGrantIssue,
-  normalizePluginGrantList,
-  revokePluginGrant
-} from "./grant-api";
+import { normalizePluginGrantList, revokePluginGrant } from "./grant-api";
 
-const GOLDEN_DIR = path.resolve(process.cwd(), "../docs/contracts/fixtures/plugin_grant_v1");
+const GOLDEN_DIR = path.resolve(process.cwd(), "../docs/contracts/fixtures/plugin_grant_v2");
 
 function golden(name: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(GOLDEN_DIR, `${name}.json`), "utf8")) as Record<
@@ -19,12 +15,6 @@ function golden(name: string): Record<string, unknown> {
 }
 
 describe("plugin grant backend golden responses", () => {
-  it("normalizes the issue response with its pairing code", () => {
-    const issue = normalizePluginGrantIssue(golden("issue"));
-    expect(issue.grant.status).toBe("pending");
-    expect(issue.pairingCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-  });
-
   it("normalizes a list that holds every status", () => {
     const list = normalizePluginGrantList(golden("list"));
     expect(new Set(list.grants.map((grant) => grant.status))).toEqual(
@@ -32,6 +22,7 @@ describe("plugin grant backend golden responses", () => {
     );
     const raw = golden("list").grants as unknown[];
     expect(list.grants).toHaveLength(raw.length);
+    expect(list.grants.every((grant) => grant.conversationIds.length > 0)).toBe(true);
   });
 
   it("reads the operator revoke response as the revoked grant", async () => {
@@ -43,11 +34,9 @@ describe("plugin grant backend golden responses", () => {
     expect(grant.revokedAt).not.toBeNull();
   });
 
-  it("never carries a secret into the normalized issue or list", () => {
-    const text = JSON.stringify([
-      normalizePluginGrantIssue(golden("issue")).grant,
-      normalizePluginGrantList(golden("list"))
-    ]);
+  it("never carries a secret or pairing code into a normalized list", () => {
+    const text = JSON.stringify(normalizePluginGrantList(golden("list")));
     expect(text).not.toContain("xpg_");
+    expect(text).not.toContain("pairing");
   });
 });

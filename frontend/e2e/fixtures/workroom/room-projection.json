@@ -1,0 +1,588 @@
+{
+  "active_turn_count": 3,
+  "additional_active_turn_count": 2,
+  "attention_turn_count": 1,
+  "collaboration": {
+    "lead_participant_id": "part_00000000000000000000000000000002",
+    "mode": "broadcast"
+  },
+  "conversation": {
+    "created_at": "2026-10-06T04:29:43.618342Z",
+    "id": "conv_00000000000000000000000000000001",
+    "title": "board room"
+  },
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "event_cursor": 4,
+  "event_cursor_proof_boundary": "projection_invalidation_cursor_not_room_authority",
+  "event_cursor_source": "chat.db:chat_frontend_events",
+  "excluded_stopped_count": 0,
+  "generated_at": "2026-10-06T04:40:03.828842Z",
+  "latest_visible_room_seq": 1,
+  "page": {
+    "after_room_seq": null,
+    "before_room_seq": null,
+    "has_newer": false,
+    "has_older": false,
+    "limit": 60,
+    "mode": "latest",
+    "next_after_room_seq": 1,
+    "next_before_room_seq": null
+  },
+  "participants": [
+    {
+      "cli_kind": "codex",
+      "display_name": "Agent 0",
+      "frontier": {
+        "actions": {
+          "cancel": {
+            "available": true,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000007/cancel",
+            "method": "POST"
+          },
+          "retry": {
+            "available": false,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": null,
+            "method": "POST"
+          }
+        },
+        "activity_id": "activity_00000000000000000000000000000005",
+        "attempt_count": 1,
+        "batch_id": "observation_batch_0000000000000000000000000000000c",
+        "context_only_tail": false,
+        "control_seq": 0,
+        "control_state": "active",
+        "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+        "coverage": {
+          "cutoff_room_seq": 1,
+          "included_member_count": 1,
+          "mode": "batch",
+          "omitted_member_count": 0
+        },
+        "created_at": "2026-10-06T04:29:43Z",
+        "current_attempt": {
+          "attempt_number": 1,
+          "claimed_at": "2026-01-01T00:00:00.000000Z",
+          "effective_attempt_limit": 3,
+          "expires_at": "2026-01-01T00:05:00.000000Z",
+          "finished_at": null,
+          "reason_code": null,
+          "recovery": {
+            "completed_at": null,
+            "next_action": "none",
+            "reason_code": null,
+            "started_at": null,
+            "state": "none"
+          },
+          "state": "claimed",
+          "transport_started_at": null,
+          "updated_at": "2026-01-01T00:00:00.000000Z"
+        },
+        "expired": true,
+        "expires_at": "2026-01-01T00:05:00.000000Z",
+        "manual_retry_budget": 0,
+        "member_activity_refs": [
+          {
+            "activity_id": "activity_00000000000000000000000000000005",
+            "room_seq": 1
+          }
+        ],
+        "member_count": 1,
+        "mentioned": false,
+        "observation_id": "observation_00000000000000000000000000000007",
+        "phase": "root",
+        "priority": 0,
+        "room_seq": 1,
+        "status": "claimed",
+        "unresolved_count": 1
+      },
+      "last_completed_outcome": null,
+      "mention_handle": "@role-0",
+      "participant_id": "part_00000000000000000000000000000002",
+      "participant_status": "active",
+      "role": "role-0",
+      "state": "runtime_recovery",
+      "status": "active",
+      "unresolved_count": 1
+    },
+    {
+      "cli_kind": "codex",
+      "display_name": "Agent 1",
+      "frontier": {
+        "actions": {
+          "cancel": {
+            "available": true,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000008/cancel",
+            "method": "POST"
+          },
+          "retry": {
+            "available": false,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": null,
+            "method": "POST"
+          }
+        },
+        "activity_id": "activity_00000000000000000000000000000005",
+        "attempt_count": 1,
+        "batch_id": "observation_batch_00000000000000000000000000000010",
+        "context_only_tail": false,
+        "control_seq": 0,
+        "control_state": "active",
+        "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+        "coverage": {
+          "cutoff_room_seq": 1,
+          "included_member_count": 1,
+          "mode": "batch",
+          "omitted_member_count": 0
+        },
+        "created_at": "2026-10-06T04:29:43Z",
+        "current_attempt": {
+          "attempt_number": 1,
+          "claimed_at": "2026-01-01T00:00:00.000000Z",
+          "effective_attempt_limit": 3,
+          "expires_at": "2026-01-01T00:05:00.000000Z",
+          "finished_at": null,
+          "reason_code": null,
+          "recovery": {
+            "completed_at": null,
+            "next_action": "none",
+            "reason_code": null,
+            "started_at": null,
+            "state": "none"
+          },
+          "state": "claimed",
+          "transport_started_at": null,
+          "updated_at": "2026-01-01T00:00:00.000000Z"
+        },
+        "expired": true,
+        "expires_at": "2026-01-01T00:05:00.000000Z",
+        "manual_retry_budget": 0,
+        "member_activity_refs": [
+          {
+            "activity_id": "activity_00000000000000000000000000000005",
+            "room_seq": 1
+          }
+        ],
+        "member_count": 1,
+        "mentioned": false,
+        "observation_id": "observation_00000000000000000000000000000008",
+        "phase": "root",
+        "priority": 0,
+        "room_seq": 1,
+        "status": "claimed",
+        "unresolved_count": 2
+      },
+      "last_completed_outcome": null,
+      "mention_handle": "@role-1",
+      "participant_id": "part_00000000000000000000000000000003",
+      "participant_status": "active",
+      "role": "role-1",
+      "state": "runtime_recovery",
+      "status": "active",
+      "unresolved_count": 2
+    },
+    {
+      "cli_kind": "codex",
+      "display_name": "Agent 2",
+      "frontier": {
+        "actions": {
+          "cancel": {
+            "available": true,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000009/cancel",
+            "method": "POST"
+          },
+          "retry": {
+            "available": false,
+            "expected_attempt_count": 1,
+            "expected_control_seq": 0,
+            "expected_state": "active",
+            "href": null,
+            "method": "POST"
+          }
+        },
+        "activity_id": "activity_00000000000000000000000000000005",
+        "attempt_count": 1,
+        "batch_id": "observation_batch_00000000000000000000000000000014",
+        "context_only_tail": false,
+        "control_seq": 0,
+        "control_state": "active",
+        "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+        "coverage": {
+          "cutoff_room_seq": 1,
+          "included_member_count": 1,
+          "mode": "batch",
+          "omitted_member_count": 0
+        },
+        "created_at": "2026-10-06T04:29:43Z",
+        "current_attempt": {
+          "attempt_number": 1,
+          "claimed_at": "2026-01-01T00:00:00.000000Z",
+          "effective_attempt_limit": 3,
+          "expires_at": "2026-01-01T00:05:00.000000Z",
+          "finished_at": null,
+          "reason_code": null,
+          "recovery": {
+            "completed_at": null,
+            "next_action": "none",
+            "reason_code": null,
+            "started_at": null,
+            "state": "none"
+          },
+          "state": "claimed",
+          "transport_started_at": null,
+          "updated_at": "2026-01-01T00:00:00.000000Z"
+        },
+        "expired": true,
+        "expires_at": "2026-01-01T00:05:00.000000Z",
+        "manual_retry_budget": 0,
+        "member_activity_refs": [
+          {
+            "activity_id": "activity_00000000000000000000000000000005",
+            "room_seq": 1
+          }
+        ],
+        "member_count": 1,
+        "mentioned": false,
+        "observation_id": "observation_00000000000000000000000000000009",
+        "phase": "root",
+        "priority": 0,
+        "room_seq": 1,
+        "status": "claimed",
+        "unresolved_count": 2
+      },
+      "last_completed_outcome": null,
+      "mention_handle": "@role-2",
+      "participant_id": "part_00000000000000000000000000000004",
+      "participant_status": "active",
+      "role": "role-2",
+      "state": "runtime_recovery",
+      "status": "active",
+      "unresolved_count": 2
+    }
+  ],
+  "projection_only": true,
+  "proof_boundary": "derived_from_room_authority",
+  "schema_version": "room_chat_projection/v3",
+  "source_authority": [
+    "chat.db:room_activities",
+    "chat.db:room_observations",
+    "chat.db:room_observation_attempts",
+    "chat.db:participants",
+    "chat.db:messages",
+    "chat.db:proposals",
+    "chat.db:room_attempt_skill_decisions",
+    "chat.db:room_observation_batches",
+    "chat.db:room_observation_batch_members",
+    "chat.db:room_collaboration_policies"
+  ],
+  "status": "attention",
+  "timeline_items": [
+    {
+      "activity_id": "activity_00000000000000000000000000000005",
+      "activity_type": "message.posted",
+      "actor": {
+        "display_name": "human",
+        "identity": "human:human",
+        "kind": "human",
+        "participant_id": null,
+        "role": "human"
+      },
+      "causal_depth": 0,
+      "causation_id": "causation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+      "content": "kickoff",
+      "context_only_tail": false,
+      "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+      "created_at": "2026-10-06T04:29:43Z",
+      "handoff_targets": [],
+      "kind": "message",
+      "mentions": [],
+      "message_id": "msg_00000000000000000000000000000006",
+      "proof_boundary": "durable_room_activity",
+      "proposal": null,
+      "proposal_id": null,
+      "reply_target_display_name": null,
+      "reply_to_activity_id": null,
+      "reply_to_message_id": null,
+      "room_seq": 1,
+      "target_participant_ids": []
+    }
+  ],
+  "turns": [
+    {
+      "attempt_count": 3,
+      "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+      "created_at": "2026-10-06T04:29:43Z",
+      "excluded_stopped_count": 0,
+      "observation_count": 3,
+      "participants": [
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 0",
+          "frontier": {
+            "actions": {
+              "cancel": {
+                "available": true,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000007/cancel",
+                "method": "POST"
+              },
+              "retry": {
+                "available": false,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": null,
+                "method": "POST"
+              }
+            },
+            "activity_id": "activity_00000000000000000000000000000005",
+            "attempt_count": 1,
+            "batch_id": "observation_batch_0000000000000000000000000000000c",
+            "context_only_tail": false,
+            "control_seq": 0,
+            "control_state": "active",
+            "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+            "coverage": {
+              "cutoff_room_seq": 1,
+              "included_member_count": 1,
+              "mode": "batch",
+              "omitted_member_count": 0
+            },
+            "created_at": "2026-10-06T04:29:43Z",
+            "current_attempt": {
+              "attempt_number": 1,
+              "claimed_at": "2026-01-01T00:00:00.000000Z",
+              "effective_attempt_limit": 3,
+              "expires_at": "2026-01-01T00:05:00.000000Z",
+              "finished_at": null,
+              "reason_code": null,
+              "recovery": {
+                "completed_at": null,
+                "next_action": "none",
+                "reason_code": null,
+                "started_at": null,
+                "state": "none"
+              },
+              "state": "claimed",
+              "transport_started_at": null,
+              "updated_at": "2026-01-01T00:00:00.000000Z"
+            },
+            "expired": true,
+            "expires_at": "2026-01-01T00:05:00.000000Z",
+            "manual_retry_budget": 0,
+            "member_activity_refs": [
+              {
+                "activity_id": "activity_00000000000000000000000000000005",
+                "room_seq": 1
+              }
+            ],
+            "member_count": 1,
+            "mentioned": false,
+            "observation_id": "observation_00000000000000000000000000000007",
+            "phase": "root",
+            "priority": 0,
+            "room_seq": 1,
+            "status": "claimed",
+            "unresolved_count": 1
+          },
+          "latest_outcome": null,
+          "mention_handle": "@role-0",
+          "observation_count": 1,
+          "participant_id": "part_00000000000000000000000000000002",
+          "participant_status": "active",
+          "response_count": 0,
+          "role": "role-0",
+          "state": "runtime_recovery",
+          "status": "active",
+          "unresolved_count": 1
+        },
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 1",
+          "frontier": {
+            "actions": {
+              "cancel": {
+                "available": true,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000008/cancel",
+                "method": "POST"
+              },
+              "retry": {
+                "available": false,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": null,
+                "method": "POST"
+              }
+            },
+            "activity_id": "activity_00000000000000000000000000000005",
+            "attempt_count": 1,
+            "batch_id": "observation_batch_00000000000000000000000000000010",
+            "context_only_tail": false,
+            "control_seq": 0,
+            "control_state": "active",
+            "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+            "coverage": {
+              "cutoff_room_seq": 1,
+              "included_member_count": 1,
+              "mode": "batch",
+              "omitted_member_count": 0
+            },
+            "created_at": "2026-10-06T04:29:43Z",
+            "current_attempt": {
+              "attempt_number": 1,
+              "claimed_at": "2026-01-01T00:00:00.000000Z",
+              "effective_attempt_limit": 3,
+              "expires_at": "2026-01-01T00:05:00.000000Z",
+              "finished_at": null,
+              "reason_code": null,
+              "recovery": {
+                "completed_at": null,
+                "next_action": "none",
+                "reason_code": null,
+                "started_at": null,
+                "state": "none"
+              },
+              "state": "claimed",
+              "transport_started_at": null,
+              "updated_at": "2026-01-01T00:00:00.000000Z"
+            },
+            "expired": true,
+            "expires_at": "2026-01-01T00:05:00.000000Z",
+            "manual_retry_budget": 0,
+            "member_activity_refs": [
+              {
+                "activity_id": "activity_00000000000000000000000000000005",
+                "room_seq": 1
+              }
+            ],
+            "member_count": 1,
+            "mentioned": false,
+            "observation_id": "observation_00000000000000000000000000000008",
+            "phase": "root",
+            "priority": 0,
+            "room_seq": 1,
+            "status": "claimed",
+            "unresolved_count": 1
+          },
+          "latest_outcome": null,
+          "mention_handle": "@role-1",
+          "observation_count": 1,
+          "participant_id": "part_00000000000000000000000000000003",
+          "participant_status": "active",
+          "response_count": 0,
+          "role": "role-1",
+          "state": "runtime_recovery",
+          "status": "active",
+          "unresolved_count": 1
+        },
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 2",
+          "frontier": {
+            "actions": {
+              "cancel": {
+                "available": true,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": "/api/chat/operator/room-observations/observation_00000000000000000000000000000009/cancel",
+                "method": "POST"
+              },
+              "retry": {
+                "available": false,
+                "expected_attempt_count": 1,
+                "expected_control_seq": 0,
+                "expected_state": "active",
+                "href": null,
+                "method": "POST"
+              }
+            },
+            "activity_id": "activity_00000000000000000000000000000005",
+            "attempt_count": 1,
+            "batch_id": "observation_batch_00000000000000000000000000000014",
+            "context_only_tail": false,
+            "control_seq": 0,
+            "control_state": "active",
+            "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+            "coverage": {
+              "cutoff_room_seq": 1,
+              "included_member_count": 1,
+              "mode": "batch",
+              "omitted_member_count": 0
+            },
+            "created_at": "2026-10-06T04:29:43Z",
+            "current_attempt": {
+              "attempt_number": 1,
+              "claimed_at": "2026-01-01T00:00:00.000000Z",
+              "effective_attempt_limit": 3,
+              "expires_at": "2026-01-01T00:05:00.000000Z",
+              "finished_at": null,
+              "reason_code": null,
+              "recovery": {
+                "completed_at": null,
+                "next_action": "none",
+                "reason_code": null,
+                "started_at": null,
+                "state": "none"
+              },
+              "state": "claimed",
+              "transport_started_at": null,
+              "updated_at": "2026-01-01T00:00:00.000000Z"
+            },
+            "expired": true,
+            "expires_at": "2026-01-01T00:05:00.000000Z",
+            "manual_retry_budget": 0,
+            "member_activity_refs": [
+              {
+                "activity_id": "activity_00000000000000000000000000000005",
+                "room_seq": 1
+              }
+            ],
+            "member_count": 1,
+            "mentioned": false,
+            "observation_id": "observation_00000000000000000000000000000009",
+            "phase": "root",
+            "priority": 0,
+            "room_seq": 1,
+            "status": "claimed",
+            "unresolved_count": 1
+          },
+          "latest_outcome": null,
+          "mention_handle": "@role-2",
+          "observation_count": 1,
+          "participant_id": "part_00000000000000000000000000000004",
+          "participant_status": "active",
+          "response_count": 0,
+          "role": "role-2",
+          "state": "runtime_recovery",
+          "status": "active",
+          "unresolved_count": 1
+        }
+      ],
+      "root_activity_id": "activity_00000000000000000000000000000005",
+      "root_message_id": "msg_00000000000000000000000000000006",
+      "root_room_seq": 1,
+      "skill_decision_count": 0,
+      "status": "attention"
+    }
+  ]
+}

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const grantApiMocks = vi.hoisted(() => ({
-  issuePluginGrant: vi.fn(),
   listPluginGrants: vi.fn(),
   revokePluginGrant: vi.fn()
 }));
@@ -64,12 +63,12 @@ vi.mock("@/lib/api", () => apiMocks);
 
 const { useRoomStore } = await import("./room-store");
 
-function grant(id: string, status = "pending") {
+function grant(id: string, status = "pending", conversationIds = ["room-a"]) {
   return {
     grantId: id,
-    conversationId: "room-a",
+    conversationIds,
     host: "claude-code",
-    scope: "board.split.decide",
+    scopes: ["board.split.decide"],
     status,
     createdAt: "2026-10-05T12:00:00Z",
     activatedAt: null,
@@ -81,11 +80,17 @@ function grant(id: string, status = "pending") {
 }
 
 function listResult(grants: ReturnType<typeof grant>[]) {
-  return { conversationId: "room-a", grants };
+  return { grants };
+}
+
+/** Calls that listed this Room's grants (each refresh also lists every known host). */
+function roomCalls() {
+  return grantApiMocks.listPluginGrants.mock.calls.filter(([query]) => "conversationId" in (query as object));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  grantApiMocks.listPluginGrants.mockImplementation(async () => listResult([]));
   vi.useRealTimers();
   useRoomStore.getState().stopSync();
   useRoomStore.getState().stopGrantsSync();
@@ -110,12 +115,34 @@ describe("grants store", () => {
     await useRoomStore.getState().refreshGrants("room-a");
     const cache = useRoomStore.getState().grantsByRoom["room-a"];
     expect(grantApiMocks.listPluginGrants).toHaveBeenCalledWith(
-      "room-a",
+      { conversationId: "room-a" },
       expect.objectContaining({})
     );
+    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledWith({ host: "claude-code" }, expect.objectContaining({}));
+    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledWith({ host: "opencode" }, expect.objectContaining({}));
     expect(cache?.grants.map((item) => item.grantId)).toEqual(["g1"]);
     expect(cache?.error).toBeNull();
     expect(cache?.loading).toBe(false);
+  });
+
+  it("keeps live host grants that leave this Room out, and the last ones when a host list fails", async () => {
+    const outside = { ...grant("g2", "active", ["room-z"]), host: "opencode" };
+    grantApiMocks.listPluginGrants.mockImplementation(async (query: object) =>
+      "host" in query && (query as { host: string }).host === "opencode"
+        ? listResult([outside, grant("g3", "expired", ["room-z"]), grant("g1", "active")])
+        : listResult([grant("g1", "active")])
+    );
+    await useRoomStore.getState().refreshGrants("room-a");
+    expect(useRoomStore.getState().grantsByRoom["room-a"]?.elsewhere.map((item) => item.grantId)).toEqual(["g2"]);
+
+    grantApiMocks.listPluginGrants.mockImplementation(async (query: object) => {
+      if ("host" in query) throw new Error("host list offline");
+      return listResult([grant("g1", "active")]);
+    });
+    await useRoomStore.getState().refreshGrants("room-a");
+    const cache = useRoomStore.getState().grantsByRoom["room-a"];
+    expect(cache?.elsewhere.map((item) => item.grantId)).toEqual(["g2"]);
+    expect(cache?.error).toBeNull();
   });
 
   it("keeps the last list and records the failure on error", async () => {
@@ -135,12 +162,12 @@ describe("grants store", () => {
     useRoomStore.getState().startGrantsSync("room-a");
     expect(grantApiMocks.listPluginGrants).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledTimes(1);
+    expect(roomCalls()).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledTimes(2);
+    expect(roomCalls()).toHaveLength(2);
     useRoomStore.getState().stopGrantsSync();
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledTimes(2);
+    expect(roomCalls()).toHaveLength(2);
     vi.useRealTimers();
   });
 
@@ -150,7 +177,7 @@ describe("grants store", () => {
     useRoomStore.getState().startGrantsSync("room-a");
     useRoomStore.getState().startGrantsSync("room-a");
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(grantApiMocks.listPluginGrants).toHaveBeenCalledTimes(1);
+    expect(roomCalls()).toHaveLength(1);
     vi.useRealTimers();
   });
 

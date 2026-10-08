@@ -1,4 +1,4 @@
-import type { ScrollAnchor, WorkspaceDockTab } from "@/store/room-persistence";
+import type { ScrollAnchor, ThemePreference, WorkspaceDockTab } from "@/store/room-persistence";
 
 import type { DomainCapability } from "./shared";
 
@@ -6,7 +6,7 @@ export type UiDomainState = {
   drafts: Record<string, string>;
   readCursors: Record<string, number>;
   scrollAnchors: Record<string, ScrollAnchor>;
-  theme: "dark" | "light";
+  theme: ThemePreference;
   sidebarOpen: boolean;
   inspectorOpen: boolean;
   dockTab: WorkspaceDockTab;
@@ -22,7 +22,7 @@ export type UiDomainActions = {
   setDraft: (roomId: string, draft: string) => void;
   markRead: (roomId: string, roomSeq: number) => void;
   saveScrollAnchor: (roomId: string, anchor: ScrollAnchor | null) => void;
-  setTheme: (theme: "dark" | "light") => void;
+  setTheme: (theme: ThemePreference) => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
   setDockTab: (tab: WorkspaceDockTab) => void;

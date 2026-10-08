@@ -1,24 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  issuePluginGrant,
   listPluginGrants,
   normalizePluginGrant,
-  normalizePluginGrantIssue,
   normalizePluginGrantList,
   revokePluginGrant
 } from "./grant-api";
 
 const CREATED_AT = "2026-10-05T12:00:00Z";
 const EXPIRES_AT = "2026-10-05T12:10:00Z";
-const PAIRING_EXPIRES_AT = "2026-10-05T12:02:00Z";
 
 function grantPayload(overrides: Record<string, unknown> = {}) {
   return {
     grant_id: "grant_1",
-    conversation_id: "conv-1",
+    conversation_ids: ["conv-1"],
     host: "claude-code",
-    scope: "board.split.decide",
+    scopes: ["room.message", "board.split.decide"],
     status: "pending",
     created_at: CREATED_AT,
     activated_at: null,
@@ -30,45 +27,34 @@ function grantPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function issuePayload(overrides: Record<string, unknown> = {}) {
+function listPayload(grants: unknown[], key: Record<string, string> = { conversation_id: "conv-1" }) {
   return {
-    schema_version: "plugin_grant_issue/v1",
-    grant: grantPayload(),
-    pairing_code: "ABCD-EFGH",
-    pairing_expires_at: PAIRING_EXPIRES_AT,
-    ...overrides
-  };
-}
-
-function listPayload(grants: unknown[]) {
-  return {
-    schema_version: "plugin_grant_list/v1",
-    conversation_id: "conv-1",
+    schema_version: "plugin_grant_list/v2",
+    ...key,
     grants
   };
 }
 
 describe("plugin grant normalizers", () => {
-  it("accepts the contract issue, list and Grant shapes", () => {
-    const issue = normalizePluginGrantIssue(issuePayload());
-    expect(issue.grant.grantId).toBe("grant_1");
-    expect(issue.grant.scope).toBe("board.split.decide");
-    expect(issue.pairingCode).toBe("ABCD-EFGH");
-    expect(issue.pairingExpiresAt).toBe(PAIRING_EXPIRES_AT);
-
+  it("accepts the contract list and Grant shapes", () => {
     const active = grantPayload({
       status: "active",
       activated_at: CREATED_AT,
       last_used_at: CREATED_AT,
       use_count: 3,
-      host: "opencode"
+      host: "opencode",
+      conversation_ids: ["conv-1", "conv-2"]
     });
     const list = normalizePluginGrantList(listPayload([grantPayload(), active]));
-    expect(list.conversationId).toBe("conv-1");
     expect(list.grants).toHaveLength(2);
+    expect(list.grants[0]?.scopes).toEqual(["room.message", "board.split.decide"]);
     expect(list.grants[1]?.status).toBe("active");
+    expect(list.grants[1]?.conversationIds).toEqual(["conv-1", "conv-2"]);
     expect(list.grants[1]?.lastUsedAt).toBe(CREATED_AT);
     expect(list.grants[1]?.useCount).toBe(3);
+
+    const byHost = normalizePluginGrantList(listPayload([grantPayload()], { host: "claude-code" }));
+    expect(byHost.grants).toHaveLength(1);
 
     const revoked = normalizePluginGrant(
       grantPayload({ status: "revoked", revoked_at: EXPIRES_AT })
@@ -82,13 +68,9 @@ describe("plugin grant normalizers", () => {
     expect(grant?.status).toBe("unknown");
   });
 
-  it("rejects malformed issue payloads", () => {
-    expect(() => normalizePluginGrantIssue(null)).toThrow();
-    expect(() => normalizePluginGrantIssue({ ...issuePayload(), schema_version: "other/v9" })).toThrow();
-    expect(() => normalizePluginGrantIssue(issuePayload({ pairing_code: "abcd-efgh" }))).toThrow();
-    expect(() => normalizePluginGrantIssue(issuePayload({ pairing_code: "ABCD-EFG" }))).toThrow();
-    expect(() => normalizePluginGrantIssue(issuePayload({ pairing_expires_at: "yesterday" }))).toThrow();
-    expect(() => normalizePluginGrantIssue(issuePayload({ grant: null }))).toThrow();
+  it("keeps an unknown scope as a fixed word, never the raw value", () => {
+    const grant = normalizePluginGrant(grantPayload({ scopes: ["board.split.decide", "board.merge", "x.y"] }));
+    expect(grant?.scopes).toEqual(["board.split.decide", "unknown"]);
   });
 
   it("rejects malformed grants without throwing for the whole list", () => {
@@ -96,7 +78,11 @@ describe("plugin grant normalizers", () => {
     expect(normalizePluginGrant(grantPayload({ grant_id: "" }))).toBeNull();
     expect(normalizePluginGrant(grantPayload({ host: "Claude Code" }))).toBeNull();
     expect(normalizePluginGrant(grantPayload({ host: "../evil" }))).toBeNull();
-    expect(normalizePluginGrant(grantPayload({ scope: "board.split.approve" }))).toBeNull();
+    expect(normalizePluginGrant(grantPayload({ scopes: [] }))).toBeNull();
+    expect(normalizePluginGrant(grantPayload({ scopes: "board.split.decide" }))).toBeNull();
+    expect(normalizePluginGrant(grantPayload({ conversation_ids: "conv-1" }))).toBeNull();
+    expect(normalizePluginGrant(grantPayload({ conversation_ids: ["conv-1", ""] }))).toBeNull();
+    expect(normalizePluginGrant(grantPayload({ conversation_ids: Array.from({ length: 17 }, (_, i) => `c${i}`) }))).toBeNull();
     expect(normalizePluginGrant(grantPayload({ created_at: "2026-10-05 12:00:00" }))).toBeNull();
     expect(normalizePluginGrant(grantPayload({ expires_at: null }))).toBeNull();
     expect(normalizePluginGrant(grantPayload({ activated_at: "soon" }))).toBeNull();
@@ -108,42 +94,29 @@ describe("plugin grant normalizers", () => {
     );
     expect(list.grants.map((grant) => grant.grantId)).toEqual(["grant_1"]);
 
-    expect(() => normalizePluginGrantList({ ...listPayload([]), schema_version: "other/v9" })).toThrow();
+    expect(() => normalizePluginGrantList({ ...listPayload([]), schema_version: "plugin_grant_list/v1" })).toThrow();
     expect(() => normalizePluginGrantList({ ...listPayload([]), grants: "nope" })).toThrow();
   });
 });
 
 describe("plugin grant fetchers", () => {
-  it("issues through the fixed Next route with exactly the contract keys", async () => {
-    const fetcher = vi.fn(async () => Response.json(issuePayload()));
-    await issuePluginGrant(
-      { conversationId: "conv-1", host: "claude-code", ttlSeconds: 600 },
-      { fetcher: fetcher as typeof fetch }
-    );
-    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
-    expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBe("/api/room-plugin-grants");
-    expect(calls[0][1]).toMatchObject({ method: "POST", cache: "no-store" });
-    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({
-      conversation_id: "conv-1",
-      host: "claude-code",
-      scope: "board.split.decide",
-      ttl_seconds: 600
-    });
-  });
-
-  it("lists through the fixed Next route with an encoded room id", async () => {
+  it("lists by Room or by host through the fixed Next route, encoded", async () => {
     const fetcher = vi.fn(async () => Response.json(listPayload([grantPayload()])));
-    const list = await listPluginGrants("conv/1", { fetcher: fetcher as typeof fetch });
+    const list = await listPluginGrants({ conversationId: "conv/1" }, { fetcher: fetcher as typeof fetch });
     expect(list.grants).toHaveLength(1);
+    await listPluginGrants({ host: "claude-code" }, { fetcher: fetcher as typeof fetch });
     const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(calls[0][0]).toBe("/api/room-plugin-grants?conversation_id=conv%2F1");
     expect(calls[0][1]).toMatchObject({ method: "GET", cache: "no-store" });
+    expect(calls[1][0]).toBe("/api/room-plugin-grants?host=claude-code");
   });
 
   it("revokes through the fixed Next route with exactly the room id body", async () => {
     const fetcher = vi.fn(async () =>
-      Response.json(grantPayload({ status: "revoked", revoked_at: EXPIRES_AT }))
+      Response.json({
+        schema_version: "plugin_grant_revoke/v2",
+        grant: grantPayload({ status: "revoked", revoked_at: EXPIRES_AT })
+      })
     );
     const grant = await revokePluginGrant("grant/1", "conv-1", {
       fetcher: fetcher as typeof fetch
@@ -157,15 +130,12 @@ describe("plugin grant fetchers", () => {
   it("preserves the upstream error code instead of the message", async () => {
     const fetcher = vi.fn(async () =>
       Response.json(
-        { detail: { code: "plugin_grant_host_invalid", message: "server detail" } },
-        { status: 422 }
+        { detail: { code: "room_conversation_unknown", message: "server detail" } },
+        { status: 404 }
       )
     );
     await expect(
-      issuePluginGrant(
-        { conversationId: "conv-1", host: "nope", ttlSeconds: 600 },
-        { fetcher: fetcher as typeof fetch }
-      )
-    ).rejects.toMatchObject({ code: "plugin_grant_host_invalid", status: 422 });
+      listPluginGrants({ conversationId: "conv-1" }, { fetcher: fetcher as typeof fetch })
+    ).rejects.toMatchObject({ code: "room_conversation_unknown", status: 404 });
   });
 });

@@ -1,0 +1,56 @@
+{
+  "candidate_total": 0,
+  "candidates": [],
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "gate_profile": {
+    "gate_ids": [
+      "patch_diff_check",
+      "backend_ruff",
+      "backend_mypy",
+      "backend_pytest",
+      "frontend_typecheck",
+      "frontend_lint",
+      "frontend_vitest",
+      "frontend_build"
+    ],
+    "profile_id": "xmuse-monorepo/v2",
+    "readiness": {
+      "code": "ready",
+      "ready": true,
+      "state": "ready"
+    },
+    "revision": 2,
+    "schema_version": "room_execution_gate_profile/v1"
+  },
+  "generated_at": "2026-10-06T04:40:04.607Z",
+  "page": {
+    "cursor": null,
+    "has_more": false,
+    "limit": 20,
+    "next_cursor": null
+  },
+  "policy": {
+    "actions": {
+      "update": {
+        "allowed_modes": [
+          "manual",
+          "consensus"
+        ],
+        "available": true,
+        "expected_revision": 0,
+        "href": "/api/chat/operator/conversations/conv_00000000000000000000000000000001/execution-policy",
+        "method": "PUT"
+      }
+    },
+    "automatic_execution_available": false,
+    "automatic_execution_code": "execution_policy_manual",
+    "kill_switch_enabled": false,
+    "mode": "manual",
+    "revision": 0,
+    "risk_policy_revision": "room_execution_low_risk/v1",
+    "updated_at": null
+  },
+  "projection_only": true,
+  "proof_boundary": "execution_projection_not_room_or_workspace_authority",
+  "schema_version": "room_execution_list_projection/v1"
+}

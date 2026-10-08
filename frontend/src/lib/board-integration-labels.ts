@@ -196,6 +196,7 @@ export function boardIntegrationErrorShowsCode(code: string | null | undefined):
 /** Detail gate line: id is rendered separately as `<code>`; this is the status + reason part. */
 export function boardIntegrationGateText(gate: Pick<BoardIntegrationGate, "status" | "statusRaw" | "reason_code">): string {
   const status = boardIntegrationGateStatusLabel(gate.status, gate.statusRaw);
-  if (!gate.reason_code) return status;
+  // `execution_gate_failed` only restates a failed status; other reasons add information.
+  if (!gate.reason_code || (gate.reason_code === "execution_gate_failed" && gate.status === "failed")) return status;
   return `${status} · ${boardReasonLabel(gate.reason_code)}`;
 }

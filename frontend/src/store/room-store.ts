@@ -39,6 +39,8 @@ import {
   listPluginGrants,
   revokePluginGrant
 } from "@/lib/grant-api";
+import { grantIsLive } from "@/lib/grant-labels";
+import { PLUGIN_GRANT_HOSTS } from "@/lib/grant-types";
 import {
   normalizeRoomList,
   normalizeRoomMemoryProjection,
@@ -387,7 +389,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   drafts: {},
   readCursors: {},
   scrollAnchors: {},
-  theme: "dark",
+  theme: "system",
   sidebarOpen: true,
   inspectorOpen: false,
   dockTab: "room",
@@ -1316,7 +1318,18 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     let request!: Promise<void>;
     request = (async () => {
       try {
-        const list = await listPluginGrants(roomId, apiOptions(controller.signal));
+        const options = apiOptions(controller.signal);
+        // Host lists only add the "leaves this Room out" notice; their failure keeps the last one.
+        const [list, ...hostLists] = await Promise.all([
+          listPluginGrants({ conversationId: roomId }, options),
+          ...PLUGIN_GRANT_HOSTS.map((host) => listPluginGrants({ host }, options).catch(() => null))
+        ]);
+        const hostsRead = hostLists.every((hostList) => hostList !== null);
+        const elsewhere = hostLists.flatMap((hostList) =>
+          (hostList?.grants ?? []).filter(
+            (grant) => grantIsLive(grant.status) && !grant.conversationIds.includes(roomId)
+          )
+        );
         if (
           controller.signal.aborted ||
           get().grantsByRoom[roomId]?.requestGeneration !== generation
@@ -1330,6 +1343,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
               [roomId]: {
                 ...cache,
                 grants: list.grants,
+                elsewhere: hostsRead ? elsewhere : cache.elsewhere,
                 loading: false,
                 consecutiveFailures: 0,
                 lastSyncedAt: Date.now(),

@@ -1,4 +1,7 @@
-/** Plugin grant shapes (contract `plugin_grant/v1`). Browser-side view only. */
+/**
+ * Plugin grant shapes (contract `plugin_grant/v2`, main_window_control_v1 §2). Browser-side view
+ * only: the Web panel lists and revokes grants; issuing is terminal-only (`xmuse-workroom pair`, T16).
+ */
 
 export type PluginGrantStatus =
   | "pending"
@@ -7,11 +10,22 @@ export type PluginGrantStatus =
   | "revoked"
   | "unknown";
 
+export const PLUGIN_GRANT_SCOPES = [
+  "room.create",
+  "room.message",
+  "board.split.decide",
+  "board.review.decide"
+] as const;
+
+/** A scope outside the four of main_window_control_v1 §1 is kept as `unknown` and shown as a fixed word. */
+export type PluginGrantScope = (typeof PLUGIN_GRANT_SCOPES)[number] | "unknown";
+
 export type PluginGrant = {
   grantId: string;
-  conversationId: string;
+  /** The Rooms this grant may act on (0–16). */
+  conversationIds: string[];
   host: string;
-  scope: "board.split.decide";
+  scopes: PluginGrantScope[];
   status: PluginGrantStatus;
   createdAt: string;
   activatedAt: string | null;
@@ -21,22 +35,11 @@ export type PluginGrant = {
   useCount: number;
 };
 
-export type PluginGrantIssue = {
-  grant: PluginGrant;
-  pairingCode: string;
-  pairingExpiresAt: string;
-};
-
 export type PluginGrantList = {
-  conversationId: string;
   grants: PluginGrant[];
 };
 
+export type PluginGrantListQuery = { conversationId: string } | { host: string };
+
+/** Hosts the panel asks about by name, to find live grants that leave the current Room out. */
 export const PLUGIN_GRANT_HOSTS = ["claude-code", "opencode"] as const;
-
-export type PluginGrantHostOption = (typeof PLUGIN_GRANT_HOSTS)[number];
-
-/** Duration options offered by the grant panel, in seconds (10 / 30 / 60 分钟). */
-export const PLUGIN_GRANT_TTL_OPTIONS = [600, 1800, 3600] as const;
-
-export const PLUGIN_GRANT_SCOPE = "board.split.decide";

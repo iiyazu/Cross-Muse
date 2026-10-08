@@ -93,6 +93,7 @@ export function createEmptyBoardCache(): RoomBoardCache {
 export function createEmptyGrantCache(): RoomGrantCache {
   return {
     grants: [],
+    elsewhere: [],
     loading: false,
     requestGeneration: 0,
     consecutiveFailures: 0,

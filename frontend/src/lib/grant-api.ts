@@ -4,18 +4,19 @@ import {
   type ApiClientOptions
 } from "./api";
 import {
-  PLUGIN_GRANT_SCOPE,
+  PLUGIN_GRANT_SCOPES,
   type PluginGrant,
-  type PluginGrantIssue,
   type PluginGrantList,
+  type PluginGrantListQuery,
+  type PluginGrantScope,
   type PluginGrantStatus
 } from "./grant-types";
 
-const ISSUE_SCHEMA = "plugin_grant_issue/v1";
-const LIST_SCHEMA = "plugin_grant_list/v1";
+const LIST_SCHEMA = "plugin_grant_list/v2";
 
 const HOST_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const PAIRING_PATTERN = /^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}$/;
+const MAX_ROOMS = 16;
+const KNOWN_SCOPES = new Set<string>(PLUGIN_GRANT_SCOPES);
 const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 const GRANT_STATUSES = new Set<string>(["pending", "active", "expired", "revoked"]);
@@ -53,19 +54,34 @@ function normalizeGrantStatus(value: unknown): PluginGrantStatus {
     : "unknown";
 }
 
+function normalizeRoomIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > MAX_ROOMS) return null;
+  const ids = value.map(asNonEmptyString);
+  return ids.every((id): id is string => id !== null) ? ids : null;
+}
+
+function normalizeScopes(value: unknown): PluginGrantScope[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const scopes = new Set<PluginGrantScope>();
+  for (const scope of value) {
+    scopes.add(typeof scope === "string" && KNOWN_SCOPES.has(scope) ? (scope as PluginGrantScope) : "unknown");
+  }
+  return [...scopes];
+}
+
 /**
- * Strict Grant normalizer. Returns null when the payload cannot be used.
- * The pairing code and secret never appear here; the store keeps only Grants.
+ * Strict `plugin_grant/v2` Grant normalizer. Returns null when the payload cannot be used.
+ * No secret or pairing code ever appears in a Grant; the store keeps only Grants.
  */
 export function normalizePluginGrant(value: unknown): PluginGrant | null {
   if (!isRecord(value)) return null;
   const grantId = asNonEmptyString(value.grant_id);
-  const conversationId = asNonEmptyString(value.conversation_id);
+  const conversationIds = normalizeRoomIds(value.conversation_ids);
+  const scopes = normalizeScopes(value.scopes);
   const host = typeof value.host === "string" && HOST_PATTERN.test(value.host)
     ? value.host
     : null;
-  if (!grantId || !conversationId || !host) return null;
-  if (value.scope !== PLUGIN_GRANT_SCOPE) return null;
+  if (!grantId || !conversationIds || !scopes || !host) return null;
   const createdAt = asTimestamp(value.created_at);
   const expiresAt = asTimestamp(value.expires_at);
   if (!createdAt || !expiresAt) return null;
@@ -83,9 +99,9 @@ export function normalizePluginGrant(value: unknown): PluginGrant | null {
   if (useCount === null) return null;
   return {
     grantId,
-    conversationId,
+    conversationIds,
     host,
-    scope: PLUGIN_GRANT_SCOPE,
+    scopes,
     status: normalizeGrantStatus(value.status),
     createdAt,
     activatedAt,
@@ -96,37 +112,14 @@ export function normalizePluginGrant(value: unknown): PluginGrant | null {
   };
 }
 
-function asPairingCode(value: unknown): string | null {
-  return typeof value === "string" && PAIRING_PATTERN.test(value) ? value : null;
-}
-
-/**
- * Normalizes a `plugin_grant_issue/v1` payload. The caller must keep the
- * returned pairing code in component state only; it is dropped from the store.
- */
-export function normalizePluginGrantIssue(payload: unknown): PluginGrantIssue {
-  if (!isRecord(payload) || payload.schema_version !== ISSUE_SCHEMA) {
-    throw grantApiError("plugin_grant_response_invalid", "Grant issue response is unusable");
-  }
-  const grant = normalizePluginGrant(payload.grant);
-  const pairingCode = asPairingCode(payload.pairing_code);
-  const pairingExpiresAt = asTimestamp(payload.pairing_expires_at);
-  if (!grant || !pairingCode || !pairingExpiresAt) {
-    throw grantApiError("plugin_grant_response_invalid", "Grant issue response is unusable");
-  }
-  return { grant, pairingCode, pairingExpiresAt };
-}
-
 export function normalizePluginGrantList(payload: unknown): PluginGrantList {
   if (!isRecord(payload) || payload.schema_version !== LIST_SCHEMA) {
     throw grantApiError("plugin_grant_response_invalid", "Grant list response is unusable");
   }
-  const conversationId = asNonEmptyString(payload.conversation_id);
-  if (!conversationId || !Array.isArray(payload.grants)) {
+  if (!Array.isArray(payload.grants)) {
     throw grantApiError("plugin_grant_response_invalid", "Grant list response is unusable");
   }
   return {
-    conversationId,
     grants: payload.grants.flatMap((item) => {
       const grant = normalizePluginGrant(item);
       return grant ? [grant] : [];
@@ -148,41 +141,16 @@ function clientOptions(options: ApiClientOptions): ApiClientOptions {
   return { ...options, timeoutMs: options.timeoutMs ?? 30_000 };
 }
 
-export type IssuePluginGrantArgs = {
-  conversationId: string;
-  host: string;
-  ttlSeconds: number;
-};
-
-export async function issuePluginGrant(
-  args: IssuePluginGrantArgs,
-  options: ApiClientOptions = {}
-): Promise<PluginGrantIssue> {
-  const raw = await fetchJson<unknown>(
-    "/api/room-plugin-grants",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversation_id: args.conversationId,
-        host: args.host,
-        scope: PLUGIN_GRANT_SCOPE,
-        ttl_seconds: args.ttlSeconds
-      }),
-      cache: "no-store",
-      credentials: "same-origin"
-    },
-    clientOptions(options)
-  );
-  return normalizePluginGrantIssue(raw);
-}
-
+/** Lists the grants that cover one Room, or every grant of one host (main_window_control_v1 §2). */
 export async function listPluginGrants(
-  conversationId: string,
+  query: PluginGrantListQuery,
   options: ApiClientOptions = {}
 ): Promise<PluginGrantList> {
+  const search = "conversationId" in query
+    ? `conversation_id=${encodeURIComponent(query.conversationId)}`
+    : `host=${encodeURIComponent(query.host)}`;
   const raw = await fetchJson<unknown>(
-    `/api/room-plugin-grants?conversation_id=${encodeURIComponent(conversationId)}`,
+    `/api/room-plugin-grants?${search}`,
     { method: "GET", cache: "no-store", credentials: "same-origin" },
     clientOptions(options)
   );

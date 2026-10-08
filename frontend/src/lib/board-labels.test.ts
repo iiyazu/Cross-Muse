@@ -115,3 +115,14 @@ describe("board labels", () => {
     expect(boardStateLabel("future_state")).toBe("未知状态");
   });
 });
+
+describe("decided_via labels", () => {
+  it("names known sources and shows any other value as a fixed word", async () => {
+    const { boardDecidedViaLabel } = await import("./board-labels");
+    expect(boardDecidedViaLabel("web")).toBe("网页");
+    expect(boardDecidedViaLabel("plugin:claude-code")).toBe("Claude Code 插件");
+    expect(boardDecidedViaLabel("plugin:<img src=x>")).toBe("插件");
+    expect(boardDecidedViaLabel("telegram")).toBe("未知来源");
+    expect(boardDecidedViaLabel(null)).toBeNull();
+  });
+});

@@ -14,8 +14,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "geist": "^1.7.2",
     "lucide-react": "^0.468.0",
     "next": "16.2.9",
+    "radix-ui": "^1.7.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-markdown": "^10.1.0",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
@@ -32,12 +35,11 @@
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^5.2.0",
-    "autoprefixer": "^10.4.21",
     "eslint": "^9.39.2",
     "eslint-config-next": "16.2.9",
     "jsdom": "^26.1.0",
     "postcss": "^8.5.10",
-    "tailwindcss": "^3.4.17",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   },

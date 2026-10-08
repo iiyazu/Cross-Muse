@@ -1,0 +1,101 @@
+{
+  "after_seq": 0,
+  "conversation_id": "conv_00000000000000000000000000000001",
+  "events": [
+    {
+      "client_action_id": "kickoff",
+      "conversation_id": "conv_00000000000000000000000000000001",
+      "created_at": "2026-10-06T04:29:43Z",
+      "event_id": "fevt_0000000000000000000000000000000b",
+      "event_type": "projection.changed",
+      "payload": {
+        "activity_id": "activity_00000000000000000000000000000005",
+        "change": "human.posted",
+        "kind": "room_projection_changed",
+        "message_id": "msg_00000000000000000000000000000006",
+        "room_seq": 1
+      },
+      "projection_only": true,
+      "proof_boundary": "frontend_event_not_authority",
+      "resource_ref": "room:activity:activity_00000000000000000000000000000005",
+      "schema_version": "chat_frontend_event/v1",
+      "sequence": 1,
+      "source_authority": "chat.db:room_kernel",
+      "source_ref": "room:activity:activity_00000000000000000000000000000005"
+    },
+    {
+      "client_action_id": null,
+      "conversation_id": "conv_00000000000000000000000000000001",
+      "created_at": "2026-01-01T00:00:00.000000Z",
+      "event_id": "fevt_0000000000000000000000000000000f",
+      "event_type": "projection.changed",
+      "payload": {
+        "activity_id": "activity_00000000000000000000000000000005",
+        "change": "observation.claimed",
+        "kind": "room_projection_changed",
+        "observation_batch_id": "observation_batch_0000000000000000000000000000000c",
+        "observation_id": "observation_00000000000000000000000000000007",
+        "participant_id": "part_00000000000000000000000000000002",
+        "room_seq": 1
+      },
+      "projection_only": true,
+      "proof_boundary": "frontend_event_not_authority",
+      "resource_ref": "room:observation:observation_00000000000000000000000000000007",
+      "schema_version": "chat_frontend_event/v1",
+      "sequence": 2,
+      "source_authority": "chat.db:room_kernel",
+      "source_ref": "room:observation:observation_00000000000000000000000000000007"
+    },
+    {
+      "client_action_id": null,
+      "conversation_id": "conv_00000000000000000000000000000001",
+      "created_at": "2026-01-01T00:00:00.000000Z",
+      "event_id": "fevt_00000000000000000000000000000013",
+      "event_type": "projection.changed",
+      "payload": {
+        "activity_id": "activity_00000000000000000000000000000005",
+        "change": "observation.claimed",
+        "kind": "room_projection_changed",
+        "observation_batch_id": "observation_batch_00000000000000000000000000000010",
+        "observation_id": "observation_00000000000000000000000000000008",
+        "participant_id": "part_00000000000000000000000000000003",
+        "room_seq": 1
+      },
+      "projection_only": true,
+      "proof_boundary": "frontend_event_not_authority",
+      "resource_ref": "room:observation:observation_00000000000000000000000000000008",
+      "schema_version": "chat_frontend_event/v1",
+      "sequence": 3,
+      "source_authority": "chat.db:room_kernel",
+      "source_ref": "room:observation:observation_00000000000000000000000000000008"
+    },
+    {
+      "client_action_id": null,
+      "conversation_id": "conv_00000000000000000000000000000001",
+      "created_at": "2026-01-01T00:00:00.000000Z",
+      "event_id": "fevt_00000000000000000000000000000017",
+      "event_type": "projection.changed",
+      "payload": {
+        "activity_id": "activity_00000000000000000000000000000005",
+        "change": "observation.claimed",
+        "kind": "room_projection_changed",
+        "observation_batch_id": "observation_batch_00000000000000000000000000000014",
+        "observation_id": "observation_00000000000000000000000000000009",
+        "participant_id": "part_00000000000000000000000000000004",
+        "room_seq": 1
+      },
+      "projection_only": true,
+      "proof_boundary": "frontend_event_not_authority",
+      "resource_ref": "room:observation:observation_00000000000000000000000000000009",
+      "schema_version": "chat_frontend_event/v1",
+      "sequence": 4,
+      "source_authority": "chat.db:room_kernel",
+      "source_ref": "room:observation:observation_00000000000000000000000000000009"
+    }
+  ],
+  "has_more": false,
+  "latest_seq": 4,
+  "projection_only": true,
+  "proof_boundary": "frontend_event_not_authority",
+  "schema_version": "chat_frontend_events/v1"
+}

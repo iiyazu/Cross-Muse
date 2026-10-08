@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-10-06T04:40:03.780307Z",
+  "projection_only": true,
+  "proof_boundary": "derived_from_room_authority",
+  "rooms": [
+    {
+      "active_participant_count": 3,
+      "active_turn_count": 3,
+      "attention_turn_count": 1,
+      "collaboration": {
+        "lead_participant_id": "part_00000000000000000000000000000002",
+        "mode": "broadcast"
+      },
+      "conversation_id": "conv_00000000000000000000000000000001",
+      "created_at": "2026-10-06T04:29:43.618342Z",
+      "href": "/rooms/conv_00000000000000000000000000000001",
+      "latest_visible_item": {
+        "activity_id": "activity_00000000000000000000000000000005",
+        "activity_type": "message.posted",
+        "actor": {
+          "display_name": "human",
+          "identity": "human:human",
+          "kind": "human",
+          "participant_id": null,
+          "role": "human"
+        },
+        "causal_depth": 0,
+        "causation_id": "causation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+        "content": "kickoff",
+        "context_only_tail": false,
+        "correlation_id": "correlation_a6ca7730e96aaeddbfeb53838b4a371aae946911c5169dc4351e9a223ca10ef4",
+        "created_at": "2026-10-06T04:29:43Z",
+        "handoff_targets": [],
+        "kind": "message",
+        "mentions": [],
+        "message_id": "msg_00000000000000000000000000000006",
+        "proof_boundary": "durable_room_activity",
+        "proposal": null,
+        "proposal_id": null,
+        "reply_target_display_name": null,
+        "reply_to_activity_id": null,
+        "reply_to_message_id": null,
+        "room_seq": 1,
+        "target_participant_ids": []
+      },
+      "latest_visible_room_seq": 1,
+      "participant_count": 3,
+      "participants": [
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 0",
+          "mention_handle": "@role-0",
+          "participant_id": "part_00000000000000000000000000000002",
+          "participant_status": "active",
+          "role": "role-0",
+          "status": "active"
+        },
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 1",
+          "mention_handle": "@role-1",
+          "participant_id": "part_00000000000000000000000000000003",
+          "participant_status": "active",
+          "role": "role-1",
+          "status": "active"
+        },
+        {
+          "cli_kind": "codex",
+          "display_name": "Agent 2",
+          "mention_handle": "@role-2",
+          "participant_id": "part_00000000000000000000000000000004",
+          "participant_status": "active",
+          "role": "role-2",
+          "status": "active"
+        }
+      ],
+      "status": "attention",
+      "title": "board room",
+      "updated_at": "2026-10-06T04:29:43Z"
+    }
+  ],
+  "schema_version": "room_list_projection/v1",
+  "source_authority": [
+    "chat.db:conversations",
+    "chat.db:room_activities",
+    "chat.db:room_observations",
+    "chat.db:room_observation_attempts",
+    "chat.db:participants",
+    "chat.db:messages",
+    "chat.db:proposals"
+  ]
+}

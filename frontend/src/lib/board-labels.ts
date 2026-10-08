@@ -181,11 +181,11 @@ export function boardDecidedViaLabel(decidedVia: string | null | undefined): str
   if (!decidedVia) return null;
   if (decidedVia === "web") return "网页";
   if (decidedVia === "cli") return "命令行";
-  if (decidedVia.startsWith("plugin:")) {
-    const host = decidedVia.slice("plugin:".length);
-    return host ? `插件（${host}）` : "插件";
-  }
-  return `未知来源（${decidedVia}）`;
+  // An unknown host or source is a fixed word, never the raw value (main_window_control_v1 §4.4).
+  if (decidedVia === "plugin:claude-code") return "Claude Code 插件";
+  if (decidedVia === "plugin:opencode") return "OpenCode 插件";
+  if (decidedVia.startsWith("plugin:")) return "插件";
+  return "未知来源";
 }
 
 export function boardContractKindLabel(kind: string): string {

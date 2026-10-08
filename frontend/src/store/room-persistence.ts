@@ -12,10 +12,17 @@ export type ScrollAnchor = {
   offset: number;
 };
 
+/** `system` follows `prefers-color-scheme`; the other two are an explicit choice. */
+export type ThemePreference = "system" | "dark" | "light";
+
+export function parseThemePreference(value: unknown): ThemePreference {
+  return value === "dark" || value === "light" ? value : "system";
+}
+
 export type PersistedRoomUiState = {
   readCursors: Record<string, number>;
   scrollAnchors: Record<string, ScrollAnchor>;
-  theme: "dark" | "light";
+  theme: ThemePreference;
   sidebarOpen: boolean;
   inspectorOpen: boolean;
   dockTab: WorkspaceDockTab;
@@ -30,7 +37,7 @@ export function defaultRoomUiState(): PersistedRoomUiState {
   return {
     readCursors: {},
     scrollAnchors: {},
-    theme: "dark",
+    theme: "system",
     sidebarOpen: true,
     inspectorOpen: false,
     dockTab: "room",
@@ -60,7 +67,7 @@ export function readRoomUiState(storage: Storage | null): PersistedRoomUiState {
       scrollAnchors: parsed.scrollAnchors && typeof parsed.scrollAnchors === "object"
         ? parsed.scrollAnchors as Record<string, ScrollAnchor>
         : {},
-      theme: parsed.theme === "light" ? "light" : "dark",
+      theme: parseThemePreference(parsed.theme),
       sidebarOpen: parsed.sidebarOpen !== false,
       inspectorOpen: parsed.dockOpen === true || parsed.inspectorOpen === true,
       dockTab,
