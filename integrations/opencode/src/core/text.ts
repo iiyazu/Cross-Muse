@@ -34,6 +34,23 @@ export function safe(input: unknown, maxLen = 160): string {
   return out;
 }
 
+// Multi-line text (a review patch) as separate safe() lines, so a diff keeps
+// its shape. Bounded by line count and total characters; the second value
+// says whether anything was cut.
+export function safeLines(input: unknown, maxLines = 120, maxChars = 6000): [string[], boolean] {
+  if (typeof input !== "string") return [[], false];
+  const raw = input.split("\n");
+  const lines: string[] = [];
+  let used = 0;
+  for (const line of raw) {
+    if (lines.length >= maxLines || used >= maxChars) return [lines, true];
+    const cleaned = safe(line, Math.min(240, maxChars - used));
+    lines.push(cleaned === "" ? " " : cleaned);
+    used += cleaned.length;
+  }
+  return [lines, false];
+}
+
 // Module ids are server-validated slugs; still funnel every interpolated
 // string through safe(). A valid slug is used verbatim, anything else is
 // sanitized (and blank becomes "?").

@@ -124,8 +124,10 @@ What the mod never does with reviews:
 3. On success the pane shows `已授权 · 剩余 mm:ss` with a 撤销授权 button,
    and each proposed split of the bound room gains 批准 / 拒绝 buttons.
    Pressing one only arms a confirm step: type the first 6 hex characters
-   after `sha256:` of that split's digest (shown nowhere near the control)
-   into the 输入摘要前 6 位以确认 field. A mismatch sends nothing; a match
+   after `sha256:` of that split's digest (shown nowhere near the control:
+   run `xmuse-workroom pair --pending` in a terminal, which lists what waits
+   for you with each digest prefix and the agent-authored module ids and
+   paths to check) into the 输入摘要前 6 位以确认 field. A mismatch sends nothing; a match
    sends the decision with the split's full digest as `expected_digest`,
    then refetches the board.
 4. `撤销授权` and `/xmuse detach` revoke the grant best-effort and drop it

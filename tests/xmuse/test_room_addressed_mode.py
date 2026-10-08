@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -16,9 +17,16 @@ from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_api_models import RoomCollaborationInit, RoomConversationCreate
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_host import RoomObservationDelivery
+from xmuse_core.chat.room_host import (
+    RoomObservationDelivery,
+    RoomParticipantHost,
+    RoomTransportResult,
+)
 from xmuse_core.chat.room_kernel import RoomKernelStore, normalize_participant_outcome
-from xmuse_core.chat.room_observation_transport_base import build_room_context_envelope
+from xmuse_core.chat.room_observation_transport_base import (
+    ADDRESSED_COLLABORATION_GUIDANCE,
+    build_room_context_envelope,
+)
 from xmuse_core.chat.room_projection import (
     build_room_chat_projection,
     build_room_list_projection,
@@ -892,6 +900,65 @@ def test_addressed_envelope_tells_agents_peers_only_see_handoffs(tmp_path: Path)
 
     peer_view = _envelope_for(db, conversation_id, members["antigravity"], collaboration)
     assert peer_view["room_context"]["collaboration"]["self_is_lead"] is False
+
+
+def test_addressed_envelope_without_owners_keeps_the_handoff_guidance(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    collaboration = {
+        **RoomKernelStore(db).get_collaboration(conversation_id),
+        "owner_participant_ids": [],
+    }
+    for member in members.values():
+        view = _envelope_for(db, conversation_id, member, collaboration)
+        assert view["room_context"]["collaboration"]["guidance"] == (
+            ADDRESSED_COLLABORATION_GUIDANCE
+        )
+
+
+def test_addressed_envelope_points_the_lead_and_owners_at_the_board(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = members["codex"]
+    collaboration = {
+        **RoomKernelStore(db).get_collaboration(conversation_id),
+        "owner_participant_ids": [owner.participant_id],
+    }
+
+    def guidance(member) -> str:
+        view = _envelope_for(db, conversation_id, member, collaboration)
+        return view["room_context"]["collaboration"]["guidance"]
+
+    lead = guidance(members["claude"])
+    assert "chat_room_board_propose_split" in lead
+    assert "chat_room_board_report_progress" not in lead
+    owned = guidance(owner)
+    assert "chat_room_board_report_progress" in owned
+    assert "chat_room_board_propose_split" not in owned
+    assert guidance(members["antigravity"]) == ADDRESSED_COLLABORATION_GUIDANCE
+
+
+def test_room_host_delivers_the_owner_ids_with_the_collaboration_view(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = ParticipantStore(db).add(
+        conversation_id=conversation_id,
+        role="owner-1",
+        display_name="Owner 1",
+        cli_kind="opencode",  # type: ignore[arg-type]
+        model="opencode-default",
+        workspace_access="workspace_write",  # type: ignore[arg-type]
+    )
+    _post(RoomKernelStore(db), conversation_id, "host-owners")
+    deliveries: list[RoomObservationDelivery] = []
+
+    class _Recording:
+        async def deliver(self, delivery, *, timeout_s):
+            deliveries.append(delivery)
+            return RoomTransportResult("finished")
+
+    asyncio.run(RoomParticipantHost(db, _Recording()).pump_once(conversation_id=conversation_id))
+
+    assert [d.participant.participant_id for d in deliveries] == [members["claude"].participant_id]
+    assert deliveries[0].collaboration is not None
+    assert deliveries[0].collaboration["owner_participant_ids"] == [owner.participant_id]
 
 
 def test_broadcast_envelope_keeps_the_historical_shape(tmp_path: Path) -> None:

@@ -812,6 +812,27 @@ test("material block labels the patch untrusted and keeps ids out of labels", OP
   }
 });
 
+test("material keeps the patch's lines and sanitizes each one", OPTIONS, async () => {
+  const patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-old\n+new\x1b[31m red\n+‮flip";
+  const nodes = buildPaneNodes(
+    mwcCache({ ...MWC_GRANT }, { material: { reviewId: MWC_REVIEW_ID, digest: MWC_REVIEW_DIGEST, text: patch, truncated: false } }),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  const texts = nodeTexts(nodes);
+  for (const line of ["diff --git a/x b/x", "--- a/x", "+++ b/x", "-old"]) expect(texts).toContain(line);
+  for (const t of texts) {
+    expect(t).not.toContain("\n");
+    expect(t).not.toContain("\x1b");
+    expect(t).not.toContain("‮");
+  }
+});
+
+test("pairing copy names the bound room for a re-pair", OPTIONS, async () => {
+  const cache = mwcCache(null);
+  const texts = nodeTexts(buildPaneNodes(cache, Date.parse("2026-01-01T00:00:00Z")));
+  expect(texts.some((t) => t.includes("xmuse-workroom pair --room " + MWC_CID))).toBe(true);
+});
+
 test("object without a reason asks for the reason first", OPTIONS, async () => {
   const nodes = buildPaneNodes(
     mwcCache(

@@ -607,17 +607,42 @@ ADDRESSED_COLLABORATION_GUIDANCE = (
     "the whole request fits your role."
 )
 
+# Rooms with workspace owners: work that changes the workspace goes through the board, where
+# the host verifies and a different family reviews it. A message handoff skips both.
+ADDRESSED_LEAD_BOARD_GUIDANCE = (
+    " This Room has module owners, and workspace changes go through the board. When a "
+    "request needs workspace changes, propose the module split with "
+    "chat_room_board_propose_split (each module's paths and its owner) and end your turn; "
+    "owners start after the Human approves it. Do not hand implementation to an owner by "
+    "message: work outside the board is never verified or reviewed. Questions and requests "
+    "without workspace changes are answered or handed off as above."
+)
+ADDRESSED_OWNER_BOARD_GUIDANCE = (
+    " You are a module owner. Change the workspace only for a module chartered to you "
+    "(chat_room_board_read shows the charters). If you are asked to change the workspace "
+    "without one, hand off to the lead and ask for a split instead of starting. Report "
+    "progress and completion with chat_room_board_report_progress (status done when "
+    "finished); a message alone never counts as done."
+)
+
 
 def _collaboration_context(delivery: RoomObservationDelivery) -> dict[str, Any] | None:
     view = delivery.collaboration
     if not isinstance(view, dict) or view.get("mode") != "addressed":
         return None
     lead = view.get("lead_participant_id")
+    self_id = delivery.participant.participant_id
+    owners = view.get("owner_participant_ids") or ()
+    guidance = ADDRESSED_COLLABORATION_GUIDANCE
+    if owners and lead == self_id:
+        guidance += ADDRESSED_LEAD_BOARD_GUIDANCE
+    if self_id in owners:
+        guidance += ADDRESSED_OWNER_BOARD_GUIDANCE
     return {
         "mode": "addressed",
         "lead_participant_id": lead,
-        "self_is_lead": lead == delivery.participant.participant_id,
-        "guidance": ADDRESSED_COLLABORATION_GUIDANCE,
+        "self_is_lead": lead == self_id,
+        "guidance": guidance,
     }
 
 

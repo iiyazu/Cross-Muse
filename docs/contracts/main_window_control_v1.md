@@ -86,6 +86,12 @@ xmuse-workroom pair --host claude-code [--room PREFIX]... [--scope S]... [--ttl 
   human typed it into the pane is visible at once; the human runs `pair --revoke` (T16).
 - `xmuse-workroom pair --revoke --host claude-code` revokes every grant of that host;
   `pair --list` prints the host's live grants with their Room ids (full ids, never prefixes).
+- `xmuse-workroom pair --pending [--room <prefix>]` (terminal only, read-only, no token) lists the
+  proposed splits and operator-pending reviews with the 6-character digest prefix the pane's
+  confirm asks for, and the module ids, owners and paths to check (agent-authored, printed as
+  plain one-line text). The pane never shows the digest next to its confirm field; this listing is
+  where the Human reads it. A new grant covers only the Rooms named at pairing, so continuing a
+  Room after a Workroom restart takes `pair --room <its id>`.
 
 ## 4. Plugin routes
 

@@ -3,6 +3,8 @@
 // calls, no transport: every output is a fixed structured label plus at most
 // a status number. Agent-authored strings never reach these toasts.
 
+import { safe } from "./text";
+
 const PAIRING_RE = /^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{4}$/;
 const DIGEST_RE = /^sha256:([0-9a-fA-F]{64})$/;
 
@@ -56,7 +58,7 @@ export function confirmPrefixOf(digest: string): string | null {
 }
 
 export function confirmHint(): string {
-  return "摘要不匹配，请重新输入前 6 位";
+  return "摘要不匹配，请重新输入前 6 位（终端运行 xmuse-workroom pair --pending 查看）";
 }
 
 export function checkConfirmInput(digest: string, raw: unknown): { ok: true } | { ok: false; hint: string } {
@@ -99,7 +101,33 @@ export function mapDecisionOutcome(
   return { toast: failureToast(status), clearGrant: false, refetch: false };
 }
 
-export const REPAIR_TOAST = "授权已失效，请在终端运行 xmuse-workroom pair 重新配对";
+export const REPAIR_TOAST =
+  "授权已失效（过期、被撤销，或 Workroom 重启过），请在终端运行 xmuse-workroom pair 重新配对；继续已有房间时加 --room <房间 id 前缀>";
+
+export const NO_GRANT_TEXT = "还没有授权：在终端运行 xmuse-workroom pair，把配对码输入 xmuse 窗格";
+
+export const SCOPE_MISSING_TEXT = "授权不包含这个操作，请重新配对（xmuse-workroom pair）";
+
+export function roomNotCoveredText(room: string): string {
+  return "这个房间不在授权范围内：在终端运行 xmuse-workroom pair --room " + safe(room, 64) + " 重新配对";
+}
+
+// Why a write cannot use the held grant, checked locally before any request.
+// The same words as the server's refusals, so a re-pair that left the bound
+// Room out does not read as an expired grant.
+export function grantRefusalText(
+  grant: { scopes: string[]; conversationIds: string[]; expiresAt: string } | null,
+  tokenHeld: boolean,
+  nowMs: number,
+  scope: string,
+  room: string | null,
+): string {
+  if (grant === null) return NO_GRANT_TEXT;
+  if (!tokenHeld || grantExpired(grant.expiresAt, nowMs)) return REPAIR_TOAST;
+  if (!grant.scopes.includes(scope)) return SCOPE_MISSING_TEXT;
+  if (room !== null && !grant.conversationIds.includes(room)) return roomNotCoveredText(room);
+  return REPAIR_TOAST;
+}
 
 export function failureToast(status: number): string {
   if (status === 0) return "操作失败（网络错误）";
@@ -183,8 +211,8 @@ export function parseSayArgs(rest: string): { ok: true; message: string } | { ok
 // Fixed words for a refused write; reason codes are mapped, never echoed.
 export function writeFailureText(status: number, code: string | null): string {
   if (status === 401) return REPAIR_TOAST;
-  if (status === 403) return "授权不包含这个操作，请重新配对（xmuse-workroom pair）";
-  if (status === 404) return "这个房间不在授权范围内";
+  if (status === 403) return SCOPE_MISSING_TEXT;
+  if (status === 404) return "这个房间不在授权范围内：在终端运行 xmuse-workroom pair --room <房间 id 前缀> 重新配对";
   if (status === 429) return "操作太频繁，请稍后再试";
   if (status === 409 && code === "plugin_grant_room_limit") return "授权的房间数已满，请重新配对";
   if (status === 422 && code === "room_provider_unavailable") return "所选 agent 当前不可用";

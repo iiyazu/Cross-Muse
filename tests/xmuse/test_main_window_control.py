@@ -567,3 +567,64 @@ def test_pair_exchange_report_names_the_exchanging_host(tmp_path: Path) -> None:
 def test_pair_room_prefix_must_be_unique(tmp_path: Path) -> None:
     api = _FakeApi()
     assert _run(_pair_deps(api), tmp_path, room_prefixes=["nope"]) == 4
+
+
+class _PendingApi(_FakeApi):
+    """A Room with one proposed split and one operator-pending review."""
+
+    def __call__(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> tuple[int, Any]:
+        if method == "GET" and url.endswith("/conversations/conv_abc123/board"):
+            self.calls.append((method, url, headers, None))
+            return 200, {
+                "participants": [{"participant_id": "part_o", "display_name": "Owner 1"}],
+                "splits": [
+                    {
+                        "split_id": "split_1",
+                        "status": "proposed",
+                        "digest": "sha256:fa827c" + "0" * 58,
+                        "modules": [
+                            {
+                                "module_id": "reports",
+                                "owner_participant_id": "part_o",
+                                "paths": ["src/reports.py\x1b[2J"],
+                            }
+                        ],
+                    },
+                    {"split_id": "split_0", "status": "approved", "digest": "sha256:" + "1" * 64},
+                ],
+                "modules": [
+                    {
+                        "module_id": "reports",
+                        "review": {
+                            "status": "pending",
+                            "reviewer_kind": "operator",
+                            "review_id": "boardreview_1",
+                            "digest": "sha256:70eaa1" + "0" * 58,
+                        },
+                    }
+                ],
+            }
+        return super().__call__(method, url, headers, body)
+
+
+def test_pair_pending_prints_what_waits_with_the_digest_prefix(tmp_path: Path) -> None:
+    api = _PendingApi()
+    deps = _pair_deps(api, token=None)  # read-only: no operator token is needed
+    assert _run(deps, tmp_path, pending=True) == 0
+    assert deps.out is not None
+    output = deps.out.getvalue()
+    assert "split split_1" in output and "confirm with: fa827c" in output
+    assert "review boardreview_1" in output and "confirm with: 70eaa1" in output
+    assert "split_0" not in output
+    assert "owner Owner 1" in output and "src/reports.py" in output
+    assert "\x1b" not in output
+    assert all(call[0] == "GET" for call in api.calls)
+
+
+def test_pair_pending_is_terminal_only(tmp_path: Path) -> None:
+    api = _PendingApi()
+    deps = _pair_deps(api, tty=False)
+    assert _run(deps, tmp_path, pending=True) == 2
+    assert api.calls == []
