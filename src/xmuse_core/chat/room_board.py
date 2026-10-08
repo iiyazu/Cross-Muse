@@ -99,6 +99,15 @@ VERIFICATION_STATUSES = ("pending", "running", "passed", "failed", "superseded",
 BOARD_VERIFICATION_WAITING_FOR_PROVIDER = "board_verification_waiting_for_provider"
 BOARD_VERIFICATION_BASE_MISMATCH = "board_verification_base_mismatch"
 BOARD_VERIFICATION_DEPENDENCY_OVERLAP = "board_verification_dependency_overlap"
+# Failures the split causes and no owner commit can fix: they wake the lead (or
+# report_to) at once instead of after MAX_CONSECUTIVE_FAILURES owner retries.
+STRUCTURAL_VERIFICATION_REASONS = frozenset(
+    {
+        BOARD_VERIFICATION_DEPENDENCY_OVERLAP,
+        BOARD_VERIFICATION_BASE_MISMATCH,
+        "board_verification_provider_patch_missing",
+    }
+)
 VERIFICATION_DEFERRAL_DELAY_S = 15
 MAX_VERIFICATION_PATCH_BYTES = 200_000
 
@@ -712,6 +721,14 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
                         )
                         tail_text = f"\nOutput tail of {gate_id}:\n{fence}\n{tail}\n{fence}"
                         break
+            if reason in STRUCTURAL_VERIFICATION_REASONS:
+                # No commit inside the charter paths can fix these: say who can.
+                return (
+                    f"Module {module_id} verification failed ({reason}). This comes "
+                    "from the split, not from the owner's code: the lead must revise "
+                    "the split (for example new module paths or dependencies), and "
+                    "the owner should not keep re-reporting done."
+                )
             return (
                 f"Module {module_id} verification failed ({reason}).{detail} "
                 "Fix the failure inside your charter paths, commit, and report "
@@ -3183,7 +3200,10 @@ class RoomBoardStore:
                             break
                     audience = [owner_id]
                     wake = [owner_id]
-                    if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    if (
+                        consecutive >= MAX_CONSECUTIVE_FAILURES
+                        or reason_code in STRUCTURAL_VERIFICATION_REASONS
+                    ):
                         escalated = True
                         escalation = report_to or lead
                         if escalation and escalation not in audience:
