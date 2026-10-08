@@ -437,6 +437,61 @@ def _assert_split_on_board_conn(
         )
 
 
+def _assert_handoff_to_owner_on_board_conn(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    target_ids: Any,
+) -> None:
+    """Refuse a lead's handoff that assigns work to an owner without a charter.
+
+    The other way past the board (#471 covers the prose split): the lead hands the
+    task straight to a workspace owner, the owner writes code in its clone, and no
+    charter, verification or integration ever sees it. A handoff to an owner that
+    already holds an active charter (follow-up context on its module) stays open,
+    as does one sent after the lead proposed the split on the board.
+    """
+
+    if not isinstance(target_ids, list) or not target_ids:
+        return
+    lead = conn.execute(
+        "select 1 from room_collaboration_policies "
+        "where conversation_id = ? and lead_participant_id = ?",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if lead is None:
+        return
+    proposed = conn.execute(
+        "select 1 from room_board_splits where conversation_id = ? "
+        "and proposed_by_participant_id = ? and status = 'proposed' limit 1",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if proposed is not None:
+        return
+    for target in target_ids:
+        owner = conn.execute(
+            "select 1 from participants where conversation_id = ? and participant_id = ? "
+            "and status = 'active' and workspace_access = 'workspace_write'",
+            (conversation_id, target),
+        ).fetchone()
+        if owner is None:
+            continue
+        chartered = conn.execute(
+            "select 1 from room_board_charters where conversation_id = ? "
+            "and owner_participant_id = ? and status = 'active' limit 1",
+            (conversation_id, target),
+        ).fetchone()
+        if chartered is None:
+            raise ValueError(
+                "room_outcome_board_split_required: owner "
+                f"{target} has no charter, and work handed to it outside the board is "
+                "never verified or integrated; assign it with "
+                "chat_room_board_propose_split (modules, assignments, contracts) so the "
+                "operator can approve it"
+            )
+
+
 def _outcome_policy_conn(
     conn: sqlite3.Connection,
     *,
@@ -1675,6 +1730,13 @@ class RoomKernelStore:
                         conversation_id=conversation_id,
                         participant_id=participant_id,
                         proposal_type=normalized.get("proposal_type"),
+                    )
+                if outcome_type == "handoff":
+                    _assert_handoff_to_owner_on_board_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        participant_id=participant_id,
+                        target_ids=normalized.get("target_participant_ids"),
                     )
                 source = self._activity_from_conn(conn, row["activity_id"])
                 phase = (

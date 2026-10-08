@@ -1027,6 +1027,87 @@ def test_lead_prose_split_is_refused_while_owners_work_from_the_board(
     assert plan["produced_activity"]["activity_type"] == "proposal.created"
 
 
+def _handoff(owner_id: str) -> dict[str, Any]:
+    return {
+        "content": "Owner 1, please add discount_line first.",
+        "target_participant_ids": [owner_id],
+    }
+
+
+def test_lead_handoff_of_work_to_an_unchartered_owner_is_refused(tmp_path: Path) -> None:
+    """Real run root5: the lead handed the task to an owner and skipped the board."""
+
+    _db, conversation_id, members, owner, kernel, claim = _lead_split_room(tmp_path)
+    assert owner is not None
+
+    with pytest.raises(ValueError, match="room_outcome_board_split_required") as refused:
+        _complete(
+            kernel,
+            conversation_id,
+            members["claude"],
+            claim,
+            "handoff",
+            _handoff(owner.participant_id),
+            "handoff-owner",
+        )
+    assert owner.participant_id in str(refused.value)
+    assert "chat_room_board_propose_split" in str(refused.value)
+
+
+def test_lead_handoff_to_an_owner_with_a_charter_stays_open(tmp_path: Path) -> None:
+    db, conversation_id, members, owner, kernel, claim = _lead_split_room(tmp_path)
+    assert owner is not None
+    lead = members["claude"]
+    board = RoomBoardStore(db)
+    split = board.propose_split(
+        conversation_id=conversation_id,
+        participant_id=lead.participant_id,
+        caller_identity=f"god:session:{lead.participant_id}",
+        observation_id=claim["observation"]["observation_id"],
+        lease_token=claim["observation"]["lease_token"],
+        client_request_id="board-split",
+        modules=[
+            {
+                "module_id": "ledger-discount",
+                "title": "Discount line",
+                "paths": ["src/ledger/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["pytest passes"],
+            }
+        ],
+        assignments={"ledger-discount": owner.participant_id},
+        contracts=[],
+    )
+    board.decide_split(
+        conversation_id=conversation_id,
+        split_id=split["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+    )
+
+    handed = _complete(
+        kernel, conversation_id, lead, claim, "handoff", _handoff(owner.participant_id), "h"
+    )
+    assert handed["produced_activity"]["activity_type"] == "room.handoff"
+
+
+def test_lead_handoff_to_a_non_owner_stays_open(tmp_path: Path) -> None:
+    _db, conversation_id, members, _owner, kernel, claim = _lead_split_room(tmp_path)
+    other = next(member for name, member in members.items() if name != "claude")
+
+    handed = _complete(
+        kernel,
+        conversation_id,
+        members["claude"],
+        claim,
+        "handoff",
+        _handoff(other.participant_id),
+        "handoff-peer",
+    )
+    assert handed["produced_activity"]["activity_type"] == "room.handoff"
+
+
 def test_lead_may_summarise_a_split_it_proposed_on_the_board(tmp_path: Path) -> None:
     db, conversation_id, members, owner, kernel, claim = _lead_split_room(tmp_path)
     assert owner is not None
