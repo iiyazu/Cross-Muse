@@ -1,6 +1,7 @@
 # Main-window control — contract v1
 
-Status: draft (contract first; no implementation yet). It extends `plugin_grant_v1.md`.
+Status: implemented for Claude Code (backend routes, `xmuse-workroom pair`, the mod); the OpenCode
+plugin carries the v2 types only. It extends `plugin_grant_v1.md`.
 Everything that document says still holds unless a section below replaces it.
 
 ## 0. Why
