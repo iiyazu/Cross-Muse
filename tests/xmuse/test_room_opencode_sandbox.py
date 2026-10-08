@@ -206,3 +206,26 @@ def test_sandbox_refuses_workspace_and_masked_writes(tmp_path: Path) -> None:
     assert "token" not in result.stdout
     assert "masked" in result.stdout
     assert not (workspace / "created.txt").exists()
+
+
+@pytest.mark.skipif(not bwrap_usable(), reason="bubblewrap is not usable here")
+def test_sandbox_pins_temp_dirs_to_its_private_tmp(tmp_path: Path) -> None:
+    # A host TMPDIR under the home is read-only in here; temp files must still work.
+    home = tmp_path / "home"
+    host_tmp = home / "tmp"
+    host_tmp.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    argv = build_opencode_sandbox_command(
+        bwrap=Path(str(shutil.which("bwrap"))),
+        opencode=Path("/bin/sh"),
+        home=home,
+        workspace=workspace,
+        masked_paths=(home,),
+        agent_args=("-c", 'echo "dirs=$TMPDIR,$TMP,$TEMP"; mktemp >/dev/null && echo made'),
+    )
+    env = {"PATH": "/usr/bin:/bin", "TMPDIR": str(host_tmp), "TMP": str(host_tmp)}
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False, env=env)
+    assert "dirs=/tmp,/tmp,/tmp" in result.stdout
+    assert "made" in result.stdout
+    assert list(host_tmp.iterdir()) == []
