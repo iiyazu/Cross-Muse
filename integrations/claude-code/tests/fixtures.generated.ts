@@ -9494,7 +9494,7 @@ export const split_approved_via_plugin = {
         "at": "2026-01-01T00:00:10.000000Z",
         "data": {
           "module_ids": [
-            "alpha"
+            "alpha2"
           ],
           "split_id": "split_0000000000000000000000000000001f"
         },
@@ -9712,7 +9712,7 @@ export const split_approved_via_plugin = {
       }
     ],
     "review_policy": "off",
-    "revision": "6:e0e840744ced",
+    "revision": "6:a0257d6986b4",
     "schema_version": "room_board_projection/v2",
     "server_time": "2026-10-04T12:00:00.000000Z",
     "splits": [
@@ -9795,33 +9795,33 @@ export const split_approved_via_plugin = {
               "reject"
             ],
             "available": false,
-            "expected_digest": "sha256:a25a0bd3b6368f744acf1b65c7fd34c8adf9c9a63a815973b439c88b945debf2",
+            "expected_digest": "sha256:9fab19e2d760df65f51faced66d19e5bc7603992a1d8cabd7f50198a6b6d8352",
             "href": "/api/chat/operator/board-splits/split_0000000000000000000000000000001f/decision",
             "method": "POST"
           }
         },
         "contracts": [
           {
-            "contract_id": "api.alpha",
+            "contract_id": "api.alpha2",
             "digest": "sha256:3ee174f5aa821ef1b31e5804928e1b61a479c64c0cf58d6ed6b4dafc7485ebb5",
             "kind": "api_schema",
-            "provider_module_id": "alpha"
+            "provider_module_id": "alpha2"
           }
         ],
         "created_at": "2026-01-01T00:00:10.000000Z",
         "decided_at": "2026-01-01T00:00:10.000000Z",
         "decided_via": "cli",
-        "digest": "sha256:a25a0bd3b6368f744acf1b65c7fd34c8adf9c9a63a815973b439c88b945debf2",
+        "digest": "sha256:9fab19e2d760df65f51faced66d19e5bc7603992a1d8cabd7f50198a6b6d8352",
         "modules": [
           {
             "depends": [],
-            "module_id": "alpha",
+            "module_id": "alpha2",
             "owner_participant_id": "part_00000000000000000000000000000003",
             "paths": [
               "src/alpha/**"
             ],
             "provides": [
-              "api.alpha"
+              "api.alpha2"
             ],
             "title": {
               "text": "Alpha module",
@@ -9868,7 +9868,7 @@ export const split_approved_via_plugin = {
       "status": null
     },
     "modules_total": 2,
-    "revision": "6:e0e840744ced",
+    "revision": "6:a0257d6986b4",
     "schema_version": "room_board_summary/v1",
     "server_time": "2026-10-04T12:00:00.000000Z"
   }

@@ -810,11 +810,12 @@ def _scenario_split_approved_via_plugin(tmp_path: Path) -> dict[str, Any]:
         now=NOW,
     )
     # A fresh split on the same conversation rejects cleanly with another provenance.
+    # alpha is active and api.alpha published, so the follow-up uses new ids.
     proposed2 = store.propose_split(
         **_lease_kwargs(members[0], leases[members[0].participant_id], request_id="propose-2"),
-        modules=[modules[0]],
-        assignments={"alpha": assignments["alpha"]},
-        contracts=[contracts[0]],
+        modules=[{**modules[0], "module_id": "alpha2", "provides": ["api.alpha2"]}],
+        assignments={"alpha2": assignments["alpha"]},
+        contracts=[{**contracts[0], "contract_id": "api.alpha2", "provider_module_id": "alpha2"}],
     )
     store.decide_split(
         conversation_id=ctx["conversation_id"],

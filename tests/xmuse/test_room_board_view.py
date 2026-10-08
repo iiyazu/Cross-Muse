@@ -659,14 +659,14 @@ def test_board_decision_auth_approve_conflict_and_reject(tmp_path: Path) -> None
     assert second.status_code == 409
 
     # Reject path: a fresh split on the same conversation rejects cleanly.
+    # alpha is active and api.alpha published, so the follow-up uses new ids
+    # (reusing them is refused when the lead proposes).
     proposed2 = store.propose_split(
         **_lease_kwargs(members[0], lead_obs, request_id="api-propose-2"),
-        modules=[modules[0]],
-        assignments={"alpha": assignments["alpha"]},
-        contracts=[contracts[0]],
+        modules=[{**modules[0], "module_id": "alpha2", "provides": ["api.alpha2"]}],
+        assignments={"alpha2": assignments["alpha"]},
+        contracts=[{**contracts[0], "contract_id": "api.alpha2", "provider_module_id": "alpha2"}],
     )
-    # Use a conflicting fresh split: approving while alpha is active is 409,
-    # but rejecting works.
     rejected = client.post(
         f"/api/chat/operator/board-splits/{proposed2['split_id']}/decision",
         json={"conversation_id": conversation_id, "decision": "reject"},

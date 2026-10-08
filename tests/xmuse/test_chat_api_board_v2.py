@@ -670,6 +670,46 @@ def test_board_decide_split_reject_records_cli_provenance(tmp_path: Path) -> Non
     assert events[0]["data"]["grant_id"] is None
 
 
+def test_board_decide_split_reused_contract_id_is_409_not_500(tmp_path: Path) -> None:
+    client, conversation_id, _ctx = _scenario("split_pending", tmp_path)
+    split = client.get(_board_url(conversation_id)).json()["splits"][0]
+    db = tmp_path / "chat.db"
+    with RoomDatabase(db).connect() as conn:
+        split_json = json.loads(
+            conn.execute(
+                "select split_json from room_board_splits where split_id = ?",
+                (split["split_id"],),
+            ).fetchone()[0]
+        )
+        taken = split_json["contracts"][0]["contract_id"]
+        author = next(iter(split_json["assignments"].values()))
+        # Another module published the same contract id after the proposal.
+        conn.execute(
+            """insert into room_board_contracts
+               (conversation_id, contract_id, version, provider_module_id, kind, content,
+                digest, author_participant_id, rationale, activity_id, created_at)
+               values (?, ?, 1, 'elsewhere', 'text', 'x', 'sha256:x', ?, 'r', null,
+                       '2026-01-01T00:00:00.000000Z')""",
+            (conversation_id, taken, author),
+        )
+        conn.commit()
+
+    response = client.post(
+        f"/api/chat/operator/board-splits/{split['split_id']}/decision",
+        json={
+            "conversation_id": conversation_id,
+            "decision": "approve",
+            "expected_digest": split["digest"],
+            "decided_via": "web",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "room_board_contract_exists"
+    assert client.get(_board_url(conversation_id)).json()["splits"][0]["status"] == "proposed"
+
+
 def test_board_decide_split_defaults_to_web(tmp_path: Path) -> None:
     client, conversation_id, _ctx = _scenario("split_pending", tmp_path)
     split_id = client.get(_board_url(conversation_id)).json()["splits"][0]["split_id"]
