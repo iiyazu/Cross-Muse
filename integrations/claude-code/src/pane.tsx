@@ -16,7 +16,10 @@ import {
   reviewStatusWord,
   shortGreenHead,
 } from "./labels";
-import { safe, safeId, shortRev, shortRoom } from "./text";
+import { safe, safeId, safeLines, shortRev, shortRoom } from "./text";
+
+// The confirm field never shows the digest; the terminal listing does.
+const CONFIRM_LABEL = "输入摘要前 6 位以确认（终端: xmuse-workroom pair --pending）";
 
 export type PaneEnv = {
   ui: {
@@ -153,7 +156,7 @@ function reviewDecisionNodes(
       {
         type: "input",
         key: "xmuse-confirm",
-        label: "输入摘要前 6 位以确认",
+        label: CONFIRM_LABEL,
         placeholder: "请输入前 6 位",
         value: "",
       },
@@ -162,12 +165,15 @@ function reviewDecisionNodes(
   }
   const material = cache.material;
   if (material !== null && material.reviewId === reviewId) {
+    // The patch keeps its lines (a diff squeezed onto one line is unreadable);
+    // every line is still sanitized on its own.
+    const [lines, cut] = safeLines(material.text);
     return [
       {
         type: "text",
-        text: material.truncated ? "复核材料 · agent 撰写，未验证（有截断）" : "复核材料 · agent 撰写，未验证",
+        text: material.truncated || cut ? "复核材料 · agent 撰写，未验证（有截断）" : "复核材料 · agent 撰写，未验证",
       },
-      { type: "text", text: safe(material.text, 2000) },
+      ...lines.map((line): PaneNode => ({ type: "text", text: line })),
       { type: "button", key: "xmuse-endorse-" + reviewId, label: "认可" },
       { type: "button", key: "xmuse-object-" + reviewId, label: "反对" },
       { type: "button", key: "xmuse-close-material", label: "关闭材料" },
@@ -190,6 +196,10 @@ export function buildPaneNodes(cache: XmuseCache, nowMs: number = Date.now()): P
   const liveGrant = grantLive ? grant : null;
   if (liveGrant === null) {
     nodes.push({ type: "text", text: "在终端运行 xmuse-workroom pair 生成配对码，然后输入这里。" });
+    if (boundId !== null) {
+      // A new grant covers only the Rooms named at pairing; name the bound one.
+      nodes.push({ type: "text", text: "继续当前房间: xmuse-workroom pair --room " + safe(boundId, 64), dim: true });
+    }
     nodes.push({
       type: "input",
       key: "xmuse-pairing",
@@ -265,7 +275,7 @@ export function buildPaneNodes(cache: XmuseCache, nowMs: number = Date.now()): P
       nodes.push({
         type: "input",
         key: "xmuse-confirm",
-        label: "输入摘要前 6 位以确认",
+        label: CONFIRM_LABEL,
         placeholder: "请输入前 6 位",
         value: "",
       });

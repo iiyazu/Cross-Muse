@@ -149,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     pair_mode = pair.add_mutually_exclusive_group()
     pair_mode.add_argument("--revoke", action="store_true", help="revoke every grant of the host")
     pair_mode.add_argument("--list", action="store_true", help="list the host's live grants")
+    pair_mode.add_argument(
+        "--pending",
+        action="store_true",
+        help="show the splits and reviews waiting for you, with the digest the pane asks for",
+    )
     return parser
 
 
@@ -291,6 +296,7 @@ def run_cli(
             ttl_seconds=args.ttl,
             revoke=args.revoke,
             list_only=args.list,
+            pending=args.pending,
             deps=pair_dependencies
             or PairDependencies(
                 stdin_isatty=sys.stdin.isatty,

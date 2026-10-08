@@ -13,11 +13,15 @@ import {
   checkConfirmInput,
   confirmPrefixOf,
   grantExpired,
+  grantRefusalText,
   isHumanOrigin,
   mapDecisionOutcome,
   mapReviewOutcome,
+  NO_GRANT_TEXT,
   ORIGIN_REFUSED,
+  REPAIR_TOAST,
   remainingMmSs,
+  SCOPE_MISSING_TEXT,
   validatePairingCode,
 } from "../src/grant_state";
 
@@ -259,6 +263,24 @@ test("grant expiry and countdown", OPTIONS, async () => {
   expect(remainingMmSs("2026-01-01T00:10:00Z", Date.parse("2026-01-01T00:00:00Z"))).toBe("10:00");
 });
 
+test("a write refused locally says why: none, expired, scope, or a Room the grant leaves out", OPTIONS, async () => {
+  const now = Date.parse("2026-01-01T00:00:00Z");
+  const grant = {
+    expiresAt: "2999-01-01T00:00:00Z",
+    conversationIds: ["conv_aaa"],
+    scopes: ["room.create", "room.message"],
+  };
+  expect(grantRefusalText(null, false, now, "room.message", "conv_aaa")).toBe(NO_GRANT_TEXT);
+  expect(grantRefusalText(grant, false, now, "room.message", "conv_aaa")).toBe(REPAIR_TOAST);
+  const expired = { ...grant, expiresAt: "2025-01-01T00:00:00Z" };
+  expect(grantRefusalText(expired, true, now, "room.message", "conv_aaa")).toBe(REPAIR_TOAST);
+  expect(grantRefusalText(grant, true, now, "board.review.decide", "conv_aaa")).toBe(SCOPE_MISSING_TEXT);
+  // Re-paired without --room: the bound Room is named, not reported as an expired grant.
+  const leftOut = grantRefusalText(grant, true, now, "room.message", "conv_bbb");
+  expect(leftOut).not.toBe(REPAIR_TOAST);
+  expect(leftOut).toContain("--room conv_bbb");
+});
+
 test("decision outcome mapping table", OPTIONS, async () => {
   expect(mapDecisionOutcome(200, null, "approve").toast).toBe("已批准拆分");
   expect(mapDecisionOutcome(200, null, "reject").toast).toBe("已拒绝拆分");
@@ -271,7 +293,7 @@ test("decision outcome mapping table", OPTIONS, async () => {
   expect(digest.toast).toBe("拆分已变化，请重新确认");
   expect(digest.refetch).toBe(true);
   const unauth = mapDecisionOutcome(401, "plugin_grant_invalid", "approve");
-  expect(unauth.toast).toBe("授权已失效，请在终端运行 xmuse-workroom pair 重新配对");
+  expect(unauth.toast).toBe(REPAIR_TOAST);
   expect(unauth.clearGrant).toBe(true);
   for (const status of [403, 404, 415, 422, 429, 500]) {
     const o = mapDecisionOutcome(status, "something", "approve");
@@ -519,7 +541,7 @@ test("401 clears the grant", OPTIONS, async ($, on) => {
   await ui.input({ key: "xmuse-pairing", text: "ABCD-EFGH" });
   await ui.press({ key: "xmuse-approve-" + PENDING_SPLIT });
   await ui.input({ key: "xmuse-confirm", text: PENDING_PREFIX });
-  expect(env.toasts[env.toasts.length - 1]).toBe("授权已失效，请在终端运行 xmuse-workroom pair 重新配对");
+  expect(env.toasts[env.toasts.length - 1]).toBe(REPAIR_TOAST);
   expect(await ui.find({ key: "xmuse-pairing" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: /已授权 · 剩余/ })).toBeUndefined();
   await ui.unmount();
