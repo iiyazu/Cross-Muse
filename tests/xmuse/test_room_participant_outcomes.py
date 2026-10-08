@@ -773,7 +773,7 @@ def test_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_path)
     tables = ("messages", "room_activities", "room_observations", "chat_request_log")
     with sqlite3.connect(db, factory=ClosingConnection) as conn:
         before = {table: table_count(conn, table) for table in tables}
-    with pytest.raises(RoomApplicationError, match="room_observation_payload_invalid"):
+    with pytest.raises(RoomApplicationError, match="room_observation_payload_invalid") as refused:
         submit(
             db,
             registry,
@@ -792,6 +792,11 @@ def test_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_path)
                 "budget": 1,
             },
         )
+    assert refused.value.code == "room_observation_payload_invalid"
+    assert (
+        "unknown outcome_payload fields author, budget, caller_identity, max_causal_depth, role;"
+        in refused.value.message
+    )
     with sqlite3.connect(db, factory=ClosingConnection) as conn:
         after = {table: table_count(conn, table) for table in tables}
     assert after == before

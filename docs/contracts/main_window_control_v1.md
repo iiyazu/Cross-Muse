@@ -91,7 +91,9 @@ xmuse-workroom pair --host claude-code [--room PREFIX]... [--scope S]... [--ttl 
   confirm asks for, and the module ids, owners and paths to check (agent-authored, printed as
   plain one-line text). The pane never shows the digest next to its confirm field; this listing is
   where the Human reads it. A new grant covers only the Rooms named at pairing, so continuing a
-  Room after a Workroom restart takes `pair --room <its id>`.
+  Room after a Workroom restart or an expired grant takes `pair --room <its id>`. While a live
+  grant leaves the pane's bound Room out, the pane says so (`已授权（不含当前房间）`), names that
+  command with the bound Room's full id, and keeps the pairing input next to `撤销授权`.
 
 ## 4. Plugin routes
 
