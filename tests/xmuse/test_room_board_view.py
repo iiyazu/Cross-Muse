@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.xmuse.room_fixtures import RoomTestStore
@@ -674,3 +675,39 @@ def test_board_decision_auth_approve_conflict_and_reject(tmp_path: Path) -> None
     )
     assert rejected.status_code == 200
     assert rejected.json()["status"] == "rejected"
+
+
+def test_host_gate_lines_render_the_profile_gates_as_local_commands() -> None:
+    from xmuse_core.chat.room_board_view import host_gate_lines
+
+    lines = host_gate_lines("python-uv/v1")
+
+    assert "- python_uv_ruff: `uv run ruff check .`" in lines
+    assert "- python_uv_pytest: `uv run python -m pytest -q`" in lines
+    assert "- patch_diff_check: `git diff --check HEAD --`" in lines
+    assert host_gate_lines(None) == []
+    assert host_gate_lines("") == []
+    assert host_gate_lines("no-such-profile/v9") == []
+
+
+def test_charter_lists_host_gates_when_the_profile_is_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real runs: four Rooms out of four failed the first verification on ruff."""
+
+    ctx = _approved_board(tmp_path)
+    target = tmp_path / "board-gates"
+    target.mkdir()
+    monkeypatch.setenv("XMUSE_EXECUTION_PROFILE_ID", "python-uv/v1")
+    materialize_owner_board_view(
+        ctx["db"], ctx["conversation_id"], ctx["members"][1].participant_id, target
+    )
+    charter_md = (target / "charter.md").read_text()
+    assert "## Host verification gates" in charter_md
+    assert "`uv run ruff check .`" in charter_md
+
+    monkeypatch.delenv("XMUSE_EXECUTION_PROFILE_ID")
+    materialize_owner_board_view(
+        ctx["db"], ctx["conversation_id"], ctx["members"][1].participant_id, target
+    )
+    assert "Host verification gates" not in (target / "charter.md").read_text()

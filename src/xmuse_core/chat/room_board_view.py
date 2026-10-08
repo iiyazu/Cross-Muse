@@ -12,6 +12,11 @@ from typing import Any
 
 from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_execution_profiles import (
+    RoomExecutionProfileError,
+    get_execution_gate_profile,
+)
+from xmuse_core.chat.room_execution_sandbox import GATE_SPECS
 from xmuse_core.chat.room_module_memory import (
     ModuleMemoryStore,
     module_memory_enabled,
@@ -48,6 +53,44 @@ def _atomic_write_text(path: Path, text: str) -> None:
     _atomic_write_bytes(path, text.encode("utf-8"))
 
 
+EXECUTION_PROFILE_ENV = "XMUSE_EXECUTION_PROFILE_ID"
+
+
+def _local_command(argv: tuple[str, ...], *, runner: str) -> str:
+    """A sandbox gate argv as the owner can run it in its clone."""
+
+    program = argv[0].rsplit("/", 1)[-1]
+    if program.startswith("python"):
+        program = "python"
+    args = [arg.removeprefix("/workspace/") for arg in argv[1:]]
+    if program == "git":
+        return " ".join([program, *args])
+    return runner + " ".join([program, *args])
+
+
+def host_gate_lines(profile_id: str | None) -> list[str]:
+    """The gates the host verifies a module with, as commands for the owner's clone.
+
+    Deterministic host knowledge: every real run so far failed its first
+    verification on a gate the owner could have run itself (ruff I001 in four
+    Rooms out of four). Unknown or unset profiles render nothing.
+    """
+
+    if not profile_id:
+        return []
+    try:
+        profile = get_execution_gate_profile(profile_id)
+    except RoomExecutionProfileError:
+        return []
+    runner = "uv run " if profile.profile_id.startswith("python-uv") else ""
+    lines: list[str] = []
+    for gate_id in profile.gate_ids:
+        spec = GATE_SPECS.get(gate_id)
+        if spec is not None:
+            lines.append(f"- {gate_id}: `{_local_command(spec.argv, runner=runner)}`")
+    return lines
+
+
 def _render_charter_md(
     *,
     participant_id: str,
@@ -55,6 +98,7 @@ def _render_charter_md(
     my_modules: list[dict[str, Any]],
     other_modules: list[dict[str, Any]],
     has_memory: bool = False,
+    gate_lines: list[str] | None = None,
 ) -> str:
     lines: list[str] = [f"# Board view for {participant_id}", ""]
     if not my_modules:
@@ -63,6 +107,16 @@ def _render_charter_md(
         return "\n".join(lines)
     lines.append(f"Board seq: {board_seq}")
     lines.append("")
+    if gate_lines:
+        lines.append("## Host verification gates")
+        lines.append("")
+        lines.append(
+            "The host runs these on your committed branch after you report done, and any "
+            "failure sends the module back. Run them in your clone first:"
+        )
+        lines.append("")
+        lines.extend(gate_lines)
+        lines.append("")
     if has_memory:
         # Only with module memory on and at least one memory (module_memory_v1 section 5).
         lines.append(
@@ -234,6 +288,7 @@ def materialize_owner_board_view(
         my_modules=sorted(my_modules, key=lambda m: str(m.get("module_id", ""))),
         other_modules=sorted(other_modules, key=lambda m: str(m.get("module_id", ""))),
         has_memory=bool(memory_sections),
+        gate_lines=host_gate_lines(os.environ.get(EXECUTION_PROFILE_ENV, "").strip()),
     )
     _atomic_write_text(target / "charter.md", charter_md)
     memory_path = target / "memory.md"
