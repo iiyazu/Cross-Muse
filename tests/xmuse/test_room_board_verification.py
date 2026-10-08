@@ -1040,10 +1040,138 @@ def _stack_fixture(
         "frontend_clone": frontend_clone,
         "worker": worker,
         "leases": {
+            members[0].participant_id: lead_obs,
             members[1].participant_id: obs_backend,
             members[2].participant_id: obs_frontend,
         },
     }
+
+
+def _follow_up_split(ctx, *, depends: list[str], module_id: str = "backend-v2") -> None:
+    """The lead adds a module for the backend owner on the same paths, and it is approved."""
+
+    lead = ctx["members"][0]
+    store = ctx["store"]
+    proposed = store.propose_split(
+        **_lease_kwargs(
+            lead, ctx["leases"][lead.participant_id], request_id=f"propose-{module_id}"
+        ),
+        modules=[
+            {
+                "module_id": module_id,
+                "title": "Backend follow-up",
+                "paths": ["src/api/**"],
+                "provides": ["api.farewell"],
+                "depends": depends,
+                "acceptance": ["farewell works"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={module_id: ctx["members"][1].participant_id},
+        contracts=[
+            {
+                "contract_id": "api.farewell",
+                "provider_module_id": module_id,
+                "kind": "protocol",
+                "content": "farewell v1",
+                "rationale": "follow-up",
+            }
+        ],
+    )
+    store.decide_split(
+        conversation_id=ctx["conversation_id"],
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+        now=NOW,
+    )
+
+
+@pytest.mark.parametrize("depends", [["api.greeting"], []])
+def test_follow_up_module_of_the_same_owner_stacks_its_predecessor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, depends: list[str]
+) -> None:
+    """Module start: the owner's second module carries only its own delta.
+
+    Real run root4: the owner's follow-up module touched the file of its first
+    module. With ``depends`` it failed as a dependency overlap; without it the
+    patch carried the first module's change again and integration conflicted.
+    """
+
+    ctx = _stack_fixture(
+        tmp_path,
+        monkeypatch,
+        home_name=f"home-follow-{len(depends)}",
+        source_name=f"source-follow-{len(depends)}",
+    )
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
+    clone = ctx["backend_clone"].path
+    first_head = _commit_in_clone(clone, "src/api/greeting.py", "GREET = 1\n", "backend v1")
+    _report_module_done(ctx, 1, "backend", "done-b1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        first_vid = str(
+            conn.execute(
+                "select verification_id from room_board_verifications where module_id = 'backend'"
+            ).fetchone()[0]
+        )
+
+    _follow_up_split(ctx, depends=depends)
+    captured: dict[str, str] = {}
+
+    def _capturing_gate(layout: Any, gate_id: str, **_kw: Any) -> GateResult:
+        stage = Path(str(layout.stage))
+        captured["greeting"] = (stage / "src/api/greeting.py").read_text(encoding="utf-8")
+        return _passing_gate(gate_id)
+
+    monkeypatch.setattr(verification, "run_gate", _capturing_gate)
+    second_head = _commit_in_clone(
+        clone, "src/api/greeting.py", "GREET = 1\nBYE = 2\n", "backend follow-up"
+    )
+    report = _report_module_done(ctx, 1, "backend-v2", "done-b2")
+
+    result = ctx["worker"].reconcile_once()
+
+    assert result["board_verifications_passed"] == 1
+    # The stage saw the owner's whole tree: first module stacked below the delta.
+    assert captured["greeting"] == "GREET = 1\nBYE = 2\n"
+    row = _verification_row(ctx["db"], report["verification_id"])
+    assert row["status"] == "passed"
+    assert row["head_commit"] == second_head
+    own_patch = str(row["patch_text"])
+    assert "+BYE = 2" in own_patch
+    assert "+GREET = 1" not in own_patch
+    outcome = json.loads(str(row["result_json"]))
+    assert outcome["stacked"] == [
+        {
+            "module_id": "backend",
+            "verification_id": first_vid,
+            "head_commit": first_head,
+            "kind": "predecessor",
+        }
+    ]
+    # Integration applies the predecessor first even without a contract edge.
+    inputs = ctx["store"].board_integration_inputs(ctx["conversation_id"])
+    assert "backend" in inputs["providers"]["backend-v2"]
+
+
+def test_module_without_earlier_owner_work_exports_from_the_clone_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first module of an owner keeps the old behaviour: no predecessor."""
+
+    ctx = _stack_fixture(tmp_path, monkeypatch, home_name="home-first", source_name="source-first")
+    monkeypatch.setattr(
+        verification, "run_gate", lambda _layout, gate_id, **_kw: _passing_gate(gate_id)
+    )
+    _commit_in_clone(ctx["backend_clone"].path, "src/api/greeting.py", "GREET = 1\n", "v1")
+    report = _report_module_done(ctx, 1, "backend", "done-b1")
+    assert ctx["worker"].reconcile_once()["board_verifications_passed"] == 1
+    row = _verification_row(ctx["db"], report["verification_id"])
+    assert json.loads(str(row["result_json"]))["stacked"] == []
+    assert "+GREET = 1" in str(row["patch_text"])
 
 
 def _report_module_done(
