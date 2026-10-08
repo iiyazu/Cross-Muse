@@ -62,6 +62,10 @@ export type XmuseAgentSnippet = {
 // reads review summaries or finding text (no AgentText leaves here).
 export type XmuseReviewInfo = {
   status: string;
+  // Opaque id and digest guard, used only for a Human decision under a
+  // grant (main_window_control_v1 §4.4); never shown in a label or toast.
+  review_id: string | null;
+  digest: string | null;
   reviewer_kind: string | null;
   escalated_from_present: boolean;
   findings_count: { blocker: number; major: number; minor: number };
@@ -127,17 +131,34 @@ export type XmuseSplitSummary = {
   digest: string;
 };
 
-// Non-secret grant metadata the pane renders from. The token itself lives
-// only in a module-level variable of the hooks module, never here.
+// Non-secret grant metadata the pane renders from (plugin_grant/v2). The
+// token itself lives only in a module-level variable of the hooks module,
+// never here.
 export type XmuseGrantMeta = {
   grantId: string;
   expiresAt: string;
-  conversationId: string;
+  conversationIds: string[];
+  scopes: string[];
 };
 
+// A pending two-step decision. kind "split": splitId + decision.
+// kind "review": reviewId + decision (endorse|object); an objection first
+// collects the human's reason (reason null until entered), then the digest.
 export type XmuseConfirming = {
+  kind: string;
   splitId: string;
+  reviewId: string;
   decision: string;
+  reason: string | null;
+};
+
+// Review material fetched under a grant, drawn only in the pane (§4.5).
+// The patch is agent-authored: sanitized, truncated and labelled untrusted.
+export type XmuseReviewMaterial = {
+  reviewId: string;
+  digest: string;
+  text: string;
+  truncated: boolean;
 };
 
 export type XmuseCache = {
@@ -158,6 +179,7 @@ export type XmuseCache = {
   expanded: { [module_id: string]: boolean };
   grant: XmuseGrantMeta | null;
   confirming: XmuseConfirming | null;
+  material: XmuseReviewMaterial | null;
   formEpoch: number;
 };
 

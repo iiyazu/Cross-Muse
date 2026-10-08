@@ -30,6 +30,9 @@ from xmuse_core.chat.room_memory_runtime import (
 MEMORYOS_SOURCE_EVIDENCE_PROFILE = "source_evidence/v1"
 MEMORYOS_SOURCE_EVIDENCE_V2_PROFILE = "source_evidence/v2"
 _MAX_REQUEST_BYTES = 64 * 1024
+CURATE_TIMEOUT_S = 180.0
+CURATE_MAX_REQUEST_BYTES = 384 * 1024
+CURATE_MAX_RESPONSE_BYTES = 256 * 1024
 _MEMORYOS_CONTEXT_HTTP_MAX_BYTES = 128 * 1024
 _ADVISORY_V2_KEYS = frozenset(
     {
@@ -138,6 +141,28 @@ class MemoryOSHTTPClient:
         else:
             normalized_profiles = frozenset(profiles)
         object.__setattr__(self, "_build_context_profiles", normalized_profiles)
+        return payload
+
+    def curate(self, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Stateless module curation (``memoryos_curate/v1``, module_memory_v1 section 3).
+
+        Runs LLM calls on the sidecar, so it gets a long timeout and larger
+        bounds than the archive calls. Retried windows are safe: MemoryOS stores
+        nothing for this endpoint.
+        """
+
+        payload = self._request_json(
+            "POST",
+            "/curate",
+            request,
+            timeout_s=CURATE_TIMEOUT_S,
+            max_request_bytes=CURATE_MAX_REQUEST_BYTES,
+            max_response_bytes=CURATE_MAX_RESPONSE_BYTES,
+        )
+        if payload.get("schema_version") != "memoryos_curate/v1" or not isinstance(
+            payload.get("memories"), list
+        ):
+            raise MemoryOSAdapterError("memoryos_curate_response_invalid")
         return payload
 
     def create_session(self, *, title: str) -> str:
@@ -355,6 +380,7 @@ class MemoryOSHTTPClient:
         *,
         timeout_s: float | None = None,
         max_response_bytes: int = ROOM_MEMORY_MAX_RESPONSE_BYTES,
+        max_request_bytes: int = _MAX_REQUEST_BYTES,
     ) -> Mapping[str, Any]:
         encoded = None
         if body is not None:
@@ -367,7 +393,7 @@ class MemoryOSHTTPClient:
                 ).encode("utf-8")
             except (TypeError, ValueError) as exc:
                 raise MemoryOSAdapterError("memoryos_request_invalid") from exc
-            if len(encoded) > _MAX_REQUEST_BYTES:
+            if len(encoded) > max_request_bytes:
                 raise MemoryOSAdapterError("memoryos_request_too_large")
         request = urllib.request.Request(
             f"{self.base_url}{path}",

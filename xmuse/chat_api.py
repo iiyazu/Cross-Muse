@@ -36,6 +36,7 @@ from xmuse.chat_api_runtime import (
     WorkroomRuntimeStopper,
 )
 from xmuse.operator_auth import resolve_operator_token
+from xmuse.room_module_memory_worker import compose_module_memory_worker
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
 from xmuse_core.chat.room_board_integration import RoomBoardIntegrationWorker
 from xmuse_core.chat.room_board_verification import RoomBoardVerificationWorker
@@ -96,6 +97,10 @@ def create_app(
         execution_profile_id=execution_profile_id,
     )
 
+    module_memory_worker = compose_module_memory_worker(
+        xmuse_root=resolved_root, environ=os.environ
+    )
+
     def _board_background_reconcile() -> dict[str, int]:
         """Verification first, then integration: a separate step per tick."""
 
@@ -119,6 +124,10 @@ def create_app(
         execution_reconcile_interval_s=execution_reconcile_interval_s,
         # One job per tick, run via asyncio.to_thread off the event loop.
         board_verification_reconciler=_board_background_reconcile,
+        # None unless XMUSE_MODULE_MEMORY=on and the sidecar is configured.
+        module_memory_reconciler=(
+            module_memory_worker.reconcile_once if module_memory_worker is not None else None
+        ),
     )
     register_room_setup_routes(
         app,
@@ -188,6 +197,10 @@ def create_app(
         app,
         root=context.root,
         operator_token=operator_token,
+        execution_root=context.execution_root,
+        runtime_starter=context.runtime_starter,
+        explicit_runtime_starter=context.explicit_runtime_starter,
+        provider_capabilities_provider=provider_capabilities_provider,
     )
     register_room_message_routes(
         app,

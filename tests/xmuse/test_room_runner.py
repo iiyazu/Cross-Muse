@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import stat
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ from xmuse_core.chat.room_controls import RoomObservationControlStore
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_execution_review_store import RoomExecutionReviewStore
 from xmuse_core.chat.room_host import RoomParticipantHost, RoomTransportResult
+from xmuse_core.chat.room_mcp_contract import room_tool_schemas
 from xmuse_core.chat.room_runtime import (
     ROOM_RUNNER_PROOF_BOUNDARY,
     ROOM_RUNNER_READINESS_KEYS,
@@ -827,7 +830,7 @@ def test_startup_failure_publishes_failed_not_ready_receipt(tmp_path: Path) -> N
     )
 
 
-def test_room_mcp_probe_requires_room_health_and_exact_outcome_tool(monkeypatch) -> None:
+def _mcp_probe_with_tools(monkeypatch, tools: Any) -> tuple[bool, bool]:
     class _Response:
         def __init__(self, payload: Any) -> None:
             self._raw = json.dumps(payload).encode("utf-8")
@@ -856,12 +859,68 @@ def test_room_mcp_probe_requires_room_health_and_exact_outcome_tool(monkeypatch)
             {
                 "jsonrpc": "2.0",
                 "id": "room-runner-readiness",
-                "result": {"tools": [{"name": "chat_room_submit_outcome"}]},
+                "result": {"tools": tools},
             }
         )
 
     monkeypatch.setattr(room_runner.urllib.request, "urlopen", urlopen)
-    assert room_runner._probe_room_mcp_once("127.0.0.1", 8100) == (True, True)
+    return room_runner._probe_room_mcp_once("127.0.0.1", 8100)
+
+
+def test_room_mcp_probe_accepts_the_surface_the_room_mcp_server_lists(monkeypatch) -> None:
+    # The probe and the server must agree: the outcome tool plus every board tool.
+    assert _mcp_probe_with_tools(monkeypatch, room_tool_schemas()) == (True, True)
+
+
+@pytest.mark.parametrize(
+    "tools",
+    [
+        pytest.param([{"name": "chat_room_submit_outcome"}], id="outcome-only"),
+        pytest.param(room_tool_schemas()[:-1], id="missing-board-tool"),
+        pytest.param([*room_tool_schemas(), {"name": "shell_exec"}], id="extra-tool"),
+        pytest.param([*room_tool_schemas(), room_tool_schemas()[0]], id="duplicate"),
+        pytest.param([*room_tool_schemas()[1:], "chat_room_submit_outcome"], id="non-object"),
+        pytest.param(None, id="no-list"),
+    ],
+)
+def test_room_mcp_probe_refuses_any_other_tool_surface(monkeypatch, tools: Any) -> None:
+    assert _mcp_probe_with_tools(monkeypatch, tools) == (True, False)
+
+
+def test_room_mcp_probe_accepts_a_real_room_mcp_server(tmp_path: Path) -> None:
+    # The managed start path end to end for this probe: a real server process, the real
+    # health payload and tool list. A mocked reply hid a broken managed start before.
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from xmuse.room_mcp_server import main; main()",
+            "--xmuse-root",
+            str(tmp_path),
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        # The server process runs with default warnings: uvicorn still imports the
+        # deprecated websockets.legacy, which PYTHONWARNINGS=error turns into a crash.
+        env={key: value for key, value in os.environ.items() if key != "PYTHONWARNINGS"},
+    )
+    try:
+        deadline = time.monotonic() + 30
+        result = (False, False)
+        while time.monotonic() < deadline and server.poll() is None:
+            result = room_runner._probe_room_mcp_once("127.0.0.1", port)
+            if result == (True, True):
+                break
+            time.sleep(0.2)
+    finally:
+        server.terminate()
+        _, stderr = server.communicate(timeout=10)
+    assert result == (True, True), stderr.decode("utf-8", "replace")[-2000:]
 
 
 def test_cli_has_no_artificial_runtime_deadline(monkeypatch) -> None:

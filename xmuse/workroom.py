@@ -39,6 +39,7 @@ from xmuse.workroom_memoryos_runtime import (
 from xmuse.workroom_memoryos_runtime import (
     write_memoryos_status as write_memoryos_status,
 )
+from xmuse.workroom_operator_token import remove_operator_token, write_operator_token
 from xmuse.workroom_processes import (
     ManagedProcess as ManagedProcess,
 )
@@ -461,10 +462,14 @@ def start_workroom(
                 _update_manifest(manifest, deps)
                 _atomic_write_manifest(paths.manifest, manifest)
 
+            operator_token = deps.token_factory()
+            # For local operator clients such as `xmuse-workroom pair`
+            # (main_window_control_v1 section 3); removed when the generation stops.
+            write_operator_token(paths.operator_token_file, operator_token)
             service_runtime = services.start(
                 node=node,
                 generation=generation,
-                operator_token=deps.token_factory(),
+                operator_token=operator_token,
                 execution_workspace=workspace,
                 execution_profile_id=resolved_profile_id,
                 readiness_timeout_s=readiness_timeout_s,
@@ -528,6 +533,7 @@ def start_workroom(
             deps.sleep(0.2)
 
         _write_if_generation_current(paths, manifest, deps, state="stopping")
+        remove_operator_token(paths.operator_token_file)
         services.stop(manifest, timeout_s=stop_timeout_s)
         _stop_generation_runtime(paths, deps, str(manifest["generation"]))
         if memory_runtime is not None:
@@ -561,6 +567,8 @@ def start_workroom(
             else WorkroomError("start_failed", str(raw_exc) or raw_exc.__class__.__name__)
         )
         if manifest is not None:
+            with suppress(Exception):
+                remove_operator_token(paths.operator_token_file)
             with suppress(Exception):
                 services.stop(manifest, timeout_s=stop_timeout_s)
             cleanup_generation = manifest.get("generation")

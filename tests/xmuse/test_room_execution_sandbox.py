@@ -70,7 +70,20 @@ def test_gate_resource_profiles_are_fixed_and_do_not_use_address_space_limits() 
     )
 
 
-def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(tmp_path: Path) -> None:
+def _bind_sources(command: list[str]) -> set[str]:
+    return {
+        command[index + 1]
+        for index, arg in enumerate(command)
+        if arg in {"--bind", "--ro-bind", "--bind-try", "--ro-bind-try", "--dev-bind"}
+    }
+
+
+def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host_home = "/xmuse-sentinel-host-home"
+    monkeypatch.setenv("HOME", host_home)
+    monkeypatch.setenv("XMUSE_OPERATOR_TOKEN", "xmuse-sentinel-operator-token")
     layout = _layout(tmp_path)
     command = build_bwrap_command(layout, GATE_SPECS["backend_ruff"])
 
@@ -94,8 +107,24 @@ def test_bwrap_command_has_no_host_environment_or_arbitrary_shell(tmp_path: Path
     ]
     joined = "\0".join(command)
     assert "XMUSE_OPERATOR_TOKEN" not in joined
+    assert "xmuse-sentinel-operator-token" not in joined
     assert "auth.json" not in joined
-    assert "/home/iiyatu" not in joined
+    assert host_home not in joined
+    # Only the layout's own paths and fixed system directories are mounted from the host.
+    layout_paths = {
+        str(path)
+        for path in (
+            layout.stage,
+            layout.git_common_dir,
+            layout.python_root,
+            layout.site_packages,
+            layout.ruff,
+            layout.node,
+            layout.frontend_node_modules,
+        )
+    }
+    system_paths = {"/usr", "/bin", "/lib", "/lib64", "/etc/hosts"}
+    assert _bind_sources(command) <= layout_paths | system_paths
     assert "/bin/sh" not in command
     assert "-c" not in command
 

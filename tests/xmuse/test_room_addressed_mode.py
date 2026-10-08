@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -14,11 +15,19 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_api_models import RoomCollaborationInit, RoomConversationCreate
+from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
-from xmuse_core.chat.room_host import RoomObservationDelivery
+from xmuse_core.chat.room_host import (
+    RoomObservationDelivery,
+    RoomParticipantHost,
+    RoomTransportResult,
+)
 from xmuse_core.chat.room_kernel import RoomKernelStore, normalize_participant_outcome
-from xmuse_core.chat.room_observation_transport_base import build_room_context_envelope
+from xmuse_core.chat.room_observation_transport_base import (
+    ADDRESSED_COLLABORATION_GUIDANCE,
+    build_room_context_envelope,
+)
 from xmuse_core.chat.room_projection import (
     build_room_chat_projection,
     build_room_list_projection,
@@ -32,6 +41,7 @@ from xmuse_core.chat.roster_templates import (
     template_to_participant_inits,
     validate_roster_template,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 OUTCOME_TOOL = "chat_room_submit_outcome"
 
@@ -141,7 +151,7 @@ def _observation_count(
         if peer_only
         else ""
     )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         return int(
             conn.execute(
                 f"""select count(*) from room_observations o
@@ -154,7 +164,7 @@ def _observation_count(
 
 
 def _activities(db: Path, conversation_id: str) -> list[tuple[str, str]]:
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         return [
             (row[0], row[1])
             for row in conn.execute(
@@ -564,7 +574,11 @@ def test_handoff_note_round_trips_through_mcp_tool_activity_and_projection(
 
     rejected = call({**note, "budget": 1})
     assert rejected["isError"] is True
-    assert rejected["structuredContent"]["error"]["code"] == "room_handoff_note_invalid"
+    assert rejected["structuredContent"]["error"] == {
+        "code": "invalid_arguments",
+        "message": "chat_room_submit_outcome argument outcome_payload.handoff_note got "
+        "unknown fields: budget; allowed: what, why, tradeoffs, open_questions, next_action",
+    }
     observation = kernel.get_observation(claim["observation"]["observation_id"])
     assert observation["status"] == "claimed"
     assert observation["lease_token"] == claim["observation"]["lease_token"]
@@ -628,7 +642,7 @@ def test_room_setup_writes_addressed_policy_and_replays_idempotently(tmp_path: P
     by_role = {item["role"]: item for item in first["participants"]}
     assert setup["collaboration"]["lead_participant_id"] == by_role["review"]["participant_id"]
 
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute(
             "select mode, lead_participant_id, revision from room_collaboration_policies "
             "where conversation_id = ?",
@@ -702,7 +716,7 @@ def test_room_setup_rejects_unknown_collaboration_lead_without_writes(tmp_path: 
         )
     assert excinfo.value.code == "room_participant_invalid"
 
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
         assert conn.execute("select count(*) from room_collaboration_policies").fetchone()[0] == 0
 
@@ -823,7 +837,7 @@ def test_collaboration_mode_is_broadcast_for_rooms_without_a_policy_row(tmp_path
     assert isinstance(RoomCollaborationInit(mode="broadcast").mode, str)
     projection = build_room_chat_projection(conversation_id, tmp_path)
     assert projection["collaboration"] == {"mode": "broadcast", "lead_participant_id": None}
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_collaboration_policies where conversation_id = ?",
@@ -893,6 +907,65 @@ def test_addressed_envelope_tells_agents_peers_only_see_handoffs(tmp_path: Path)
     assert peer_view["room_context"]["collaboration"]["self_is_lead"] is False
 
 
+def test_addressed_envelope_without_owners_keeps_the_handoff_guidance(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    collaboration = {
+        **RoomKernelStore(db).get_collaboration(conversation_id),
+        "owner_participant_ids": [],
+    }
+    for member in members.values():
+        view = _envelope_for(db, conversation_id, member, collaboration)
+        assert view["room_context"]["collaboration"]["guidance"] == (
+            ADDRESSED_COLLABORATION_GUIDANCE
+        )
+
+
+def test_addressed_envelope_points_the_lead_and_owners_at_the_board(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = members["codex"]
+    collaboration = {
+        **RoomKernelStore(db).get_collaboration(conversation_id),
+        "owner_participant_ids": [owner.participant_id],
+    }
+
+    def guidance(member) -> str:
+        view = _envelope_for(db, conversation_id, member, collaboration)
+        return view["room_context"]["collaboration"]["guidance"]
+
+    lead = guidance(members["claude"])
+    assert "chat_room_board_propose_split" in lead
+    assert "chat_room_board_report_progress" not in lead
+    owned = guidance(owner)
+    assert "chat_room_board_report_progress" in owned
+    assert "chat_room_board_propose_split" not in owned
+    assert guidance(members["antigravity"]) == ADDRESSED_COLLABORATION_GUIDANCE
+
+
+def test_room_host_delivers_the_owner_ids_with_the_collaboration_view(tmp_path: Path) -> None:
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = ParticipantStore(db).add(
+        conversation_id=conversation_id,
+        role="owner-1",
+        display_name="Owner 1",
+        cli_kind="opencode",  # type: ignore[arg-type]
+        model="opencode-default",
+        workspace_access="workspace_write",  # type: ignore[arg-type]
+    )
+    _post(RoomKernelStore(db), conversation_id, "host-owners")
+    deliveries: list[RoomObservationDelivery] = []
+
+    class _Recording:
+        async def deliver(self, delivery, *, timeout_s):
+            deliveries.append(delivery)
+            return RoomTransportResult("finished")
+
+    asyncio.run(RoomParticipantHost(db, _Recording()).pump_once(conversation_id=conversation_id))
+
+    assert [d.participant.participant_id for d in deliveries] == [members["claude"].participant_id]
+    assert deliveries[0].collaboration is not None
+    assert deliveries[0].collaboration["owner_participant_ids"] == [owner.participant_id]
+
+
 def test_broadcast_envelope_keeps_the_historical_shape(tmp_path: Path) -> None:
     db, conversation_id, members = _room(tmp_path)
     collaboration = RoomKernelStore(db).get_collaboration(conversation_id)
@@ -900,3 +973,97 @@ def test_broadcast_envelope_keeps_the_historical_shape(tmp_path: Path) -> None:
 
     envelope = _envelope_for(db, conversation_id, members["claude"], collaboration)
     assert "collaboration" not in envelope["room_context"]
+
+
+SPLIT_PROSE = {"content": "Split into ledger-discount, owned by Owner 1.", "proposal_type": "split"}
+
+
+def _lead_split_room(tmp_path: Path, *, with_owner: bool = True):
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = None
+    if with_owner:
+        owner = ParticipantStore(db).add(
+            conversation_id=conversation_id,
+            role="owner-1",
+            display_name="Owner 1",
+            cli_kind="opencode",  # type: ignore[arg-type]
+            model="opencode-default",
+            workspace_access="workspace_write",  # type: ignore[arg-type]
+        )
+    kernel = RoomKernelStore(db)
+    _post(kernel, conversation_id, "split-root")
+    claim = _claim(kernel, conversation_id, members["claude"], "host-lead")
+    return db, conversation_id, members, owner, kernel, claim
+
+
+@pytest.mark.parametrize("proposal_type", ["split", "Module-Split"])
+def test_lead_prose_split_is_refused_while_owners_work_from_the_board(
+    tmp_path: Path, proposal_type: str
+) -> None:
+    _db, conversation_id, members, _owner, kernel, claim = _lead_split_room(tmp_path)
+
+    with pytest.raises(ValueError, match="room_outcome_board_split_required") as refused:
+        _complete(
+            kernel,
+            conversation_id,
+            members["claude"],
+            claim,
+            "propose",
+            {**SPLIT_PROSE, "proposal_type": proposal_type},
+            "split-prose",
+        )
+    assert "chat_room_board_propose_split" in str(refused.value)
+
+    # Other proposals stay open to the lead on the same delivery.
+    plan = _complete(
+        kernel,
+        conversation_id,
+        members["claude"],
+        claim,
+        "propose",
+        {"content": "Adopt ruff first.", "proposal_type": "plan"},
+        "plan",
+    )
+    assert plan["produced_activity"]["activity_type"] == "proposal.created"
+
+
+def test_lead_may_summarise_a_split_it_proposed_on_the_board(tmp_path: Path) -> None:
+    db, conversation_id, members, owner, kernel, claim = _lead_split_room(tmp_path)
+    assert owner is not None
+    lead = members["claude"]
+    RoomBoardStore(db).propose_split(
+        conversation_id=conversation_id,
+        participant_id=lead.participant_id,
+        caller_identity=f"god:session:{lead.participant_id}",
+        observation_id=claim["observation"]["observation_id"],
+        lease_token=claim["observation"]["lease_token"],
+        client_request_id="board-split",
+        modules=[
+            {
+                "module_id": "ledger-discount",
+                "title": "Discount line",
+                "paths": ["src/ledger/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["pytest passes"],
+            }
+        ],
+        assignments={"ledger-discount": owner.participant_id},
+        contracts=[],
+    )
+
+    summary = _complete(
+        kernel, conversation_id, lead, claim, "propose", SPLIT_PROSE, "split-summary"
+    )
+    assert summary["produced_activity"]["activity_type"] == "proposal.created"
+
+
+def test_prose_split_stays_open_in_a_room_without_owners(tmp_path: Path) -> None:
+    _db, conversation_id, members, _owner, kernel, claim = _lead_split_room(
+        tmp_path, with_owner=False
+    )
+
+    result = _complete(
+        kernel, conversation_id, members["claude"], claim, "propose", SPLIT_PROSE, "split"
+    )
+    assert result["produced_activity"]["activity_type"] == "proposal.created"

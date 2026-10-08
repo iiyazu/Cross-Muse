@@ -14,6 +14,7 @@ from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_errors import RoomApplicationError
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_mcp_contract import ROOM_TOOL_NAMES, room_tool_schemas
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 TOOL = "chat_room_submit_outcome"
 REQUIRED = {
@@ -86,7 +87,7 @@ def _arguments(conversation_id, participant, session, claim, **extra):
 
 
 def _counts(db: Path) -> dict[str, int]:
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         tables = [
             "messages",
             "room_activities",
@@ -373,11 +374,37 @@ def test_http_unknown_nested_outcome_authority_fields_reject_without_writes(tmp_
         ),
     )
     assert result["isError"] is True
-    assert result["structuredContent"]["error"]["code"] == "room_observation_payload_invalid"
+    error = result["structuredContent"]["error"]
+    assert error["code"] == "invalid_arguments"
+    assert error["message"].startswith(
+        "chat_room_submit_outcome argument outcome_payload got unknown fields: "
+        "author, budget, caller_identity, max_causal_depth, role; allowed: content, "
+    )
     assert _counts(db) == before
     observation = RoomKernelStore(db).get_observation(claim["observation"]["observation_id"])
     assert observation["status"] == "claimed"
     assert observation["lease_token"] == claim["observation"]["lease_token"]
+
+
+def test_http_misplaced_top_level_argument_is_named(tmp_path: Path):
+    # agy once put reply_to_activity_id inside outcome_payload; the error must say where it goes.
+    db, registry, conversation_id, participant, session, claim = _room(tmp_path)
+    from xmuse.room_mcp_server import create_app
+
+    result = _chat_call(
+        TestClient(create_app(tmp_path)),
+        _arguments(
+            conversation_id,
+            participant,
+            session,
+            claim,
+            outcome_payload={"content": "done", "reply_to_activity_id": "activity_x"},
+        ),
+    )
+    assert result["isError"] is True
+    message = result["structuredContent"]["error"]["message"]
+    assert "outcome_payload got unknown fields: reply_to_activity_id;" in message
+    assert message.endswith("(reply_to_activity_id is a top-level argument)")
 
 
 def test_http_execution_patch_contract_error_is_a_failed_tool_result(tmp_path: Path):

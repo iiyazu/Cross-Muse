@@ -1,9 +1,13 @@
 // Pane tests: every fixture draws a valid tree on terminal and desktop;
-// agent text appears only after expand, only in labelled Text; status,
+// agent text appears only after expand (module detail) or after the person
+// presses 查看复核材料 (review patch), only in labelled Text; status,
 // toast, command and tool outputs never carry agent strings, ESC or bidi.
 import { expect, mock, test } from "claude-code/testing";
 import type { Engine, On } from "claude-code/testing";
 import * as fx from "./fixtures.generated";
+import { normalizeBoard, normalizeSummary } from "../src/api";
+import { buildPaneNodes, type PaneNode } from "../src/pane";
+import type { XmuseCache } from "../types/index";
 
 const OPTIONS = { options: { pollSeconds: 1 } };
 const SURFACES = ["terminal", "desktop"] as const;
@@ -103,7 +107,7 @@ const OLD_FIXTURES = [
   "split_approved_via_plugin",
 ] as const;
 
-const REVIEW_WORDS = /待复核|待你复核|已背书|已驳回|已升级|已验收|在 Web 复核/;
+const REVIEW_WORDS = /待复核|待你复核|已背书|已驳回|已升级|已验收/;
 
 // Agent-authored review strings from every review golden: verdict summaries
 // and finding texts carried by projection review events. None may ever be
@@ -238,7 +242,7 @@ test("injection agent text hidden until expand, then labelled Text only", OPTION
   expect(ESC.test(String(status.text))).toBe(false);
 });
 
-test("proposed splits link to the web room page", OPTIONS, async ($, on) => {
+test("proposed splits show no web link", OPTIONS, async ($, on) => {
   const statuses: (string | undefined)[] = [];
   const toasts: string[] = [];
   await loadFixture($, on, "split_pending", statuses, toasts);
@@ -250,9 +254,8 @@ test("proposed splits link to the web room page", OPTIONS, async ($, on) => {
       requestId: "xmuse",
       props: paneProps(80) as never,
     });
-    const link = await ui.find({ type: "Link", text: /在 Web 审批/ });
-    expect(link).toBeDefined();
-    expect(String((link?.props ?? {}).href ?? "")).toContain("/rooms/");
+    expect(await ui.find({ type: "Text", text: /待审批/ })).toBeDefined();
+    expect(await ui.findAll({ type: "Link" })).toHaveLength(0);
     await ui.unmount();
   }
 });
@@ -387,7 +390,7 @@ test("superseded review shows nothing review-specific", OPTIONS, async ($, on) =
   }
 });
 
-test("operator-pending review links to the room page only", OPTIONS, async ($, on) => {
+test("operator-pending review offers no link and no button without a grant", OPTIONS, async ($, on) => {
   const statuses: (string | undefined)[] = [];
   const toasts: string[] = [];
   await loadFixture($, on, "review_operator_pending", statuses, toasts);
@@ -399,18 +402,12 @@ test("operator-pending review links to the room page only", OPTIONS, async ($, o
       requestId: "xmuse",
       props: paneProps(80) as never,
     });
-    const link = await ui.find({ type: "Link", text: /在 Web 复核/ });
-    expect(link).toBeDefined();
-    const href = String((link?.props ?? {}).href ?? "");
-    expect(href).toContain("/rooms/");
-    const projection = fx.review_operator_pending.projection as unknown as {
-      modules: { review: { review_id: string | null } }[];
-    };
-    for (const m of projection.modules) {
-      if (m.review.review_id !== null) expect(href).not.toContain(m.review.review_id);
+    expect(await ui.find({ type: "Text", text: /待你复核/ })).toBeDefined();
+    expect(await ui.findAll({ type: "Link" })).toHaveLength(0);
+    const buttons = await ui.findAll({ type: "Button" });
+    for (const b of buttons) {
+      expect(JSON.stringify(b)).not.toMatch(/查看复核材料|认可|反对/);
     }
-    expect(href).not.toContain("board-reviews");
-    expect(href).not.toContain("material");
     await ui.unmount();
   }
 });
@@ -693,5 +690,184 @@ test("pane error operator label has no job id target", OPTIONS, async ($, on) =>
     const dumps = await nodeDump(ui);
     for (const dump of dumps) expect(dump).not.toContain("boardintegration_");
     await ui.unmount();
+  }
+});
+
+// ------------------------------------------------- review pane nodes (MWC v1)
+
+const MWC_REVIEW_ID = "boardreview_0000000000000000000000000000002e";
+const MWC_REVIEW_DIGEST = "sha256:2df9fdc1871ddcd97c6d419b27d5e4f10c6dd82ade419d6c431f080d81fa0db5";
+const MWC_CID = String(
+  (fx.review_operator_pending.summary as { conversation_id: string }).conversation_id,
+);
+
+function mwcCache(
+  grant: XmuseCache["grant"],
+  extra?: { confirming?: XmuseCache["confirming"]; material?: XmuseCache["material"] },
+): XmuseCache {
+  const summary = normalizeSummary(fx.review_operator_pending.summary);
+  const board = normalizeBoard(fx.review_operator_pending.projection);
+  if (summary === null || board === null) throw new Error("bad review fixture");
+  return {
+    binding: MWC_CID,
+    cwd: "/repo",
+    summary,
+    board,
+    summaryEtag: null,
+    boardEtag: null,
+    lastPollAt: null,
+    offline: false,
+    baselined: true,
+    seenAttention: [],
+    seenStates: {},
+    failCount: 0,
+    nextRetryAt: 0,
+    paneOpen: true,
+    expanded: {},
+    grant,
+    confirming: extra?.confirming ?? null,
+    material: extra?.material ?? null,
+    formEpoch: 0,
+  };
+}
+
+const MWC_GRANT = {
+  grantId: "grant_test_1",
+  expiresAt: "2999-01-01T00:00:00Z",
+  conversationIds: [MWC_CID],
+  scopes: ["room.create", "room.message", "board.split.decide", "board.review.decide"],
+};
+
+function nodeTexts(nodes: PaneNode[]): string[] {
+  return nodes.filter((n) => n.type === "text").map((n) => (n as { text: string }).text);
+}
+
+function nodeKeys(nodes: PaneNode[]): string[] {
+  return nodes.filter((n) => n.type !== "text").map((n) => (n as { key: string }).key);
+}
+
+function nodeLabels(nodes: PaneNode[]): string[] {
+  return nodes
+    .filter((n) => n.type === "button" || n.type === "input")
+    .map((n) => (n as { label: string }).label);
+}
+
+test("granted operator-pending review offers the material button, never a link", OPTIONS, async () => {
+  const nodes = buildPaneNodes(mwcCache({ ...MWC_GRANT }), Date.parse("2026-01-01T00:00:00Z"));
+  expect(nodeKeys(nodes)).toContain("xmuse-material-" + MWC_REVIEW_ID);
+  expect(nodes.some((n) => n.type === "link")).toBe(false);
+  for (const l of nodeLabels(nodes)) expect(l).not.toContain("boardreview_");
+});
+
+test("pairing copy points at the terminal", OPTIONS, async () => {
+  const cache = mwcCache(null);
+  cache.binding = null;
+  cache.summary = null;
+  cache.board = null;
+  const texts = nodeTexts(buildPaneNodes(cache, Date.parse("2026-01-01T00:00:00Z")));
+  expect(texts.some((t) => t.includes("xmuse-workroom pair"))).toBe(true);
+  expect(texts.some((t) => t.includes("Web"))).toBe(false);
+});
+
+test("review buttons need the review scope on this room", OPTIONS, async () => {
+  const noScope = buildPaneNodes(
+    mwcCache({ ...MWC_GRANT, scopes: ["board.split.decide"] }),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  expect(nodeKeys(noScope).some((k) => k.startsWith("xmuse-material-"))).toBe(false);
+  const otherRoom = buildPaneNodes(
+    mwcCache({ ...MWC_GRANT, conversationIds: ["conv_other_room"] }),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  expect(nodeKeys(otherRoom).some((k) => k.startsWith("xmuse-material-"))).toBe(false);
+  const participant = buildPaneNodes(
+    mwcCache({ ...MWC_GRANT }),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  // participant-pending alpha offers no button, operator-pending beta does
+  expect(nodeKeys(participant).filter((k) => k.startsWith("xmuse-material-"))).toEqual([
+    "xmuse-material-" + MWC_REVIEW_ID,
+  ]);
+});
+
+test("material block labels the patch untrusted and keeps ids out of labels", OPTIONS, async () => {
+  const nodes = buildPaneNodes(
+    mwcCache(
+      { ...MWC_GRANT },
+      { material: { reviewId: MWC_REVIEW_ID, digest: MWC_REVIEW_DIGEST, text: "PATCH-MWC-XYZ +return to_decimal(x);", truncated: true } },
+    ),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  const texts = nodeTexts(nodes);
+  expect(texts.some((t) => t.includes("复核材料 · agent 撰写，未验证"))).toBe(true);
+  expect(texts.some((t) => t.includes("PATCH-MWC-XYZ"))).toBe(true);
+  const keys = nodeKeys(nodes);
+  for (const k of ["xmuse-endorse-" + MWC_REVIEW_ID, "xmuse-object-" + MWC_REVIEW_ID, "xmuse-close-material"]) {
+    expect(keys).toContain(k);
+  }
+  expect(keys).not.toContain("xmuse-material-" + MWC_REVIEW_ID);
+  for (const l of nodeLabels(nodes)) {
+    expect(l).not.toContain("boardreview_");
+    expect(l).not.toContain("PATCH-MWC-XYZ");
+  }
+});
+
+test("material keeps the patch's lines and sanitizes each one", OPTIONS, async () => {
+  const patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-old\n+new\x1b[31m red\n+‮flip";
+  const nodes = buildPaneNodes(
+    mwcCache({ ...MWC_GRANT }, { material: { reviewId: MWC_REVIEW_ID, digest: MWC_REVIEW_DIGEST, text: patch, truncated: false } }),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  const texts = nodeTexts(nodes);
+  for (const line of ["diff --git a/x b/x", "--- a/x", "+++ b/x", "-old"]) expect(texts).toContain(line);
+  for (const t of texts) {
+    expect(t).not.toContain("\n");
+    expect(t).not.toContain("\x1b");
+    expect(t).not.toContain("‮");
+  }
+});
+
+test("pairing copy names the bound room for a re-pair", OPTIONS, async () => {
+  const cache = mwcCache(null);
+  const texts = nodeTexts(buildPaneNodes(cache, Date.parse("2026-01-01T00:00:00Z")));
+  expect(texts.some((t) => t.includes("xmuse-workroom pair --room " + MWC_CID))).toBe(true);
+});
+
+test("a live grant that leaves the bound room out says so and takes a new code", OPTIONS, async () => {
+  const at = Date.parse("2026-01-01T00:00:00Z");
+  const otherRoom = buildPaneNodes(mwcCache({ ...MWC_GRANT, conversationIds: ["conv_other_room"] }), at);
+  const texts = nodeTexts(otherRoom);
+  expect(texts.some((t) => t.startsWith("已授权（不含当前房间）"))).toBe(true);
+  expect(texts.some((t) => t.startsWith("已授权 · "))).toBe(false);
+  expect(texts.some((t) => t.includes("xmuse-workroom pair --room " + MWC_CID))).toBe(true);
+  expect(nodeKeys(otherRoom)).toContain("xmuse-pairing");
+  expect(nodeKeys(otherRoom)).toContain("xmuse-revoke");
+
+  const covered = buildPaneNodes(mwcCache({ ...MWC_GRANT }), at);
+  expect(nodeTexts(covered).some((t) => t.startsWith("已授权 · "))).toBe(true);
+  expect(nodeKeys(covered)).not.toContain("xmuse-pairing");
+});
+
+test("object without a reason asks for the reason first", OPTIONS, async () => {
+  const nodes = buildPaneNodes(
+    mwcCache(
+      { ...MWC_GRANT },
+      { confirming: { kind: "review", splitId: "", reviewId: MWC_REVIEW_ID, decision: "object", reason: null } },
+    ),
+    Date.parse("2026-01-01T00:00:00Z"),
+  );
+  expect(nodeKeys(nodes)).toContain("xmuse-review-reason");
+  expect(nodeKeys(nodes)).not.toContain("xmuse-confirm");
+});
+
+test("endorse and reasoned object ask for the digest guard", OPTIONS, async () => {
+  for (const confirming of [
+    { kind: "review", splitId: "", reviewId: MWC_REVIEW_ID, decision: "endorse", reason: null },
+    { kind: "review", splitId: "", reviewId: MWC_REVIEW_ID, decision: "object", reason: "小数精度不对" },
+  ]) {
+    const nodes = buildPaneNodes(mwcCache({ ...MWC_GRANT }, { confirming }), Date.parse("2026-01-01T00:00:00Z"));
+    expect(nodeKeys(nodes)).toContain("xmuse-confirm");
+    expect(nodeKeys(nodes)).toContain("xmuse-cancel-confirm");
+    expect(nodeKeys(nodes)).not.toContain("xmuse-review-reason");
   }
 });

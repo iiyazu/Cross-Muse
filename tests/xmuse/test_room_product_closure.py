@@ -16,6 +16,7 @@ from xmuse_core.chat.room_host import (
     RoomTransportResult,
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 AVAILABLE_PROVIDER_CAPABILITIES = {
     "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
@@ -204,7 +205,7 @@ def test_chat_api_room_closes_through_independent_agent_outcomes_and_projection(
     }
 
     assert projection["status"] == "settled"
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         tables = {
             row[0] for row in conn.execute("select name from sqlite_schema where type = 'table'")
         }

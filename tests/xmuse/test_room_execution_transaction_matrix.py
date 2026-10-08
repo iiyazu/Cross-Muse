@@ -8,10 +8,11 @@ import pytest
 
 from tests.xmuse.execution_store_testkit import TestExecutionStore
 from tests.xmuse.test_room_execution_gate_plan_ledger import _authorize
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _authority_snapshot(path: Path) -> tuple[object, ...]:
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         candidate = conn.execute(
             "select state, revision, authorized_at, rejected_at from room_execution_candidates"
         ).fetchall()

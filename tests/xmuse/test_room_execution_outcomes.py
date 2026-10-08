@@ -20,6 +20,7 @@ from xmuse_core.chat.room_execution_contracts import (
 )
 from xmuse_core.chat.room_execution_profiles import build_execution_gate_plan
 from xmuse_core.chat.room_kernel import RoomKernelStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 PATH = "src/xmuse_core/example.py"
 PATCH = (
@@ -167,7 +168,7 @@ def test_candidate_is_atomic_replayable_and_raw_diff_has_one_storage_location(tm
     assert detail is not None and detail["unified_diff"] == PATCH
     assert result["produced_proposal"]["content"] == "Change the example"
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         rows = conn.execute(
             """select 'candidate' source, unified_diff value from room_execution_candidates
                union all select 'activity', payload_json from room_activities
@@ -200,7 +201,7 @@ def test_candidate_is_atomic_replayable_and_raw_diff_has_one_storage_location(tm
         outcome_payload=patch_outcome(),
     )
     assert replay == result
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert before == {
             table: conn.execute(f"select count(*) from {table}").fetchone()[0] for table in before
         }
@@ -208,7 +209,7 @@ def test_candidate_is_atomic_replayable_and_raw_diff_has_one_storage_location(tm
 
 def test_candidate_peer_snapshot_excludes_retired_provider_rows(tmp_path):
     db, registry, conversation_id, records, _, claims = root_and_claims(tmp_path)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """insert into participants (
                    participant_id, conversation_id, role, display_name, cli_kind, model,
@@ -230,7 +231,7 @@ def test_candidate_peer_snapshot_excludes_retired_provider_rows(tmp_path):
         outcome_payload=patch_outcome(),
     )
     candidate_id = result["execution_candidate"]["candidate_id"]
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         member_ids = {
             row[0]
             for row in conn.execute(
@@ -316,7 +317,7 @@ def test_assessment_requires_current_full_material_and_is_atomic(tmp_path):
             proposal_assessments=[wrong],
         )
     assert exc_info.value.code == "room_execution_assessment_digest_mismatch"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set display_name = 'drifted' where participant_id = ?",
             (reviewer[0].participant_id,),
@@ -335,7 +336,7 @@ def test_assessment_requires_current_full_material_and_is_atomic(tmp_path):
             proposal_assessments=[vote],
         )
     assert identity_error.value.code == "room_execution_assessor_identity_drift"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             "update participants set display_name = ? where participant_id = ?",
             (reviewer[0].display_name, reviewer[0].participant_id),
@@ -353,7 +354,7 @@ def test_assessment_requires_current_full_material_and_is_atomic(tmp_path):
         proposal_assessments=[vote],
     )
     assert accepted["proposal_assessments"][0]["assessment"] == "endorse"
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("begin immediate")
         with pytest.raises(RoomExecutionStoreError) as self_vote:
@@ -446,7 +447,7 @@ def test_manual_default_and_consensus_all_endorse_create_exactly_one_run(tmp_pat
     assert first["created"] is True
     assert second["created"] is False
     assert second["run"]["run_id"] == first["run"]["run_id"]
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from room_execution_runs").fetchone()[0] == 1
         assert conn.execute("select count(*) from room_execution_authorizations").fetchone()[0] == 1
 
@@ -535,7 +536,7 @@ def test_author_identity_or_policy_drift_invalidates_consensus(tmp_path, drift):
     candidate = execution.get_candidate(result["execution_candidate"]["candidate_id"])
     assert candidate is not None and candidate["consensus_state"] == "endorsed"
     if drift == "author_identity":
-        with sqlite3.connect(db) as conn:
+        with sqlite3.connect(db, factory=ClosingConnection) as conn:
             conn.execute(
                 "update participants set display_name = 'changed' where participant_id = ?",
                 (records[0][0].participant_id,),

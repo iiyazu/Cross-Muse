@@ -21,6 +21,7 @@ from pathlib import Path
 from xmuse_core.chat.room_opencode_sandbox import (
     MASKED_HOME_PATHS,
     OPENCODE_WRITABLE_HOME_PATHS,
+    SANDBOX_TEMP_ENV_ARGS,
     drive_masks,
 )
 
@@ -136,6 +137,7 @@ def build_workspace_write_sandbox_command(
         argv.extend(["--ro-bind", str(source_resolved), str(destination_path)])
     for path in others:
         argv.extend(_mask(path))
+    argv.extend(SANDBOX_TEMP_ENV_ARGS)
     argv.extend(["--chdir", str(workspace_resolved), "--die-with-parent", "--new-session"])
     argv.extend(list(agent_argv))
     return tuple(argv)

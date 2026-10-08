@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from xmuse.chat_api import create_app
 from xmuse_core.chat import room_setup
 from xmuse_core.chat.participant_store import ParticipantStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 AVAILABLE_PROVIDER_CAPABILITIES = {
     "codex": {"available": True, "enabled": True, "confinement": "read_only_sandbox"},
@@ -75,7 +76,7 @@ def test_default_room_setup_creates_only_room_participants(tmp_path: Path) -> No
     )
     assert not (tmp_path / "god_sessions.json").exists()
     assert not (tmp_path / "feature_lanes.json").exists()
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         tables = {
             row[0] for row in conn.execute("select name from sqlite_schema where type = 'table'")
         }
@@ -227,7 +228,7 @@ def test_room_setup_rejects_unavailable_template_provider_before_writing(
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "room_provider_unavailable"
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
         assert conn.execute("select count(*) from participants").fetchone()[0] == 0
         assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 0
@@ -292,7 +293,7 @@ def test_room_setup_rejects_default_roster_with_unavailable_provider(
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "room_provider_unavailable"
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
 
 
@@ -330,7 +331,7 @@ def test_room_setup_rejects_unavailable_explicit_participant_provider(
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "room_provider_unavailable"
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
         assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 0
 
@@ -358,7 +359,7 @@ def test_room_setup_public_request_rejects_retired_providers_before_writing(
     )
 
     assert response.status_code == 422
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
 
 
@@ -416,7 +417,7 @@ def test_room_setup_rejects_unknown_cli_kind_without_writing(tmp_path: Path) -> 
     )
 
     assert response.status_code == 422
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
         assert conn.execute("select count(*) from participants").fetchone()[0] == 0
 
@@ -476,7 +477,7 @@ def test_room_setup_is_idempotent_and_conflicting_reuse_is_rejected(tmp_path: Pa
     assert first.json() == replay.json()
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "room_setup_idempotency_conflict"
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
         assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 1
         assert conn.execute("select count(*) from room_memory_bindings").fetchone()[0] == 3
@@ -498,7 +499,7 @@ def test_concurrent_room_setup_replay_creates_one_complete_roster(tmp_path: Path
         )
 
     assert results[0] == results[1]
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
         assert conn.execute("select count(*) from participants").fetchone()[0] == 4
         assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 1
@@ -531,7 +532,7 @@ def test_room_setup_uses_one_write_connection(
 
     assert result["client_request_id"] == "setup-single-connection"
     assert connection_modes == [False]
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         conversation_id = result["id"]
         assert (
             conn.execute(
@@ -572,7 +573,7 @@ def test_room_setup_rolls_back_conversation_roster_and_receipt_on_insert_failure
             )
         )
 
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
         assert conn.execute("select count(*) from participants").fetchone()[0] == 0
         assert conn.execute("select count(*) from room_setup_requests").fetchone()[0] == 0
@@ -628,7 +629,7 @@ def test_room_setup_rejects_duplicate_roles_and_unbounded_or_extra_participants(
     assert duplicate_response.json()["detail"]["code"] == "room_participant_role_duplicate"
     assert extra_response.status_code == 422
     assert too_many_response.status_code == 422
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
 
 
@@ -662,7 +663,7 @@ def test_room_setup_rejects_oversized_participant_identity_fields(
     )
 
     assert response.status_code == 422
-    with sqlite3.connect(tmp_path / "chat.db") as conn:
+    with sqlite3.connect(tmp_path / "chat.db", factory=ClosingConnection) as conn:
         assert conn.execute("select count(*) from conversations").fetchone()[0] == 0
 
 
@@ -719,4 +720,9 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
         ("/api/chat/plugin/grants/exchange", "POST"),
         ("/api/chat/plugin/grants/revoke", "POST"),
         ("/api/chat/plugin/board-splits/{split_id}/decision", "POST"),
+        ("/api/chat/operator/plugin-grants/revoke-host", "POST"),
+        ("/api/chat/plugin/rooms", "POST"),
+        ("/api/chat/plugin/rooms/{conversation_id}/messages", "POST"),
+        ("/api/chat/plugin/board-reviews/{review_id}/decision", "POST"),
+        ("/api/chat/plugin/board-reviews/{review_id}/material", "GET"),
     }

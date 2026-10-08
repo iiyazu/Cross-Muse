@@ -29,12 +29,19 @@ there are no drvfs mounts and the confinement is unchanged.
 
 | Tool | Caller | Effect |
 | --- | --- | --- |
-| `chat_room_board_read` | any participant | Charters, contract index, the caller's board inbox (advances its cursor), optionally one contract's full text. |
+| `chat_room_board_read` | any participant | Charters, contract index, the caller's board inbox (advances its cursor), optionally one contract's full text; with `review_id`, the assigned reviewer's review material. |
 | `chat_room_board_propose_split` | Room lead | Proposes module charters, initial contracts and module→participant assignments; inert until an operator approves. |
 | `chat_room_board_claim` | assigned owner | Marks the module as taken. |
 | `chat_room_board_publish_contract` | provider module owner or lead | Publishes or revises a contract with optimistic `base_version`; wakes every dependent owner. |
 | `chat_room_board_report_progress` | module owner | Status, summary and checkable claims; `blocked`/`ready_for_review` wake the report target. |
 | `chat_room_board_ask` | any participant | Question to one peer; wakes that peer, who answers with a normal outcome reply. |
+| `chat_room_board_review` | assigned reviewer | Rules on a pending review: `endorse`, or `object` with at least one `blocker` or `major` finding. |
+
+A call whose argument breaks an enum in the tool schema, or puts an unknown field into a
+closed object (`additionalProperties: false`, at any depth), fails with `invalid_arguments`.
+The message names the argument path and what is allowed, and says when an unknown nested
+field is a top-level argument; some providers reach the tools through a generic wrapper and
+learn the schema only from these messages.
 
 Every board call carries the same conversation, participant, GOD session, observation,
 lease token and client request identifiers as the outcome tool and fails closed on a lost

@@ -99,7 +99,57 @@ def _validate_tool_call(params: object) -> tuple[str, dict[str, Any]]:
     unknown = sorted(set(arguments) - set(input_schema["properties"]))
     if unknown:
         raise ValueError(f"{name} got unknown arguments: " + ", ".join(unknown))
+    top_level = frozenset(input_schema["properties"])
+    for key, value in arguments.items():
+        violation = _schema_violation(input_schema["properties"][key], value, key, top_level)
+        if violation:
+            raise ValueError(f"{name} argument {violation}")
     return name, arguments
+
+
+def _schema_violation(
+    schema: dict[str, Any], value: Any, path: str, top_level: frozenset[str]
+) -> str | None:
+    """Name the first enum or closed object the value breaks, with what is allowed.
+
+    Some providers call MCP tools through a generic wrapper and never see the
+    input schema, so the error is the only place they learn the allowed values
+    and fields.
+    """
+
+    allowed = schema.get("enum")
+    if isinstance(allowed, list) and value not in allowed:
+        return f"{path} must be one of: " + ", ".join(str(item) for item in allowed)
+    properties = schema.get("properties")
+    if isinstance(value, dict) and isinstance(properties, dict):
+        if schema.get("additionalProperties") is False:
+            unknown = sorted(str(key) for key in value if key not in properties)
+            if unknown:
+                misplaced = [key for key in unknown if key in top_level]
+                note = ""
+                if misplaced:
+                    verb = (
+                        "is a top-level argument"
+                        if len(misplaced) == 1
+                        else "are top-level arguments"
+                    )
+                    note = f" ({', '.join(misplaced)} {verb})"
+                return (
+                    f"{path} got unknown fields: {', '.join(unknown)}; "
+                    f"allowed: {', '.join(properties)}{note}"
+                )
+        for key, item in value.items():
+            if isinstance(properties.get(key), dict):
+                violation = _schema_violation(properties[key], item, f"{path}.{key}", top_level)
+                if violation:
+                    return violation
+    items = schema.get("items")
+    if isinstance(value, list) and isinstance(items, dict):
+        for index, item in enumerate(value):
+            violation = _schema_violation(items, item, f"{path}[{index}]", top_level)
+            if violation:
+                return violation
+    return None
 
 
 def _call_tool(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

@@ -26,6 +26,7 @@ from xmuse_core.chat.room_memory_diversity import (
     build_memory_diversity_result,
     validate_memory_diversity_result,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 MANIFEST_SCHEMA = "room_memory_diversity_dogfood_manifest/v1"
 _CANDIDATE_KINDS = {
@@ -370,7 +371,7 @@ def collect_diversity_evidence(
     if not db_path.is_file() or db_path.is_symlink():
         raise MemoryDiversityCollectorError("memory_diversity_chat_db_missing")
     uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
-    with sqlite3.connect(uri, uri=True) as conn:
+    with sqlite3.connect(uri, uri=True, factory=ClosingConnection) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma query_only = on")
         room_ids = tuple(normalized["room_ids"])

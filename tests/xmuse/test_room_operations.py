@@ -11,6 +11,7 @@ from xmuse_core.chat.room_operations import (
     runtime_incident_guard,
     runtime_recoverability,
 )
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 
 
 def _runtime(
@@ -103,7 +104,7 @@ def _bulk_observations(db: Path, count: int) -> None:
                 stamp,
             )
         )
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.executemany(
             """insert into room_activities (
                 activity_id, conversation_id, seq, activity_type, actor_kind,
@@ -169,7 +170,7 @@ def test_retired_provider_observations_do_not_create_actionable_incidents(
 ) -> None:
     db = tmp_path / "chat.db"
     _bulk_observations(db, 3)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute("update participants set cli_kind = 'a2a', model = 'historical'")
 
     projection = build_room_operations_projection(db, _runtime())
@@ -181,7 +182,7 @@ def test_retired_provider_observations_do_not_create_actionable_incidents(
 def test_observation_incident_priority_and_bound_is_not_cleanup(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     _bulk_observations(db, 5)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_observations set control_state = 'active'
                  where observation_id = 'observation_0'"""
@@ -227,7 +228,7 @@ def test_observation_incident_priority_and_bound_is_not_cleanup(tmp_path: Path) 
 def test_operations_canonicalizes_mirrored_batch_cancel_and_exhausted(tmp_path: Path) -> None:
     db = tmp_path / "chat.db"
     _bulk_observations(db, 2)
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conversation_id, participant_id = conn.execute(
             "select conversation_id, participant_id from room_observations limit 1"
         ).fetchone()
@@ -262,7 +263,7 @@ def test_operations_canonicalizes_mirrored_batch_cancel_and_exhausted(tmp_path: 
         item["observation_id"] for item in cancelling["incidents"] if item["kind"] == "observation"
     ] == ["observation_0"]
 
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, factory=ClosingConnection) as conn:
         conn.execute(
             """update room_observations set control_state = 'exhausted'
                where observation_id = 'observation_0'"""

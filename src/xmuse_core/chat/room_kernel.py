@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -144,9 +145,13 @@ def normalize_participant_outcome(
         raise ValueError("room_max_causal_depth_invalid")
     payload = {} if outcome_payload is None else outcome_payload
     if not isinstance(payload, dict):
-        raise ValueError("room_observation_payload_invalid")
-    if set(payload) - OUTCOME_PAYLOAD_FIELDS:
-        raise ValueError("room_observation_payload_invalid")
+        raise ValueError("room_observation_payload_invalid: outcome_payload must be an object")
+    unknown = sorted(str(key) for key in set(payload) - OUTCOME_PAYLOAD_FIELDS)
+    if unknown:
+        raise ValueError(
+            "room_observation_payload_invalid: unknown outcome_payload fields "
+            f"{', '.join(unknown)}; allowed: {', '.join(sorted(OUTCOME_PAYLOAD_FIELDS))}"
+        )
 
     def text_field(name: str) -> str:
         value = payload.get(name)
@@ -387,6 +392,51 @@ def _assert_no_pending_review_verdict_conn(
         )
 
 
+def _assert_split_on_board_conn(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: str,
+    participant_id: str,
+    proposal_type: Any,
+) -> None:
+    """Refuse a lead's prose split in a Room whose owners work from the board.
+
+    Only a board split reaches the operator's approval and the owners' charters; a split
+    written into a propose outcome reaches nobody.  A lead that already proposed the
+    split with the board tool may still summarise it in its outcome.
+    """
+
+    if not isinstance(proposal_type, str) or "split" not in re.split(
+        r"[^a-z]+", proposal_type.lower()
+    ):
+        return
+    lead = conn.execute(
+        "select 1 from room_collaboration_policies "
+        "where conversation_id = ? and lead_participant_id = ?",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if lead is None:
+        return
+    owner = conn.execute(
+        "select 1 from participants where conversation_id = ? and status = 'active' "
+        "and workspace_access = 'workspace_write' limit 1",
+        (conversation_id,),
+    ).fetchone()
+    if owner is None:
+        return
+    proposed = conn.execute(
+        "select 1 from room_board_splits where conversation_id = ? "
+        "and proposed_by_participant_id = ? and status = 'proposed' limit 1",
+        (conversation_id, participant_id),
+    ).fetchone()
+    if proposed is None:
+        raise ValueError(
+            "room_outcome_board_split_required: this Room's owners work from the board; "
+            "propose the split with chat_room_board_propose_split (modules, assignments, "
+            "contracts) so the operator can approve it, then submit the outcome"
+        )
+
+
 def _outcome_policy_conn(
     conn: sqlite3.Connection,
     *,
@@ -480,7 +530,14 @@ class RoomKernelStore:
         mentions: list[str] | None = None,
         display_mentions: list[str] | None = None,
         delivery_mode: str = "active",
+        provenance: dict[str, str] | None = None,
     ) -> dict[str, Any]:
+        """Post one Human message.
+
+        ``provenance`` (``{"via": "plugin:<host>", "grant_id": ...}``) records a
+        message sent from a host plugin (main_window_control_v1 section 4.2) in
+        the activity payload; Web messages carry none.
+        """
         if not isinstance(human_id, str) or not human_id.strip():
             raise ValueError("room_human_id_required")
         if not isinstance(content, str) or not content.strip():
@@ -524,6 +581,10 @@ class RoomKernelStore:
             "causation_id": causation_id,
             "correlation_id": correlation_id,
         }
+        if provenance:
+            # Only when present, so replays of requests stored before provenance existed
+            # keep their fingerprint.
+            semantic["provenance"] = dict(provenance)
         fingerprint = sha256(_json(semantic).encode()).hexdigest()
         now = _now()
         with self._connect() as conn:
@@ -599,6 +660,8 @@ class RoomKernelStore:
                 addressed = policy is not None and str(policy["mode"]) == "addressed"
                 lead_participant_id = policy["lead_participant_id"] if policy is not None else None
                 payload = {"content": content, "mentions": effective_mentions}
+                if provenance:
+                    payload.update(provenance)
                 if addressed:
                     mentioned_rows = [
                         participant
@@ -1605,6 +1668,13 @@ class RoomKernelStore:
                         conversation_id=conversation_id,
                         participant_id=participant_id,
                         member_activity_ids=member_activity_ids,
+                    )
+                if outcome_type == "propose":
+                    _assert_split_on_board_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        participant_id=participant_id,
+                        proposal_type=normalized.get("proposal_type"),
                     )
                 source = self._activity_from_conn(conn, row["activity_id"])
                 phase = (

@@ -22,6 +22,7 @@ from xmuse_core.chat.room_host import (
 )
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_skill_decisions import RoomAttemptSkillDecisionStore
+from xmuse_core.runtime.sqlite_connection import ClosingConnection
 from xmuse_core.skills.catalog import SkillCatalog
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -159,7 +160,7 @@ def test_operator_api_enforces_auth_guards_idempotency_and_pending_retry(tmp_pat
     )
     assert missing.status_code == 404
 
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, factory=ClosingConnection) as conn:
         assert (
             conn.execute(
                 "select count(*) from room_observation_controls where observation_id = ?",
@@ -638,7 +639,7 @@ def test_host_exhaustion_and_manual_budget_allow_exactly_one_more_attempt(tmp_pa
         final = controls.projection(observation_id)
         assert final["control_state"] == "exhausted"
         assert final["manual_retry_budget"] == 1
-        with sqlite3.connect(path) as conn:
+        with sqlite3.connect(path, factory=ClosingConnection) as conn:
             limits = [
                 row[0]
                 for row in conn.execute(

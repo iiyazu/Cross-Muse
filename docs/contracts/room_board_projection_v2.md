@@ -195,6 +195,13 @@ Version history and content come from §5.
 Contract content and charter `acceptance` are not part of a split summary. `acceptance` is
 descriptive text, is never executed and never shown as a result.
 
+A split exists only on the board. In a Room with an active `workspace_write` participant, the
+outcome tool refuses the lead's `propose` outcome whose `proposal_type` names a split (a word
+`split`, case-insensitive) with `room_outcome_board_split_required` (the message names
+`chat_room_board_propose_split`), unless that lead already has a `proposed` split on the board;
+a split written into a proposal would reach neither the operator's approval nor the owners.
+Other proposals, and every proposal in a Room without owners, are unchanged.
+
 ### 3.6 `StaleDependent`
 
 ```jsonc
@@ -862,7 +869,8 @@ Patch export: `owner_patch_empty`, `owner_patch_binary`, `owner_patch_reserved_p
 Staging and gates (from `room_execution`): `execution_*` (for example
 `execution_patch_*_rejected`, `execution_repo_busy`, `execution_frontend_dependencies_unavailable`).
 
-Split: `room_board_split_dependency_cycle` and the other `room_board_*` validation codes.
+Split: `room_board_split_dependency_cycle` and the other `room_board_*` validation codes;
+`room_outcome_board_split_required` from the outcome tool (§3.5).
 
 Integration (`ModuleIntegration.reason_code`, `RoomIntegration.latest.reason_code`, event
 `reason_code`, §3.11): `board_integration_conflict`, `board_integration_gate_failed`,
@@ -962,6 +970,14 @@ the bounded `error` retries; the invariants above; and the user's checkout is ne
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 
 ## 12. Changelog
+
+- 2026-10-08 — the lead's prose split is refused in a Room with owners
+  (`room_outcome_board_split_required`, §3.5); the projection is unchanged.
+
+- 2026-10-06 — main-window control, compatible addition: `review.decided_via` and the `review`
+  event's `decided_via` may also be `plugin:<host>` (a Human review decided from a host plugin
+  under a grant, `main_window_control_v1.md` §4.4). Consumers render an unknown value as a
+  fixed word.
 
 - 2026-10-05 — integration (M2b), compatible additions: `capabilities.integrations: 1`, the
   host-owned integration branch rebuilt from accepted candidates (incumbents first, fallback to
