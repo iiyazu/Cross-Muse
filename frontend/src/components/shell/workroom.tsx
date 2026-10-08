@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Tooltip } from "radix-ui";
 import { PanelLeft, Plus } from "lucide-react";
 
+import { currentPanelLink } from "@/components/board/panel-link";
 import { useNeedsYou } from "@/components/board/use-needs-you";
 import { WorkPanel } from "@/components/board/work-panel";
 import { SystemSheet } from "@/components/system/system-sheet";
@@ -67,6 +68,8 @@ export function Workroom() {
       bootstrappedRef.current = true;
       setBootstrapped(true);
       if (!routeRoomId && selected) router.replace(roomHref(selected));
+      // A deep link names a view inside the work panel, so it arrives with the panel open.
+      if (selected && currentPanelLink(selected, window.location.pathname, window.location.search).view) setPanelOpen(true);
     });
     return () => {
       active = false;

@@ -17,6 +17,7 @@ import { ReviewDialog } from "@/components/decisions/review-dialog";
 
 import { attentionKey, DecisionCard, WaitingOnAgents } from "./attention";
 import { useBoardPeople, type BoardPeople, type PanelView } from "./board-context";
+import { currentPanelLink, panelSearch } from "./panel-link";
 import { ContractView } from "./contract-view";
 import { EventList } from "./event-list";
 import { IntegrationDetail } from "./integration-detail";
@@ -114,18 +115,32 @@ export function WorkPanel({
   })));
   const people = useBoardPeople(projection);
   const needs = useNeedsYou(roomId);
-  const [stack, setStack] = useState<PanelView[]>([{ kind: "board" }]);
+  // A deep link (from the in-app pane) seeds the stack once; the panel is keyed by room.
+  const [link] = useState(() => (typeof window === "undefined"
+    ? { view: null, reviewModuleId: null }
+    : currentPanelLink(roomId, window.location.pathname, window.location.search)));
+  const [stack, setStack] = useState<PanelView[]>(() => (link.view ? [{ kind: "board" }, link.view] : [{ kind: "board" }]));
   const [reviewModuleId, setReviewModuleId] = useState<string | null>(null);
+  const [linkReviewId, setLinkReviewId] = useState<string | null>(link.reviewModuleId);
   const view = stack[stack.length - 1];
-  const reviewModule = reviewModuleId ? projection?.modules.find((candidate) => candidate.module_id === reviewModuleId) ?? null : null;
+  const findModule = (moduleId: string | null) => (moduleId ? projection?.modules.find((candidate) => candidate.module_id === moduleId) ?? null : null);
+  // A linked review opens only while it is still yours to decide; otherwise the module file shows why.
+  const linked = findModule(linkReviewId);
+  const linkedReview = linked && linked.review.reviewer_kind === "operator" && linked.review.status === "pending" ? linked : null;
+  const reviewModule = findModule(reviewModuleId) ?? linkedReview;
   const memoryProposer = (participantId: string | null, label: string | null | undefined, kind: string | undefined) => {
     if (kind === "memoryos_curator") return label || "MemoryOS 整理器";
     const participant = roomParticipants?.find((candidate) => candidate.participant_id === participantId);
     return participant?.display_name ?? (participantId ? people.name(participantId) : "Agent");
   };
 
-  const navigate = (next: PanelView) => setStack((current) => [...current, next]);
-  const back = () => setStack((current) => (current.length > 1 ? current.slice(0, -1) : current));
+  const show = (next: PanelView[]) => {
+    setStack(next);
+    // Keep the address on the open view, so a reload or a copied link lands in the same place.
+    window.history.replaceState(null, "", `${window.location.pathname}${panelSearch(next[next.length - 1])}`);
+  };
+  const navigate = (next: PanelView) => show([...stack, next]);
+  const back = () => { if (stack.length > 1) show(stack.slice(0, -1)); };
 
   const overview = useMemo(() => boardOverview(projection, summary), [projection, summary]);
   const attention = useMemo(() => splitAttention(projection?.attention ?? summary?.attention ?? []), [projection, summary]);
@@ -337,7 +352,11 @@ export function WorkPanel({
         <ReviewDialog
           key={reviewModule.review.review_id ?? reviewModule.module_id}
           module={reviewModule}
-          onOpenChange={(open) => { if (!open) setReviewModuleId(null); }}
+          onOpenChange={(open) => {
+            if (open) return;
+            setReviewModuleId(null);
+            setLinkReviewId(null);
+          }}
           open
           roomId={roomId}
         />

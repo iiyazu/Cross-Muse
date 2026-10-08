@@ -113,6 +113,35 @@ test.describe("board", () => {
   });
 });
 
+test.describe("deep links", () => {
+  test("a module link opens the panel on that module and the address follows the panel", async ({ page }) => {
+    await installWorkroom(page, { board: "integration_fallback_to_incumbent" });
+    await page.goto(`${ROOM_URL}?module=m1`);
+    const panel = page.getByRole("dialog", { name: "工作面板" }).or(page.getByRole("complementary", { name: "工作面板" }));
+    await expect(panel.getByRole("list", { name: "信任链" })).toContainText("分支中是旧版本");
+    await panel.getByRole("button", { name: "集成详情" }).click();
+    await expect(page).toHaveURL(/\?integration=/);
+    await panel.getByRole("button", { name: "返回" }).click();
+    await expect(page).toHaveURL(/\?module=m1$/);
+    await page.reload();
+    await expect(panel.getByRole("list", { name: "信任链" })).toBeVisible();
+  });
+
+  test("a review link opens the operator review while it is still pending", async ({ page }) => {
+    await installWorkroom(page, { board: "review_operator_pending" });
+    await page.goto(`${ROOM_URL}?review=beta`);
+    await expect(page.getByRole("dialog", { name: "复核模块 beta" })).toBeVisible();
+  });
+
+  test("a review link to a decided review shows the module, not a dialog", async ({ page }) => {
+    await installWorkroom(page, { board: "review_endorsed" });
+    await page.goto(`${ROOM_URL}?review=beta`);
+    const panel = page.getByRole("dialog", { name: "工作面板" }).or(page.getByRole("complementary", { name: "工作面板" }));
+    await expect(panel.getByRole("list", { name: "信任链" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: /^复核模块/ })).toHaveCount(0);
+  });
+});
+
 test.describe("narrow window", () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) >= 1280, "the dock is a sheet only below 1280px");
 
