@@ -111,6 +111,9 @@ export async function installWorkroom(page: Page, options: WorkroomOptions = {})
     if (rest.startsWith(`${room}/board/integrations/`) && board && fs.existsSync(boardFile(board, ".integration"))) {
       return fulfill(route, readJson(boardFile(board, ".integration")));
     }
+    if (rest.startsWith(`${room}/board/verifications/`) && board && fs.existsSync(boardFile(board, ".verification"))) {
+      return fulfill(route, readJson(boardFile(board, ".verification")));
+    }
     if (rest.startsWith(`${room}/board/reviews/`) && board && fs.existsSync(boardFile(board, ".review"))) {
       return fulfill(route, readJson(boardFile(board, ".review")));
     }

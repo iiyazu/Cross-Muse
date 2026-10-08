@@ -66,6 +66,16 @@ test.describe("board", () => {
     await axeClean(page);
   });
 
+  test("says why a module is back for rework: the failed gate and its output tail", async ({ page }) => {
+    await installWorkroom(page, { board: "verification_failed_rework" });
+    await page.goto(`${ROOM_URL}?module=alpha`);
+    const panel = page.getByRole("dialog", { name: "工作面板" }).or(page.getByRole("complementary", { name: "工作面板" }));
+    const rework = panel.getByRole("region", { name: "返工：为什么没通过" });
+    await expect(rework).toContainText("patch_diff_check");
+    await expect(rework.locator("pre")).toContainText("Diff check failed");
+    await axeClean(page);
+  });
+
   test("approves a split with its digest", async ({ page }) => {
     const recorded = await installWorkroom(page, { board: "split_pending" });
     await page.goto(ROOM_URL);

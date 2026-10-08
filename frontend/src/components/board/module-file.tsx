@@ -16,10 +16,11 @@ import type { BoardPeople, PanelView } from "./board-context";
 import { EventList } from "./event-list";
 import { trustSteps } from "./model";
 import { TrustLadder } from "./trust";
+import { VerificationGates } from "./verification-gates";
 
 function Section({ title, children, aside }: { title: string; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
-    <section className="border-t border-line px-4 py-3">
+    <section aria-label={title} className="border-t border-line px-4 py-3">
       <div className="mb-2 flex items-center gap-2">
         <h4 className="m-0 flex-1 text-xs font-medium tracking-wide text-fg-3">{title}</h4>
         {aside}
@@ -172,6 +173,12 @@ export function ModuleFile({
           <p className="m-0 mt-1 text-xs text-fail">{boardReasonLabel(module.verification.reason_code)}</p>
         ) : null}
       </Section>
+
+      {(verification.status === "failed" || verification.status === "error") && verification.verification_id ? (
+        <Section title={verification.status === "failed" ? "返工：为什么没通过" : "验证出错"}>
+          <VerificationGates roomId={roomId} verificationId={verification.verification_id} />
+        </Section>
+      ) : null}
 
       {projection.capabilities.reviews === 1 ? (
         <Section title="复核">
