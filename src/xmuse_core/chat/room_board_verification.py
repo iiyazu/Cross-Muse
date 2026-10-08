@@ -319,6 +319,37 @@ class RoomBoardVerificationWorker:
             "board_verifications_deferred": 0,
         }
 
+    def _module_predecessors(
+        self,
+        store: RoomBoardStore,
+        conversation_id: str,
+        participant_id: str,
+        module_id: str,
+        head_commit: str,
+    ) -> list[dict[str, Any]]:
+        """This owner's earlier modules whose verified head the current head builds on.
+
+        Oldest first; the last one is the module start. Only verified work that
+        is an ancestor of the latest such head counts, so a module whose head
+        later moved away (a rework the owner did not build on) is left out.
+        """
+
+        earlier = [
+            item
+            for item in store.owner_passed_board_verifications(
+                conversation_id, participant_id, exclude_module_id=module_id
+            )
+            if isinstance(item.get("head_commit"), str)
+            and item["head_commit"]
+            and self._clones.is_ancestor(str(item["head_commit"]), head_commit)
+        ]
+        if not earlier:
+            return []
+        start = str(earlier[-1]["head_commit"])
+        return [
+            item for item in earlier if self._clones.is_ancestor(str(item["head_commit"]), start)
+        ]
+
     def _verify_claim(self, claimed: Mapping[str, Any]) -> BoardVerificationOutcome:
         conversation_id = str(claimed["conversation_id"])
         module_id = str(claimed["module_id"])
@@ -343,7 +374,20 @@ class RoomBoardVerificationWorker:
                 raise BoardVerificationTransientError(exc.code) from exc
             return _failed(exc.code)
         try:
-            patch = self._clones.export_patch(owner_id, base_commit=base_commit)
+            # The owner's whole tree against the room base: what the stage runs.
+            full_patch = self._clones.export_patch(owner_id, base_commit=base_commit)
+            patch = full_patch
+            predecessors = self._module_predecessors(
+                store, conversation_id, participant_id, module_id, full_patch.head_commit
+            )
+            if predecessors:
+                # Module start: one clone serves every module of this owner, so a
+                # later module's own patch (the bytes reviewed and integrated) is
+                # what was committed after the work its earlier modules were
+                # verified with. The stage still runs the owner's whole tree.
+                patch = self._clones.export_patch(
+                    owner_id, base_commit=str(predecessors[-1]["head_commit"])
+                )
         except OwnerCloneError as exc:
             if exc.code in _TRANSIENT_CLONE_CODES:
                 raise BoardVerificationTransientError(exc.code) from exc
@@ -366,6 +410,22 @@ class RoomBoardVerificationWorker:
         stacked: list[dict[str, Any]] = []
         provider_texts: list[str] = []
         provider_path_groups: list[list[str]] = []
+        # The owner's earlier modules are already in the owner's tree, which the
+        # stage runs whole (``full_patch``). A provider that is also a predecessor
+        # is not stacked again and never counts as an overlap: building on it is
+        # the point.
+        predecessor_ids = {str(item["module_id"]) for item in predecessors}
+        owner_changed = sorted(set(full_patch.changed_paths))
+        for item in predecessors:
+            stacked.append(
+                {
+                    "module_id": str(item["module_id"]),
+                    "verification_id": str(item["verification_id"]),
+                    "head_commit": str(item["head_commit"] or ""),
+                    "kind": "predecessor",
+                }
+            )
+        providers = [item for item in providers if item not in predecessor_ids]
         if providers:
             blocked: list[str] = []
             latest_by_provider: dict[str, dict[str, Any]] = {}
@@ -429,7 +489,7 @@ class RoomBoardVerificationWorker:
                         "head_commit": str(latest["head_commit"] or ""),
                     }
                 )
-            overlapping = find_overlapping_paths([*provider_path_groups, list(own_changed)])
+            overlapping = find_overlapping_paths([*provider_path_groups, owner_changed])
             if overlapping:
                 return _failed(
                     BOARD_VERIFICATION_DEPENDENCY_OVERLAP,
@@ -444,13 +504,13 @@ class RoomBoardVerificationWorker:
                 )
         stacked_tuple = tuple(stacked)
         if provider_texts:
-            combined_text = combine_verification_patches([*provider_texts, patch.unified_diff])
+            combined_text = combine_verification_patches([*provider_texts, full_patch.unified_diff])
             combined_changed = tuple(
-                sorted(set(own_changed) | {p for g in provider_path_groups for p in g})
+                sorted(set(owner_changed) | {p for g in provider_path_groups for p in g})
             )
         else:
-            combined_text = patch.unified_diff
-            combined_changed = own_changed
+            combined_text = full_patch.unified_diff
+            combined_changed = tuple(owner_changed)
         combined_digest = f"sha256:{sha256(combined_text.encode('utf-8')).hexdigest()}"
         try:
             repository_manifest_digest = build_repository_manifest_digest(
@@ -487,7 +547,9 @@ class RoomBoardVerificationWorker:
             patch_text=combined_text,
             patch_sha256=combined_digest,
             candidate_digest=combined_digest,
-            base_head=patch.base_commit,
+            # The room base: the stage is the execution root's worktree there,
+            # and the owner's whole tree (``full_patch``) applies on it.
+            base_head=full_patch.base_commit,
             allowed_files=combined_changed,
             policy_revision=1,
             risk_policy_revision=BOARD_VERIFICATION_RISK_POLICY,

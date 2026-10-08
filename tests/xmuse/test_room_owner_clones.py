@@ -127,6 +127,22 @@ def test_export_patch_content(tmp_path: Path) -> None:
     assert "new file" in patch.unified_diff
 
 
+def test_is_ancestor_reads_the_host_mirror(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    head = _init_source(source)
+    manager = OwnerCloneManager(tmp_path / "clones")
+    assert manager.is_ancestor(head, head) is False  # no mirror yet
+    clone = manager.create(source, "alice")
+    _owner_commit(clone.path, "b.txt", "one\n", "first")
+    first = manager.export_patch("alice", base_commit=head).head_commit
+    _owner_commit(clone.path, "b.txt", "two\n", "second")
+    second = manager.export_patch("alice", base_commit=first).head_commit
+    assert manager.is_ancestor(first, second) is True
+    assert manager.is_ancestor(first, first) is True
+    assert manager.is_ancestor(second, first) is False
+    assert manager.is_ancestor("0" * 40, second) is False
+
+
 def test_board_dir_is_excluded_and_never_exported(tmp_path: Path) -> None:
     source = tmp_path / "source"
     head = _init_source(source)

@@ -346,6 +346,17 @@ reviewer reads (the participant through `chat_room_board_read`, the operator thr
 what an endorsement vouches for. A stacked module's code is vouched for by that module's own
 review; it is never accepted through a dependent's review.
 
+**Module start (one owner, several modules).** An owner keeps one clone for every module it
+owns, so a later module is usually built on the owner's earlier ones. When the head of a
+verified earlier module of the same owner is an ancestor of the current head, that module is a
+*predecessor*: the module's own patch is exported from the latest predecessor head (not from
+the room base), the stage still runs the owner's whole tree on the room base, and the
+predecessor is listed in `stacked` (stored with `kind: "predecessor"`, which the projection does
+not expose). A predecessor that is also a contract provider is not stacked twice and never
+counts as a dependency overlap. Integration applies every predecessor before the module, like a
+provider. So a follow-up module on the same files carries only its own change, and its review
+covers only that change.
+
 **`digest`** = `"sha256:" + hex(SHA-256(canonical JSON of {review_id, verification_id,
 head_commit, patch_sha256}))`, where `patch_sha256` is the SHA-256 of the reviewed module's
 own stored patch bytes. `patch_sha256` takes part in the digest only and never leaves the

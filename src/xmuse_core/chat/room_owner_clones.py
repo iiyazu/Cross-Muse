@@ -246,6 +246,22 @@ class OwnerCloneManager:
             changed_paths=changed_paths,
         )
 
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        """Whether ``ancestor`` is ``descendant`` or one of its ancestors, in the mirror.
+
+        Both commits must already be in the host mirror (a previous
+        :meth:`export_patch` fetched them). A commit the mirror does not hold is
+        not an ancestor.
+        """
+
+        mirror = self._clones_root / _MIRROR_DIR_NAME
+        if not mirror.is_dir():
+            return False
+        result = self._git_process(
+            ["merge-base", "--is-ancestor", ancestor, descendant], cwd=mirror
+        )
+        return result.returncode == 0
+
     def remove(self, owner_id: str) -> None:
         if OWNER_ID_RE.fullmatch(owner_id) is None:
             raise OwnerCloneError("owner_id_invalid")
@@ -337,6 +353,17 @@ class OwnerCloneManager:
     def _run_git(
         self, args: list[str], *, cwd: Path | None, allow_file_protocol: bool = False
     ) -> str:
+        result = self._git_process(args, cwd=cwd, allow_file_protocol=allow_file_protocol)
+        if result.returncode != 0:
+            raise OwnerCloneError(
+                "owner_git_failed",
+                (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
+            )
+        return result.stdout
+
+    def _git_process(
+        self, args: list[str], *, cwd: Path | None, allow_file_protocol: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         argv: list[str] = [
             self._git,
             "-c",
@@ -370,9 +397,4 @@ class OwnerCloneManager:
             raise OwnerCloneError("owner_git_timeout", str(exc)) from exc
         except OSError as exc:
             raise OwnerCloneError("owner_git_failed", f"{type(exc).__name__}: {exc}") from exc
-        if result.returncode != 0:
-            raise OwnerCloneError(
-                "owner_git_failed",
-                (result.stderr or result.stdout or f"exit {result.returncode}").strip(),
-            )
-        return result.stdout
+        return result
