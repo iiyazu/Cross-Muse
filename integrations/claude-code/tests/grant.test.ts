@@ -19,6 +19,7 @@ import {
   mapReviewOutcome,
   NO_GRANT_TEXT,
   ORIGIN_REFUSED,
+  parseNewArgs,
   REPAIR_TOAST,
   remainingMmSs,
   SCOPE_MISSING_TEXT,
@@ -775,11 +776,23 @@ test("new from a composer origin creates the room and binds it", OPTIONS, async 
   const body = seen as Record<string, unknown>;
   expect(Object.keys(body).sort()).toEqual(["client_request_id", "lead", "owners", "review_policy", "reviewer", "title"]);
   expect(body["title"]).toBe("test room");
+  // review is on by default: with no other family the Human reviews in the pane
+  expect(body["review_policy"]).toBe("cross_family");
+  expect(String((res as unknown as { text?: unknown }).text ?? "")).toContain("跨家族复核");
   // the created room joins the grant set and becomes the binding: saying works there
   const said = await $.command.run({ command: "xmuse", args: "say hello new room", origin: { kind: "composer" } } as never);
   expect(String((said as unknown as { text?: unknown }).text ?? "")).toContain("已发送");
   expect(env.posts.filter((p) => p.url.includes("/api/chat/plugin/rooms/") && p.url.endsWith("/messages"))).toHaveLength(1);
   await ui.unmount();
+});
+
+test("/xmuse new keeps cross-family review on unless --no-review", OPTIONS, async () => {
+  const plain = parseNewArgs("a room");
+  expect(plain.ok && plain.value.review).toBe(true);
+  const off = parseNewArgs("a room --no-review --owners opencode");
+  expect(off.ok && off.value.review).toBe(false);
+  expect(off.ok && off.value.title).toBe("a room");
+  expect(parseNewArgs("a room --reviewer claude --no-review").ok).toBe(false);
 });
 
 // --- review flow (main_window_control_v1 §4.4–§4.5) ---

@@ -122,6 +122,9 @@ export type RoomCreateRequest = {
   lead: string;
   owners: string[];
   reviewer: string | null;
+  // Cross-family review unless the Human opted out (--no-review). With no other
+  // family in the Room the server assigns the review to the Human.
+  review: boolean;
 };
 
 export async function createRoom(
@@ -140,7 +143,7 @@ export async function createRoom(
       lead: { cli_kind: req.lead },
       owners: req.owners.map((kind) => ({ cli_kind: kind })),
       reviewer: req.reviewer === null ? null : { cli_kind: req.reviewer },
-      review_policy: req.reviewer === null ? "off" : "cross_family",
+      review_policy: req.review ? "cross_family" : "off",
     },
     bearer,
   );
