@@ -15,6 +15,7 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_api_models import RoomCollaborationInit, RoomConversationCreate
+from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_host import (
@@ -968,3 +969,97 @@ def test_broadcast_envelope_keeps_the_historical_shape(tmp_path: Path) -> None:
 
     envelope = _envelope_for(db, conversation_id, members["claude"], collaboration)
     assert "collaboration" not in envelope["room_context"]
+
+
+SPLIT_PROSE = {"content": "Split into ledger-discount, owned by Owner 1.", "proposal_type": "split"}
+
+
+def _lead_split_room(tmp_path: Path, *, with_owner: bool = True):
+    db, conversation_id, members = _room(tmp_path, mode="addressed", lead="claude")
+    owner = None
+    if with_owner:
+        owner = ParticipantStore(db).add(
+            conversation_id=conversation_id,
+            role="owner-1",
+            display_name="Owner 1",
+            cli_kind="opencode",  # type: ignore[arg-type]
+            model="opencode-default",
+            workspace_access="workspace_write",  # type: ignore[arg-type]
+        )
+    kernel = RoomKernelStore(db)
+    _post(kernel, conversation_id, "split-root")
+    claim = _claim(kernel, conversation_id, members["claude"], "host-lead")
+    return db, conversation_id, members, owner, kernel, claim
+
+
+@pytest.mark.parametrize("proposal_type", ["split", "Module-Split"])
+def test_lead_prose_split_is_refused_while_owners_work_from_the_board(
+    tmp_path: Path, proposal_type: str
+) -> None:
+    _db, conversation_id, members, _owner, kernel, claim = _lead_split_room(tmp_path)
+
+    with pytest.raises(ValueError, match="room_outcome_board_split_required") as refused:
+        _complete(
+            kernel,
+            conversation_id,
+            members["claude"],
+            claim,
+            "propose",
+            {**SPLIT_PROSE, "proposal_type": proposal_type},
+            "split-prose",
+        )
+    assert "chat_room_board_propose_split" in str(refused.value)
+
+    # Other proposals stay open to the lead on the same delivery.
+    plan = _complete(
+        kernel,
+        conversation_id,
+        members["claude"],
+        claim,
+        "propose",
+        {"content": "Adopt ruff first.", "proposal_type": "plan"},
+        "plan",
+    )
+    assert plan["produced_activity"]["activity_type"] == "proposal.created"
+
+
+def test_lead_may_summarise_a_split_it_proposed_on_the_board(tmp_path: Path) -> None:
+    db, conversation_id, members, owner, kernel, claim = _lead_split_room(tmp_path)
+    assert owner is not None
+    lead = members["claude"]
+    RoomBoardStore(db).propose_split(
+        conversation_id=conversation_id,
+        participant_id=lead.participant_id,
+        caller_identity=f"god:session:{lead.participant_id}",
+        observation_id=claim["observation"]["observation_id"],
+        lease_token=claim["observation"]["lease_token"],
+        client_request_id="board-split",
+        modules=[
+            {
+                "module_id": "ledger-discount",
+                "title": "Discount line",
+                "paths": ["src/ledger/**"],
+                "provides": [],
+                "depends": [],
+                "acceptance": ["pytest passes"],
+            }
+        ],
+        assignments={"ledger-discount": owner.participant_id},
+        contracts=[],
+    )
+
+    summary = _complete(
+        kernel, conversation_id, lead, claim, "propose", SPLIT_PROSE, "split-summary"
+    )
+    assert summary["produced_activity"]["activity_type"] == "proposal.created"
+
+
+def test_prose_split_stays_open_in_a_room_without_owners(tmp_path: Path) -> None:
+    _db, conversation_id, members, _owner, kernel, claim = _lead_split_room(
+        tmp_path, with_owner=False
+    )
+
+    result = _complete(
+        kernel, conversation_id, members["claude"], claim, "propose", SPLIT_PROSE, "split"
+    )
+    assert result["produced_activity"]["activity_type"] == "proposal.created"
