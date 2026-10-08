@@ -489,7 +489,10 @@ def normalize_review_verdict(verdict: Any, findings: Sequence[dict[str, Any]]) -
     """Validate a review verdict against its findings."""
 
     if verdict not in BOARD_REVIEW_VERDICTS:
-        raise ValueError("room_board_review_verdict_invalid")
+        raise ValueError(
+            "room_board_review_verdict_invalid: verdict must be one of: "
+            + ", ".join(BOARD_REVIEW_VERDICTS)
+        )
     if verdict == "object" and not any(
         isinstance(item, dict) and item.get("severity") in ("blocker", "major") for item in findings
     ):
