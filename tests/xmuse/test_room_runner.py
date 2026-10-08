@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import stat
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -883,6 +885,42 @@ def test_room_mcp_probe_accepts_the_surface_the_room_mcp_server_lists(monkeypatc
 )
 def test_room_mcp_probe_refuses_any_other_tool_surface(monkeypatch, tools: Any) -> None:
     assert _mcp_probe_with_tools(monkeypatch, tools) == (True, False)
+
+
+def test_room_mcp_probe_accepts_a_real_room_mcp_server(tmp_path: Path) -> None:
+    # The managed start path end to end for this probe: a real server process, the real
+    # health payload and tool list. A mocked reply hid a broken managed start before.
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from xmuse.room_mcp_server import main; main()",
+            "--xmuse-root",
+            str(tmp_path),
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        # The server process runs with default warnings: uvicorn still imports the
+        # deprecated websockets.legacy, which PYTHONWARNINGS=error turns into a crash.
+        env={key: value for key, value in os.environ.items() if key != "PYTHONWARNINGS"},
+    )
+    try:
+        deadline = time.monotonic() + 30
+        result = (False, False)
+        while time.monotonic() < deadline and server.poll() is None:
+            result = room_runner._probe_room_mcp_once("127.0.0.1", port)
+            if result == (True, True):
+                break
+            time.sleep(0.2)
+    finally:
+        server.terminate()
+        _, stderr = server.communicate(timeout=10)
+    assert result == (True, True), stderr.decode("utf-8", "replace")[-2000:]
 
 
 def test_cli_has_no_artificial_runtime_deadline(monkeypatch) -> None:

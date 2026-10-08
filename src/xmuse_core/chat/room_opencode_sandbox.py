@@ -149,6 +149,21 @@ def resolve_bwrap_executable(
     return Path(found) if found else None
 
 
+# Every provider sandbox mounts a private tmpfs at /tmp. The host's temp variables usually name
+# a directory the sandbox makes read-only (or masks), so they are pinned to /tmp inside.
+SANDBOX_TEMP_ENV_ARGS: tuple[str, ...] = (
+    "--setenv",
+    "TMPDIR",
+    "/tmp",
+    "--setenv",
+    "TMP",
+    "/tmp",
+    "--setenv",
+    "TEMP",
+    "/tmp",
+)
+
+
 def build_opencode_sandbox_command(
     *,
     bwrap: Path,
@@ -208,6 +223,7 @@ def build_opencode_sandbox_command(
     argv.extend(["--ro-bind", str(workspace), str(workspace)])
     for path in others:
         argv.extend(_mask(path))
+    argv.extend(SANDBOX_TEMP_ENV_ARGS)
     argv.extend(["--chdir", str(workspace), "--die-with-parent", "--new-session"])
     argv.extend([str(opencode), *agent_args])
     return tuple(argv)

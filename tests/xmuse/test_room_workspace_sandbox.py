@@ -67,6 +67,8 @@ def test_argv_order(tmp_path: Path) -> None:
     chdir = argv.index("--chdir")
     assert argv[chdir + 1] == str(workspace.resolve())
     assert argv[chdir + 2 : chdir + 4] == ("--die-with-parent", "--new-session")
+    setenv = {argv[i + 1]: argv[i + 2] for i, item in enumerate(argv) if item == "--setenv"}
+    assert setenv == {"TMPDIR": "/tmp", "TMP": "/tmp", "TEMP": "/tmp"}
     binds = _pairs(argv, "--bind")
     workspace_bind = next(i for i, t in binds if t == str(workspace.resolve()))
     own_bind = next(i for i, t in binds if t == str(home / ".claude"))
