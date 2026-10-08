@@ -130,7 +130,7 @@ export async function installWorkroom(page: Page, options: WorkroomOptions = {})
     return fulfill(route, { status: "applied" });
   });
   await page.route("**/api/room-plugin-grants**", async (route) => {
-    if (route.request().method() === "GET") return fulfill(route, { schema_version: "plugin_grant_list/v1", conversation_id: ROOM_ID, grants: [] });
+    if (route.request().method() === "GET") return fulfill(route, { schema_version: "plugin_grant_list/v2", conversation_id: ROOM_ID, grants: [] });
     return fulfill(route, { detail: { code: "not_mocked", message: "grant" } }, 404);
   });
   await page.route("**/api/rooms/*/messages", async (route) => {

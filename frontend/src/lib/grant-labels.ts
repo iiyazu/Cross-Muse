@@ -1,4 +1,4 @@
-import type { PluginGrantStatus } from "./grant-types";
+import type { PluginGrantScope, PluginGrantStatus } from "./grant-types";
 
 type GrantStatusMeta = {
   text: string;
@@ -44,7 +44,7 @@ const GRANT_ERROR_TEXTS: Record<string, string> = {
   plugin_grant_unknown: "授权不存在或不属于此房间"
 };
 
-const OPERATOR_TOKEN_MISSING_TEXT = "服务端未配置 operator 令牌，无法签发授权";
+const OPERATOR_TOKEN_MISSING_TEXT = "服务端未配置 operator 令牌，读不到授权";
 
 /**
  * Maps an error `code` (never the server `message`) to inline Chinese text.
@@ -78,8 +78,21 @@ export function grantRemainingText(expiresAt: string, nowMs: number): string {
   return `剩余 ${seconds} 秒`;
 }
 
-export function grantTtlLabel(ttlSeconds: number): string {
-  return `${Math.round(ttlSeconds / 60)} 分钟`;
+const GRANT_SCOPE_TEXTS: Record<PluginGrantScope, string> = {
+  "room.create": "建房间",
+  "room.message": "发消息",
+  "board.split.decide": "批拆分",
+  "board.review.decide": "定复核",
+  unknown: "未知权限"
+};
+
+export function grantScopeText(scope: PluginGrantScope): string {
+  return GRANT_SCOPE_TEXTS[scope] ?? GRANT_SCOPE_TEXTS.unknown;
+}
+
+/** The terminal command that pairs `host` for this Room; the Room id is always the full id. */
+export function grantPairCommand(host: string, roomId: string): string {
+  return `xmuse-workroom pair --host ${host} --room ${roomId}`;
 }
 
 /** Relative `last_used_at`; null means the grant was never used. */
