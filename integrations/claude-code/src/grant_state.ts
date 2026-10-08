@@ -119,21 +119,34 @@ export const ORIGIN_REFUSED = "xmuse: 写操作只接受你在输入框里亲自
 const OWNER_KINDS = ["claude", "opencode", "antigravity"];
 const LEAD_KINDS = ["claude", "opencode", "antigravity", "codex"];
 
-export type NewRoomArgs = { title: string; lead: string; owners: string[]; reviewer: string | null };
+export type NewRoomArgs = {
+  title: string;
+  lead: string;
+  owners: string[];
+  reviewer: string | null;
+  review: boolean;
+};
 
 export const NEW_USAGE =
-  "用法: /xmuse new <标题> [--owners opencode,claude] [--lead opencode] [--reviewer claude]";
+  "用法: /xmuse new <标题> [--owners opencode,claude] [--lead opencode] [--reviewer claude] [--no-review]";
 
-// `/xmuse new` arguments (after the word "new"). Flags take one value;
-// everything else is the title. Defaults: lead opencode, two OpenCode owners.
+// `/xmuse new` arguments (after the word "new"). Flags take one value, except
+// --no-review; everything else is the title. Defaults: lead opencode, two
+// OpenCode owners, cross-family review on (the Human reviews when no other
+// family is in the Room).
 export function parseNewArgs(rest: string): { ok: true; value: NewRoomArgs } | { ok: false; hint: string } {
   const words = rest.split(/\s+/).filter((w) => w !== "");
   const titleWords: string[] = [];
   let lead = "opencode";
   let owners = ["opencode", "opencode"];
   let reviewer: string | null = null;
+  let review = true;
   for (let i = 0; i < words.length; i++) {
     const w = words[i] ?? "";
+    if (w === "--no-review") {
+      review = false;
+      continue;
+    }
     if (w === "--owners" || w === "--lead" || w === "--reviewer") {
       const value = words[i + 1];
       if (value === undefined) return { ok: false, hint: NEW_USAGE };
@@ -155,7 +168,8 @@ export function parseNewArgs(rest: string): { ok: true; value: NewRoomArgs } | {
   if (reviewer !== null && !LEAD_KINDS.includes(reviewer)) {
     return { ok: false, hint: "reviewer 只能是 claude/opencode/antigravity/codex" };
   }
-  return { ok: true, value: { title, lead, owners, reviewer } };
+  if (reviewer !== null && !review) return { ok: false, hint: "--reviewer 和 --no-review 不能同时用" };
+  return { ok: true, value: { title, lead, owners, reviewer, review } };
 }
 
 export const SAY_USAGE = "用法: /xmuse say [@lead|@owner-1 ...] <消息>";

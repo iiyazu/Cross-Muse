@@ -34,6 +34,12 @@ Options (`userConfig`, see `.claude-plugin/plugin.json`):
   to a room (no argument: most recently updated room). Without a binding the
   mod auto-binds to the most recently updated room that has board modules.
 - `/xmuse detach` — clear the binding.
+- `/xmuse new <title> [--lead K] [--owners K,K] [--reviewer K] [--no-review]`
+  (under a grant) — create an addressed Room and bind it. Cross-family review
+  is on by default: an assigned reviewer of another family reviews, and with
+  no other family in the Room the review comes to you in the pane.
+  `--no-review` turns review off, so a verified module is accepted as is.
+- `/xmuse say <message>` (under a grant) — post to the bound Room.
 - `mcp__xmuse__status` — the same block as `/xmuse status`. This is the only
   thing the mod gives the model.
 

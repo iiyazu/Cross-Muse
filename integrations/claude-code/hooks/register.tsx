@@ -492,6 +492,7 @@ async function commandNew(caller: any, rest: string): Promise<string> {
     lead: parsed.value.lead,
     owners: parsed.value.owners,
     reviewer: parsed.value.reviewer,
+    review: parsed.value.review,
   });
   const created = res.status === 201 ? parseRoomCreatePayload(res.json) : null;
   if (created === null) {
@@ -509,7 +510,9 @@ async function commandNew(caller: any, rest: string): Promise<string> {
     shortRoom(created.conversationId) +
     " · lead + " +
     String(created.owners) +
-    " owner · 已绑定。下一步: /xmuse say <任务>（lead 会提出拆分，你在窗格里审批）"
+    " owner · " +
+    (parsed.value.review ? "跨家族复核（没有其他家族时由你复核）" : "复核已关闭") +
+    " · 已绑定。下一步: /xmuse say <任务>（lead 会提出拆分，你在窗格里审批）"
   );
 }
 
