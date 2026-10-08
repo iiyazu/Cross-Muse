@@ -44,6 +44,7 @@ _CONFLICT_CODES = {
     "room_board_split_decided",
     "room_board_split_not_proposed",
     "room_board_charter_active",
+    "room_board_contract_exists",
     "room_board_split_digest_mismatch",
     "room_board_review_not_pending",
     "room_board_review_not_operator",
