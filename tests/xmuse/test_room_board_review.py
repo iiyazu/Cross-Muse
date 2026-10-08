@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from tests.xmuse.room_fixtures import RoomTestStore
+from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_board import (
@@ -24,6 +25,7 @@ from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_c
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_kernel import RoomKernelStore
 from xmuse_core.chat.room_mcp_contract import (
+    ROOM_BOARD_READ_TOOL_NAME,
     ROOM_BOARD_REVIEW_TOOL_NAME,
     ROOM_BOARD_TOOL_NAMES,
     room_tool_schema,
@@ -290,6 +292,8 @@ def test_normalize_verdict_object_needs_blocker_or_major() -> None:
         normalize_review_verdict("object", [{"severity": "minor", "text": "nit"}])
     with pytest.raises(ValueError, match="blocker_or_major"):
         normalize_review_verdict("object", [])
+    with pytest.raises(ValueError, match="verdict must be one of: endorse, object"):
+        normalize_review_verdict("approve", [])
     with pytest.raises(ValueError, match="findings_invalid"):
         normalize_review_findings([{"severity": "blocker", "text": ""}])
     with pytest.raises(ValueError, match="findings_invalid"):
@@ -716,6 +720,98 @@ def test_review_tool_registered_with_exact_schema() -> None:
         "endorse",
         "object",
     ]
+
+
+def test_reviewer_reads_material_and_learns_verdicts_through_mcp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from xmuse.room_mcp_server import create_app
+
+    # The MCP server stamps calls with the wall clock, so the leases start now.
+    start = datetime.now(UTC)
+    monkeypatch.setitem(globals(), "T0", start)
+    monkeypatch.setitem(globals(), "NOW", start + timedelta(seconds=10))
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1", done_at=start + timedelta(seconds=10))
+    reviewer = ctx["members"][2]
+    session = GodSessionRegistry(tmp_path / "god_sessions.json").create(
+        reviewer.role,
+        reviewer.display_name,
+        "claude",
+        "address",
+        "inbox",
+        ctx["conversation_id"],
+        reviewer.participant_id,
+    )
+    observation = ctx["leases"][reviewer.participant_id]
+    client = TestClient(create_app(tmp_path))
+
+    def call(tool: str, request_id: str, **arguments: Any) -> dict[str, Any]:
+        response = client.post(
+            "/mcp/room",
+            json={
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": tool,
+                    "arguments": {
+                        "conversation_id": ctx["conversation_id"],
+                        "participant_id": reviewer.participant_id,
+                        "god_session_id": session.god_session_id,
+                        "observation_id": observation["observation_id"],
+                        "lease_token": observation["lease_token"],
+                        "client_request_id": request_id,
+                        **arguments,
+                    },
+                },
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["result"]
+
+    read = call(ROOM_BOARD_READ_TOOL_NAME, "read-1", review_id=result["review_id"])
+    assert read["isError"] is False
+    material = read["structuredContent"]["review_material"]
+    assert material["module_id"] == "alpha"
+    assert material["patch_text"] is not None
+
+    guessed = call(
+        ROOM_BOARD_REVIEW_TOOL_NAME,
+        "rev-1",
+        review_id=result["review_id"],
+        verdict="approve",
+        summary="ok",
+    )
+    assert guessed["isError"] is True
+    assert guessed["structuredContent"]["error"] == {
+        "code": "invalid_arguments",
+        "message": "chat_room_board_review argument verdict must be one of: endorse, object",
+    }
+    nested = call(
+        ROOM_BOARD_REVIEW_TOOL_NAME,
+        "rev-2",
+        review_id=result["review_id"],
+        verdict="object",
+        summary="broken",
+        findings=[{"severity": "major", "text": "a"}, {"severity": "nit", "text": "b"}],
+    )
+    assert nested["structuredContent"]["error"]["message"] == (
+        "chat_room_board_review argument findings[1].severity must be one of: blocker, major, minor"
+    )
+    assert _review_row(ctx["db"], result["review_id"])["status"] == "pending"
+
+    ruled = call(
+        ROOM_BOARD_REVIEW_TOOL_NAME,
+        "rev-3",
+        review_id=result["review_id"],
+        verdict="endorse",
+        summary="ok",
+    )
+    assert ruled["isError"] is False
+    assert ruled["structuredContent"]["status"] == "endorsed"
 
 
 def test_claude_read_only_profile_approves_review_exact_title() -> None:

@@ -99,7 +99,37 @@ def _validate_tool_call(params: object) -> tuple[str, dict[str, Any]]:
     unknown = sorted(set(arguments) - set(input_schema["properties"]))
     if unknown:
         raise ValueError(f"{name} got unknown arguments: " + ", ".join(unknown))
+    for key, value in arguments.items():
+        violation = _enum_violation(input_schema["properties"][key], value, key)
+        if violation:
+            raise ValueError(f"{name} argument {violation}")
     return name, arguments
+
+
+def _enum_violation(schema: dict[str, Any], value: Any, path: str) -> str | None:
+    """Name the first enum the value breaks, with the allowed values.
+
+    Some providers call MCP tools through a generic wrapper and never see the
+    input schema, so the error is the only place they learn the allowed values.
+    """
+
+    allowed = schema.get("enum")
+    if isinstance(allowed, list) and value not in allowed:
+        return f"{path} must be one of: " + ", ".join(str(item) for item in allowed)
+    properties = schema.get("properties")
+    if isinstance(value, dict) and isinstance(properties, dict):
+        for key, item in value.items():
+            if isinstance(properties.get(key), dict):
+                violation = _enum_violation(properties[key], item, f"{path}.{key}")
+                if violation:
+                    return violation
+    items = schema.get("items")
+    if isinstance(value, list) and isinstance(items, dict):
+        for index, item in enumerate(value):
+            violation = _enum_violation(items, item, f"{path}[{index}]")
+            if violation:
+                return violation
+    return None
 
 
 def _call_tool(root: Path, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

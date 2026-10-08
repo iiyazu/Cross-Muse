@@ -229,8 +229,10 @@ ROOM_BOARD_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "Read the Room board: module charters, the contract index, and your board inbox "
         "(new board events addressed to you; reading advances your cursor). Pass "
         "contract_ref ('id' for the latest or 'id@version') to get one contract's full text. "
+        "An assigned reviewer passes review_id to get the review material: the module's "
+        "own patch, its charter and its contracts. "
         "Use the identifiers of your current delivery.",
-        {"contract_ref": {"type": "string"}},
+        {"contract_ref": {"type": "string"}, "review_id": {"type": "string"}},
         [],
     ),
     _board_tool(
@@ -320,7 +322,9 @@ ROOM_BOARD_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     _board_tool(
         ROOM_BOARD_REVIEW_TOOL_NAME,
         "Rule-assigned cross-family review: judge a verified module against its charter "
-        "and contracts. Only the assigned reviewer may call it with its review_id.",
+        "and contracts. Only the assigned reviewer may call it with its review_id. "
+        "verdict is 'endorse' (accept) or 'object' (needs changes; requires at least one "
+        "blocker or major finding).",
         {
             "review_id": {"type": "string"},
             "verdict": {"type": "string", "enum": ["endorse", "object"]},
