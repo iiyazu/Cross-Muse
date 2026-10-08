@@ -15,7 +15,7 @@ from tests.xmuse.room_fixtures import RoomTestStore
 from xmuse_core.agents.god_session_registry import GodSessionRegistry
 from xmuse_core.chat.participant_store import ParticipantStore
 from xmuse_core.chat.room_api_models import RoomCollaborationInit, RoomConversationCreate
-from xmuse_core.chat.room_board import RoomBoardStore
+from xmuse_core.chat.room_board import RoomBoardStore, board_activity_content
 from xmuse_core.chat.room_collaboration import write_room_collaboration_policy_conn
 from xmuse_core.chat.room_database import RoomDatabase
 from xmuse_core.chat.room_host import (
@@ -26,6 +26,7 @@ from xmuse_core.chat.room_host import (
 from xmuse_core.chat.room_kernel import RoomKernelStore, normalize_participant_outcome
 from xmuse_core.chat.room_observation_transport_base import (
     ADDRESSED_COLLABORATION_GUIDANCE,
+    ADDRESSED_OWNER_BOARD_GUIDANCE,
     build_room_context_envelope,
 )
 from xmuse_core.chat.room_projection import (
@@ -1148,3 +1149,18 @@ def test_prose_split_stays_open_in_a_room_without_owners(tmp_path: Path) -> None
         kernel, conversation_id, members["claude"], claim, "propose", SPLIT_PROSE, "split"
     )
     assert result["produced_activity"]["activity_type"] == "proposal.created"
+
+
+def test_owner_guidance_forbids_fallbacks_for_provider_code() -> None:
+    # Real run root5: an owner whose clone lacked the provider's code shipped an
+    # ImportError fallback that re-implemented it; verification stacks the real one.
+    assert "do not copy it or add an import fallback" in ADDRESSED_OWNER_BOARD_GUIDANCE
+    assert "stacks the provider's verified code" in ADDRESSED_OWNER_BOARD_GUIDANCE
+
+
+def test_review_request_asks_to_object_to_provider_copies() -> None:
+    content = board_activity_content(
+        "board.review_requested",
+        {"module_id": "invoice", "verification_id": "v", "review_id": "r"},
+    )
+    assert "object to copies of, or import fallbacks for, code another module" in content
