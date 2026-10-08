@@ -1101,6 +1101,17 @@ class RoomParticipantHost:
                         # Advisory context only: an unreadable policy falls back to
                         # the historical broadcast envelope instead of blocking.
                         collaboration = None
+                    if isinstance(collaboration, dict):
+                        # Owners change the workspace through the board; the delivery
+                        # guidance names that path for the lead and the owners.
+                        collaboration = {
+                            **collaboration,
+                            "owner_participant_ids": [
+                                p.participant_id
+                                for p in active
+                                if p.workspace_access == "workspace_write"
+                            ],
+                        }
                     active_meta = tuple(
                         {
                             "participant_id": p.participant_id,
