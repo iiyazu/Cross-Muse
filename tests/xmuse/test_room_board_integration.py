@@ -536,6 +536,147 @@ def test_incumbent_first_newcomer_falls_back_and_branch_moves(
     assert _source_snapshot(ctx["source"]) == before
 
 
+def _follow_up_room(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str):
+    """One owner integrates m1, then gets m1b on the same file and builds on m1."""
+
+    ctx = _room(
+        tmp_path,
+        monkeypatch,
+        name=name,
+        specs=[{"id": "m1", "paths": ["docs/a.txt"]}],
+        files={"docs/a.txt": "a0\n"},
+    )
+    clone = ctx["clones"]["m1"]
+    _commit_in_clone(clone, "docs/a.txt", "a0\na1\n", "m1")
+    first = _pass_module(ctx, 1, "m1", "done-m1", now=_t(10))
+    assert ctx["worker"].reconcile_once(now=_t(20))["board_integrations_integrated"] == 1
+    lead, owner = ctx["members"][0], ctx["members"][1]
+    proposed = ctx["store"].propose_split(
+        **ctx["lease_kwargs"](lead, "propose-2", now=_t(25)),
+        modules=[
+            {
+                "module_id": "m1b",
+                "title": "m1b",
+                "paths": ["docs/a.txt"],
+                "provides": ["api.m1b"],
+                "depends": [],
+                "acceptance": ["works"],
+                "report_to": lead.participant_id,
+            }
+        ],
+        assignments={"m1b": owner.participant_id},
+        contracts=[
+            {
+                "contract_id": "api.m1b",
+                "provider_module_id": "m1b",
+                "kind": "api_schema",
+                "content": "{}",
+                "rationale": "",
+            }
+        ],
+    )
+    ctx["store"].decide_split(
+        conversation_id=ctx["conversation_id"],
+        split_id=proposed["split_id"],
+        decision="approve",
+        operator_identity="operator:host",
+        now=_t(26),
+    )
+    _commit_in_clone(clone, "docs/a.txt", "a0\na1\na2\n", "m1b")
+    return ctx, first
+
+
+def _pass_with_start(
+    ctx: dict[str, Any],
+    module_id: str,
+    request_id: str,
+    *,
+    start: str | None,
+    stacked: list[dict[str, Any]],
+    now: datetime,
+) -> None:
+    """Complete a passed verification the way the worker records it (owner 1)."""
+
+    store = ctx["store"]
+    owner = ctx["members"][1]
+    reported = store.report_progress(
+        **ctx["lease_kwargs"](owner, request_id, now=now),
+        module_id=module_id,
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+    manager = OwnerCloneManager(ctx["clones_root"])
+    owner_id = owner_id_for_participant(ctx["conversation_id"], owner.participant_id)
+    base = manager.read_base_commit(owner_id)
+    patch = manager.export_patch(owner_id, base_commit=start or base)
+    claimed = store.claim_next_board_verification(worker_id="w1", now=now)
+    assert claimed is not None
+    store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit=patch.head_commit,
+        patch_digest=f"sha256:{sha256(patch.unified_diff.encode('utf-8')).hexdigest()}",
+        changed_paths=sorted(patch.changed_paths),
+        gates=[{"gate_id": "patch_diff_check", "status": "passed", "exit_code": 0}],
+        evidence={},
+        now=now,
+        patch_text=patch.unified_diff,
+        stacked=stacked,
+        base_commit=base,
+    )
+
+
+def test_owner_follow_up_module_integrates_on_top_of_its_predecessor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Module start: m1b's delta applies after m1, so both integrate (real run root4)."""
+
+    ctx, first = _follow_up_room(tmp_path, monkeypatch, "home-follow")
+    _pass_with_start(
+        ctx,
+        "m1b",
+        "done-m1b",
+        start=first["head_commit"],
+        stacked=[
+            {
+                "module_id": "m1",
+                "verification_id": first["verification_id"],
+                "head_commit": first["head_commit"],
+                "kind": "predecessor",
+            }
+        ],
+        now=_t(30),
+    )
+
+    assert ctx["worker"].reconcile_once(now=_t(40))["board_integrations_integrated"] == 1
+    job = _latest_job(ctx)
+    assert [item["module_id"] for item in job["items"]] == ["m1", "m1b"]
+    assert {item["module_id"]: item["status"] for item in job["items"]} == {
+        "m1": "applied",
+        "m1b": "applied",
+    }
+    assert _mirror_tree(ctx, str(_mirror_ref(ctx)))["docs/a.txt"] == "a0\na1\na2\n"
+
+
+def test_owner_follow_up_with_the_whole_owner_diff_conflicts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The behaviour module start replaces: m1b's patch repeats m1 and conflicts."""
+
+    ctx, _first = _follow_up_room(tmp_path, monkeypatch, "home-follow-old")
+    _pass_with_start(ctx, "m1b", "done-m1b", start=None, stacked=[], now=_t(30))
+
+    ctx["worker"].reconcile_once(now=_t(40))
+    job = _latest_job(ctx)
+    by_module = {item["module_id"]: item for item in job["items"]}
+    assert by_module["m1"]["status"] == "applied"
+    assert by_module["m1b"]["status"] != "applied"
+    assert _mirror_tree(ctx, str(_mirror_ref(ctx)))["docs/a.txt"] == "a0\na1\n"
+
+
 def test_dependency_order_beats_incumbency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = _room(
         tmp_path,

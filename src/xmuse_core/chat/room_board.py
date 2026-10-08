@@ -2531,6 +2531,32 @@ class RoomBoardStore:
             "patch_text": patch_text,
         }
 
+    def owner_passed_board_verifications(
+        self, conversation_id: str, participant_id: str, *, exclude_module_id: str
+    ) -> list[dict[str, Any]]:
+        """The latest ``passed`` verification of every other module this owner verified.
+
+        Oldest first. The verification worker uses them to find the work an
+        owner's later module was built on in the same clone (module start).
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select distinct module_id from room_board_verifications "
+                "where conversation_id = ? and participant_id = ? and module_id != ? "
+                "and status = 'passed'",
+                (conversation_id, participant_id, exclude_module_id),
+            ).fetchall()
+        found = [
+            latest
+            for latest in (
+                self.latest_passed_board_verification(conversation_id, str(row["module_id"]))
+                for row in rows
+            )
+            if latest is not None
+        ]
+        return sorted(found, key=lambda item: (item["created_at"], item["verification_id"]))
+
     def latest_passed_board_verification(
         self, conversation_id: str, module_id: str
     ) -> dict[str, Any] | None:
@@ -3070,13 +3096,15 @@ class RoomBoardStore:
                     or not head
                 ):
                     raise ValueError("room_board_verification_stacked_invalid")
-                clean_stacked.append(
-                    {
-                        "module_id": module,
-                        "verification_id": vid,
-                        "head_commit": head,
-                    }
-                )
+                clean_entry = {
+                    "module_id": module,
+                    "verification_id": vid,
+                    "head_commit": head,
+                }
+                # The owner's earlier module this one was built on (module start).
+                if entry.get("kind") == "predecessor":
+                    clean_entry["kind"] = "predecessor"
+                clean_stacked.append(clean_entry)
         if base_commit is not None and (
             not isinstance(base_commit, str) or not base_commit.strip()
         ):
@@ -5417,6 +5445,7 @@ class RoomBoardStore:
             candidates = self._integration_candidates_conn(conn, conversation_id=conversation_id)
             wanted = {item["module_id"] for item in candidates}
             verifications: dict[str, dict[str, Any]] = {}
+            predecessors_of: dict[str, list[str]] = {}
             for item in candidates:
                 row = conn.execute(
                     "select * from room_board_verifications where verification_id = ?",
@@ -5439,6 +5468,14 @@ class RoomBoardStore:
                     "head_commit": row["head_commit"],
                     "created_at": str(row["created_at"]),
                 }
+                stacked = result.get("stacked") if isinstance(result, dict) else None
+                predecessors_of[item["module_id"]] = [
+                    str(entry["module_id"])
+                    for entry in (stacked if isinstance(stacked, list) else [])
+                    if isinstance(entry, dict)
+                    and entry.get("kind") == "predecessor"
+                    and isinstance(entry.get("module_id"), str)
+                ]
             missing = [module_id for module_id in wanted if module_id not in verifications]
             if missing:
                 raise ValueError("room_board_integration_candidate_unknown")
@@ -5448,6 +5485,14 @@ class RoomBoardStore:
                 )
                 for module_id in charters
             }
+            # A module verified on top of its owner's earlier module (module
+            # start) carries only its own delta, so that module must be applied
+            # first: it is a dependency like a contract provider.
+            for module_id, earlier in predecessors_of.items():
+                edges = providers.setdefault(module_id, [])
+                for predecessor in earlier:
+                    if predecessor in charters and predecessor not in edges:
+                        edges.append(predecessor)
             green = self._green_head_conn(conn, conversation_id=conversation_id)
             latest_job = self._latest_integration_job_conn(conn, conversation_id=conversation_id)
             return {
