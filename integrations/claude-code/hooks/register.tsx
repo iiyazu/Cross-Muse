@@ -34,6 +34,7 @@ import {
   exchangeToast,
   failureToast,
   grantExpired,
+  grantRefusalText,
   isHumanOrigin,
   mapDecisionOutcome,
   mapReviewOutcome,
@@ -236,6 +237,11 @@ async function liveToken(caller: any, scope: string, room: string | null): Promi
   if (!live.grant.scopes.includes(scope)) return null;
   if (room !== null && !live.grant.conversationIds.includes(room)) return null;
   return held;
+}
+
+async function refusalText(caller: any, scope: string, room: string | null): Promise<string> {
+  const live = (await read(caller, cacheAtom)) as XmuseCache;
+  return grantRefusalText(live.grant, grantToken !== null, await caller.clock.now(), scope, room);
 }
 
 async function requestId(caller: any, tag: string): Promise<string> {
@@ -485,7 +491,7 @@ async function commandNew(caller: any, rest: string): Promise<string> {
   const parsed = parseNewArgs(rest);
   if (!parsed.ok) return parsed.hint;
   const held = await liveToken(caller, "room.create", null);
-  if (held === null) return REPAIR_TOAST;
+  if (held === null) return await refusalText(caller, "room.create", null);
   const res = await createRoom(pluginHttp(caller), base(), held, {
     clientRequestId: await requestId(caller, "new"),
     title: parsed.value.title,
@@ -521,7 +527,7 @@ async function commandSay(caller: any, rest: string): Promise<string> {
   const live = (await read(caller, cacheAtom)) as XmuseCache;
   if (live.binding === null) return "xmuse 未绑定房间：先 /xmuse new 或 /xmuse attach";
   const held = await liveToken(caller, "room.message", live.binding);
-  if (held === null) return REPAIR_TOAST;
+  if (held === null) return await refusalText(caller, "room.message", live.binding);
   const res = await postMessage(pluginHttp(caller), base(), held, live.binding, await requestId(caller, "say"), parsed.message);
   if (res.status !== 201) {
     if (res.status === 401) await dropGrant(caller);

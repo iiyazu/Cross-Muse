@@ -126,8 +126,11 @@ def run_pair(
     revoke: bool,
     list_only: bool,
     deps: PairDependencies,
+    pending: bool = False,
 ) -> int:
     try:
+        if pending:
+            return _run_pending(room_prefixes=room_prefixes, deps=deps)
         return _run_pair(
             root=root,
             host=host,
@@ -210,6 +213,84 @@ def _run_pair(
     _print(deps, f"rooms {','.join(grant['conversation_ids']) or '(none yet)'}")
     _print(deps, "type the code into the xmuse pane of your main window (never into a prompt)")
     return _report_exchange(deps, token, host, str(grant["grant_id"]))
+
+
+def _plain(value: Any, limit: int = 120) -> str:
+    """Agent-authored text for a terminal: printable characters only, one line, bounded."""
+
+    text = "".join(ch if ch.isprintable() else " " for ch in str(value))
+    return text[:limit]
+
+
+def _digest_prefix(digest: Any) -> str:
+    text = str(digest or "")
+    return text.removeprefix("sha256:")[:6] or "?"
+
+
+def _run_pending(*, room_prefixes: Sequence[str], deps: PairDependencies) -> int:
+    """Print what waits for the Human, with the digest prefix the pane's confirm asks for.
+
+    The pane never shows the digest next to its confirm field, so whatever drives the
+    pane cannot read it there; this terminal-only listing is where the Human reads it.
+    """
+
+    if not (deps.stdin_isatty() and deps.stdout_isatty()):
+        raise PairError("plugin_pair_tty_required", 2)
+    base = deps.api_base.rstrip("/")
+    if room_prefixes:
+        rooms = resolve_rooms(deps, room_prefixes)
+    else:
+        status, payload = deps.http("GET", base + "/api/chat/rooms", {}, None)
+        listed = payload.get("rooms") if isinstance(payload, dict) else None
+        if status != 200 or not isinstance(listed, list):
+            raise PairError("workroom_not_running", 3)
+        rooms = [
+            str(item["conversation_id"])
+            for item in listed
+            if isinstance(item, dict) and isinstance(item.get("conversation_id"), str)
+        ]
+    shown = 0
+    for room in rooms:
+        status, board = deps.http(
+            "GET", f"{base}/api/chat/conversations/{urllib.parse.quote(room)}/board", {}, None
+        )
+        if status != 200 or not isinstance(board, dict):
+            continue
+        names = {
+            str(p.get("participant_id")): _plain(p.get("display_name"), 48)
+            for p in board.get("participants", [])
+            if isinstance(p, dict)
+        }
+        for split in board.get("splits", []):
+            if not isinstance(split, dict) or split.get("status") != "proposed":
+                continue
+            shown += 1
+            _print(deps, f"room {room}  split {split.get('split_id')}")
+            _print(deps, f"  confirm with: {_digest_prefix(split.get('digest'))}")
+            for module in split.get("modules", []):
+                if not isinstance(module, dict):
+                    continue
+                paths = " ".join(_plain(path, 80) for path in module.get("paths", [])[:8])
+                owner = names.get(str(module.get("owner_participant_id")), "?")
+                _print(deps, f"  module {_plain(module.get('module_id'), 48)}  owner {owner}")
+                _print(deps, f"    paths {paths}")
+        for module in board.get("modules", []):
+            review = module.get("review") if isinstance(module, dict) else None
+            if (
+                not isinstance(review, dict)
+                or review.get("status") != "pending"
+                or review.get("reviewer_kind") != "operator"
+            ):
+                continue
+            shown += 1
+            _print(deps, f"room {room}  review {review.get('review_id')}")
+            _print(deps, f"  confirm with: {_digest_prefix(review.get('digest'))}")
+            _print(deps, f"  module {_plain(module.get('module_id'), 48)}")
+    if shown == 0:
+        _print(deps, "nothing waits for you")
+    else:
+        _print(deps, "module ids and paths are agent-authored; check them before you confirm")
+    return 0
 
 
 def _report_exchange(deps: PairDependencies, token: str, host: str, grant_id: str) -> int:
