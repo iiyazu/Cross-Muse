@@ -433,6 +433,50 @@ def test_third_consecutive_failure_escalates_to_lead(tmp_path: Path) -> None:
     assert _observations_for(ctx["db"], lead.participant_id, activity_id)
 
 
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "board_verification_dependency_overlap",
+        "board_verification_base_mismatch",
+        "board_verification_provider_patch_missing",
+    ],
+)
+def test_structural_failure_escalates_to_lead_at_once(tmp_path: Path, reason: str) -> None:
+    """Real run root4: the owner could not fix an overlap and the lead never heard of it."""
+
+    ctx = _approved_board(tmp_path)
+    owner, lead = ctx["members"][1], ctx["members"][0]
+
+    _reported, result = _round(ctx, "done-1", status="failed", reason=reason, now=_round_time(0))
+
+    assert result["escalated"] is True
+    assert sorted(result["woken_participant_ids"]) == sorted(
+        [owner.participant_id, lead.participant_id]
+    )
+    assert _observations_for(ctx["db"], lead.participant_id, result["activity_id"])
+    with RoomDatabase(ctx["db"]).connect(readonly=True) as conn:
+        content = str(
+            conn.execute(
+                "select payload_json from room_activities where activity_id = ?",
+                (result["activity_id"],),
+            ).fetchone()[0]
+        )
+    assert "the lead must revise the split" in content
+    assert "Fix the failure inside your charter paths" not in content
+
+
+def test_owner_fixable_failure_does_not_escalate_at_once(tmp_path: Path) -> None:
+    ctx = _approved_board(tmp_path)
+    owner = ctx["members"][1]
+
+    _reported, result = _round(
+        ctx, "done-1", status="failed", reason="board_verification_gate_failed", now=_round_time(0)
+    )
+
+    assert result["escalated"] is False
+    assert result["woken_participant_ids"] == [owner.participant_id]
+
+
 def test_failure_streak_resets_after_pass(tmp_path: Path) -> None:
     ctx = _approved_board(tmp_path)
 
