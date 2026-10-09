@@ -16,6 +16,7 @@ from typing import Any, Protocol, cast
 
 from xmuse.memoryos_http_client import MemoryOSAdapterError, MemoryOSHTTPClient
 from xmuse_core.chat.memoryos_supervisor import MemoryOSProfile
+from xmuse_core.chat.room_board import RoomBoardStore
 from xmuse_core.chat.room_board_view import refresh_board_views
 from xmuse_core.chat.room_module_memory import ModuleMemoryStore, module_memory_enabled
 
@@ -59,6 +60,11 @@ class RoomModuleMemoryWorker:
             touched.add(module.conversation_id)
         for conversation_id in sorted(touched):
             refresh_board_views(self._root, conversation_id)
+        # A reassigned owner waits for the notebook to hold the handover (§3).
+        released = RoomBoardStore(self._root / "chat.db").release_held_wakes(
+            memory_ready=store.caught_up
+        )
+        counts["module_memory_wakes_released"] = len(released)
         return counts
 
 

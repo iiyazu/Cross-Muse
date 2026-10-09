@@ -734,3 +734,24 @@ def test_board_module_reassign_route(tmp_path: Path) -> None:
     board = client.get(f"/api/chat/conversations/{conversation_id}/board").json()
     alpha = next(m for m in board["modules"] if m["module_id"] == "alpha")
     assert alpha["owner_participant_id"] == members[2].participant_id
+
+
+def test_board_module_reassign_route_holds_the_wake_with_module_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XMUSE_MODULE_MEMORY", "on")
+    monkeypatch.setenv("XMUSE_MEMORYOS_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("XMUSE_MEMORYOS_API_KEY", "test-key")
+    ctx = _approved_board(tmp_path)
+    client = _api_client(tmp_path)
+    moved = client.post(
+        "/api/chat/operator/board-modules/alpha/reassign",
+        json={
+            "conversation_id": ctx["conversation_id"],
+            "owner_participant_id": ctx["members"][2].participant_id,
+            "expected_version": 1,
+        },
+        headers=_headers(),
+    )
+    assert moved.status_code == 200
+    assert moved.json()["wake"] == "held"
