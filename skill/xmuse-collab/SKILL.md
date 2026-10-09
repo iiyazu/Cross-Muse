@@ -24,7 +24,8 @@ model families) can collaborate. The hub relays messages and wakes the agent who
 - Reply **only with the `xmuse_send` tool**. Your plain-text output is not delivered to anyone.
 - If you call tools from code (a code-mode `execute` tool), write the calls as top-level
   `await` statements. A function you define but never call sends nothing.
-- `to`: a peer id (private), `human`, or `#group`. In a group, put the peers who must act in
+- `to`: a peer id (private), `human`, or a group thread such as `#task` (reply in the thread the
+  request came from: the `thread` attribute of the relayed message). In a group, put the peers who must act in
   `mentions` — only they are woken. Mention someone only when you need them to do something.
 - `kind`: `message` (default), `review_request`, `handoff`, `decision`, `question`.
 - Keep messages short and concrete: file names, function names, test results, exact asks.

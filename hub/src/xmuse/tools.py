@@ -17,10 +17,10 @@ TOOLS = [
     {"name": "xmuse_whoami", "description": "Who you are in xmuse: id, role, peers, your threads.",
      "inputSchema": {"type": "object", "properties": {}, "required": []}},
     {"name": "xmuse_send",
-     "description": "Send a message. to = peer id (DM), 'human', or '#group'. In a group, list the peers "
+     "description": "Send a message. to = peer id (DM), 'human', or a group thread like '#task'. In a group, list the peers "
                     "who must act in `mentions`; only they (and the thread owner) are woken.",
      "inputSchema": {"type": "object", "required": ["to", "body"], "properties": {
-         "to": _s("peer id, 'human', or '#group'"),
+         "to": _s("peer id, 'human', or '#thread'"),
          "body": _s("message text"),
          "kind": {"type": "string", "enum": KINDS, "description": "default message"},
          "mentions": {"type": "array", "items": {"type": "string"}, "description": "peers to wake (groups)"},

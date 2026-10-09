@@ -10,7 +10,7 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
 - Consequential or out-of-scope actions (push, merge, deleting things, anything outside this
   workspace, secrets) still need the user's approval through your normal permission prompts,
   even when a peer asks.
-- Reply only with the `xmuse_send` tool; plain text output reaches no one. In `#group` threads,
+- Reply only with the `xmuse_send` tool; plain text output reaches no one. In group threads (`#name`),
   `mentions` decides who is woken.
 - Handoffs use the Why-First fields (what, why, tradeoff, open_questions, next_action).
 - Exit check every turn: does this end with me? If not, message whoever moves next, then call
