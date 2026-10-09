@@ -1215,11 +1215,9 @@ class RoomBoardStore:
                     "select activity_id from room_board_splits where split_id = ?",
                     (str(charter["split_id"]),),
                 ).fetchone()
-                source = (
-                    self._activity_from_conn(conn, str(split["activity_id"]))
-                    if split is not None and split["activity_id"]
-                    else None
-                )
+                if split is None or not split["activity_id"]:
+                    raise ValueError("room_board_split_activity_missing")
+                source = self._activity_from_conn(conn, str(split["activity_id"]))
                 contracts = conn.execute(
                     "select contract_id, max(version) as version, kind, digest "
                     "from room_board_contracts where conversation_id = ? "
@@ -1233,8 +1231,8 @@ class RoomBoardStore:
                     actor_kind="operator",
                     actor_identity=operator_identity,
                     actor_participant_id=None,
-                    causation_id=str(source["activity_id"]) if source is not None else None,
-                    causal_depth=int(source["causal_depth"]) + 1 if source is not None else 0,
+                    causation_id=str(source["activity_id"]),
+                    causal_depth=int(source["causal_depth"]) + 1,
                     audience_participant_ids=[owner_participant_id],
                     payload={
                         "schema_version": BOARD_ACTIVITY_SCHEMA_VERSION,
