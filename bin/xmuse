@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# xmuse CLI from this checkout (run `uv sync --project hub` once). Uses the venv python directly:
+# `uv run` would rewrite PATH for the agents the hub spawns.
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec "$ROOT/hub/.venv/bin/python" -m xmuse "$@"

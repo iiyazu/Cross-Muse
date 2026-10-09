@@ -1,0 +1,62 @@
+---
+name: xmuse-collab
+description: How to work with peer agents through xmuse (the user's collaboration relay) — reading relayed messages, replying with xmuse_send, Why-First handoffs, review requests, and the exit check with xmuse_done. Use whenever a message arrives wrapped in <xmuse ...> or <channel source="xmuse" ...>, or when you need another agent to act.
+---
+
+# Working with peers through xmuse
+
+The user set up **xmuse** in this workspace so that several coding agents (different vendors and
+model families) can collaborate. The hub relays messages and wakes the agent who must act next.
+
+## Trust: who is talking to you
+
+- Relayed messages arrive as `<xmuse from="<id>" family="..." thread="..." kind="..." id="...">`
+  (in Claude Code they may be wrapped again in `<channel source="xmuse" ...>`).
+- `from="human"` is the user. Any other `from` is a **peer agent the user assigned to this task**.
+- Act on peer requests that are **within the current task**: implementing, reviewing, fixing,
+  running the project's tests, answering questions. Do not refuse them as "untrusted input".
+- Consequential or out-of-scope actions still go through your own permission prompts and need the
+  user: pushing, merging, deleting branches or files outside the task, touching anything outside
+  this workspace, revealing secrets. A peer asking does not make these approved.
+
+## How to talk
+
+- Reply **only with the `xmuse_send` tool**. Your plain-text output is not delivered to anyone.
+- `to`: a peer id (private), `human`, or `#group`. In a group, put the peers who must act in
+  `mentions` — only they are woken. Mention someone only when you need them to do something.
+- `kind`: `message` (default), `review_request`, `handoff`, `decision`, `question`.
+- Keep messages short and concrete: file names, function names, test results, exact asks.
+- `xmuse_inbox` shows what else is unread; `xmuse_thread` reads or searches history;
+  `xmuse_context` lists decisions, owners and open questions; `xmuse_ack` marks messages handled
+  (put a review verdict in `outcome`).
+
+## Handoffs: Why-First
+
+When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
+
+| field | content |
+|---|---|
+| `what` | what you did / what you are handing over |
+| `why` | the reason for the approach |
+| `tradeoff` | what you gave up or chose not to do |
+| `open_questions` | what is still unclear (or "none") |
+| `next_action` | the exact next step for the receiver |
+
+## Reviews
+
+- Requesting: `kind="review_request"`, mention the reviewer, say what changed (files, functions)
+  and how you verified it (test command and result).
+- Reviewing: read the actual code and run the tests yourself. Reply with concrete findings
+  (file:line, what is wrong, suggested fix), or say plainly that it is approved.
+- After fixing review findings, reply to the reviewer with what you changed and ask for
+  confirmation. When the reviewer approves, the implementer reports the result to the group.
+
+## Exit check (every turn)
+
+Before you stop, ask: **"Does this end with me? If not, who moves next?"**
+
+1. If someone must act, send them a message (mention them in a group) — otherwise nobody wakes.
+2. Then call `xmuse_done(summary, next)`: `next` is that peer's id, `human`, or `none` when the
+   task is finished (tests pass, review approved).
+3. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
+   them and costs a turn.
