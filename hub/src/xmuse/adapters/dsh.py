@@ -124,8 +124,6 @@ class DshHeadless:
                 "--json", *(["--session-id", session] if session else []), "-"]  # task text on stdin
 
     def run(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None = None):
-        if not str(cwd).startswith("/mnt/c/"):
-            raise RuntimeError(f"dsh needs a workspace under C:\\ (got {cwd})")
         with log.open("a") as out, log.with_suffix(".err").open("a") as err:
             p = subprocess.Popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=err, text=True, encoding="utf-8", start_new_session=True,

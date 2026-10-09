@@ -91,6 +91,8 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
     if other:  # project configs carry one identity per vendor (M1 limit)
         raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
+    if vendor == "dsh" and not str(ws).startswith("/mnt/c/"):  # dsh cannot write through \\wsl.localhost
+        raise SystemExit(f"dsh needs the workspace on C:\\ (under /mnt/c/), not {ws}")
     s = {"allowed_tools": cfg.get("claude_allow", CLAUDE_ALLOW)} if vendor == "claude" else {}
     s.update(settings or {})
     tok = _token(state / "tokens" / agent_id)
