@@ -31,14 +31,20 @@ def transcript(cwd: Path, session: str) -> Path:
 
 
 def branch_points(path: Path) -> int:
-    """Parents with more than one user/assistant child (ported from spikes/cc-tree.py)."""
+    """Parents with more than one user prompt as child: two writers resumed the same leaf (ported from
+    spikes/cc-tree.py). Parallel tool calls also give a parent several children (one assistant record
+    per tool_use, results hanging off different records), so only prompts count, not tool results."""
     if not path.exists():
         return 0
     kids: dict = {}
     for line in path.open():
         o = json.loads(line)
-        if o.get("type") in ("user", "assistant") and "uuid" in o and not o.get("isSidechain"):
-            kids.setdefault(o.get("parentUuid"), []).append(o["uuid"])
+        if o.get("type") != "user" or "uuid" not in o or o.get("isSidechain"):
+            continue
+        c = (o.get("message") or {}).get("content")
+        if isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
+            continue
+        kids.setdefault(o.get("parentUuid"), []).append(o["uuid"])
     return sum(1 for p, k in kids.items() if p is not None and len(k) > 1)
 
 

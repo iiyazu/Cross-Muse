@@ -338,3 +338,15 @@ def test_start_failure_fails_the_turn(make):
     h.wait_quiet()
     assert h.turns()[0]["state"] == "failed" and "start failed" in h.turns()[0]["error"]
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "failed"
+
+
+def test_turn_that_reaches_no_one_is_flagged(make):
+    h = make()
+    h.plan_claude({}, {"as": "claude-1", "calls": [["xmuse_send", {"to": "human", "body": "hi"}]]})
+    h.send("claude-1", "one")
+    h.wait_quiet()
+    [n] = h.q("select * from messages where kind='notice'")
+    assert "ended without xmuse_send or xmuse_done" in n["body"] and n["thread_id"] == "dm:claude-1+human"
+    h.send("claude-1", "two")
+    h.wait_quiet()
+    assert len(h.q("select * from messages where kind='notice'")) == 1

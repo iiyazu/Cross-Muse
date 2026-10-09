@@ -39,6 +39,11 @@ def test_branch_points(tmp_path):
             f.write(json.dumps({"type": typ, "uuid": u, "parentUuid": parent,
                                 "isSidechain": u == "s"}) + "\n")
         f.write(json.dumps({"type": "system", "uuid": "x", "parentUuid": "b"}) + "\n")
+        # parallel tool calls: two tool_use records under one parent, results under each (not a fork)
+        res = {"content": [{"type": "tool_result", "tool_use_id": "t"}]}
+        for u, parent, typ, msg in (("p1", "e", "assistant", {}), ("p2", "p1", "assistant", {}),
+                                    ("r1", "p1", "user", res), ("r2", "p2", "user", res)):
+            f.write(json.dumps({"type": typ, "uuid": u, "parentUuid": parent, "message": msg}) + "\n")
     assert branch_points(p) == 1
 
 

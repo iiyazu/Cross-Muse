@@ -196,6 +196,10 @@ class Engine:
             until = time.strftime("%H:%M", time.localtime(end.retry_at))
             mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} hit its vendor usage limit; its messages"
                                                               f" are requeued and it resumes at {until}.")
+        elif thread and end.status == "succeeded" and not end.note and conn.execute(
+                "select 1 from messages where turn_id=?", (turn["id"],)).fetchone() is None:
+            mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} ended without xmuse_send or xmuse_done;"
+                                      " its reply, if any, reached no one", turn["chain_id"])
         elif thread and (end.status == "failed" or end.note):
             mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} {end.status}"
                                       f"{': ' + end.error if end.status == 'failed' else ''}"
