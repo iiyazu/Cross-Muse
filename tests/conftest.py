@@ -92,6 +92,9 @@ class Harness:
     def hook(self, agent, event, **payload):
         return self.post("/v1/hooks/claude", {"event": event, **payload}, self.token(agent))
 
+    def hook_dsh(self, agent, event, **payload):
+        return self.post("/v1/hooks/dsh", {"event": event, **payload}, self.token(agent))
+
     def plan_claude(self, *steps):
         """Set the fake's plan; the step counter restarts at the first step."""
         (self.home / "fake-claude" / "plan.json").write_text(json.dumps(list(steps)))

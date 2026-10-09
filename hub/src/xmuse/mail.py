@@ -11,6 +11,12 @@ from . import db
 from .config import HUB, HUMAN
 from .tools import WHY_FIELDS, ToolError
 
+# A retried tool call replays with the same content after a killed turn resumes (M1b report
+# section 6 item 3), so the auto idem key is sender + content, bucketed in a short window:
+# replays inside the window collapse, a genuinely repeated message later still goes through.
+# An explicit idem_key (human `--idem`) stays permanent.
+IDEM_WINDOW = 600
+
 
 def agents(conn) -> dict[str, dict]:
     return {a["id"]: a for a in db.rows(conn.execute("select * from agents order by id"))}
@@ -64,8 +70,9 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
     with db.tx(conn):
         roster = agents(conn)
         turn = running_turn(conn, sender) if sender in roster else None
-        if idem is None and turn is not None:  # a retried tool call inside one turn is a duplicate
-            idem = hashlib.sha256(json.dumps([turn["id"], to, kind, body]).encode()).hexdigest()[:32]
+        if idem is None and turn is not None:
+            bucket = int(db.now() // IDEM_WINDOW)
+            idem = hashlib.sha256(json.dumps([sender, to, kind, body, bucket]).encode()).hexdigest()[:32]
         if idem is not None:
             dup = db.row(conn.execute("select * from messages where sender=? and idem_key=?", (sender, idem)))
             if dup:

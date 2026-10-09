@@ -11,6 +11,7 @@ HUB = "hub"
 DEFAULTS = {
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain
+    "chat_warn_tokens": 50_000,      # a chat wake over this logs a warning (M1c task 2)
     "agent_hourly_turns": 40,
     "agent_hourly_tokens": 30_000_000,
     "turn_timeout": 1800,            # seconds before a running turn is interrupted
@@ -31,6 +32,7 @@ SHIM = REPO / "shim" / "server.ts"
 SKILL = REPO / "skill" / "xmuse-collab"
 TEMPLATES = REPO / "templates"
 HOOK = Path(__file__).resolve().parent / "hook.py"
+DSH_HOOK = Path(__file__).resolve().parent / "dsh_hook.py"
 
 
 def state_root() -> Path:

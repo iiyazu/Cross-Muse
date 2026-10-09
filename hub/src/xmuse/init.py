@@ -75,7 +75,7 @@ def init(ws: Path) -> Path:
         claude_md.write_text("@AGENTS.md\n")
     elif "@AGENTS.md" not in claude_md.read_text():
         claude_md.write_text(claude_md.read_text().rstrip() + "\n\n@AGENTS.md\n")
-    _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json"])
+    _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/"])
     return state
 
 

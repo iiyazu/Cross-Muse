@@ -13,8 +13,10 @@
 - dsh refuses a second writer ("already owned"): back off (10 s, doubling) and after N refusals pause
   the agent for the human. An unknown session id is an error, never a new session: the hub retries
   the messages in a fresh session with a bootstrap pack.
-- A user message whose source carries rpcId was typed in the desktop app: admission waits for its
-  turn to end (session log, zstd JSONL).
+- A human message typed in the desktop app arrives live through the dsh Claude-dialect hooks
+  (SessionStart / UserPromptSubmit / Stop, reported by the workspace hooks.json): admission
+  waits for the human turn to end. The session log (zstd JSONL, source.rpcId) stays only as a
+  deprecated helper, no longer read here.
 """
 import json
 import os
@@ -26,9 +28,14 @@ from pathlib import Path
 
 import zstandard
 
-from ..config import SHIM
+from .. import db
+from ..config import DSH_HOOK, SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
+
+# A hub-owned prompt starts with the wakepack relay header; a hook report carrying it is the
+# hub's own headless prompt, never human input.
+HUB_PROMPT_MARK = "[xmuse]"
 
 WIN_HOME = Path("/mnt/c/Users") / os.environ.get("USER", "")
 APP = WIN_HOME / "AppData/Local/Programs/DeepSeek Harness"
@@ -95,7 +102,11 @@ def parse(lines) -> tuple[dict, Usage]:
 
 
 def human_turn(log: Path) -> bool:
-    """A desktop-typed message (source.rpcId) with no turn/end after it."""
+    """A desktop-typed message (source.rpcId) with no turn/end after it.
+
+    Deprecated: presence() no longer polls the session log; it reads the live hook state
+    in DshDriver.human. Kept for the unit test and as a manual fallback.
+    """
     if not log.exists():
         return False
     busy = False
@@ -198,10 +209,11 @@ class DshDriver:
         self.state, self.ws = state, Path(cfg["workspace"])
         self.home = Path(cfg.get("dsh_home", WIN_HOME / ".dsh"))
         self.headless = DshHeadless(sink, state, cfg)
+        self.db = sink.db  # the engine's pool: hook reports and presence share one thread each
+        self.human: dict[str, bool] = {}  # vendor session -> a human input is being processed
 
     def presence(self, agent: dict, session: str | None) -> Presence:
-        logs = list(self.home.glob(f"sessions/*/{session}/session.v4.jsonl.zstd")) if session else []
-        return Presence("free", bool(logs) and human_turn(logs[0]), False)
+        return Presence("free", bool(session and self.human.get(session)), False)
 
     def precheck(self, agent: dict, ws: Path) -> str | None:
         """One minimal run without tools: an unknown model or provider fails here (about 10 s, no tokens)."""
@@ -211,12 +223,66 @@ class DshDriver:
         info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log)
         return None if info.get("ok") and info["rc"] == 0 else info.get("error") or f"exit {info['rc']}"
 
-    def on_hook(self, agent: dict, event: str, payload: dict) -> bool:
+    def on_hook(self, agent: dict, event: str, p: dict) -> bool:
+        """Live hook report from dsh_hook.py: {event, session_id, cwd, prompt, source, ...}.
+
+        SessionStart adopts a desktop-opened session as current; UserPromptSubmit marks a
+        human turn in flight (hub-owned wakepack prompts are ignored); Stop clears it.
+        Returns True when admission should be re-checked.
+        """
+        sid = p.get("session_id")
+        if event == "SessionStart":
+            if sid:
+                self._adopt(agent["id"], sid, p.get("cwd"))
+            return True
+        if event == "UserPromptSubmit":
+            if not sid or str(p.get("prompt", "")).lstrip().startswith(HUB_PROMPT_MARK):
+                return False
+            self.human[sid] = True
+            return True
+        if event == "Stop":
+            if sid:
+                self.human.pop(sid, None)
+            return True
         return False
+
+    def _adopt(self, agent_id: str, sid: str, cwd: str | None) -> None:
+        """A desktop-opened session becomes the agent's current one: the hub continues it after."""
+        with db.tx(self.db()):
+            cur = db.row(self.db().execute("select * from sessions where agent_id=? and state='current'",
+                                           (agent_id,)))
+            if cur and cur["vendor_session"] == sid:
+                return
+            if cur:
+                self.db().execute("update sessions set state='retired', retired_at=? where id=?",
+                                  (db.now(), cur["id"]))
+            old = db.row(self.db().execute("select * from sessions where agent_id=? and vendor_session=?",
+                                           (agent_id, sid)))
+            if old:
+                self.db().execute("update sessions set state='current', retired_at=null where id=?", (old["id"],))
+            else:
+                self.db().execute("insert into sessions(agent_id, vendor_session, cwd, origin, created_at)"
+                                  " values(?,?,?,?,?)", (agent_id, sid, cwd, "tui", db.now()))
 
     @staticmethod
     def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
-        return []  # the overlay is per run and lives in the state dir; skill and AGENTS.md come from init
+        """Workspace hooks.json + reporter copy for the desktop app (probe hooks-winws.json).
+
+        The headless overlay intentionally does NOT mount the bridge: hub-owned prompts must
+        never look human. The desktop profile mounts `@deepseek-ai/dsh-hooks-claude-code`
+        with configPath at the hooks.json written here; its UserPromptSubmit/Stop reports
+        then drive presence() live. Commands are workspace-relative (hook processes run in
+        the session cwd); the hub state is baked in as a Windows path, the agent as argv.
+        Skill and AGENTS.md still come from init.
+        """
+        d = ws / ".dsh"
+        d.mkdir(parents=True, exist_ok=True)
+        cmd = f"python3 .dsh/xmuse-dsh-hook.py {{ev}} {to_win(state)} {agent['id']}"
+        hooks = {"hooks": {ev: [{"hooks": [{"type": "command", "command": cmd.format(ev=ev)}]}]
+                           for ev in ("SessionStart", "UserPromptSubmit", "Stop")}}
+        (d / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n")
+        (d / "xmuse-dsh-hook.py").write_text(DSH_HOOK.read_text())
+        return [d / "hooks.json", d / "xmuse-dsh-hook.py"]
 
     def attach_command(self, agent: dict, session: str | None) -> str:
         return (f"dsh has no terminal UI: open the DeepSeek Harness desktop app"

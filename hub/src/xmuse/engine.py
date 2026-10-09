@@ -5,6 +5,7 @@ no human input in flight, and a writable session gets ALL its queued messages me
 turn through its vendor driver. Every other thread only enqueues events.
 """
 import json
+import logging
 import queue
 import threading
 import time
@@ -13,6 +14,8 @@ from pathlib import Path
 from . import db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
 from .config import HUMAN, ROTATE_AT
+
+log = logging.getLogger(__name__)
 
 
 class Engine:
@@ -215,6 +218,11 @@ class Engine:
             mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} {end.status}"
                                       f"{': ' + end.error if end.status == 'failed' else ''}"
                                       f"{' [' + end.note + ']' if end.note else ''}", turn["chain_id"])
+        if end.status == "succeeded" and u.mode == "chat" and u.total > self.cfg["chat_warn_tokens"]:
+            log.warning("chat wake over %s tokens: turn %s of %s used %s (input %s + cache_read %s"
+                        " + cache_write %s + output %s); its session may be due a rotation",
+                        self.cfg["chat_warn_tokens"], turn["id"], agent["id"], u.total,
+                        u.input, u.cache_read, u.cache_write, u.output)
         self._on_kick()
 
     def _on_approval(self, agent_id, session: str, req: dict) -> None:
