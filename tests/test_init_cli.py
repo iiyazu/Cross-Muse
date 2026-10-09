@@ -80,7 +80,7 @@ def test_claude_config(ws):
 
 def test_opencode_config_asks_for_consequential_commands(ws):
     state = xinit.init(ws)
-    xinit.add_agent(state, "opencode-1", "opencode", settings={"rotate_at": 9})
+    xinit.add_agent(state, "opencode-1", "opencode", settings={"note": 9})
     cfg = json.loads((ws / "opencode.json").read_text())
     srv = cfg["mcp"]["servers"]["xmuse"]
     assert srv["environment"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "opencode-1"}

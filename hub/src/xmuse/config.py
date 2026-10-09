@@ -18,11 +18,10 @@ DEFAULTS = {
     "turn_timeout": 1800,            # seconds before a running turn is interrupted
     "sweep_interval": 15,            # low-frequency fallback scan
     "recent_n": 8,                   # thread messages in a fresh-session bootstrap pack
+    "align_global_cap": 40,          # active entries per view layer (design §4.5.1 item 4)
+    "align_role_cap": 20,
+    "align_thread_cap": 15,
 }
-
-# Rotate to a fresh session once the context read by the last model call of a turn
-# exceeds this (design §4.1 principle 9). See report for the choice.
-ROTATE_AT = {"claude": 120_000, "opencode": 120_000, "dsh": 120_000}
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
           "dsh": "deepseek-official/deepseek-v4-flash"}

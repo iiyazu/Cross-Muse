@@ -6,9 +6,9 @@ when they are woken is the engine's job.
 """
 import json
 
-from . import db
+from . import align, db
 from .config import HUB, HUMAN
-from .tools import WHY_FIELDS, ToolError
+from .tools import DECLARE, WHY_FIELDS, ToolError
 
 # A retried tool call resends identical content: same-turn retries, and replays when a killed
 # turn resumes in a later turn (M1b report section 6 item 3). Collapse those, but only against
@@ -59,13 +59,18 @@ def members(conn, thread_id: str) -> list[str]:
 
 
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
-         mentions: list | None = None, why: dict | None = None, idem: str | None = None) -> dict:
+         mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
+         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag)."""
     mentions = list(dict.fromkeys(mentions or []))
     if kind == "handoff":
         missing = [k for k in WHY_FIELDS if not (why or {}).get(k)]
         if missing:
             raise ToolError("invalid_arguments", f"kind=handoff needs why.{', why.'.join(missing)}")
+    if (scope or supersedes) and kind not in DECLARE:
+        raise ToolError("invalid_arguments", "scope and supersedes need kind=decision|assumption|question")
+    if depends_on and kind != "handoff":
+        raise ToolError("invalid_arguments", "depends_on needs kind=handoff")
     with db.tx(conn):
         roster = agents(conn)
         turn = running_turn(conn, sender) if sender in roster else None
@@ -108,7 +113,16 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             state = "passive" if r not in wake else ("queued" if chain["state"] == "open" else "held")
             conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
                          " values(?,?,?,?,?)", (mid, r, int(r in wake), state, db.now()))
-        return {**db.row(conn.execute("select * from messages where id=?", (mid,))), "woken": sorted(wake)}
+        if kind in DECLARE:
+            eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes)]
+        elif kind == "handoff":  # one assignment per named peer (a DM names its peer)
+            eids = align.assign(conn, sender, thread["id"], mid, body,
+                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [])
+        else:
+            eids = []
+        align.resolve(conn, resolves or [])
+        return {**db.row(conn.execute("select * from messages where id=?", (mid,))), "woken": sorted(wake),
+                "entries": [f"E{i}" for i in eids]}
 
 
 def _chain(conn, cfg, sender, thread_id, turn) -> tuple[dict, int]:
@@ -166,25 +180,6 @@ def thread(conn, member: str, thread_id: str, query: str | None = None, limit: i
     return {"thread": thread_id, "members": members(conn, thread_id), "messages": [_public(r) for r in reversed(rs)]}
 
 
-def context(conn, agent_id: str, topic: str | None = None) -> dict:
-    """Deterministic collaboration context (M1). M2 adds the MemoryOS-curated layer."""
-    tids = [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]
-    out = {"threads": []}
-    for tid in tids:
-        t = db.row(conn.execute("select * from threads where id=?", (tid,)))
-        like = f"%{topic}%" if topic else "%"
-        pick = lambda kinds, n: [_public(r) for r in reversed(db.rows(conn.execute(  # noqa: E731
-            f"select * from messages where thread_id=? and kind in ({','.join('?' * len(kinds))}) and body like ?"
-            " order by id desc limit ?", (tid, *kinds, like, n))))]
-        out["threads"].append({
-            "id": tid, "owner": t["owner"], "members": members(conn, tid),
-            "decisions": pick(["decision"], 10), "handoffs": pick(["handoff"], 3),
-            "open_questions": [q for q in pick(["question"], 10) if not conn.execute(
-                "select 1 from deliveries where message_id=? and acked_at is not null", (q["id"],)).fetchone()],
-            "last_done": pick(["done"], 2)})
-    return out
-
-
 def whoami(conn, agent_id: str, workspace: str) -> dict:
     roster = agents(conn)
     me = roster[agent_id]
@@ -195,7 +190,7 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
             "threads": [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]}
 
 
-def done(conn, agent_id: str, summary: str, nxt: str) -> dict:
+def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None) -> dict:
     """Exit check: record it on the running turn and post it to the chain's thread (no wake)."""
     turn = running_turn(conn, agent_id)
     with db.tx(conn):
@@ -213,10 +208,12 @@ def done(conn, agent_id: str, summary: str, nxt: str) -> dict:
         depth = 0 if turn is None else conn.execute(
             "select coalesce(max(m.depth), -1) + 1 from deliveries d join messages m on m.id=d.message_id"
             " where d.turn_id=?", (turn["id"],)).fetchone()[0]
-        conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, created_at)"
-                     " values(?,?,?,?,?,?,?,?)", (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth,
-                                                  turn and turn["id"], db.now()))
-    return {"recorded": True, "thread": tid}
+        mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, created_at)"
+                           " values(?,?,?,?,?,?,?,?)", (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth,
+                                                        turn and turn["id"], db.now())).lastrowid
+        eids = [align.declare(conn, agent_id, tid, mid, d["kind"], d["statement"], d.get("scope"), d.get("supersedes"))
+                for d in declares or []]
+    return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {})}
 
 
 def _public(r: dict) -> dict:

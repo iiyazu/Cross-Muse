@@ -254,30 +254,17 @@ def test_human_idempotency_key(make):
     assert len(h.turns()) == 1
 
 
-def test_rotation_starts_fresh_session_with_bootstrap_pack(make):
-    h = make([("claude-1", "claude", {"rotate_at": 50_000})])
-    h.plan_claude({"context": 60_000}, {})
-    h.send("claude-1", "first task")
-    h.wait_quiet()
-    h.send("claude-1", "second task")
-    h.wait_quiet()
-    c1, c2 = h.claude_calls()
-    assert "--session-id" in c2["argv"]
-    assert c1["argv"][c1["argv"].index("--session-id") + 1] != c2["argv"][c2["argv"].index("--session-id") + 1]
-    assert "You are claude-1" in c2["prompt"] and "first task" in c2["prompt"]  # identity + recent thread
-    s = h.q("select state, context_tokens from sessions order by id")
-    assert s[0] == {"state": "retired", "context_tokens": 60_000} and s[1]["state"] == "current"
-    assert h.turns()[1]["fresh"] == 1
-
-
-def test_no_rotation_below_threshold(make):
-    h = make([("claude-1", "claude", {"rotate_at": 500_000})])
-    h.plan_claude({"context": 60_000}, {})
+def test_large_context_session_is_resumed_not_rotated(make):
+    h = make()
+    h.plan_claude({"context": 900_000}, {"context": 900_000})
     h.send("claude-1", "a")
     h.wait_quiet()
     h.send("claude-1", "b")
     h.wait_quiet()
-    assert "--resume" in h.claude_calls()[1]["argv"]
+    c1, c2 = h.claude_calls()
+    assert "--resume" in c2["argv"] and c1["argv"][c1["argv"].index("--session-id") + 1] ==         c2["argv"][c2["argv"].index("--resume") + 1]
+    assert h.q("select state, context_tokens from sessions") == [{"state": "current", "context_tokens": 900_000}]
+    assert [t["fresh"] for t in h.turns()] == [1, 0]
 
 
 def test_fork_detection_notes_the_turn(make):

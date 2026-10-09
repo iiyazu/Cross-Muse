@@ -150,7 +150,6 @@ def main(argv=None) -> None:
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
-    p.add_argument("--rotate-at", type=int)
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
@@ -165,9 +164,14 @@ def main(argv=None) -> None:
     p.add_argument("--thread")
     p = sub.add_parser("resume")
     p.add_argument("--agent", required=True)
-    p = sub.add_parser("thread")
+    p = sub.add_parser("thread", help="thread <id> --owner <agent> | thread close <id>")
     p.add_argument("id")
+    p.add_argument("tid", nargs="?")
     p.add_argument("--owner")
+    p = sub.add_parser("align", help="list [--all] | confirm E<id> | reject E<id>")
+    p.add_argument("action", choices=["list", "confirm", "reject"])
+    p.add_argument("id", nargs="?")
+    p.add_argument("--all", action="store_true")
     p = sub.add_parser("log")
     p.add_argument("--thread")
     p.add_argument("--json", action="store_true")
@@ -197,8 +201,7 @@ def main(argv=None) -> None:
             print(json.dumps(status(state)["agents"], indent=1))
             return
         from .init import add_agent
-        s = {k: v for k, v in (("rotate_at", a.rotate_at),) if v}
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role, s)
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -216,8 +219,17 @@ def main(argv=None) -> None:
         print(json.dumps(call(state, "/v1/admin/stop", {"agent": a.agent, "thread": a.thread})))
     elif a.cmd == "resume":
         print(json.dumps(call(state, "/v1/admin/resume", {"agent": a.agent})))
+    elif a.cmd == "thread" and a.id == "close":
+        print(json.dumps(call(state, "/v1/admin/close", {"id": a.tid})))
     elif a.cmd == "thread":
         print(json.dumps(call(state, "/v1/admin/thread", {"id": a.id, "owner": a.owner})))
+    elif a.cmd == "align" and a.action == "list":
+        for e in db.rows(db.connect(state / "hub.db").execute(
+                "select * from entries" + ("" if a.all else " where status in ('active','proposed')") + " order by id")):
+            print(f"E{e['id']} [{e['kind']}] {e['status']} {e['scope']} {e['author']}"
+                  f"{' -> ' + e['assignee'] if e['assignee'] else ''}: {e['statement']}")
+    elif a.cmd == "align":
+        print(json.dumps(call(state, "/v1/admin/align", {"op": a.action, "id": a.id})))
     elif a.cmd == "log":
         log(state, a.thread, a.json)
     elif a.cmd == "usage":

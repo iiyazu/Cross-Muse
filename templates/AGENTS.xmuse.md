@@ -14,7 +14,7 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
   `mentions` decides who is woken.
 - Handoffs use the Why-First fields (what, why, tradeoff, open_questions, next_action).
 - Exit check every turn: does this end with me? If not, message whoever moves next, then call
-  `xmuse_done(summary, next)`.
+  `xmuse_done(summary, next, declares?)`; declare decisions and assumptions others depend on.
 
 Full guide: skill `xmuse-collab` (`.claude/skills/xmuse-collab/SKILL.md`).
 <!-- xmuse:end -->

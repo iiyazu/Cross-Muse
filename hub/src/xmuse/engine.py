@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
-from .config import HUMAN, ROTATE_AT
+from .config import HUMAN
 
 log = logging.getLogger(__name__)
 
@@ -107,11 +107,8 @@ class Engine:
             adapter, fresh = driver.push, False
         else:
             adapter = driver.headless
-            rotate_at = db.settings(agent).get("rotate_at", ROTATE_AT.get(agent["vendor"], 120_000))
-            fresh = session is None or session["context_tokens"] >= rotate_at
+            fresh = session is None  # never rotated automatically (design §4.1 principle 9)
         with db.tx(conn):
-            if fresh and session:
-                conn.execute("update sessions set state='retired', retired_at=? where id=?", (db.now(), session["id"]))
             chain = pending[-1]["chain_id"]
             tid = conn.execute("insert into turns(agent_id, session_id, adapter, chain_id, fresh, state, started_at)"
                                " values(?,?,?,?,?,?,?)", (agent["id"], None if fresh else session["id"], adapter.name,
@@ -222,7 +219,7 @@ class Engine:
                    "code": self.cfg["code_warn_tokens"]}.get(u.mode)
         if end.status == "succeeded" and warn_at and u.total > warn_at:
             log.warning("%s wake over %s tokens: turn %s of %s used %s (input %s + cache_read %s"
-                        " + cache_write %s + output %s); its session may be due a rotation",
+                        " + cache_write %s + output %s)",
                         u.mode, warn_at, turn["id"], agent["id"], u.total,
                         u.input, u.cache_read, u.cache_write, u.output)
         self._on_kick()

@@ -61,6 +61,20 @@ create table if not exists usage(
   input integer not null, cache_read integer not null, cache_write integer not null,
   output integer not null, context integer not null, calls integer not null,
   created_at real not null);
+create table if not exists entries(          -- alignment library (design §4.5.1); never deleted
+  id integer primary key,                    -- shown as E<id>
+  kind text not null,                        -- decision|convention|assumption|question|lesson|assignment
+  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id>
+  thread_id text, statement text not null, refs text not null default '[]',  -- refs: source message ids
+  author text not null,
+  status text not null,                      -- proposed|active|superseded|resolved|archived|rejected
+  supersedes integer, assignee text, depends_on text,  -- depends_on: JSON list of entry ids (assignments)
+  valid_at real not null, recorded_at real not null, invalid_at real,
+  seq integer not null);                     -- alignment version of the last change
+create table if not exists entry_events(
+  seq integer primary key,                   -- global monotonic alignment version
+  entry_id integer not null, op text not null,  -- add|supersede|resolve|archive|confirm|reject
+  at real not null);
 create table if not exists approvals(
   id text primary key, agent_id text not null, vendor_session text, action text,
   resources text, state text not null default 'pending', decision text,
