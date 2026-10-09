@@ -97,7 +97,8 @@ def log(state: Path, thread: str | None, as_json: bool) -> None:
         chains = {m["chain_id"] for m in msgs}
         turns = [t for t in turns if t["chain_id"] in chains]
     if as_json:
-        print(json.dumps({"messages": msgs, "turns": turns}, indent=1, ensure_ascii=False))
+        agents = db.rows(conn.execute("select id, vendor, model from agents order by id"))
+        print(json.dumps({"agents": agents, "messages": msgs, "turns": turns}, indent=1, ensure_ascii=False))
         return
     ts = lambda x: datetime.fromtimestamp(x).strftime("%H:%M:%S") if x else "--:--:--"  # noqa: E731
     ev = [(m["created_at"], 0, m) for m in msgs] + [(t["started_at"], 1, t) for t in turns]

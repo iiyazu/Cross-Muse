@@ -135,6 +135,7 @@ class DshHeadless:
             lines = []
             for line in p.stdout:
                 out.write(line)
+                out.flush()
                 lines.append(line)
         p.wait()
         info, usage = parse(lines)
