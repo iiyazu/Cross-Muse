@@ -1,9 +1,9 @@
 """Delivery engine through the dsh headless adapter, with a fake dsh replaying M0-dsh NDJSON recordings."""
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
-import zstandard
 
 from xmuse import init as xinit
 from xmuse.adapters.dsh import human_turn, overlay, parse
@@ -117,24 +117,20 @@ def test_precheck_reports_an_unknown_model(make):
 
 
 def test_human_typing_in_the_desktop_app_holds_admission(make):
+    """Live hooks (SessionStart/UserPromptSubmit/Stop dialect, probe hooks.log shape)."""
     h = make(DSH)
     h.plan_dsh({"as": "dsh-1", "calls": [SEND]}, {"as": "dsh-1", "calls": [SEND]})
     h.send("dsh-1", "first")
     h.wait_quiet()
     sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
-    log = h.tmp / "dsh-home" / "sessions" / "--C-ws--" / sid / "session.v4.jsonl.zstd"
-    log.parent.mkdir(parents=True)
-    rec = [{"type": "turn/end", "data": {"turn": 1}},
-           {"type": "user/message", "data": {"source": {"kind": "user", "rpcId": "r1"}}}]
-    write = lambda recs: log.write_bytes(zstandard.ZstdCompressor().compress(  # noqa: E731
-        "".join(json.dumps(r) + "\n" for r in recs).encode()))
-    write(rec)
+    h.hook_dsh("dsh-1", "UserPromptSubmit", session_id=sid, prompt="human typing")
+    assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is True
     m = h.send("dsh-1", "while the human types")
     h.hub.engine.call(lambda: None)
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "queued"
     assert not h.q("select 1 from turns where id=2")
-    write(rec + [{"type": "turn/end", "data": {"turn": 2}}])
-    h.hub.engine.kick()
+    h.hook_dsh("dsh-1", "Stop", session_id=sid)
+    assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is False
     h.wait_quiet()
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
 
@@ -165,3 +161,111 @@ def test_dsh_agent_needs_a_workspace_on_c(tmp_path, monkeypatch):
         xinit.add_agent(state, "dsh-1", "dsh")
     assert json.loads(overlay({"id": "d", "model": "p/m"}, tmp_path, mcp=False))[1] == {"id": "tool-web",
                                                                                        "disabled": True}
+
+
+def test_hub_prompt_hook_is_ignored(make):
+    """The hub's own headless prompts (wakepack relay) never look human."""
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    h.hook_dsh("dsh-1", "UserPromptSubmit", session_id=sid,
+               prompt="[xmuse] Messages relayed by xmuse, the collaboration layer")
+    assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is False
+    m = h.send("dsh-1", "second")
+    h.wait_quiet()
+    assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
+    assert len(h.turns()) == 2
+
+
+def test_session_start_hook_adopts_a_desktop_session(make):
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    old = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    h.hook_dsh("dsh-1", "SessionStart", session_id="desktop-new", source="desktop", cwd="C:\\ws")
+    rows = h.q("select vendor_session, origin, state from sessions order by id")
+    assert rows == [{"vendor_session": old, "origin": "hub", "state": "retired"},
+                    {"vendor_session": "desktop-new", "origin": "tui", "state": "current"}]
+    h.hook_dsh("dsh-1", "SessionStart", session_id="desktop-new", source="desktop", cwd="C:\\ws")
+    assert len(h.q("select * from sessions")) == 2  # adopting the current session is a no-op
+
+
+def test_dsh_hook_script_reports_to_the_hub(make):
+    """dsh_hook.py as dsh runs it: event + state + agent argv, payload on stdin."""
+    from xmuse.config import DSH_HOOK
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "warm up")
+    h.wait_quiet()
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    payload = {"session_id": sid, "hook_event_name": "UserPromptSubmit",
+               "cwd": "C:\\ws", "prompt": "typed by the human"}
+    subprocess.run(["python3", str(DSH_HOOK), "UserPromptSubmit", str(h.state), "dsh-1"],
+                   input=json.dumps(payload), text=True, check=True, timeout=10)
+    assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is True
+    subprocess.run(["python3", str(DSH_HOOK), "Stop", str(h.state), "dsh-1"],
+                   input=json.dumps({"session_id": sid}), text=True, check=True, timeout=10)
+    assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is False
+    # never blocks dsh, even when the hub is gone
+    r = subprocess.run(["python3", str(DSH_HOOK), "Stop", "/nonexistent", "dsh-1"],
+                       input="{}", text=True, timeout=10)
+    assert r.returncode == 0
+
+
+def test_dsh_write_config_installs_workspace_hooks(tmp_path):
+    from xmuse.adapters.dsh import DshDriver
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    paths = DshDriver.write_config(ws, {"id": "dsh-1"}, tmp_path / "state")
+    hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())
+    assert set(hooks["hooks"]) == {"SessionStart", "UserPromptSubmit", "Stop"}
+    for ev, groups in hooks["hooks"].items():
+        [g] = groups
+        [ho] = g["hooks"]
+        assert ho["type"] == "command" and "xmuse-dsh-hook.py " + ev in ho["command"] \
+            and "dsh-1" in ho["command"]
+    assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text().startswith("#!/usr/bin/env python3")
+    assert [p.name for p in paths] == ["hooks.json", "xmuse-dsh-hook.py"]
+
+
+def test_presence_falls_back_to_the_session_log_without_hooks(make):
+    """No hook ever seen for the session (desktop bridge not mounted): M1b log reading."""
+    import zstandard
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    drv = h.hub.engine.drivers["dsh"]
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is False  # quiet log, no hooks
+    log = h.tmp / "dsh-home" / "sessions" / "--C-ws--" / sid / "session.v4.jsonl.zstd"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(zstandard.ZstdCompressor().compress(
+        "".join(json.dumps(r) + "\n" for r in [
+            {"type": "turn/end", "data": {"turn": 1}},
+            {"type": "user/message", "data": {"source": {"kind": "user", "rpcId": "r1"}}}]).encode()))
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is True  # log fallback
+    h.hook_dsh("dsh-1", "Stop", session_id=sid)
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is False  # live hooks take over
+
+
+def test_expired_human_flag_releases_admission(make):
+    """A desktop closed mid-turn never sends Stop: the flag expires after turn_timeout."""
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    drv = h.hub.engine.drivers["dsh"]
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    h.hook_dsh("dsh-1", "UserPromptSubmit", session_id=sid, prompt="human typing")
+    m = h.send("dsh-1", "while the desktop is gone")
+    h.hub.engine.call(lambda: None)
+    assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "queued"
+    drv.human[sid] -= drv.cfg.get("turn_timeout", 1800) + 1  # Stop never arrives: backdate past expiry
+    h.hub.engine.kick()
+    h.hub.engine.call(lambda: None)
+    h.wait_quiet()
+    assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"

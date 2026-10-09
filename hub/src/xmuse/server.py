@@ -137,7 +137,7 @@ class Hub:
     def route(self, method: str, path: str, caller: str, body: dict):
         if path.startswith("/v1/tools/") and caller != config.HUMAN:
             return self.tool(caller, path.rsplit("/", 1)[1], body.get("args", {}))
-        if path == "/v1/hooks/claude" and caller != config.HUMAN:
+        if path in ("/v1/hooks/claude", "/v1/hooks/dsh") and caller != config.HUMAN:
             return self.hook(caller, body)
         if path == "/v1/shim/register" and caller != config.HUMAN:
             return self.register(caller, body)

@@ -4,12 +4,17 @@
 message and one delivery per recipient, idempotently. Who gets woken is decided here;
 when they are woken is the engine's job.
 """
-import hashlib
 import json
 
 from . import db
 from .config import HUB, HUMAN
 from .tools import WHY_FIELDS, ToolError
+
+# A retried tool call resends identical content: same-turn retries, and replays when a killed
+# turn resumes in a later turn (M1b report section 6 item 3). Collapse those, but only against
+# the current turn or an interrupted turn nobody has handled since (a later succeeded turn
+# means the content was seen; repeating it then, e.g. ping-pong "again", is a new message).
+# An explicit idem_key (human `--idem`) stays permanent.
 
 
 def agents(conn) -> dict[str, dict]:
@@ -64,13 +69,22 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
     with db.tx(conn):
         roster = agents(conn)
         turn = running_turn(conn, sender) if sender in roster else None
-        if idem is None and turn is not None:  # a retried tool call inside one turn is a duplicate
-            idem = hashlib.sha256(json.dumps([turn["id"], to, kind, body]).encode()).hexdigest()[:32]
         if idem is not None:
             dup = db.row(conn.execute("select * from messages where sender=? and idem_key=?", (sender, idem)))
             if dup:
                 return {**dup, "duplicate": True}
         thread = _thread(conn, sender, to, roster)
+        if idem is None and turn is not None:
+            dup = db.row(conn.execute(
+                "select m.* from messages m left join turns t0 on t0.id = m.turn_id"
+                " where m.sender = ? and m.thread_id = ? and m.kind = ? and m.body = ?"
+                " and m.mentions = ? and (m.turn_id = ? or (t0.state = 'interrupted' and not exists ("
+                " select 1 from turns t2 where t2.agent_id = m.sender and t2.started_at > m.created_at"
+                " and t2.state = 'succeeded')))"
+                " order by m.id desc",
+                (sender, thread["id"], kind, body, json.dumps(mentions), turn["id"])))
+            if dup:
+                return {**dup, "duplicate": True}
         mem = members(conn, thread["id"])
         bad = [m for m in mentions if m not in mem or m == HUMAN]
         if bad:
