@@ -1,5 +1,9 @@
 """Watermark, snapshot/delta alignment injection, budgets, body cap, size notice, per-turn metrics."""
-from xmuse import align, db, mail, wakepack
+import io
+import json
+import sys
+
+from xmuse import align, cli, db, mail, wakepack
 
 DECISION = "decision"
 
@@ -110,6 +114,65 @@ def test_removed_watermark_means_snapshot_again(make):
     p = wake(h)
     assert "[alignment: current shared decisions" in p and "You are" not in p
     assert h.turns()[1]["align_mode"] == "snapshot"
+
+
+def test_sharp_context_drop_means_compaction_so_snapshot_again(make):
+    h = two(make)
+    h.plan_claude({"context": 300_000}, {"context": 100_000}, {})
+    declare(h, "ids are int", scope="global")
+    wake(h)
+    wake(h)                                              # 100k < 300k * 0.5: the vendor compacted
+    assert h.q("select * from seen") == []
+    assert "[alignment: current" in wake(h)
+    assert h.turns()[2]["align_mode"] == "snapshot"
+
+
+def test_moderate_context_drop_keeps_the_watermark(make):
+    h = two(make)
+    h.plan_claude({"context": 300_000}, {"context": 200_000}, {})
+    declare(h, "ids are int", scope="global")
+    wake(h)
+    wake(h)
+    assert len(h.q("select * from seen")) == 1
+    declare(h, "ids are Decimal strings", scope="global", supersedes="E1")
+    assert "[alignment update since" in wake(h)
+
+
+def hook_compact(monkeypatch, state, stdin):
+    monkeypatch.setenv("XMUSE_STATE", str(state))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
+    cli.main(["hook", "compact"])
+
+
+def test_hook_compact_prints_snapshot_and_marks_it_seen(make, monkeypatch, capsys):
+    h = two(make)
+    h.plan_claude({})
+    declare(h, "ids are int", scope="global")
+    wake(h)
+    s = h.q("select id, vendor_session vs from sessions")[0]
+    declare(h, "tokens are tuples", scope="global")
+    hook_compact(monkeypatch, h.state, json.dumps({"session_id": s["vs"], "source": "compact"}))
+    out = capsys.readouterr().out
+    assert "[alignment: current shared decisions" in out and "E1 [decision] ids are int" in out and "E2 [decision]" in out
+    assert align.watermark(h.conn(), s["id"]) == align.current_seq(h.conn()) == 2
+    align.reset_watermark(h.conn(), s["id"])
+    hook_compact(monkeypatch, h.state, json.dumps({"session_id": s["vs"]}))
+    assert capsys.readouterr().out == out and align.watermark(h.conn(), s["id"]) == 2
+
+
+def test_hook_compact_never_fails_or_prints_without_a_session_or_hub(make, monkeypatch, capsys, tmp_path):
+    h = two(make)
+    h.plan_claude({})
+    wake(h)
+    for state, stdin in [(h.state, json.dumps({"session_id": "unknown"})), (h.state, "not json"), (h.state, "{}"),
+                         (tmp_path / "no-hub", json.dumps({"session_id": "x"}))]:
+        hook_compact(monkeypatch, state, stdin)
+    (tmp_path / "stale").mkdir()
+    (tmp_path / "stale" / "hub.json").write_text('{"port": 1, "pid": 1}')
+    (tmp_path / "stale" / "tokens").mkdir()
+    (tmp_path / "stale" / "tokens" / "_admin").write_text("x")
+    hook_compact(monkeypatch, tmp_path / "stale", json.dumps({"session_id": "x"}))
+    assert capsys.readouterr().out == ""
 
 
 def test_joining_a_thread_with_entries_means_snapshot_again(make):

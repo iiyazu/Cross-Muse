@@ -118,6 +118,21 @@ def test_large_context_session_is_kept(make):
     assert [x["state"] for x in s] == ["current"] and s[0]["context_tokens"] > 1000  # still recorded
 
 
+def test_compaction_ended_resets_the_watermark_failed_does_not(make):
+    h = make(OC)
+    h.oc.plan = [{}]
+    h.send("opencode-1", "first")
+    h.wait_quiet()
+    assert len(h.q("select * from seen")) == 1
+    h.oc._frame("ses_other", "session.compaction.ended")
+    h.oc._frame("ses_fake1", "session.compaction.failed", error={"message": "template"})
+    h.oc._frame("ses_fake1", "session.compaction.started", reason="auto")
+    time.sleep(0.5)
+    assert len(h.q("select * from seen")) == 1
+    h.oc._frame("ses_fake1", "session.compaction.ended", reason="auto")
+    h.wait(lambda: not h.q("select * from seen"), what="watermark reset")
+
+
 def test_permission_request_is_forwarded_and_approved(make):
     h = make(OC)
     h.oc.plan = [{"result": "hang"}]

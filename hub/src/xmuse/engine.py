@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import db, mail, wakepack
+from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
 from .config import HUMAN
 
@@ -34,6 +34,15 @@ class Engine:
 
     def approval(self, agent_id, session: str, request: dict) -> None:
         self.q.put(("approval", agent_id, session, request))
+
+    def compacted(self, vendor_session: str) -> None:
+        """The vendor compacted this session: its next wake gets a full alignment snapshot."""
+        self.q.put(("compacted", vendor_session))
+
+    def _on_compacted(self, vendor_session: str) -> None:
+        conn = self.db()
+        for r in conn.execute("select id from sessions where vendor_session=?", (vendor_session,)).fetchall():
+            align.reset_watermark(conn, r[0])
 
     def call(self, fn, *args, timeout: float = 60):
         """Run fn on the engine thread (state changes stay single-threaded) and return its result."""
@@ -195,10 +204,13 @@ class Engine:
                          (turn["id"], agent["id"], agent["vendor"], u.model or agent["model"], u.mode, u.input,
                           u.cache_read, u.cache_write, u.output, u.context, u.calls, db.now()))
             if turn["session_id"]:
+                prev = conn.execute("select context_tokens from sessions where id=?", (turn["session_id"],)).fetchone()[0]
                 conn.execute("update sessions set vendor_session=coalesce(?, vendor_session), context_tokens=?,"
                              " total_tokens=total_tokens+?, wakes=wakes+1 where id=?",
                              (end.session, u.context, u.total, turn["session_id"]))
-                if end.status != "succeeded":  # the pack may not have been read: re-send the snapshot next time
+                # the pack may not have been read: re-send the snapshot next time. A context that fell sharply
+                # means the vendor compacted (the signal every vendor shares, and dsh's only one)
+                if end.status != "succeeded" or 0 < u.context < prev * self.cfg["compact_drop_ratio"]:
                     conn.execute("delete from seen where session_id=?", (turn["session_id"],))
             if turn["chain_id"]:
                 conn.execute("update chains set tokens=tokens+? where id=?", (u.total, turn["chain_id"]))

@@ -13,7 +13,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos
+from . import align, config, db, mail, memoryos, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
@@ -132,6 +132,23 @@ class Hub:
     def admin_close(self, body: dict):
         self.curator.kick(body["id"], closed=True)  # reads the thread's entries before they are archived
         return align.close_thread(self.db(), body["id"])
+
+    def admin_compact(self, body: dict):
+        """Claude's SessionStart(compact) hook: the session is re-told the alignment right now, so its
+        watermark is the current version (the next wake sends only a delta)."""
+        return self.engine.call(self._compact, body["session_id"])
+
+    def _compact(self, vendor_session: str):
+        conn = self.db()
+        s = db.row(conn.execute("select id, agent_id from sessions where vendor_session=? order by id desc limit 1",
+                                (vendor_session,)))
+        if s is None:
+            return {"snapshot": None}
+        seq = align.current_seq(conn)
+        text = wakepack.snapshot(conn, self.cfg, s["agent_id"])
+        with db.tx(conn):
+            conn.execute("insert or replace into seen values(?,?)", (s["id"], seq))
+        return {"snapshot": text}
 
     def admin_approve(self, body: dict):
         conn = self.db()

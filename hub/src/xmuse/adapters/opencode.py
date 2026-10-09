@@ -193,6 +193,8 @@ class OpenCodePrompt:
             t.usage.model = (d.get("model") or {}).get("id", t.usage.model)
         elif typ == "session.tool.input.started" and t is not None and d.get("name") in CODE_TOOLS:
             t.usage.mode = "code"
+        elif typ == "session.compaction.ended":  # `failed` keeps the context, so the watermark stays
+            self.sink.compacted(sid)
         elif typ == "permission.asked":
             self.sink.approval(self._agent(sid), sid, d)
         elif typ in END:

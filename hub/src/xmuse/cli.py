@@ -185,7 +185,18 @@ def main(argv=None) -> None:
     p.add_argument("decision", choices=["once", "always", "reject"])
     p = sub.add_parser("attach")
     p.add_argument("agent")
+    p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
+    p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
+    if a.cmd == "hook":  # re-inject the alignment after Claude compacted; never blocks Claude, whatever fails
+        try:
+            sid = json.load(sys.stdin).get("session_id")
+            text = sid and call(config.find_state(a.ws), "/v1/admin/compact", {"session_id": sid})["snapshot"]
+            if text:
+                print(text)
+        except (Exception, SystemExit):
+            pass
+        return
 
     if a.cmd == "init":
         from .init import init
