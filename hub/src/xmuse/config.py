@@ -20,10 +20,11 @@ DEFAULTS = {
 
 # Rotate to a fresh session once the context read by the last model call of a turn
 # exceeds this (design §4.1 principle 9). See report for the choice.
-ROTATE_AT = {"claude": 120_000, "opencode": 120_000}
+ROTATE_AT = {"claude": 120_000, "opencode": 120_000, "dsh": 120_000}
 
-MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode/muse-spark-1.3-contributor-free"}
-FAMILIES = {"claude": "anthropic", "opencode": "opencode"}
+MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
+          "dsh": "deepseek-official/deepseek-v4-flash"}
+FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek"}
 
 REPO = Path(__file__).resolve().parents[3]
 SHIM = REPO / "shim" / "server.ts"

@@ -18,6 +18,7 @@ create table if not exists agents(
   paused_until real, created_at real not null);
 create table if not exists sessions(
   id integer primary key, agent_id text not null, vendor_session text,
+  cwd text,                                  -- dsh resumes only in the exact cwd it was created in
   origin text not null,                      -- hub | tui
   state text not null default 'current',     -- current | retired
   context_tokens integer not null default 0, total_tokens integer not null default 0,

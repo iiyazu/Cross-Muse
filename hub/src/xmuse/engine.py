@@ -131,8 +131,8 @@ class Engine:
             return
         with db.tx(conn):
             sid = None if not fresh else conn.execute(
-                "insert into sessions(agent_id, vendor_session, origin, created_at) values(?,?,?,?)",
-                (agent["id"], info.get("handle"), "hub", db.now())).lastrowid
+                "insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
+                (agent["id"], info.get("handle"), info.get("cwd", str(self.ws)), "hub", db.now())).lastrowid
             conn.execute("update turns set pid=?, handle=?, session_id=coalesce(session_id, ?) where id=?",
                          (info.get("pid"), info.get("handle"), sid, tid))
 
@@ -171,13 +171,19 @@ class Engine:
         with db.tx(conn):
             conn.execute("update turns set state=?, ended_at=?, error=? where id=?",
                          (end.status, db.now(), "; ".join(x for x in (end.error, end.note) if x) or None, turn["id"]))
-            if end.retry_at:  # quota refusal: the messages were not handled; retry them after the reset
+            if end.retry_at or end.requeue:  # the messages were not handled: put them back
                 conn.execute("update chains set wakes=max(wakes-1, 0) where id in (select m.chain_id from deliveries"
                              " d join messages m on m.id=d.message_id where d.turn_id=? and d.state='admitted')",
                              (turn["id"],))
                 conn.execute("update deliveries set state='queued', turn_id=null, updated_at=? where turn_id=?"
                              " and state='admitted'", (db.now(), turn["id"]))
-                conn.execute("update agents set paused_until=? where id=?", (end.retry_at, agent["id"]))
+                if end.retry_at:
+                    conn.execute("update agents set paused_until=? where id=?", (end.retry_at, agent["id"]))
+                if end.requeue == "hold":
+                    conn.execute("update agents set paused=1 where id=?", (agent["id"],))
+                if end.requeue == "fresh" and turn["session_id"]:
+                    conn.execute("update sessions set state='retired', retired_at=? where id=?",
+                                 (db.now(), turn["session_id"]))
             conn.execute("update deliveries set state=?, updated_at=? where turn_id=? and state='admitted'",
                          (dstate, db.now(), turn["id"]))
             conn.execute("insert or replace into usage values(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -192,7 +198,12 @@ class Engine:
         self.adapters.pop(turn["id"], None)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
-        if end.retry_at:
+        if end.requeue == "hold":
+            mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} paused: {end.error}. Its messages are"
+                                                              f" requeued; `xmuse resume --agent {agent['id']}` to retry.")
+        elif end.requeue:
+            pass  # retried in a fresh session right away
+        elif end.retry_at:
             until = time.strftime("%H:%M", time.localtime(end.retry_at))
             mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} hit its vendor usage limit; its messages"
                                                               f" are requeued and it resumes at {until}.")

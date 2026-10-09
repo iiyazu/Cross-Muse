@@ -50,6 +50,8 @@ class TurnEnd:
     error: str | None = None
     note: str | None = None  # e.g. fork_detected
     retry_at: float | None = None  # vendor refused the turn for quota: requeue and pause the agent until then
+    requeue: str | None = None     # messages were not handled: 'fresh' = vendor lost the session, retry in a new
+                                   # one; 'hold' = session stays busy (lease refused), pause the agent for the human
 
 
 @dataclass

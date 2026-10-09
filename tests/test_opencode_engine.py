@@ -32,7 +32,7 @@ def test_turn_posts_queue_prompt_with_metadata_and_explicit_model(make):
     [p] = h.oc.prompts
     assert p["delivery"] == "queue" and p["metadata"]["xmuse"] == {"turn": 1, "agent": "opencode-1"}
     assert "ping" in p["text"] and "You are opencode-1" in p["text"]
-    assert h.oc.sessions["ses_fake1"]["model"] == {"providerID": "opencode", "id": "muse-spark-1.3-contributor-free"}
+    assert h.oc.sessions["ses_fake1"]["model"] == {"providerID": "opencode-go", "id": "muse-spark-1.3-contributor"}
     assert h.oc.sessions["ses_fake1"]["location"] == {"directory": str(h.ws)}
     [t] = h.turns()
     assert t["state"] == "succeeded" and t["adapter"] == "opencode" and t["handle"] == "ses_fake1"
