@@ -13,7 +13,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail
+from . import align, config, db, mail, memoryos
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
@@ -32,6 +32,8 @@ class Hub:
         self.ws = Path(self.cfg["workspace"])
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
+        self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"])  # align.view reads it from cfg
+        self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.admin = digest((state / "tokens" / "_admin").read_text().strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin)
@@ -74,6 +76,7 @@ class Hub:
             out = mail.send(conn, self.cfg, agent, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
                             args.get("resolves"), args.get("depends_on"))
+            self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
                     **({"entries": out["entries"]} if out.get("entries") else {}),
@@ -85,7 +88,7 @@ class Hub:
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
         if name == "xmuse_context":
-            return align.view(conn, self.cfg, agent, args.get("topic"))
+            return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
             return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"))
         return mail.whoami(conn, agent, str(self.ws))
@@ -105,6 +108,7 @@ class Hub:
     def admin_send(self, body: dict):
         out = mail.send(self.db(), self.cfg, config.HUMAN, body["to"], body["body"], body.get("kind", "message"),
                         body.get("mentions"), body.get("why"), body.get("idem"))
+        self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", [])}
 
@@ -126,6 +130,7 @@ class Hub:
         return align.review(self.db(), body["op"], body["id"])
 
     def admin_close(self, body: dict):
+        self.curator.kick(body["id"], closed=True)  # reads the thread's entries before they are archived
         return align.close_thread(self.db(), body["id"])
 
     def admin_approve(self, body: dict):
@@ -198,6 +203,7 @@ class Hub:
     def shutdown(self) -> None:
         self.stopping.set()
         self.loop.join(10)
+        self.curator.stop()
         self.httpd.shutdown()
         for d in self.engine.drivers.values():
             d.close()

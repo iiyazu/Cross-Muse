@@ -84,6 +84,7 @@ def test_repeated_refusals_pause_the_agent_and_keep_the_messages(make):
     h.wait(lambda: h.q("select paused from agents")[0]["paused"] == 1, what="paused")
     assert "held by another dsh process" in h.turns()[1]["error"]
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "queued"
+    h.wait(lambda: h.q("select 1 from messages where kind='notice'"), what="notice")  # posted after the pause is saved
     assert any("dsh-1 paused" in n["body"] for n in h.q("select body from messages where kind='notice'"))
     h.admin("resume", agent="dsh-1")
     h.wait(lambda: h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done",

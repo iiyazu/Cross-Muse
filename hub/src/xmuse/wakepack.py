@@ -61,7 +61,7 @@ def identity(x) -> str:
 def alignment(x) -> str:
     """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
     if x.seen is None:
-        text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"]), "snapshot"
+        text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
     else:
         text, x.mode = delta(x.conn, x.cfg, x.agent["id"], x.seen), "delta"
     x.tokens = tokens(text)
@@ -77,8 +77,8 @@ def _line(e: dict) -> str:
     return out + f" (refs {','.join('#%d' % r for r in e['refs'])})"
 
 
-def snapshot(conn, cfg: dict, agent_id: str) -> str:
-    v = align.view(conn, cfg, agent_id)
+def snapshot(conn, cfg: dict, agent_id: str, query: str = "") -> str:
+    v = align.view(conn, cfg, agent_id, query=query)  # query: the wake's message text, for MemoryOS ranking
     role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
     titles = {"global": "Project-wide", f"role:{role}": f"Your role ({role})", f"agent:{agent_id}": "Yours"}
     sections = [("Assigned to you" + (f"; ready now: {', '.join(v['ready'])}" if v["ready"] else ""), v["assigned"])]

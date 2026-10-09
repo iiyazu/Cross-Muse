@@ -112,6 +112,27 @@ def test_removed_watermark_means_snapshot_again(make):
     assert h.turns()[1]["align_mode"] == "snapshot"
 
 
+def test_joining_a_thread_with_entries_means_snapshot_again(make):
+    h = two(make)
+    h.plan_claude({}, {}, {})
+    declare(h, "task rule")                              # E1 in #g, which claude-3 is not a member of
+    h.add_raw("claude-3", "claude")
+    n = len(h.claude_calls())
+    h.send("claude-3", "hello")
+    h.wait_quiet()
+    assert "task rule" not in h.claude_calls()[n]["prompt"] and len(h.q("select * from seen")) == 1
+    assert "result" in h.tool("claude-3", "xmuse_send", to="claude-1", body="a new dm: no entries to miss")
+    h.wait_quiet()
+    assert len(h.q("select * from seen where session_id in (select id from sessions where agent_id='claude-3')")) == 1
+    assert "result" in h.tool("claude-3", "xmuse_send", to="#g", body="joining the group")  # now a member of #g
+    assert h.q("select * from seen where session_id in (select id from sessions where agent_id='claude-3')") == []
+    n = len(h.claude_calls())
+    h.send("claude-3", "again")
+    h.wait_quiet()
+    p = h.claude_calls()[n]["prompt"]
+    assert "[alignment: current" in p and "Thread #g:\nE1 [decision] task rule (refs #" in p
+
+
 def test_failed_turn_drops_the_watermark(make):
     h = two(make)
     h.plan_claude({}, {"result": "error"}, {})

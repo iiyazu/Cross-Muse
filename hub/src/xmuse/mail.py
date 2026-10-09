@@ -40,7 +40,11 @@ def _thread(conn, sender: str, to: str, roster: dict) -> dict:
             for m in [HUMAN, *roster]:
                 conn.execute("insert into thread_members values(?,?)", (to, m))
             t = db.row(conn.execute("select * from threads where id=?", (to,)))
-        conn.execute("insert or ignore into thread_members values(?,?)", (to, sender))
+        if conn.execute("insert or ignore into thread_members values(?,?)", (to, sender)).rowcount and conn.execute(
+                "select 1 from entries where scope=? and status='active'", (f"thread:{to}",)).fetchone():
+            # joined a thread that already has entries: deltas only cover changes after the watermark, so
+            # drop the sender's watermarks and the next wake injects a snapshot including this thread
+            conn.execute("delete from seen where session_id in (select id from sessions where agent_id=?)", (sender,))
         return t
     if to != HUMAN and to not in roster:
         raise ToolError("unknown_recipient",

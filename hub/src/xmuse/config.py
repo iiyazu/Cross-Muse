@@ -25,6 +25,8 @@ DEFAULTS = {
     "align_delta_tokens": 2_000,
     "body_limit": 4_000,             # chars per xmuse_send body; bigger content goes in a workspace file
     "session_notice_tokens": 400_000,  # one notice per session when its context first passes this
+    "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
+    "recall_budget_tokens": 2_000,   # per over-cap layer, sent as /recall budget_tokens
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",

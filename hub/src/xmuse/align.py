@@ -28,18 +28,21 @@ def _ref(conn, ref, status: str | None = "active", kinds=()) -> int:
     return int(m[1])
 
 
-def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int, author: str, supersedes: int | None = None,
-        assignee: str | None = None, depends_on: list | None = None, status: str = "active") -> int:
+def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, author: str, supersedes: int | None = None,
+        assignee: str | None = None, depends_on: list | None = None, status: str = "active",
+        resolves: list | None = None) -> int:
+    """A proposed entry only records `supersedes` / `resolves`; `review(confirm)` applies them."""
     if len(statement) > LIMIT:  # keep the first sentence; the full text stays in the referenced message
         first = re.split(r"(?<=[.!?。！？])\s", statement, maxsplit=1)[0]
         statement = first[:LIMIT - 1] + "…" if len(first) > LIMIT else first + " …"
     eid = conn.execute(
         "insert into entries(kind, scope, thread_id, statement, refs, author, status, supersedes, assignee, depends_on,"
-        " valid_at, recorded_at, seq) values(?,?,?,?,?,?,?,?,?,?,?,?,0)",
-        (kind, scope, tid, statement, json.dumps([msg]), author, status, supersedes, assignee,
-         json.dumps(depends_on) if depends_on else None, db.now(), db.now())).lastrowid
+        " resolves, valid_at, recorded_at, seq) values(?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+        (kind, scope, tid, statement, json.dumps(msg if isinstance(msg, list) else [msg]), author, status, supersedes,
+         assignee, json.dumps(depends_on) if depends_on else None, json.dumps(resolves) if resolves else None,
+         db.now(), db.now())).lastrowid
     _move(conn, eid, "add", status)
-    if supersedes:
+    if supersedes and status == "active":
         _move(conn, supersedes, "supersede", "superseded")
     return eid
 
@@ -66,7 +69,13 @@ def resolve(conn, refs: list) -> None:
 
 def review(conn, op: str, ref: str) -> dict:
     with db.tx(conn):
-        _move(conn, _ref(conn, ref, "proposed"), op, "active" if op == "confirm" else "rejected")
+        eid = _ref(conn, ref, "proposed")
+        _move(conn, eid, op, "active" if op == "confirm" else "rejected")
+        if op == "confirm":  # a human accepted the proposal, including what it replaces or answers
+            sup, res = conn.execute("select supersedes, resolves from entries where id=?", (eid,)).fetchone()
+            for old, how, to in [(sup, "supersede", "superseded"), *((r, "resolve", "resolved") for r in json.loads(res or "[]"))]:
+                if old and conn.execute("select 1 from entries where id=? and status='active'", (old,)).fetchone():
+                    _move(conn, old, how, to)
     return {"ok": True}
 
 
@@ -140,7 +149,8 @@ def delta(conn, agent_id: str, since: int) -> dict:
             if e["status"] == "active":
                 out["added"].append(e)
         elif last == "supersede":
-            by = conn.execute("select max(id) from entries where supersedes=?", (eid,)).fetchone()[0]
+            by = conn.execute("select max(id) from entries where supersedes=? and status not in ('proposed','rejected')",
+                              (eid,)).fetchone()[0]
             out["superseded"].append((e, f"E{by}"))
         elif last == "resolve":
             out["resolved"].append(e)
@@ -151,22 +161,28 @@ def delta(conn, agent_id: str, since: int) -> dict:
     return out
 
 
-def view(conn, cfg: dict, agent_id: str, topic: str | None = None) -> dict:
+def view(conn, cfg: dict, agent_id: str, topic: str | None = None, query: str = "") -> dict:
     """Active entries for one agent: global + its role + its threads + its own, then work assigned to it.
-    Layers are capped (newest by seq kept); `truncated` names the layers that overflowed."""
+    Layers are capped; `truncated` names the layers that overflowed. Which entries survive is MemoryOS's
+    /recall ranking for `query` when available, else the newest by seq."""
     scopes = _scopes(conn, agent_id, topic)
     rs = db.rows(conn.execute(
         f"select * from entries where status='active' and (scope in ({','.join('?' * len(scopes))}) or assignee=?)"
         " order by seq desc", (*scopes, None if topic else agent_id)))
     caps = {"global": cfg["align_global_cap"], "role": cfg["align_role_cap"], "thread": cfg["align_thread_cap"]}
-    layers, assigned, truncated = {s: [] for s in scopes}, [], []
+    by, assigned = {s: [] for s in scopes}, []
     for e in rs:
-        if e["assignee"] == agent_id:
-            assigned.append(e)
-        elif len(layers[e["scope"]]) < (caps.get(e["scope"].split(":")[0]) or 1 << 30):
-            layers[e["scope"]].append(e)
-        elif e["scope"] not in truncated:
-            truncated.append(e["scope"])
+        (assigned if e["assignee"] == agent_id else by[e["scope"]]).append(e)
+    mo, layers, truncated = cfg.get("_mo"), {}, []
+    role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
+    for s, es in by.items():
+        cap = caps.get(s.split(":")[0]) or 1 << 30
+        if len(es) > cap:
+            truncated.append(s)
+            keep = mo and mo.rank(es, s, role, query, cap, cfg["recall_budget_tokens"])
+            mo = mo if keep else None  # one failure skips MemoryOS for the other layers of this view
+            es = [e for e in es if f"E{e['id']}" in keep] if keep else es[:cap]
+        layers[s] = es
     assigned.sort(key=lambda e: e["id"])
     ready = [f"E{e['id']}" for e in assigned if e["kind"] == "assignment" and not _blocked(conn, e)]
     return {"layers": {s: [_pub(e) for e in sorted(es, key=lambda e: e["id"])] for s, es in layers.items()},

@@ -67,6 +67,7 @@ def test_failed_turn_marks_deliveries_and_notifies(make):
     [t] = h.turns()
     assert t["state"] == "failed" and "error_during_execution" in t["error"]
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "failed"
+    h.wait(lambda: h.q("select 1 from messages where kind='notice'"), what="notice")  # posted after the pause is saved
     [n] = h.q("select * from messages where kind='notice'")
     assert "failed" in n["body"] and n["thread_id"] == "dm:claude-1+human"
 
