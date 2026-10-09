@@ -225,6 +225,18 @@ class OpenCodeDriver:
     def on_hook(self, agent: dict, event: str, payload: dict) -> bool:
         return False  # the SSE stream carries everything
 
+    def precheck(self, agent: dict, ws: Path, wait: float = 30) -> str | None:
+        """The model must be in the server's catalog (filled in shortly after start; costs no tokens)."""
+        prov, mid = agent["model"].split("/", 1)
+        end = time.time() + wait
+        while True:
+            models = self.server.api("GET", "/api/model")["data"]
+            if any(m.get("providerID") == prov and m.get("id") == mid for m in models):
+                return None
+            if time.time() > end:
+                return f"not in the OpenCode catalog ({len(models)} models; is provider {prov} logged in?)"
+            time.sleep(1)
+
     def approve(self, session: str, request_id: str, decision: str) -> None:
         self.server.api("POST", f"/api/session/{session}/permission/{request_id}/reply", {"decision": decision})
 

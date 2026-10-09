@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import config, db, mail
 from .adapters.claude import ClaudeDriver
+from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
 from .engine import Engine
 from .tools import ToolError, validate
@@ -39,6 +40,18 @@ class Hub:
             if oc_base is None:
                 srv.start()
             self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, srv)
+        if self.db().execute("select 1 from agents where vendor='dsh'").fetchone():
+            self.engine.drivers["dsh"] = DshDriver(self.engine, state, self.cfg)
+
+    def precheck(self) -> list[str]:
+        """Each agent's explicit model must exist before anything is delivered (dsh: about 10 s per model)."""
+        errors = []
+        for a in db.rows(self.db().execute("select * from agents order by id")):
+            check = getattr(self.engine.drivers[a["vendor"]], "precheck", None)
+            err = check and check(a, self.ws)
+            if err:
+                errors.append(f"{a['id']}: model {a['model']} unusable: {err}")
+        return errors
 
     def who(self, header: str | None) -> str | None:
         token = (header or "").removeprefix("Bearer ").strip()
@@ -180,6 +193,11 @@ class Hub:
         (self.state / "hub.json").unlink(missing_ok=True)
 
     def serve(self) -> None:
+        errors = self.precheck()
+        if errors:
+            for d in self.engine.drivers.values():
+                d.close()
+            raise SystemExit("precheck failed:\n" + "\n".join(errors))
         self.start()
         done = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: done.set())

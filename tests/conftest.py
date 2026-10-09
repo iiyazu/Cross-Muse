@@ -12,10 +12,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from fakes.fake_opencode import FakeOpenCode  # noqa: E402
 from xmuse import db, init as xinit  # noqa: E402
-from xmuse.config import FAMILIES  # noqa: E402
+from xmuse.config import FAMILIES, MODELS  # noqa: E402
 from xmuse.server import Hub, digest  # noqa: E402
 
 FAKE_CLAUDE = Path(__file__).parent / "fakes" / "fake_claude.py"
+FAKE_DSH = Path(__file__).parent / "fakes" / "fake_dsh.py"
 
 
 class Harness:
@@ -26,14 +27,17 @@ class Harness:
         subprocess.run(["git", "init", "-q", str(self.ws)], check=True)
         self.state = xinit.init(self.ws)
         c = json.loads((self.state / "config.json").read_text())
-        (self.state / "config.json").write_text(json.dumps({**c, "sweep_interval": 3600, **cfg}))
+        (self.state / "config.json").write_text(json.dumps({**c, "sweep_interval": 3600, "dsh_exe": str(FAKE_DSH),
+                                                            "dsh_backoff": 0.1, "dsh_home": str(tmp / "dsh-home"),
+                                                            **cfg}))
         for i, (aid, vendor, *rest) in enumerate(agents):
             settings = rest[0] if rest else {}
-            if i and vendor in [v for _, v, *_ in agents[:i]]:
+            if vendor == "dsh" or i and vendor in [v for _, v, *_ in agents[:i]]:  # dsh: ws is not on C:\
                 self.add_raw(aid, vendor, settings)
             else:
                 xinit.add_agent(self.state, aid, vendor, settings=settings)
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
+        (self.home / "fake-dsh").mkdir(parents=True, exist_ok=True)
         self.oc = FakeOpenCode(self.state) if any(v == "opencode" for _, v, *_ in agents) else None
         self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base)
         self.hub.start()
@@ -41,10 +45,10 @@ class Harness:
             assert self.hub.engine.drivers["opencode"].headless.ready.wait(5)
 
     def add_raw(self, aid, vendor, settings=None):
-        """A second agent of the same vendor (project configs allow one; the engine does not care)."""
+        """A second agent of the same vendor (project configs allow one; the engine does not care), or dsh."""
         tok = "xmt_" + aid
         (self.state / "tokens" / aid).write_text(tok)
-        model = {"claude": "claude-opus-5-5", "opencode": "opencode/muse-spark-1.3-contributor-free"}[vendor]
+        model = (settings or {}).pop("model", None) or MODELS[vendor]
         with db.tx(self.conn()) as c:
             c.execute("insert into agents(id, vendor, model, family, settings, token_digest, created_at)"
                       " values(?,?,?,?,?,?,?)", (aid, vendor, model, FAMILIES[vendor], json.dumps(settings or {}),
@@ -92,6 +96,14 @@ class Harness:
         """Set the fake's plan; the step counter restarts at the first step."""
         (self.home / "fake-claude" / "plan.json").write_text(json.dumps(list(steps)))
         (self.home / "fake-claude" / "n").write_text("0")
+
+    def plan_dsh(self, *steps):
+        (self.home / "fake-dsh" / "plan.json").write_text(json.dumps(list(steps)))
+        (self.home / "fake-dsh" / "n").write_text("0")
+
+    def dsh_calls(self):
+        f = self.home / "fake-dsh" / "calls.jsonl"
+        return [json.loads(x) for x in f.open()] if f.exists() else []
 
     def claude_calls(self):
         f = self.home / "fake-claude" / "calls.jsonl"

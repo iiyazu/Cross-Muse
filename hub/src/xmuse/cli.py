@@ -37,12 +37,15 @@ def hub_start(state: Path) -> None:
             return
         (state / "hub.json").unlink()
     log = (state / "logs" / "hub.log").open("a")
-    subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state)}),
-                     stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-    for _ in range(240):
+    p = subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state)}),
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    for _ in range(600):  # model prechecks run first (dsh: about 10 s each)
         if (state / "hub.json").exists():
             print(f"hub started: {json.loads((state / 'hub.json').read_text())}")
             return
+        if p.poll() is not None:
+            tail = (state / "logs" / "hub.log").read_text().strip().splitlines()[-6:]
+            raise SystemExit("hub exited:\n" + "\n".join(tail))
         time.sleep(0.25)
     raise SystemExit(f"hub did not start; see {state / 'logs' / 'hub.log'}")
 
@@ -94,7 +97,8 @@ def log(state: Path, thread: str | None, as_json: bool) -> None:
         chains = {m["chain_id"] for m in msgs}
         turns = [t for t in turns if t["chain_id"] in chains]
     if as_json:
-        print(json.dumps({"messages": msgs, "turns": turns}, indent=1, ensure_ascii=False))
+        agents = db.rows(conn.execute("select id, vendor, model from agents order by id"))
+        print(json.dumps({"agents": agents, "messages": msgs, "turns": turns}, indent=1, ensure_ascii=False))
         return
     ts = lambda x: datetime.fromtimestamp(x).strftime("%H:%M:%S") if x else "--:--:--"  # noqa: E731
     ev = [(m["created_at"], 0, m) for m in msgs] + [(t["started_at"], 1, t) for t in turns]
@@ -143,7 +147,7 @@ def main(argv=None) -> None:
     p = sub.add_parser("agent")
     p.add_argument("action", choices=["add", "list"])
     p.add_argument("id", nargs="?")
-    p.add_argument("--vendor", choices=["claude", "opencode"])
+    p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
     p.add_argument("--rotate-at", type=int)
