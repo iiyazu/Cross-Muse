@@ -23,7 +23,10 @@ from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from xmuse.operator_auth import require_operator_token
-from xmuse_core.chat.room_api_models import RoomBoardSplitDecisionRequest
+from xmuse_core.chat.room_api_models import (
+    RoomBoardModuleReassignRequest,
+    RoomBoardSplitDecisionRequest,
+)
 from xmuse_core.chat.room_application import RoomApplicationService
 from xmuse_core.chat.room_board import DECIDED_VIA_RE, RoomBoardStore
 from xmuse_core.chat.room_board_projection import (
@@ -52,9 +55,16 @@ _CONFLICT_CODES = {
     "room_board_review_material_incomplete",
     "room_board_review_decided",
     "room_board_review_forbidden",
+    "room_board_charter_not_active",
+    "room_board_charter_version_mismatch",
+    "room_board_reassign_same_owner",
+    "room_board_reassign_integrated",
+    "room_board_assignee_inactive",
 }
 
 _NOT_FOUND_CODES = {
+    "room_board_module_unknown",
+    "room_board_assignee_unknown",
     "room_board_split_unknown",
     "room_board_review_unknown",
     "room_board_verification_unknown",
@@ -341,6 +351,33 @@ def register_room_board_routes(
                 ),
             )
         return detail
+
+    @app.post("/api/chat/operator/board-modules/{module_id}/reassign")
+    def reassign_room_board_module(
+        module_id: str,
+        request: Request,
+        payload: RoomBoardModuleReassignRequest,
+    ) -> dict[str, Any]:
+        """Hand a module that is not integrated to another owner (charter version + 1)."""
+
+        require_operator_token(request, configured_token=operator_token)
+        _require_conversation(root, payload.conversation_id)
+        try:
+            result = RoomBoardStore(root / "chat.db").reassign_module(
+                conversation_id=payload.conversation_id,
+                module_id=module_id,
+                owner_participant_id=payload.owner_participant_id,
+                expected_version=payload.expected_version,
+                operator_identity="operator:local",
+                decided_via=payload.decided_via,
+            )
+        except (KeyError, ValueError, RuntimeError) as exc:
+            raise _store_error(exc) from exc
+        try:
+            refresh_board_views(root, payload.conversation_id)
+        except Exception as exc:
+            logger.warning("room board refresh after reassign failed: %s", exc)
+        return dict(result)
 
     @app.post("/api/chat/operator/board-splits/{split_id}/decision")
     def decide_room_board_split(

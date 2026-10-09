@@ -200,6 +200,20 @@ class RoomMemoryCandidateResolveRequest(BaseModel):
         return strip_required_string(value)
 
 
+class RoomBoardModuleReassignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(min_length=1, max_length=200)
+    owner_participant_id: str = Field(min_length=1, max_length=200)
+    expected_version: int = Field(ge=1)
+    decided_via: Literal["web", "cli"] = "web"
+
+    @field_validator("conversation_id", "owner_participant_id", mode="before")
+    @classmethod
+    def _strip_reassign_text(cls, value: object) -> object:
+        return strip_required_string(value)
+
+
 class RoomBoardSplitDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
