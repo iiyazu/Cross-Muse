@@ -19,6 +19,7 @@
   fallback when no hook was ever seen for the session (desktop bridge not mounted).
 """
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -32,6 +33,8 @@ from .. import db
 from ..config import DSH_HOOK, SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
+
+log = logging.getLogger(__name__)
 
 # A hub-owned prompt starts with the wakepack relay header; a hook report carrying it is the
 # hub's own headless prompt, never human input.
@@ -210,12 +213,20 @@ class DshDriver:
         self.home = Path(cfg.get("dsh_home", WIN_HOME / ".dsh"))
         self.headless = DshHeadless(sink, state, cfg)
         self.db = sink.db  # the engine's pool: hook reports and presence share one thread each
-        self.human: dict[str, bool] = {}  # vendor session -> a human input is being processed
+        self.cfg = cfg
+        self.human: dict[str, float] = {}  # vendor session -> UserPromptSubmit report time
         self.seen: set[str] = set()  # vendor sessions ever reported by hooks (live state wins)
 
     def presence(self, agent: dict, session: str | None) -> Presence:
         if session and session in self.seen:
-            return Presence("free", bool(self.human.get(session)), False)
+            ts = self.human.get(session)
+            if ts is not None and time.time() - ts <= self.cfg.get("turn_timeout", 1800):
+                return Presence("free", True, False)
+            if ts is not None:  # Stop never arrived (desktop closed mid-turn): expire loudly
+                self.human.pop(session, None)
+                log.warning("dsh human flag for %s on %s expired after %ds without Stop; clearing",
+                            agent["id"], session, int(time.time() - ts))
+            return Presence("free", False, False)
         # no hook was ever seen for this session (desktop bridge not mounted): fall back
         # to the session log (M1b behaviour).
         logs = list(self.home.glob(f"sessions/*/{session}/session.v4.jsonl.zstd")) if session else []
@@ -248,7 +259,7 @@ class DshDriver:
         if event == "UserPromptSubmit":
             if not sid or str(p.get("prompt", "")).lstrip().startswith(HUB_PROMPT_MARK):
                 return False
-            self.human[sid] = True
+            self.human[sid] = time.time()
             return True
         if event == "Stop":
             if sid:

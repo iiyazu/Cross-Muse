@@ -250,3 +250,22 @@ def test_presence_falls_back_to_the_session_log_without_hooks(make):
     assert drv.presence({"id": "dsh-1"}, sid).human_turn is True  # log fallback
     h.hook_dsh("dsh-1", "Stop", session_id=sid)
     assert drv.presence({"id": "dsh-1"}, sid).human_turn is False  # live hooks take over
+
+
+def test_expired_human_flag_releases_admission(make):
+    """A desktop closed mid-turn never sends Stop: the flag expires after turn_timeout."""
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    drv = h.hub.engine.drivers["dsh"]
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    h.hook_dsh("dsh-1", "UserPromptSubmit", session_id=sid, prompt="human typing")
+    m = h.send("dsh-1", "while the desktop is gone")
+    h.hub.engine.call(lambda: None)
+    assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "queued"
+    drv.human[sid] -= drv.cfg.get("turn_timeout", 1800) + 1  # Stop never arrives: backdate past expiry
+    h.hub.engine.kick()
+    h.hub.engine.call(lambda: None)
+    h.wait_quiet()
+    assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
