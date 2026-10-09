@@ -1558,3 +1558,66 @@ def test_revision_changes_after_escalate_stale_reviews(tmp_path: Path) -> None:
     revision_after = proj_after["revision"]
 
     assert revision_before != revision_after
+
+
+def _module_memory(
+    conn,
+    conversation_id: str,
+    module_id: str,
+    memory_id: str,
+    kind: str,
+    statement: str,
+    status: str = "active",
+) -> None:
+    conn.execute(
+        """insert into room_module_memories
+           (memory_id, conversation_id, module_id, kind, topic_key, statement, version,
+            occurrences, sources_json, supersedes_id, status, superseded_by, run_id, created_at)
+           values (?, ?, ?, ?, ?, ?, 1, 0, '[]', null, ?, null, 'run_test', ?)""",
+        (
+            memory_id,
+            conversation_id,
+            module_id,
+            kind,
+            memory_id,
+            statement,
+            status,
+            NOW.isoformat(),
+        ),
+    )
+
+
+def test_reviewer_material_lists_the_module_decisions_with_module_memory_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An owner can read a notebook decision and still break it; the reviewer checks it."""
+
+    ctx = _approved_board(tmp_path)
+    _reported, result = _pass_alpha(ctx, "done-1")
+    reviewer = ctx["members"][2]
+    conversation_id = ctx["conversation_id"]
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        _module_memory(
+            conn, conversation_id, "alpha", "m1", "decision", "docstrings start with [v2]"
+        )
+        _module_memory(conn, conversation_id, "alpha", "m2", "lesson", "run ruff before done")
+        _module_memory(
+            conn, conversation_id, "alpha", "m3", "rule", "old rule", status="superseded"
+        )
+        _module_memory(conn, conversation_id, "beta", "m4", "decision", "another module")
+        conn.commit()
+
+    def read(request_id: str) -> dict:
+        return ctx["store"].read(
+            **_lease_kwargs(
+                reviewer, ctx["leases"][reviewer.participant_id], request_id=request_id
+            ),
+            review_id=result["review_id"],
+        )["review_material"]
+
+    monkeypatch.delenv("XMUSE_MODULE_MEMORY", raising=False)
+    assert "module_decisions" not in read("read-off")
+    monkeypatch.setenv("XMUSE_MODULE_MEMORY", "on")
+    assert read("read-on")["module_decisions"] == [
+        {"kind": "decision", "statement": "docstrings start with [v2]"}
+    ]
