@@ -1,5 +1,6 @@
 """Delivery engine through the Claude headless adapter, with a fake `claude -p` replaying M0 streams."""
 import json
+import time
 
 FIX_CHAT = {"input": 6, "cache_read": 51779}  # spot values from fixtures/claude-chat.jsonl result.usage
 
@@ -68,6 +69,24 @@ def test_failed_turn_marks_deliveries_and_notifies(make):
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "failed"
     [n] = h.q("select * from messages where kind='notice'")
     assert "failed" in n["body"] and n["thread_id"] == "dm:claude-1+human"
+
+
+def test_usage_limit_requeues_and_pauses_until_reset(make):
+    h = make()
+    h.plan_claude({"limited": time.time() + 2}, {})
+    m = h.send("claude-1", "do it")
+    h.wait(lambda: h.q("select paused_until from agents")[0]["paused_until"], what="paused")
+    assert h.turns()[0]["state"] == "failed" and h.turns()[0]["error"] == "usage limit reached"
+    d = h.q("select * from deliveries where message_id=?", m["id"])[0]
+    assert d["state"] == "queued" and d["turn_id"] is None
+    assert h.q("select wakes from chains")[0]["wakes"] == 0
+    [n] = h.q("select * from messages where kind='notice'")
+    assert "usage limit" in n["body"] and n["thread_id"] == "dm:claude-1+human"
+    time.sleep(2.1)
+    h.hub.engine.kick()
+    h.wait(lambda: h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done",
+           what="retried after reset")
+    assert len(h.claude_calls()) == 2
 
 
 def test_exit_without_result_is_a_failure(make):

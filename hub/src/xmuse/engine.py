@@ -72,7 +72,8 @@ class Engine:
     # ---- admission -----------------------------------------------------------------
     def _on_kick(self) -> None:
         conn = self.db()
-        for agent in db.rows(conn.execute("select * from agents where paused=0 order by id")):
+        for agent in db.rows(conn.execute("select * from agents where paused=0 and coalesce(paused_until, 0)<=? order by id",
+                                          (db.now(),))):
             if mail.running_turn(conn, agent["id"]) is None:
                 self._admit(conn, agent)
 
@@ -170,6 +171,13 @@ class Engine:
         with db.tx(conn):
             conn.execute("update turns set state=?, ended_at=?, error=? where id=?",
                          (end.status, db.now(), "; ".join(x for x in (end.error, end.note) if x) or None, turn["id"]))
+            if end.retry_at:  # quota refusal: the messages were not handled; retry them after the reset
+                conn.execute("update chains set wakes=max(wakes-1, 0) where id in (select m.chain_id from deliveries"
+                             " d join messages m on m.id=d.message_id where d.turn_id=? and d.state='admitted')",
+                             (turn["id"],))
+                conn.execute("update deliveries set state='queued', turn_id=null, updated_at=? where turn_id=?"
+                             " and state='admitted'", (db.now(), turn["id"]))
+                conn.execute("update agents set paused_until=? where id=?", (end.retry_at, agent["id"]))
             conn.execute("update deliveries set state=?, updated_at=? where turn_id=? and state='admitted'",
                          (dstate, db.now(), turn["id"]))
             conn.execute("insert or replace into usage values(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -184,7 +192,11 @@ class Engine:
         self.adapters.pop(turn["id"], None)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
-        if thread and (end.status == "failed" or end.note):
+        if end.retry_at:
+            until = time.strftime("%H:%M", time.localtime(end.retry_at))
+            mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} hit its vendor usage limit; its messages"
+                                                              f" are requeued and it resumes at {until}.")
+        elif thread and (end.status == "failed" or end.note):
             mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} {end.status}"
                                       f"{': ' + end.error if end.status == 'failed' else ''}"
                                       f"{' [' + end.note + ']' if end.note else ''}", turn["chain_id"])

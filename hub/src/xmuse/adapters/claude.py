@@ -57,6 +57,8 @@ def parse_stream(lines) -> tuple[dict, Usage]:
             last = m.get("usage") or last
             if any(c.get("type") == "tool_use" and c.get("name") in CODE_TOOLS for c in m.get("content", [])):
                 u.mode = "code"
+        elif o.get("type") == "rate_limit_event" and o["rate_limit_info"].get("status") == "rejected":
+            info["retry_at"] = o["rate_limit_info"].get("resetsAt") or time.time() + 3600
         elif o.get("type") == "result":
             r = o.get("usage") or {}
             u.input, u.output = r.get("input_tokens", 0), r.get("output_tokens", 0)
@@ -170,9 +172,12 @@ class ClaudeResume:
         else:
             tail = spec.run_log.with_suffix(".err").read_text()[-400:].strip()
             status, error = "failed", info.get("error") or f"exit {p.returncode}: {tail}"
+        retry_at = info.get("retry_at") if status == "failed" else None
+        if retry_at:
+            error = "usage limit reached"
         if info.get("denied"):
             note = (note + "; " if note else "") + "permission_denied: " + ", ".join(info["denied"])
-        self.sink.turn_ended(TurnEnd(spec.turn_id, status, sid, usage, error, note))
+        self.sink.turn_ended(TurnEnd(spec.turn_id, status, sid, usage, error, note, retry_at))
 
     def interrupt(self, turn_id: int) -> None:
         st = self.procs.get(turn_id)

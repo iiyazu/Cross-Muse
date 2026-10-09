@@ -14,7 +14,8 @@ SCHEMA = """
 create table if not exists agents(
   id text primary key, vendor text not null, model text not null, family text not null,
   role text not null default '', settings text not null default '{}',
-  token_digest text not null, paused integer not null default 0, created_at real not null);
+  token_digest text not null, paused integer not null default 0,
+  paused_until real, created_at real not null);
 create table if not exists sessions(
   id integer primary key, agent_id text not null, vendor_session text,
   origin text not null,                      -- hub | tui

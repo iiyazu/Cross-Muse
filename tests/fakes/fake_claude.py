@@ -12,6 +12,7 @@ of steps consumed one per invocation (counter in $HOME/fake-claude/n). Step keys
   exit      exit code (default 0)
   fork      true: add a second child to the transcript's last parent (simulates a concurrent writer)
   context   override the last assistant usage so the turn's context equals this many tokens
+  limited   epoch: emit a rejected rate_limit_event resetting then, and an error result
 Every invocation's argv and prompt are appended to $HOME/fake-claude/calls.jsonl.
 """
 import json
@@ -85,6 +86,10 @@ for name, args in step.get("calls", []):
 time.sleep(step.get("sleep", 0))
 mode = step.get("result", "success")
 if mode != "none" and result is not None:
+    if step.get("limited"):
+        print(json.dumps({"type": "rate_limit_event", "rate_limit_info": {
+            "status": "rejected", "resetsAt": step["limited"], "rateLimitType": "five_hour"}}), flush=True)
+        mode = "error"
     if mode == "error":
         result.update(subtype="error_during_execution", is_error=True)
     if step.get("denied"):

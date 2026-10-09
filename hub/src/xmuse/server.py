@@ -95,7 +95,7 @@ class Hub:
 
     def admin_resume(self, body: dict):
         with db.tx(self.db()) as c:
-            c.execute("update agents set paused=0 where id=?", (body["agent"],))
+            c.execute("update agents set paused=0, paused_until=null where id=?", (body["agent"],))
         self.engine.kick()
         return {"ok": True}
 

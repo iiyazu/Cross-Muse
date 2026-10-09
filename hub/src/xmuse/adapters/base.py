@@ -49,6 +49,7 @@ class TurnEnd:
     usage: Usage = field(default_factory=Usage)
     error: str | None = None
     note: str | None = None  # e.g. fork_detected
+    retry_at: float | None = None  # vendor refused the turn for quota: requeue and pause the agent until then
 
 
 @dataclass
