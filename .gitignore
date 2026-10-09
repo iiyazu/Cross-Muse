@@ -1,0 +1,3 @@
+node_modules/
+# disposable agent workspace (nested git repo); recreate with spikes/make-ws.sh
+spikes/ws/
