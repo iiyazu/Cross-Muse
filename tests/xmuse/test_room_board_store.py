@@ -1709,3 +1709,73 @@ def test_previous_owner_work_is_never_an_integration_candidate_after_reassign(tm
 
     candidates = store.board_integration_inputs(conversation_id)["candidates"]
     assert "alpha" not in {item["module_id"] for item in candidates}
+
+
+def test_a_held_reassign_wake_goes_out_once_memory_is_ready(tmp_path):
+    ctx = _approved_board(tmp_path)
+    db, conversation_id, members, store = (
+        ctx["db"],
+        ctx["conversation_id"],
+        ctx["members"],
+        ctx["store"],
+    )
+    new_owner = members[2].participant_id
+    result = store.reassign_module(
+        conversation_id=conversation_id,
+        module_id="alpha",
+        owner_participant_id=new_owner,
+        expected_version=1,
+        operator_identity="operator:host",
+        hold_wake_s=60,
+    )
+    assert result["wake"] == "held"
+    assert not _pending_for_activity(db, conversation_id, new_owner, result["activity_id"])
+
+    asked: list[tuple[str, str, int]] = []
+
+    def not_yet(conversation: str, module: str, seq: int) -> bool:
+        asked.append((conversation, module, seq))
+        return False
+
+    assert store.release_held_wakes(memory_ready=not_yet) == []
+    assert asked == [(conversation_id, "alpha", result["activity_seq"])]
+    released = store.release_held_wakes(memory_ready=lambda *_args: True)
+    assert [(item["participant_id"], item["reason"]) for item in released] == [
+        (new_owner, "memory_ready")
+    ]
+    assert _pending_for_activity(db, conversation_id, new_owner, result["activity_id"])
+    assert store.release_held_wakes(memory_ready=lambda *_args: True) == []
+
+
+def test_a_held_reassign_wake_has_a_deadline_and_a_newer_reassign_drops_it(tmp_path):
+    ctx = _approved_board(tmp_path)
+    db, conversation_id, members, store = (
+        ctx["db"],
+        ctx["conversation_id"],
+        ctx["members"],
+        ctx["store"],
+    )
+    kwargs = {
+        "conversation_id": conversation_id,
+        "module_id": "alpha",
+        "operator_identity": "operator:host",
+        "hold_wake_s": 60,
+    }
+    first = store.reassign_module(
+        **kwargs, owner_participant_id=members[2].participant_id, expected_version=1
+    )
+    second = store.reassign_module(
+        **kwargs, owner_participant_id=members[1].participant_id, expected_version=2
+    )
+
+    # Memory never catches up (the sidecar is down): only the deadline releases.
+    assert store.release_held_wakes() == []
+    later = datetime.now(UTC) + timedelta(seconds=120)
+    released = {item["activity_id"]: item["reason"] for item in store.release_held_wakes(now=later)}
+    assert released == {first["activity_id"]: "superseded", second["activity_id"]: "deadline"}
+    assert not _pending_for_activity(
+        db, conversation_id, members[2].participant_id, first["activity_id"]
+    )
+    assert _pending_for_activity(
+        db, conversation_id, members[1].participant_id, second["activity_id"]
+    )

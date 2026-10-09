@@ -226,3 +226,26 @@ def create_room_board_schema(conn: sqlite3.Connection) -> None:
         "create index if not exists idx_room_board_integration_items_module "
         "on room_board_integration_items(conversation_id, module_id, integration_id)"
     )
+    # A reassignment's wake, held until the module notebook holds the handover
+    # (module_memory_v1 §3); released by the memory loop or at its deadline.
+    conn.execute(
+        """create table if not exists room_board_held_wakes (
+               activity_id text primary key references room_activities(activity_id),
+               conversation_id text not null references conversations(id),
+               module_id text not null,
+               charter_version integer not null,
+               participant_id text not null references participants(participant_id),
+               activity_seq integer not null,
+               release_after text not null,
+               released_at text,
+               release_reason text check (
+                   release_reason is null
+                   or release_reason in ('memory_ready', 'deadline', 'superseded')
+               ),
+               created_at text not null
+           )"""
+    )
+    conn.execute(
+        "create index if not exists idx_room_board_held_wakes_open "
+        "on room_board_held_wakes(released_at, created_at)"
+    )

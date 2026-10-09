@@ -43,6 +43,13 @@ its cursor and builds windows of the module's activities:
 - A reassignment of the module (a `board.charter_assigned` carrying `reassigned_from`, see
   `room_board_projection_v2.md` §8) also flushes what accumulated before it, so the next owner's
   notebook holds the previous owner's history from the start.
+- While this worker runs, the reassignment does not wake the new owner at once: the wake is
+  held (`room_board_held_wakes`) until the module's cursor has passed every activity before the
+  reassignment (curated, or nothing of the module to curate), and for at most 60 s. The worker
+  releases it in the same pass that stored the handover, and the board loop releases any wake
+  past its deadline even without this worker, so a sidecar outage delays the owner by at most
+  the deadline and never strands it. A wake whose charter version was reassigned again
+  meanwhile is dropped. With the switch off nothing is held.
 - "The owner" in the table above means every owner the module has had: the history of a
   previous owner stays the module's history after a reassignment.
 - `active` holds the module's active memories (at most 60, newest first).

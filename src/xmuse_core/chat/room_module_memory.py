@@ -434,11 +434,20 @@ class ModuleMemoryStore:
             last_seen = cursor
             ready = False
             for row in rows:
-                if items and _is_reassignment(row, module):
-                    # The owner changed: curate what the previous owner left now, so the
-                    # next owner's notebook holds it from the start (module_memory_v1 §1).
-                    ready = True
-                    break
+                if _is_reassignment(row, module):
+                    if items:
+                        # The owner changed: curate what the previous owner left now, so
+                        # the next owner's notebook holds it from the start (§1).
+                        ready = True
+                        break
+                    if last_seen > cursor:
+                        # Nothing of this module before the handover: the notebook is
+                        # already current, which a held wake waits to see (§3).
+                        conn.execute("begin immediate")
+                        if self._cursor_conn(conn, module) == cursor:
+                            self._advance_cursor_conn(conn, module, last_seen, _stamp(current))
+                            cursor = last_seen
+                        conn.commit()
                 last_seen = int(row["seq"])
                 item = _activity_item(row, module)
                 if item is None:
@@ -697,6 +706,20 @@ class ModuleMemoryStore:
                set last_seq = excluded.last_seq, updated_at = excluded.updated_at""",
             (module.conversation_id, module.module_id, last_seq, stamp),
         )
+
+    def caught_up(self, conversation_id: str, module_id: str, seq: int) -> bool:
+        """Whether curation has passed every activity before ``seq`` for the module."""
+
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "select last_seq from room_module_memory_cursors "
+                    "where conversation_id = ? and module_id = ?",
+                    (conversation_id, module_id),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None and int(row[0]) >= seq - 1
 
     def memories(self, conversation_id: str, module_id: str) -> list[dict[str, Any]]:
         try:
