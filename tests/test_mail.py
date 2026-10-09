@@ -164,3 +164,37 @@ def test_validation_messages(name, args, msg):
 def test_tool_count_and_short_descriptions():
     assert len(tools.TOOLS) == 7
     assert all(len(t["description"]) <= 200 for t in tools.TOOLS)
+
+
+def test_send_dedupes_across_resumed_turns(make, monkeypatch):
+    """M1c task 3 (M1b report section 6 item 3): a killed turn's replay in the next turn
+    collapses; the same content after a succeeded turn sends again (ping-pong)."""
+    from xmuse import db, mail
+    h = make()
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    conn, cfg = h.conn(), h.hub.cfg
+    with db.tx(conn):
+        chain = conn.execute("insert into chains(thread_id, origin, max_wakes, max_tokens, created_at)"
+                             " values(?,?,?,?,?)",
+                             ("dm:claude-1+human", "agent:claude-1",
+                              cfg["max_chain_wakes"], cfg["max_chain_tokens"], db.now())).lastrowid
+        t1 = conn.execute("insert into turns(agent_id, adapter, chain_id, state, started_at)"
+                          " values(?,?,?,?,?)",
+                          ("claude-1", "claude_resume", chain, "running", db.now())).lastrowid
+    m1 = mail.send(conn, cfg, "claude-1", "human", "K1")
+    assert "duplicate" not in m1
+    with db.tx(conn):
+        conn.execute("update turns set state='interrupted', ended_at=? where id=?", (db.now(), t1))
+        conn.execute("insert into turns(agent_id, adapter, chain_id, state, started_at) values(?,?,?,?,?)",
+                     ("claude-1", "claude_resume", chain, "running", db.now()))
+    m2 = mail.send(conn, cfg, "claude-1", "human", "K1")
+    assert m2["duplicate"] is True and m2["id"] == m1["id"]
+    assert conn.execute("select count(*) from messages where sender='claude-1'").fetchone()[0] == 1
+    with db.tx(conn):
+        conn.execute("update turns set state='succeeded', ended_at=? where state='running'", (db.now(),))
+        conn.execute("insert into turns(agent_id, adapter, chain_id, state, started_at) values(?,?,?,?,?)",
+                     ("claude-1", "claude_resume", chain, "running", db.now()))
+    m3 = mail.send(conn, cfg, "claude-1", "human", "K1")
+    assert "duplicate" not in m3 and m3["id"] != m1["id"]
+    m4 = mail.send(conn, cfg, "claude-1", "human", "K1")
+    assert m4["duplicate"] is True and m4["id"] == m3["id"]

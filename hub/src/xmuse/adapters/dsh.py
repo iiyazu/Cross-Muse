@@ -15,8 +15,8 @@
   the messages in a fresh session with a bootstrap pack.
 - A human message typed in the desktop app arrives live through the dsh Claude-dialect hooks
   (SessionStart / UserPromptSubmit / Stop, reported by the workspace hooks.json): admission
-  waits for the human turn to end. The session log (zstd JSONL, source.rpcId) stays only as a
-  deprecated helper, no longer read here.
+  waits for the human turn to end. The session log (zstd JSONL, source.rpcId) stays as the
+  fallback when no hook was ever seen for the session (desktop bridge not mounted).
 """
 import json
 import os
@@ -104,8 +104,8 @@ def parse(lines) -> tuple[dict, Usage]:
 def human_turn(log: Path) -> bool:
     """A desktop-typed message (source.rpcId) with no turn/end after it.
 
-    Deprecated: presence() no longer polls the session log; it reads the live hook state
-    in DshDriver.human. Kept for the unit test and as a manual fallback.
+    Fallback for presence() when no hook was ever seen for the session. Also kept for the
+    unit test.
     """
     if not log.exists():
         return False
@@ -211,9 +211,15 @@ class DshDriver:
         self.headless = DshHeadless(sink, state, cfg)
         self.db = sink.db  # the engine's pool: hook reports and presence share one thread each
         self.human: dict[str, bool] = {}  # vendor session -> a human input is being processed
+        self.seen: set[str] = set()  # vendor sessions ever reported by hooks (live state wins)
 
     def presence(self, agent: dict, session: str | None) -> Presence:
-        return Presence("free", bool(session and self.human.get(session)), False)
+        if session and session in self.seen:
+            return Presence("free", bool(self.human.get(session)), False)
+        # no hook was ever seen for this session (desktop bridge not mounted): fall back
+        # to the session log (M1b behaviour).
+        logs = list(self.home.glob(f"sessions/*/{session}/session.v4.jsonl.zstd")) if session else []
+        return Presence("free", bool(logs) and human_turn(logs[0]), False)
 
     def precheck(self, agent: dict, ws: Path) -> str | None:
         """One minimal run without tools: an unknown model or provider fails here (about 10 s, no tokens)."""
@@ -228,9 +234,13 @@ class DshDriver:
 
         SessionStart adopts a desktop-opened session as current; UserPromptSubmit marks a
         human turn in flight (hub-owned wakepack prompts are ignored); Stop clears it.
-        Returns True when admission should be re-checked.
+        Every report marks its session seen: from then on the live state is authoritative
+        and the session log is no longer read for it. Returns True when admission should
+        be re-checked.
         """
         sid = p.get("session_id")
+        if sid:
+            self.seen.add(sid)
         if event == "SessionStart":
             if sid:
                 self._adopt(agent["id"], sid, p.get("cwd"))

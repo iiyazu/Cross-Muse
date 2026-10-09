@@ -153,3 +153,21 @@ def test_engine_call_propagates_errors(make):
     else:
         raise AssertionError("no error")
     assert h.hub.engine.call(lambda a: a + 1, 1) == 2
+
+
+def test_chat_wake_over_50k_warns_but_code_wake_does_not(make, caplog):
+    """Task 2 / v2-1: only chat wakes over chat_warn_tokens warn; code wakes never do."""
+    import logging
+    h = make()
+    h.plan_claude({"as": "claude-1", "calls": [["xmuse_send", {"to": "human", "body": "hi"}]]},
+                  {"fixture": "claude-code.jsonl"})
+    h.send("claude-1", "chat hi")
+    with caplog.at_level(logging.WARNING, logger="xmuse.engine"):
+        h.wait_quiet()
+    assert any("chat wake over 50000 tokens" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    h.send("claude-1", "code edit")
+    with caplog.at_level(logging.WARNING, logger="xmuse.engine"):
+        h.wait_quiet()
+    assert h.turns()[1]["mode"] == "code" and h.turns()[1]["state"] == "succeeded"
+    assert not [r for r in caplog.records if "wake over" in r.getMessage()]

@@ -218,10 +218,12 @@ class Engine:
             mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} {end.status}"
                                       f"{': ' + end.error if end.status == 'failed' else ''}"
                                       f"{' [' + end.note + ']' if end.note else ''}", turn["chain_id"])
-        if end.status == "succeeded" and u.mode == "chat" and u.total > self.cfg["chat_warn_tokens"]:
-            log.warning("chat wake over %s tokens: turn %s of %s used %s (input %s + cache_read %s"
+        warn_at = {"chat": self.cfg["chat_warn_tokens"],
+                   "code": self.cfg["code_warn_tokens"]}.get(u.mode)
+        if end.status == "succeeded" and warn_at and u.total > warn_at:
+            log.warning("%s wake over %s tokens: turn %s of %s used %s (input %s + cache_read %s"
                         " + cache_write %s + output %s); its session may be due a rotation",
-                        self.cfg["chat_warn_tokens"], turn["id"], agent["id"], u.total,
+                        u.mode, warn_at, turn["id"], agent["id"], u.total,
                         u.input, u.cache_read, u.cache_write, u.output)
         self._on_kick()
 

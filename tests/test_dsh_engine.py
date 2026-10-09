@@ -229,3 +229,24 @@ def test_dsh_write_config_installs_workspace_hooks(tmp_path):
             and "dsh-1" in ho["command"]
     assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text().startswith("#!/usr/bin/env python3")
     assert [p.name for p in paths] == ["hooks.json", "xmuse-dsh-hook.py"]
+
+
+def test_presence_falls_back_to_the_session_log_without_hooks(make):
+    """No hook ever seen for the session (desktop bridge not mounted): M1b log reading."""
+    import zstandard
+    h = make(DSH)
+    h.plan_dsh({"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "first")
+    h.wait_quiet()
+    sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
+    drv = h.hub.engine.drivers["dsh"]
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is False  # quiet log, no hooks
+    log = h.tmp / "dsh-home" / "sessions" / "--C-ws--" / sid / "session.v4.jsonl.zstd"
+    log.parent.mkdir(parents=True)
+    log.write_bytes(zstandard.ZstdCompressor().compress(
+        "".join(json.dumps(r) + "\n" for r in [
+            {"type": "turn/end", "data": {"turn": 1}},
+            {"type": "user/message", "data": {"source": {"kind": "user", "rpcId": "r1"}}}]).encode()))
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is True  # log fallback
+    h.hook_dsh("dsh-1", "Stop", session_id=sid)
+    assert drv.presence({"id": "dsh-1"}, sid).human_turn is False  # live hooks take over
