@@ -25,8 +25,9 @@ def digest(token: str) -> str:
 
 
 class Hub:
-    def __init__(self, state: Path, claude_bin: str = "claude", oc_base: str | None = None):
+    def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None):
         self.state, self.cfg = state, config.load(state)
+        claude_bin = claude_bin or self.cfg.get("claude_bin", "claude")
         self.ws = Path(self.cfg["workspace"])
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
@@ -134,7 +135,7 @@ class Hub:
         raise ToolError("not_found", f"{method} {path}")
 
     # ---- process -----------------------------------------------------------------------
-    def serve(self) -> None:
+    def start(self) -> None:
         hub = self
 
         class H(BaseHTTPRequestHandler):
@@ -162,17 +163,26 @@ class Hub:
             def log_message(self, *a):
                 pass
 
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        stop = threading.Event()
-        signal.signal(signal.SIGTERM, lambda *_: stop.set())
-        signal.signal(signal.SIGINT, lambda *_: stop.set())
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
-        (self.state / "hub.json").write_text(json.dumps({"port": httpd.server_address[1], "pid": os.getpid()}))
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.stopping = threading.Event()
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
+        self.loop.start()
+        (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid()}))
         self.engine.kick()
-        try:
-            self.engine.run_forever(stop)
-        finally:
-            httpd.shutdown()
-            for d in self.engine.drivers.values():
-                d.close()
-            (self.state / "hub.json").unlink(missing_ok=True)
+
+    def shutdown(self) -> None:
+        self.stopping.set()
+        self.loop.join(10)
+        self.httpd.shutdown()
+        for d in self.engine.drivers.values():
+            d.close()
+        (self.state / "hub.json").unlink(missing_ok=True)
+
+    def serve(self) -> None:
+        self.start()
+        done = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: done.set())
+        signal.signal(signal.SIGINT, lambda *_: done.set())
+        done.wait()
+        self.shutdown()
