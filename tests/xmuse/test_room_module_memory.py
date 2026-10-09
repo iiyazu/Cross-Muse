@@ -432,3 +432,99 @@ def test_reassignment_keeps_the_former_owner_history_and_flushes_it(tmp_path: Pa
     assert window is not None
     assert [item["speaker"] for item in window.activities] == ["human", "human"]
     assert "Rule 1" in window.activities[-1]["text"]
+
+
+def _reassign_alpha(db: Path, conversation_id: str, *, hold_wake_s: float | None) -> dict[str, Any]:
+    old_owner = _alpha(db).owner_participant_id
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        version = conn.execute(
+            "select max(version) from room_board_charters where conversation_id = ? "
+            "and module_id = 'alpha'",
+            (conversation_id,),
+        ).fetchone()[0]
+        new_owner = conn.execute(
+            "select participant_id from participants where conversation_id = ? "
+            "and participant_id != ? and status = 'active' order by participant_id limit 1",
+            (conversation_id, old_owner),
+        ).fetchone()[0]
+    return RoomBoardStore(db).reassign_module(
+        conversation_id=conversation_id,
+        module_id="alpha",
+        owner_participant_id=new_owner,
+        expected_version=int(version),
+        operator_identity="operator:host",
+        hold_wake_s=hold_wake_s,
+    )
+
+
+def _woken(db: Path, conversation_id: str, result: dict[str, Any]) -> bool:
+    with RoomDatabase(db).connect(readonly=True) as conn:
+        row = conn.execute(
+            "select 1 from room_observations where conversation_id = ? and activity_id = ? "
+            "and participant_id = ?",
+            (conversation_id, result["activity_id"], result["owner_participant_id"]),
+        ).fetchone()
+    return row is not None
+
+
+def test_a_held_reassign_wake_waits_for_the_handover_notebook(tmp_path: Path) -> None:
+    """The new owner's first turn starts after the notebook holds the handover (§3).
+
+    Without the hold the new owner listed .xmuse before the notebook existed: in a
+    real run the curation finished five seconds after the owner had looked.
+    """
+
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    while (window := store.next_window(_alpha(db))) is not None:
+        store.store_result(window, {"memories": []})
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="Rule: every done summary starts with DISC-OK",
+        client_request_id="rule-disc-ok",
+        mentions=[_alpha(db).owner_participant_id],
+    )
+    result = _reassign_alpha(db, conversation_id, hold_wake_s=60)
+    assert result["wake"] == "held"
+    assert not store.caught_up(conversation_id, "alpha", result["activity_seq"])
+    assert RoomBoardStore(db).release_held_wakes(memory_ready=store.caught_up) == []
+    assert not _woken(db, conversation_id, result)
+
+    class _Client:
+        def curate(self, request: dict[str, Any]) -> dict[str, Any]:
+            return _lesson(request["window"][-1]["seq"], memory_id="mem_handover")
+
+    counts = RoomModuleMemoryWorker(xmuse_root=tmp_path, client=_Client()).reconcile_once()
+    assert counts["module_memory_stored"] >= 1
+    assert counts["module_memory_wakes_released"] == 1
+    assert _woken(db, conversation_id, result)
+    assert ModuleMemoryStore(db).memories(conversation_id, "alpha")
+
+
+def test_a_handover_with_nothing_new_is_caught_up_at_once(tmp_path: Path) -> None:
+    db, conversation_id = _failed_board(tmp_path)
+    store = ModuleMemoryStore(db)
+    while (window := store.next_window(_alpha(db))) is not None:
+        store.store_result(window, {"memories": []})
+    old_owner = _alpha(db).owner_participant_id
+    # Activity of no interest to the module, then the handover, then a message for
+    # the former owner that will not make a window on its own.
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="unrelated",
+        client_request_id="unrelated",
+        mentions=[],
+    )
+    result = _reassign_alpha(db, conversation_id, hold_wake_s=60)
+    RoomKernelStore(db).post_human_activity(
+        conversation_id=conversation_id,
+        human_id="human",
+        content="thanks for the work so far",
+        client_request_id="after-handover",
+        mentions=[old_owner],
+    )
+    assert not store.caught_up(conversation_id, "alpha", result["activity_seq"])
+    assert store.next_window(_alpha(db)) is None
+    assert store.caught_up(conversation_id, "alpha", result["activity_seq"])

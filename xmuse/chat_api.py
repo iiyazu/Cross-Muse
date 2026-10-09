@@ -38,6 +38,7 @@ from xmuse.chat_api_runtime import (
 from xmuse.operator_auth import resolve_operator_token
 from xmuse.room_module_memory_worker import compose_module_memory_worker
 from xmuse_core.chat.memoryos_supervisor import browser_memoryos_status
+from xmuse_core.chat.room_board import REASSIGN_WAKE_HOLD_S, RoomBoardStore
 from xmuse_core.chat.room_board_integration import RoomBoardIntegrationWorker
 from xmuse_core.chat.room_board_verification import RoomBoardVerificationWorker
 from xmuse_core.chat.room_execution_operator_store import RoomExecutionOperatorStore
@@ -106,6 +107,11 @@ def create_app(
 
         counts = dict(board_verification_worker.reconcile_once())
         counts.update(board_integration_worker.reconcile_once())
+        # A wake held for a module notebook still goes out at its deadline when the
+        # memory loop is gone (module_memory_v1 §3).
+        counts["board_held_wakes_released"] = len(
+            RoomBoardStore(resolved_root / "chat.db").release_held_wakes()
+        )
         return counts
 
     app, context = create_chat_api_foundation(
@@ -192,6 +198,7 @@ def create_app(
         app,
         root=context.root,
         operator_token=operator_token,
+        reassign_wake_hold_s=(REASSIGN_WAKE_HOLD_S if module_memory_worker is not None else None),
     )
     register_plugin_grant_routes(
         app,

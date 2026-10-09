@@ -203,6 +203,7 @@ def register_room_board_routes(
     *,
     root: Path,
     operator_token: str | None = None,
+    reassign_wake_hold_s: float | None = None,
 ) -> None:
     @app.get("/api/chat/conversations/{conversation_id}/board")
     def room_board(conversation_id: str, request: Request, response: Response) -> Any:
@@ -370,6 +371,8 @@ def register_room_board_routes(
                 expected_version=payload.expected_version,
                 operator_identity="operator:local",
                 decided_via=payload.decided_via,
+                # Set only while the module memory loop runs (module_memory_v1 §3).
+                hold_wake_s=reassign_wake_hold_s,
             )
         except (KeyError, ValueError, RuntimeError) as exc:
             raise _store_error(exc) from exc

@@ -14,7 +14,7 @@ import json
 import re
 import sqlite3
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -74,6 +74,9 @@ REVIEW_MATERIAL_PATCH_LIMIT_BYTES = 256 * 1024
 
 BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
+# With module memory curating, a reassignment holds the new owner's wake until the
+# module notebook holds the handover, at most this long (module_memory_v1 §3).
+REASSIGN_WAKE_HOLD_S = 60.0
 MAX_CONTRACT_CONTENT_BYTES = 65536
 MAX_VERIFICATION_ATTEMPTS = 3
 MAX_INTEGRATION_ATTEMPTS = 3
@@ -1128,6 +1131,7 @@ class RoomBoardStore:
         expected_version: int,
         operator_identity: str,
         decided_via: str = "web",
+        hold_wake_s: float | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Hand a module that has not been integrated to another owner (operator only).
@@ -1137,11 +1141,15 @@ class RoomBoardStore:
         before the new version never become integration candidates (candidates start
         at the current charter), and pending ones are superseded now. An integrated
         module is refused: replacing its owner would also have to retract code.
+
+        With ``hold_wake_s`` the new owner is not woken here: the wake is held until
+        ``release_held_wakes`` finds the module notebook curated up to the handover,
+        or for at most ``hold_wake_s`` seconds, so the first turn reads the notebook.
         """
 
         if decided_via not in ("web", "cli"):
             raise ValueError("room_board_decided_via_invalid")
-        _current, stamp = _current_stamp(now)
+        current, stamp = _current_stamp(now)
         with self._connect() as conn:
             conn.execute("begin immediate")
             try:
@@ -1257,13 +1265,34 @@ class RoomBoardStore:
                     },
                     stamp=stamp,
                 )
-                self._wake_participants_conn(
-                    conn,
-                    conversation_id=conversation_id,
-                    activity_id=str(activity["activity_id"]),
-                    participant_ids=[owner_participant_id],
-                    stamp=stamp,
-                )
+                release_after: str | None = None
+                if hold_wake_s is None:
+                    self._wake_participants_conn(
+                        conn,
+                        conversation_id=conversation_id,
+                        activity_id=str(activity["activity_id"]),
+                        participant_ids=[owner_participant_id],
+                        stamp=stamp,
+                    )
+                else:
+                    release_after = _timestamp(current + timedelta(seconds=float(hold_wake_s)))
+                    conn.execute(
+                        """insert into room_board_held_wakes
+                           (activity_id, conversation_id, module_id, charter_version,
+                            participant_id, activity_seq, release_after, released_at,
+                            release_reason, created_at)
+                           values (?, ?, ?, ?, ?, ?, ?, null, null, ?)""",
+                        (
+                            str(activity["activity_id"]),
+                            conversation_id,
+                            module_id,
+                            version + 1,
+                            owner_participant_id,
+                            int(activity["seq"]),
+                            release_after,
+                            stamp,
+                        ),
+                    )
                 conn.commit()
                 return {
                     "module_id": module_id,
@@ -1272,10 +1301,97 @@ class RoomBoardStore:
                     "reassigned_from": previous_owner,
                     "activity_id": str(activity["activity_id"]),
                     "activity_seq": int(activity["seq"]),
+                    "wake": "now" if release_after is None else "held",
+                    "wake_release_after": release_after,
                 }
             except Exception:
                 conn.rollback()
                 raise
+
+    def release_held_wakes(
+        self,
+        *,
+        memory_ready: Callable[[str, str, int], bool] | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Wake the owners whose reassignment wake was held for the module notebook.
+
+        A held wake is released once ``memory_ready(conversation_id, module_id,
+        activity_seq)`` reports the module's memory curated up to the handover, or at
+        its deadline whatever memory did. A wake whose charter version is no longer the
+        module's active one (reassigned again meanwhile) is dropped, not delivered.
+        """
+
+        _current, stamp = _current_stamp(now)
+        with self._connect() as conn:
+            held = conn.execute(
+                "select * from room_board_held_wakes where released_at is null "
+                "order by created_at, activity_id"
+            ).fetchall()
+        reasons: dict[str, str] = {}
+        for row in held:
+            if stamp >= str(row["release_after"]):
+                reasons[str(row["activity_id"])] = "deadline"
+            elif memory_ready is not None and memory_ready(
+                str(row["conversation_id"]), str(row["module_id"]), int(row["activity_seq"])
+            ):
+                reasons[str(row["activity_id"])] = "memory_ready"
+        if not reasons:
+            return []
+        released: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            try:
+                for row in held:
+                    activity_id = str(row["activity_id"])
+                    reason = reasons.get(activity_id)
+                    if reason is None:
+                        continue
+                    still = conn.execute(
+                        "select released_at from room_board_held_wakes where activity_id = ?",
+                        (activity_id,),
+                    ).fetchone()
+                    if still is None or still["released_at"] is not None:
+                        continue
+                    conversation_id = str(row["conversation_id"])
+                    participant_id = str(row["participant_id"])
+                    charter = self._current_charter_conn(
+                        conn, conversation_id=conversation_id, module_id=str(row["module_id"])
+                    )
+                    if (
+                        charter is not None
+                        and str(charter["status"]) == "active"
+                        and int(charter["version"]) == int(row["charter_version"])
+                        and str(charter["owner_participant_id"]) == participant_id
+                    ):
+                        self._wake_participants_conn(
+                            conn,
+                            conversation_id=conversation_id,
+                            activity_id=activity_id,
+                            participant_ids=[participant_id],
+                            stamp=stamp,
+                        )
+                    else:
+                        reason = "superseded"
+                    conn.execute(
+                        "update room_board_held_wakes set released_at = ?, release_reason = ? "
+                        "where activity_id = ?",
+                        (stamp, reason, activity_id),
+                    )
+                    released.append(
+                        {
+                            "activity_id": activity_id,
+                            "conversation_id": conversation_id,
+                            "module_id": str(row["module_id"]),
+                            "participant_id": participant_id,
+                            "reason": reason,
+                        }
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return released
 
     @staticmethod
     def _active_charter_owner_map(

@@ -809,7 +809,10 @@ comment every 15 seconds. Same template as `/agent-streams`.
   grant) accepts `{conversation_id, owner_participant_id, expected_version, decided_via?}`. It
   hands a module that is **not integrated** to another active agent participant: the current
   charter version becomes `retired` and the same charter is written as version + 1 for the new
-  owner, who gets a `charter_assigned` event (`charter_version` = the new version) and is woken.
+  owner, who gets a `charter_assigned` event (`charter_version` = the new version) and is woken
+  (with module memory running, after the module notebook holds the handover, at most 60 s
+  later: `module_memory_v1.md` §3). The response carries `wake` (`now` or `held`) and
+  `wake_release_after` (the deadline of a held wake, else `null`).
   Pending verifications and reviews of the module are superseded, and work verified before the
   new version is never an integration candidate (candidates start at the current charter). It
   is refused with `409` for a stale `expected_version` (`room_board_charter_version_mismatch`),
@@ -994,6 +997,10 @@ the bounded `error` retries; the invariants above; and the user's checkout is ne
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 
 ## 12. Changelog
+
+- 2026-10-09 — reassignment wake (§8): with module memory running the new owner is woken once
+  the module notebook holds the handover (at most 60 s); the reassign response adds `wake` and
+  `wake_release_after`; the projection is unchanged.
 
 - 2026-10-09 — module reassignment (§8): an operator route hands a module that is not
   integrated to another owner as charter version + 1; the projection shape is unchanged.
