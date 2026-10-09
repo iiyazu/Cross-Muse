@@ -16,7 +16,8 @@ from .tools import TOOLS
 WRITERS = {"claude": claude.write_config, "opencode": opencode.write_config}
 # Headless Claude coding profile: edits in the workspace plus test/inspection commands. Anything else
 # (push, rm, network) is denied in -p mode and reported as permission_denied.
-CLAUDE_ALLOW = ["Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(pytest:*)", "Bash(git diff:*)",
+CLAUDE_ALLOW = ["Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(pytest:*)",
+                "Bash(python3 -m unittest:*)", "Bash(python -m unittest:*)", "Bash(git diff:*)",
                 "Bash(git status:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git add:*)",
                 "Bash(git commit:*)", "Bash(ls:*)"]
 SKILL_DIRS = [".claude/skills", ".opencode/skills"]
