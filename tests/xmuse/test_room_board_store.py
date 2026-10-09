@@ -1560,3 +1560,152 @@ def test_question_and_progress_payloads_stay_bounded_and_addressed(tmp_path):
             (conversation_id, asked["activity_id"]),
         ).fetchone()[0]
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# module reassignment (charter version + 1 for another owner)
+# ---------------------------------------------------------------------------
+
+
+def _report_done(ctx, member, request_id: str, module_id: str = "alpha"):
+    return ctx["store"].report_progress(
+        **_lease_kwargs(member, ctx["leases"][member.participant_id], request_id=request_id),
+        module_id=module_id,
+        status="done",
+        summary="finished",
+        claims=[],
+    )
+
+
+def test_reassign_moves_an_unintegrated_module_to_a_new_owner(tmp_path):
+    ctx = _approved_board(tmp_path)
+    db, conversation_id, members = ctx["db"], ctx["conversation_id"], ctx["members"]
+    old_owner, new_owner = members[1], members[2]
+    pending = _report_done(ctx, old_owner, "done-before-reassign")
+
+    result = ctx["store"].reassign_module(
+        conversation_id=conversation_id,
+        module_id="alpha",
+        owner_participant_id=new_owner.participant_id,
+        expected_version=1,
+        operator_identity="operator:host",
+    )
+
+    assert result["version"] == 2
+    assert result["reassigned_from"] == old_owner.participant_id
+    with RoomDatabase(db).connect() as conn:
+        rows = conn.execute(
+            "select version, owner_participant_id, status from room_board_charters "
+            "where conversation_id = ? and module_id = 'alpha' order by version",
+            (conversation_id,),
+        ).fetchall()
+        assert [(r["version"], r["owner_participant_id"], r["status"]) for r in rows] == [
+            (1, old_owner.participant_id, "retired"),
+            (2, new_owner.participant_id, "active"),
+        ]
+        verification = conn.execute(
+            "select status from room_board_verifications where verification_id = ?",
+            (pending["verification_id"],),
+        ).fetchone()
+        assert verification["status"] == "superseded"
+        activity = conn.execute(
+            "select payload_json from room_activities where activity_id = ?",
+            (result["activity_id"],),
+        ).fetchone()
+    payload = json.loads(activity["payload_json"])
+    assert payload["reassigned_from"] == old_owner.participant_id
+    assert "reassigned module alpha to you" in payload["content"]
+    assert ".xmuse/memory.md" in payload["content"]
+    assert _pending_for_activity(
+        db, conversation_id, new_owner.participant_id, result["activity_id"]
+    )
+    # The previous owner no longer owns the module.
+    with pytest.raises(ValueError):
+        _report_done(ctx, old_owner, "done-after-reassign")
+
+
+def test_reassign_refusals(tmp_path, monkeypatch):
+    ctx = _approved_board(tmp_path)
+    conversation_id, members, store = ctx["conversation_id"], ctx["members"], ctx["store"]
+    kwargs = {"conversation_id": conversation_id, "operator_identity": "operator:host"}
+
+    with pytest.raises(ValueError, match="room_board_charter_version_mismatch"):
+        store.reassign_module(
+            **kwargs,
+            module_id="alpha",
+            owner_participant_id=members[2].participant_id,
+            expected_version=2,
+        )
+    with pytest.raises(ValueError, match="room_board_reassign_same_owner"):
+        store.reassign_module(
+            **kwargs,
+            module_id="alpha",
+            owner_participant_id=members[1].participant_id,
+            expected_version=1,
+        )
+    with pytest.raises(ValueError, match="room_board_module_unknown"):
+        store.reassign_module(
+            **kwargs,
+            module_id="nope",
+            owner_participant_id=members[2].participant_id,
+            expected_version=1,
+        )
+    monkeypatch.setattr(
+        RoomBoardStore,
+        "_green_head_conn",
+        staticmethod(lambda conn, *, conversation_id: {"applied": {"alpha": "v1"}}),
+    )
+    with pytest.raises(ValueError, match="room_board_reassign_integrated"):
+        store.reassign_module(
+            **kwargs,
+            module_id="alpha",
+            owner_participant_id=members[2].participant_id,
+            expected_version=1,
+        )
+
+
+def test_previous_owner_work_is_never_an_integration_candidate_after_reassign(tmp_path):
+    ctx = _approved_board(tmp_path)
+    conversation_id, members, store = ctx["conversation_id"], ctx["members"], ctx["store"]
+    reported = _report_done(ctx, members[1], "done-old")
+    claimed = store.claim_next_board_verification(worker_id="w1")
+    assert claimed is not None and claimed["verification_id"] == reported["verification_id"]
+    store.complete_board_verification(
+        verification_id=reported["verification_id"],
+        lease_token=claimed["lease_token"],
+        status="passed",
+        reason_code=None,
+        head_commit="a" * 40,
+        patch_digest="sha256:" + "b" * 64,
+        changed_paths=["src/alpha/a.py"],
+        gates=[{"gate_id": "patch_diff_check", "status": "passed", "exit_code": 0}],
+        evidence={},
+        patch_text="diff --git a/src/alpha/a.py b/src/alpha/a.py\n",
+        stacked=[],
+        base_commit="c" * 40,
+    )
+    with RoomDatabase(ctx["db"]).connect() as conn:
+        # The fixture's leases run on a fixed test clock while the split was approved
+        # on the wall clock; date the verification at the v1 charter so it is a
+        # candidate before the reassignment.
+        conn.execute(
+            "update room_board_verifications set created_at = ("
+            "select created_at from room_board_charters where conversation_id = ? "
+            "and module_id = 'alpha' and version = 1) where verification_id = ?",
+            (conversation_id, reported["verification_id"]),
+        )
+        conn.commit()
+    assert "alpha" in {
+        item["module_id"] for item in store.board_integration_inputs(conversation_id)["candidates"]
+    }
+
+    store.reassign_module(
+        conversation_id=conversation_id,
+        module_id="alpha",
+        owner_participant_id=members[2].participant_id,
+        expected_version=1,
+        operator_identity="operator:host",
+    )
+
+    candidates = store.board_integration_inputs(conversation_id)["candidates"]
+    assert "alpha" not in {item["module_id"] for item in candidates}

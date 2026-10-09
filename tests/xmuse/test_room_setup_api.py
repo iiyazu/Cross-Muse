@@ -712,6 +712,7 @@ def test_default_room_api_business_route_allowlist(tmp_path: Path) -> None:
             "GET",
         ),
         ("/api/chat/operator/board-splits/{split_id}/decision", "POST"),
+        ("/api/chat/operator/board-modules/{module_id}/reassign", "POST"),
         ("/api/chat/operator/board-reviews/{review_id}/material", "GET"),
         ("/api/chat/operator/board-reviews/{review_id}/decision", "POST"),
         ("/api/chat/operator/plugin-grants", "POST"),

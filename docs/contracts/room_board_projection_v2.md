@@ -805,6 +805,19 @@ comment every 15 seconds. Same template as `/agent-streams`.
   decided). Clients take `href`, `expected_digest` and the allowed decisions from
   `Split.actions.decide` rather than building them. The Next.js proxy fixes
   `decided_via: "web"` itself; a browser can never claim another provenance.
+- `POST /api/chat/operator/board-modules/{module_id}/reassign` (operator token only, no plugin
+  grant) accepts `{conversation_id, owner_participant_id, expected_version, decided_via?}`. It
+  hands a module that is **not integrated** to another active agent participant: the current
+  charter version becomes `retired` and the same charter is written as version + 1 for the new
+  owner, who gets a `charter_assigned` event (`charter_version` = the new version) and is woken.
+  Pending verifications and reviews of the module are superseded, and work verified before the
+  new version is never an integration candidate (candidates start at the current charter). It
+  is refused with `409` for a stale `expected_version` (`room_board_charter_version_mismatch`),
+  the same owner (`room_board_reassign_same_owner`), an integrated module
+  (`room_board_reassign_integrated`; follow-up work goes through a new split), a charter that is
+  not active (`room_board_charter_not_active`), or an inactive assignee
+  (`room_board_assignee_inactive`), and with `404` for an unknown module or participant. The
+  projection shape is unchanged: the module shows its new owner and charter version.
 
 ### 8.1 Review verdicts
 
@@ -981,6 +994,9 @@ the bounded `error` retries; the invariants above; and the user's checkout is ne
 - The `/board` 422 string `detail` is replaced by the §1 error shape.
 
 ## 12. Changelog
+
+- 2026-10-09 — module reassignment (§8): an operator route hands a module that is not
+  integrated to another owner as charter version + 1; the projection shape is unchanged.
 
 - 2026-10-08 — the lead's prose split is refused in a Room with owners
   (`room_outcome_board_split_required`, §3.5); the projection is unchanged.
