@@ -83,6 +83,12 @@ its cursor and builds windows of the module's activities:
 3. Current decisions and facts.
 
 The owner's `charter.md` then gains one line pointing to it. Without memories neither file changes.
+
+The notebook is advisory to the owner, so the cross-family reviewer checks it too: with the
+switch on, the review material an assigned reviewer reads (`chat_room_board_read` with
+`review_id`) carries `module_decisions`, the module's active `decision`, `rule` and `preference`
+memories (at most 20, newest first, `{kind, statement}`), and the review request asks the
+reviewer to object to a patch that breaks one. The operator's review material is unchanged.
 With the switch off, memories left from an earlier run are ignored and neither file changes. The
 owner prompt is unchanged.
 

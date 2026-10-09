@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import sqlite3
 import uuid
@@ -45,6 +46,7 @@ from xmuse_core.chat.room_collaboration import (
     review_policy_for_conversation,
 )
 from xmuse_core.chat.room_database import RoomDatabase
+from xmuse_core.chat.room_module_memory import module_memory_enabled
 
 TOOL_READ = "chat_room_board_read"
 TOOL_PROPOSE_SPLIT = "chat_room_board_propose_split"
@@ -74,6 +76,10 @@ REVIEW_MATERIAL_PATCH_LIMIT_BYTES = 256 * 1024
 
 BOARD_ACTIVITY_SCHEMA_VERSION = "room_board_activity/v1"
 BOARD_INBOX_LIMIT = 50
+# Notebook kinds a reviewer checks the patch against (module_memory_v1 §5); lessons and
+# facts inform the owner but are not conventions a patch can violate.
+REVIEW_MODULE_DECISION_KINDS = ("decision", "rule", "preference")
+REVIEW_MODULE_DECISIONS_MAX = 20
 # With module memory curating, a reassignment holds the new owner's wake until the
 # module notebook holds the handover, at most this long (module_memory_v1 §3).
 REASSIGN_WAKE_HOLD_S = 60.0
@@ -756,8 +762,9 @@ def board_activity_content(activity_type: str, payload: dict[str, Any]) -> str:
             f"({payload.get('verification_id')}); {reviewer} must review it: read the "
             f"material with chat_room_board_read using review_id "
             f"{payload.get('review_id')}, judge it against the charter and contracts "
-            "(object to copies of, or import fallbacks for, code another module "
-            "provides), and answer with chat_room_board_review."
+            "and any module_decisions it lists (object to copies of, or import "
+            "fallbacks for, code another module provides, and to a patch that breaks "
+            "a module decision), and answer with chat_room_board_review."
         )
     if activity_type == "board.review":
         findings = payload.get("findings") or []
@@ -2861,7 +2868,7 @@ class RoomBoardStore:
         upstream = self._provider_modules_conn(
             conn, conversation_id=conversation_id, module_id=module_id
         )
-        return {
+        material: dict[str, Any] = {
             "review_id": review_id,
             "module_id": module_id,
             "verification_id": verification_id,
@@ -2876,6 +2883,37 @@ class RoomBoardStore:
             "changed_paths": changed_paths,
             "patch_text": patch_text,
         }
+        if module_memory_enabled(os.environ):
+            # The owner's notebook is advisory: in a real run an owner read a decision
+            # and still broke it, and the reviewer, who never saw it, endorsed.
+            material["module_decisions"] = self._module_decisions_conn(
+                conn, conversation_id=conversation_id, module_id=module_id
+            )
+        return material
+
+    @staticmethod
+    def _module_decisions_conn(
+        conn: sqlite3.Connection, *, conversation_id: str, module_id: str
+    ) -> list[dict[str, str]]:
+        """The module notebook's active decisions, rules and preferences, newest first."""
+
+        try:
+            rows = conn.execute(
+                "select kind, statement from room_module_memories where conversation_id = ? "
+                "and module_id = ? and status = 'active' and kind in ({}) "
+                "order by version desc, created_at desc limit ?".format(
+                    ", ".join("?" for _ in REVIEW_MODULE_DECISION_KINDS)
+                ),
+                (
+                    conversation_id,
+                    module_id,
+                    *REVIEW_MODULE_DECISION_KINDS,
+                    REVIEW_MODULE_DECISIONS_MAX,
+                ),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [{"kind": str(row["kind"]), "statement": str(row["statement"])} for row in rows]
 
     def owner_passed_board_verifications(
         self, conversation_id: str, participant_id: str, *, exclude_module_id: str
