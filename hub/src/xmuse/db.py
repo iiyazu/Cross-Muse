@@ -75,6 +75,8 @@ create table if not exists entry_events(
   seq integer primary key,                   -- global monotonic alignment version
   entry_id integer not null, op text not null,  -- add|supersede|resolve|archive|confirm|reject
   at real not null);
+create table if not exists seen(             -- watermark: alignment version this session has been shown
+  session_id integer primary key, seq integer not null);
 create table if not exists approvals(
   id text primary key, agent_id text not null, vendor_session text, action text,
   resources text, state text not null default 'pending', decision text,
@@ -90,9 +92,16 @@ def connect(path) -> sqlite3.Connection:
     return conn
 
 
+COLUMNS = [("turns", "align_tokens", "integer"), ("turns", "align_mode", "text"),  # added after M1: per-turn metrics
+           ("sessions", "notified", "integer not null default 0")]               # size notice sent
+
+
 def init(path) -> sqlite3.Connection:
     conn = connect(path)
     conn.executescript(SCHEMA)
+    for table, col, decl in COLUMNS:
+        if col not in {r[1] for r in conn.execute(f"pragma table_info({table})")}:
+            conn.execute(f"alter table {table} add column {col} {decl}")
     return conn
 
 

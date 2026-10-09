@@ -68,6 +68,9 @@ class Hub:
         args = validate(name, args)
         conn = self.db()
         if name == "xmuse_send":
+            if len(args["body"]) > self.cfg["body_limit"]:
+                raise ToolError("body_too_long", f"body is {len(args['body'])} chars, the limit is "
+                                f"{self.cfg['body_limit']}: write the content to a file in the workspace and send its path")
             out = mail.send(conn, self.cfg, agent, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
                             args.get("resolves"), args.get("depends_on"))

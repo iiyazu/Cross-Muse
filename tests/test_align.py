@@ -195,6 +195,22 @@ def test_ready_work_waits_for_dependencies(make):
     assert view(h, "claude-3")["assigned"] == []
 
 
+def test_decision_dependencies_are_met_even_when_superseded(make):
+    h = three(make)
+    decl(h, "claude-1", "use Decimal")                                   # E1 decision
+    decl(h, "claude-1", "which rounding?", "question")                   # E2 question
+    decl(h, "claude-1", "assume UTF-8", "assumption")                    # E3 assumption
+    h.tool("claude-1", "xmuse_send", to="#g", body="build it", kind="handoff", why=WHY, mentions=["claude-3"],
+           depends_on=["E1", "E3"])                          # E4
+    h.tool("claude-1", "xmuse_send", to="#g", body="round it", kind="handoff", why=WHY, mentions=["claude-3"],
+           depends_on=["E2"])                                # E5
+    assert view(h, "claude-3")["ready"] == ["E4"]            # an active decision/assumption already counts
+    decl(h, "claude-1", "use Decimal strings", supersedes="E1")          # E6; E1 superseded must not re-block E4
+    assert view(h, "claude-3")["ready"] == ["E4"]
+    decl(h, "claude-1", "half-even", resolves=["E2"])
+    assert view(h, "claude-3")["ready"] == ["E4", "E5"]
+
+
 def test_thread_close_archives_only_that_threads_entries(make):
     h = three(make)
     decl(h, "claude-1", "task rule")

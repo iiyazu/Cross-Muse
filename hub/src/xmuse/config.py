@@ -21,6 +21,10 @@ DEFAULTS = {
     "align_global_cap": 40,          # active entries per view layer (design §4.5.1 item 4)
     "align_role_cap": 20,
     "align_thread_cap": 15,
+    "align_snapshot_tokens": 12_000,  # injected alignment budgets, estimated as len(text)//3
+    "align_delta_tokens": 2_000,
+    "body_limit": 4_000,             # chars per xmuse_send body; bigger content goes in a workspace file
+    "session_notice_tokens": 400_000,  # one notice per session when its context first passes this
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",

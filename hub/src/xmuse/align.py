@@ -89,20 +89,72 @@ def _pub(e: dict) -> dict:
 
 
 def _blocked(conn, e: dict):
+    """A dependency is met when resolved/archived, or when it is a decision-like entry that exists
+    (active, or superseded: a newer version does not re-block work). Questions and assignments must resolve."""
     deps = json.loads(e["depends_on"] or "[]")
-    return conn.execute(f"select 1 from entries where status not in ('resolved','archived')"
-                        f" and id in ({','.join('?' * len(deps))})", deps).fetchone()
+    return conn.execute(
+        f"select 1 from entries where id in ({','.join('?' * len(deps))}) and status not in ('resolved','archived')"
+        " and not (kind in ('decision','convention','assumption','lesson') and status in ('active','superseded'))",
+        deps).fetchone()
+
+
+def _scopes(conn, agent_id: str, topic: str | None = None) -> list[str]:
+    role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
+    tids = [r[0] for r in conn.execute("select thread_id from thread_members where member=? order by 1", (agent_id,))]
+    if topic and topic not in tids:
+        raise ToolError("unknown_thread", f"topic must be one of your threads: {', '.join(tids) or '(none)'}")
+    return ["global"] + ([] if topic else [f"role:{role}"] * bool(role) + [f"agent:{agent_id}"]) + \
+           [f"thread:{t}" for t in ([topic] if topic else tids)]
+
+
+def current_seq(conn) -> int:
+    return conn.execute("select coalesce(max(seq), 0) from entry_events").fetchone()[0]
+
+
+def watermark(conn, session_id: int) -> int | None:
+    r = conn.execute("select seq from seen where session_id=?", (session_id,)).fetchone()
+    return r and r[0]
+
+
+def reset_watermark(conn, session_id: int) -> None:
+    """The next wake of this session gets a full snapshot (vendor compaction, handoff)."""
+    with db.tx(conn):
+        conn.execute("delete from seen where session_id=?", (session_id,))
+
+
+def delta(conn, agent_id: str, since: int) -> dict:
+    """What changed in this agent's scope after alignment version `since`, as net effects: entries both
+    created and invalidated inside the window were never shown, so they are not reported."""
+    scopes = _scopes(conn, agent_id)
+    rs = db.rows(conn.execute(
+        f"select e.*, v.op from entry_events v join entries e on e.id=v.entry_id where v.seq>? and "
+        f"(e.scope in ({','.join('?' * len(scopes))}) or e.assignee=?) order by v.seq", (since, *scopes, agent_id)))
+    ops, ents = {}, {}
+    for r in rs:
+        ops.setdefault(r["id"], []).append(r["op"])
+        ents[r["id"]] = {**_pub(r), "status": r["status"], "scope": r["scope"]}
+    out = {"added": [], "superseded": [], "resolved": [], "archived": {}}
+    for eid in sorted(ops):
+        e, last = ents[eid], ops[eid][-1]
+        if "add" in ops[eid] or "confirm" in ops[eid]:
+            if e["status"] == "active":
+                out["added"].append(e)
+        elif last == "supersede":
+            by = conn.execute("select max(id) from entries where supersedes=?", (eid,)).fetchone()[0]
+            out["superseded"].append((e, f"E{by}"))
+        elif last == "resolve":
+            out["resolved"].append(e)
+        elif last == "archive":
+            t = e["scope"][7:] if e["scope"].startswith("thread:") else ""
+            out["archived"][t] = out["archived"].get(t, 0) + 1
+    out["archived"] = sorted(out["archived"].items())
+    return out
 
 
 def view(conn, cfg: dict, agent_id: str, topic: str | None = None) -> dict:
     """Active entries for one agent: global + its role + its threads + its own, then work assigned to it.
     Layers are capped (newest by seq kept); `truncated` names the layers that overflowed."""
-    role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
-    tids = [r[0] for r in conn.execute("select thread_id from thread_members where member=? order by 1", (agent_id,))]
-    if topic and topic not in tids:
-        raise ToolError("unknown_thread", f"topic must be one of your threads: {', '.join(tids) or '(none)'}")
-    scopes = ["global"] + ([] if topic else [f"role:{role}"] * bool(role) + [f"agent:{agent_id}"]) + \
-             [f"thread:{t}" for t in ([topic] if topic else tids)]
+    scopes = _scopes(conn, agent_id, topic)
     rs = db.rows(conn.execute(
         f"select * from entries where status='active' and (scope in ({','.join('?' * len(scopes))}) or assignee=?)"
         " order by seq desc", (*scopes, None if topic else agent_id)))

@@ -4,6 +4,7 @@
 message and one delivery per recipient, idempotently. Who gets woken is decided here;
 when they are woken is the engine's job.
 """
+import hashlib
 import json
 
 from . import align, db
@@ -193,7 +194,14 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
 def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None) -> dict:
     """Exit check: record it on the running turn and post it to the chain's thread (no wake)."""
     turn = running_turn(conn, agent_id)
+    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, declares]).encode()).hexdigest())
     with db.tx(conn):
+        dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
+                                          (agent_id, key)))
+        if dup:  # a retried done in the same turn: return the earlier result, declare nothing twice
+            eids = [r[0] for r in conn.execute("select id from entries where refs=? order by id", (json.dumps([dup["id"]]),))]
+            return {"recorded": True, "thread": dup["thread_id"], "duplicate": True,
+                    **({"entries": [f"E{i}" for i in eids]} if eids else {})}
         if turn is None or turn["chain_id"] is None:
             tid = dm_id(agent_id, HUMAN)
             if conn.execute("select 1 from threads where id=?", (tid,)).fetchone() is None:
@@ -208,9 +216,10 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
         depth = 0 if turn is None else conn.execute(
             "select coalesce(max(m.depth), -1) + 1 from deliveries d join messages m on m.id=d.message_id"
             " where d.turn_id=?", (turn["id"],)).fetchone()[0]
-        mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, created_at)"
-                           " values(?,?,?,?,?,?,?,?)", (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth,
-                                                        turn and turn["id"], db.now())).lastrowid
+        mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, idem_key,"
+                           " created_at) values(?,?,?,?,?,?,?,?,?)",
+                           (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth, turn and turn["id"], key,
+                            db.now())).lastrowid
         eids = [align.declare(conn, agent_id, tid, mid, d["kind"], d["statement"], d.get("scope"), d.get("supersedes"))
                 for d in declares or []]
     return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {})}

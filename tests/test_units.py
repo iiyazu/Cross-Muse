@@ -111,12 +111,13 @@ def test_wakepack_tags_relay_and_passive_summary(make):
     conn = h.conn()
     agent = db.row(conn.execute("select * from agents where id='claude-1'"))
     msgs = db.rows(conn.execute("select * from messages where sender='claude-2'"))
-    text = wakepack.render(conn, agent, msgs, fresh=True, recent_n=5, workspace="/w")
+    cfg = {**h.hub.cfg, "recent_n": 5}
+    text = wakepack.render(conn, cfg, agent, msgs, None, "/w").text
     assert text.startswith("[xmuse] Messages relayed by xmuse") and "collaborators the user assigned" in text
     assert "You are claude-1 (anthropic) in workspace /w. Peers: claude-2 (anthropic)" in text
     assert '<xmuse from="claude-2" family="anthropic" thread="dm:claude-1+claude-2" kind="handoff" id="2">' in text
     assert "next_action: n" in text and "Also 1 unread message(s)" in text
-    resume = wakepack.render(conn, agent, msgs, fresh=False, recent_n=5, workspace="/w")
+    resume = wakepack.render(conn, cfg, agent, msgs, 1, "/w").text
     assert "You are" not in resume and "Earlier in" not in resume
 
 
@@ -128,8 +129,8 @@ def test_wakepack_recent_thread_excludes_new_messages(make):
     m = h.send("#g", "new one", mentions=["claude-1"])
     conn = h.conn()
     agent = db.row(conn.execute("select * from agents"))
-    text = wakepack.render(conn, agent, db.rows(conn.execute("select * from messages where id=?", (m["id"],))),
-                           True, 8, "/w")
+    text = wakepack.render(conn, h.hub.cfg, agent, db.rows(conn.execute("select * from messages where id=?", (m["id"],))),
+                           None, "/w").text
     earlier = text.split("Earlier in #g (most recent 8):\n")[1].split("\n\n")[0]
     assert earlier.count("\n- ") == 7 and "old 11" in earlier and "old 3" not in earlier and "new one" not in earlier
 
