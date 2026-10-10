@@ -116,7 +116,7 @@ Claude 桌面版当协调者、dsh 前台模式和插件包的配置，见 [hub/
 | `experiments/` | 实验场景、runner、指标（`metrics.py`）、离线回放（`replay_mo.py`）、结果 |
 | `docs/design/` | 设计稿、实验报告、审计 |
 | `scripts/bootstrap.sh` | 一键准备环境 |
-| `spikes/`、`e2e/` | 早期探针和端到端记录（历史产物，计划移到 `archive/`） |
+| `archive/` | 早期探针（`spikes/`）和 M1 端到端记录（`e2e/`），只留作历史，不再维护 |
 
 ## 开发
 

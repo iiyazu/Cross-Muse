@@ -34,7 +34,7 @@ def transcript(cwd: Path, session: str) -> Path:
 
 def branch_points(path: Path) -> int:
     """Parents with more than one user prompt as child: two writers resumed the same leaf (ported from
-    spikes/cc-tree.py). Parallel tool calls also give a parent several children (one assistant record
+    archive/spikes/cc-tree.py). Parallel tool calls also give a parent several children (one assistant record
     per tool_use, results hanging off different records), so only prompts count, not tool results."""
     if not path.exists():
         return 0
@@ -82,7 +82,7 @@ def parse_stream(lines) -> tuple[dict, Usage]:
 
 
 def transcript_usage(path: Path, after_uuid: str | None = None, since: float = 0) -> Usage:
-    """Usage of an interactive (channel) turn read from the transcript (ported from spikes/cc-usage.py)."""
+    """Usage of an interactive (channel) turn read from the transcript (ported from archive/spikes/cc-usage.py)."""
     u, seen, last = Usage(), set(), None
     for line in path.open():
         o = json.loads(line)

@@ -464,7 +464,7 @@ class Run:
                 if m["sender"] in revs and m["kind"] != "notice"))
         else:
             self.run_tests(seed, w, out)
-            r =subprocess.run([sys.executable, str(REPO / "e2e" / "check.py"), str(out), self.sc["IMPL"], self.sc["REVIEW"],
+            r =subprocess.run([sys.executable, str(EXP / "check.py"), str(out), self.sc["IMPL"], self.sc["REVIEW"],
                                 (out / "public.status").read_text(), (out / "hidden.status").read_text(), str(elapsed),
                                 str(rc)], capture_output=True, text=True)
             (out / "summary.json").write_text(r.stdout)
