@@ -294,3 +294,10 @@ def test_view_entries_is_recorded_per_wake(make):
     declare(h, "tokens are tuples")
     wake(h)
     assert [t["view_entries"] for t in h.turns()] == [1, 2]
+
+
+def test_human_decision_can_supersede_via_the_admin_send(make):
+    h = two(make)
+    declare(h, "ids are int", scope="global")
+    h.send("#g", "ids are strings now", kind="decision", supersedes="E1")
+    assert [(e["id"], e["status"]) for e in h.q("select id, status from entries order by id")] == [(1, "superseded"), (2, "active")]

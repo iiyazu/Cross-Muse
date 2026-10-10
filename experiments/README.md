@@ -4,9 +4,9 @@
 （每个都带公开测试、隐藏测试、预埋 bug 和「中途被推翻的约定」），以及一个不依赖
 任何第三方库的验证器 `verify.py`。
 
-> **runner 还没写**：把 A/B/C 三组跑起来、注入 rot 消息、收集 `log.json` 的调度器，
-> 要等 hub 的 M2a（H1–H3：对齐库、水位与差量注入、`/recall`）落地之后再写。
-> 现在这里只有种子和验收；`verify.py` 不启动任何 agent。
+> **runner**：`run.py <场景> <编号>`（场景在 `scenarios/*.env`，用法见 `run.py` 文件头），
+> 结果写到 `results/<场景>-<编号>/`，指标用 `metrics.py` 算。`verify.py` 不启动任何 agent。
+> 默认阵容只用 opencode 和 dsh；claude agent 必须在 `AGENTS` 里显式写模型（`claude-1:claude:claude-haiku-5-5`），否则 runner 直接报错。
 
 ---
 

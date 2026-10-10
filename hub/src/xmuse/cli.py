@@ -159,6 +159,8 @@ def main(argv=None) -> None:
     p.add_argument("--mention", action="append", default=[])
     p.add_argument("--kind", default="message")
     p.add_argument("--idem")
+    p.add_argument("--scope")
+    p.add_argument("--supersedes", help="E<id> this decision replaces (kind decision|assumption|question)")
     p = sub.add_parser("stop")
     p.add_argument("--agent")
     p.add_argument("--thread")
@@ -225,7 +227,8 @@ def main(argv=None) -> None:
          "status": lambda s: print(json.dumps(status(s), indent=1))}[a.action](state)
     elif a.cmd == "send":
         print(json.dumps(call(state, "/v1/admin/send", {"to": a.to, "body": a.body, "kind": a.kind,
-                                                         "mentions": a.mention, "idem": a.idem})))
+                                                         "mentions": a.mention, "idem": a.idem,
+                                                         "scope": a.scope, "supersedes": a.supersedes})))
     elif a.cmd == "stop":
         print(json.dumps(call(state, "/v1/admin/stop", {"agent": a.agent, "thread": a.thread})))
     elif a.cmd == "resume":

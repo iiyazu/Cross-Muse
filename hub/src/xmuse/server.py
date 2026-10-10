@@ -111,7 +111,7 @@ class Hub:
 
     def admin_send(self, body: dict):
         out = mail.send(self.db(), self.cfg, config.HUMAN, body["to"], body["body"], body.get("kind", "message"),
-                        body.get("mentions"), body.get("why"), body.get("idem"))
+                        body.get("mentions"), body.get("why"), body.get("idem"), body.get("scope"), body.get("supersedes"))
         self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", [])}

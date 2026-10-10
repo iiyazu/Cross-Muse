@@ -7,3 +7,5 @@ __pycache__/
 # e2e: disposable workspaces and hub state are rebuilt by the scenario scripts
 e2e/ws-*/
 e2e/state-*/
+# experiments: runner hub state (results/ is committed)
+experiments/state-*/
