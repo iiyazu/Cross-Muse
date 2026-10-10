@@ -40,6 +40,9 @@ class Hub:
         self.ws = Path(self.cfg["workspace"])
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
+        with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
+            for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
+                c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))
         self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"])  # align.view reads it from cfg
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
@@ -102,6 +105,7 @@ class Hub:
             self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
+                    **({"pushed": out["pushed"]} if out.get("pushed") else {}),
                     **({"entries": out["entries"]} if out.get("entries") else {}),
                     **({"duplicate": True} if out.get("duplicate") else {})}
         if name == "xmuse_inbox":
@@ -164,7 +168,8 @@ class Hub:
                         via=config.VIA_CLI)
         self.curator.kick(out["thread_id"])
         self.engine.kick()
-        return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", [])}
+        return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", []),
+                **({"pushed": out["pushed"]} if out.get("pushed") else {})}
 
     def admin_stop(self, body: dict):
         return self.engine.call(self.engine.stop, body.get("agent"), body.get("thread"))

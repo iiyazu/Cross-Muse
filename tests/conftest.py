@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from fakes.fake_opencode import FakeOpenCode  # noqa: E402
 from xmuse import db, init as xinit  # noqa: E402
-from xmuse.config import FAMILIES, MODELS  # noqa: E402
+from xmuse.config import MODELS, family  # noqa: E402
 from xmuse.server import Hub, digest  # noqa: E402
 
 FAKE_CLAUDE = Path(__file__).parent / "fakes" / "fake_claude.py"
@@ -54,7 +54,7 @@ class Harness:
         model = (settings or {}).pop("model", None) or MODELS[vendor]
         with db.tx(self.conn()) as c:
             c.execute("insert into agents(id, vendor, model, family, settings, token_digest, created_at)"
-                      " values(?,?,?,?,?,?,?)", (aid, vendor, model, FAMILIES[vendor], json.dumps(settings or {}),
+                      " values(?,?,?,?,?,?,?)", (aid, vendor, model, family(vendor, model), json.dumps(settings or {}),
                                                  digest(tok), time.time()))
 
     def close(self):

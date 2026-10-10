@@ -110,7 +110,8 @@ def test_cli_foreground_flag_and_readd(wsc, capsys):
 def test_engine_never_wakes_foreground_agent(make):
     h = make([("dsh-1", "dsh", FG)])
     h.plan_dsh({})
-    h.send("dsh-1", "first")
+    first = h.send("dsh-1", "first")
+    assert first["woken"] == [] and first["pushed"] == ["dsh-1"]  # T8: the relay pushes it; the hub never wakes it
     h.send("dsh-1", "second", mentions=["dsh-1"])
     h.hub.engine.kick()
     time.sleep(0.6)

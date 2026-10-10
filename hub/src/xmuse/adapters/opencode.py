@@ -32,8 +32,14 @@ CODE_TOOLS = {"edit", "write", "patch", "apply_patch", "multiedit", "shell", "ba
 # goes to the human. This keeps unattended runs moving on tests and read-only inspection; it is not a sandbox.
 READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "diff", "sort", "uniq", "tree",
              "which", "true", "file", "stat", "du", "basename", "dirname", "realpath", "nl", "cut", "tr", "cmp"}
+# options that turn a read-only tool into a writer or a launcher (T8): long options by prefix, short ones by letter
+# (also inside clusters like -uo)
+DENY_LONG = {"sort": ("--output", "--compress-program"), "tree": ("--output",), "rg": ("--pre",),
+             "git": ("--output", "--open-files-in-pager", "--ext-diff", "--textconv", "--exec")}
+DENY_SHORT = {"sort": "o", "tree": "o", "git": "O"}
 GIT_LOCAL = {"status", "diff", "log", "show", "add", "commit", "rev-parse", "ls-files", "blame", "grep",
-             "shortlog", "describe", "restore"}
+             "shortlog", "describe"}  # no restore/checkout/reset: they discard work
+_SED_PRINT = re.compile(r"^\d+(,\d+)?p$")
 PIPE_FILTERS = {"head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "nl"}  # may follow `|`
 # Unattended experiments only (XMUSE_SHELL_POLICY=blocklist-experiment, set in the hub's environment by the runner,
 # never by config): the pre-T5 rule, approve unless the env-stripped command starts like one of these. Bypassable
@@ -88,18 +94,34 @@ def _python_ok(argv: list[str]) -> bool:
     return rest[0].endswith(".py") and _safe_path(rest[0])
 
 
+def _denied_option(cmd: str, args: list[str]) -> bool:
+    long, short = DENY_LONG.get(cmd, ()), DENY_SHORT.get(cmd, "")
+    for a in args:
+        if a == "--":
+            break
+        if a.startswith("--") and any(a.startswith(d) for d in long):
+            return True
+        if a.startswith("-") and not a.startswith("--") and any(c in a[1:] for c in short):
+            return True
+    return False
+
+
 def _argv_ok(argv: list[str], first: bool) -> bool:
     if not argv or "/" in argv[0]:  # `/usr/bin/git push` and `./x` name no allowlisted program
         return False
     cmd, args = argv[0], argv[1:]
+    if _denied_option(cmd, args):
+        return False
     if not first:
         return cmd in PIPE_FILTERS and not any(a.startswith("/") and not a.startswith("/tmp/") for a in args)
     if cmd in READ_ONLY:
         return True
-    if cmd == "sed":
-        return "-i" not in args and not any(a.startswith("-i") or a.startswith("--in-place") for a in args)
+    if cmd == "sed":  # only `sed -n 'N[,M]p' FILE...`: other scripts can write (w/W) or execute (e)
+        return len(args) >= 2 and args[0] == "-n" and bool(_SED_PRINT.match(args[1])) and \
+            all(_safe_path(a) for a in args[2:])
     if cmd == "find":
-        return not any(a in ("-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fls") for a in args)
+        return not any(a in ("-exec", "-execdir", "-delete", "-ok", "-okdir") or a.startswith(("-fprint", "-fls"))
+                       for a in args)
     if cmd == "git":
         return bool(args) and args[0] in GIT_LOCAL  # no `git -C`, `git -c`, push, merge, reset, ...
     if cmd in ("python", "python3"):

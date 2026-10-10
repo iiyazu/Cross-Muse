@@ -68,6 +68,23 @@ def test_transcript_usage_counts_only_new_calls_once(tmp_path):
     assert (got.calls, got.cache_read, got.output, got.context, got.mode) == (2, 200, 10, 111, "chat")
 
 
+def test_family_follows_the_model_not_the_shell(make):
+    from xmuse.config import family
+    from xmuse.server import Hub
+    assert family("dsh", "opencode-go/muse-spark-1.3-contributor") == "opencode"  # was "deepseek" (audit C)
+    assert family("dsh", "deepseek-official/deepseek-v4-flash") == "deepseek"
+    assert family("opencode", "deepseek-official/deepseek-v4-flash") == "deepseek"
+    assert family("claude", "claude-haiku-5-5") == "anthropic"
+    assert family("opencode", "someone/unknown-model") == "opencode"  # nothing to go on: the shell's
+    h = make([("claude-1", "claude"), ("dsh-1", "dsh")])
+    peers = {p["id"]: p.get("family") for p in h.tool("claude-1", "xmuse_whoami")["result"]["peers"]}
+    assert peers["dsh-1"] == "opencode"
+    with db.tx(h.conn()) as c:  # a database written before T8
+        c.execute("update agents set family='deepseek' where id='dsh-1'")
+    Hub(h.state)  # opening it repairs the stored family
+    assert h.q("select family from agents where id='dsh-1'")[0]["family"] == "opencode"
+
+
 def test_host_facts_are_derived_or_a_clear_error(tmp_path, monkeypatch):
     import pytest
     from xmuse import host

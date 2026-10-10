@@ -14,7 +14,7 @@ const until = async (cond, what = 'condition', ms = 4000) => {
     await tick(10)
   }
 }
-const TOOL_NAMES = ['xmuse_whoami', 'xmuse_send', 'xmuse_inbox', 'xmuse_ack', 'xmuse_thread', 'xmuse_context', 'xmuse_done', 'xmuse_approve']
+const TOOL_NAMES = ['xmuse_whoami', 'xmuse_send', 'xmuse_inbox', 'xmuse_ack', 'xmuse_thread', 'xmuse_context', 'xmuse_done']
 
 /** handler(url, body, req) -> [code, obj] | Promise of the same. */
 function fakeHub(handler) {
@@ -148,7 +148,7 @@ test('self-check logs services, hub state and tools, never throws', async () => 
   assert.ok(line, 'self-check log present')
   assert.match(line[1], /"sessionController":true/)
   assert.match(line[1], new RegExp(`ok \\(port ${port}\\)`))
-  assert.match(line[1], /"tools":"8 from bundled tools.json"/)
+  assert.match(line[1], /"tools":"7 from bundled tools.json"/)
   close()
   const bad = setup({ noSessionController: true, noHub: true })
   await tick()
@@ -165,7 +165,7 @@ test('no config.state: no built-in machine path, the self-check says what to set
   const line = t.logs.find(([, m]) => m.includes('self-check'))[1]
   assert.match(line, /config\.state is not set/)
   assert.match(line, /xmuse doctor/)
-  assert.match(line, /"tools":"8 from bundled tools.json"/)
+  assert.match(line, /"tools":"7 from bundled tools.json"/)
   t.dispose()
   if (saved !== undefined) process.env.XMUSE_STATE_WIN = saved
 })
@@ -211,7 +211,7 @@ test('bind/unbind/status persist to file; usage errors; restart restores; legacy
   assert.match(s.text, /s1 -> dsh-1/)
   assert.match(s.text, /relay: (polling|idle|error)/)
   assert.match(s.text, /sessionController: yes/)
-  assert.match(s.text, /tools: 8 from bundled/)
+  assert.match(s.text, /tools: 7 from bundled/)
   assert.equal((await t.run('s1', 'nope')).kind, 'error')
   assert.equal((await t.run('s1', '')).kind, 'error')
   // bindings survive a "restart"
@@ -245,7 +245,7 @@ test('bind persist failure does not throw', async () => {
 
 // ---- tools ----
 
-test('all 8 tools register per session with hub-derived schemas and unbound-safe descriptions', async () => {
+test('all 7 tools register per session with hub-derived schemas and unbound-safe descriptions', async () => {
   const t = setup()
   const agent = t.mkAgent('s1')
   await t.emit('agent/created', { agent })
@@ -278,7 +278,7 @@ test('tool specs: hub state tools.json wins, broken file falls back to the bundl
   const b = setup({ toolsJson: '{not json' })
   const agentB = b.mkAgent('s1')
   await b.emit('agent/created', { agent: agentB })
-  assert.equal(agentB.tools.size, 8)
+  assert.equal(agentB.tools.size, 7)
   assert.ok(b.logs.some(([l, m]) => l === 'warn' && /bundled copy/.test(m)))
   a.dispose(); b.dispose()
 })
@@ -301,7 +301,6 @@ test('every tool proxies args to /v1/tools/<name> with the bound agent token and
     xmuse_whoami: {}, xmuse_send: { to: 'oc', body: 'hi', mentions: ['oc'], kind: 'message' }, xmuse_inbox: { unread_only: false },
     xmuse_ack: { ids: [1, 2], outcome: 'ok' }, xmuse_thread: { id: '#t', limit: 5 }, xmuse_context: { topic: '#t' },
     xmuse_done: { summary: 's', next: 'none', declares: [{ kind: 'decision', statement: 'x' }] },
-    xmuse_approve: { id: 'per_1', decision: 'reject', user_said: 'no' },
   }
   for (const n of TOOL_NAMES) {
     seen.length = 0
@@ -419,12 +418,12 @@ test('identity: a restored binding is re-asserted on the hub before polling (dsh
 
 test('agent backfill at apply time, creation, idempotence and disposal', async () => {
   const t = setup({ preAgents: ['pre'] })
-  assert.equal(t.agents.get('pre').tools.size, 8, 'backfilled from roots()')
+  assert.equal(t.agents.get('pre').tools.size, 7, 'backfilled from roots()')
   t.mkAgent('late')
   await t.emit('agent/created', { agent: t.agents.get('late') })
-  assert.equal(t.agents.get('late').tools.size, 8)
+  assert.equal(t.agents.get('late').tools.size, 7)
   await t.emit('agent/created', { agent: t.agents.get('late') })
-  assert.equal(t.agents.get('late').tools.size, 8)
+  assert.equal(t.agents.get('late').tools.size, 7)
   await t.emit('agent/disposed', { agent: t.agents.get('late') })
   assert.equal(t.agents.get('late').tools.size, 0)
   t.dispose()
@@ -585,4 +584,15 @@ test('duplicate binding: one loop per agent, last binding wins, replacement is r
   assert.match(status, /s2 -> dsh-2/)
   assert.doesNotMatch(status, /dsh-1/)
   t.dispose(); hub.close()
+})
+
+test('the coordinator-only tool is never offered to a dsh session, even when the hub lists it', async () => {
+  const t = setup()
+  const agent = t.mkAgent('s1')
+  await t.emit('agent/created', { agent })
+  const hubTools = JSON.parse(fs.readFileSync(new URL('../tools.json', import.meta.url), 'utf8')).map((x) => x.name)
+  assert.ok(hubTools.includes('xmuse_approve'), 'the bundled copy mirrors the hub (8 tools)')
+  assert.ok(!agent.tools.has('xmuse_approve'))
+  assert.equal(agent.tools.size, 7)
+  t.dispose()
 })

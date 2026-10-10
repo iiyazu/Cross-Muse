@@ -96,6 +96,8 @@ export function propertyMap(schema) {
   return Object.fromEntries(Object.entries(schema.properties ?? {}).map(([k, v]) => [k, toDsl(v, req.has(k))]))
 }
 
+const COORDINATOR_ONLY = new Set(['xmuse_approve'])
+
 const loadToolSpecs = (stateDir, log) => {
   const read = (p) => {
     const specs = JSON.parse(readFileSync(p, 'utf8'))
@@ -431,7 +433,8 @@ export function apply(ctx, config) {
   let toolSpecs = []
   try {
     const loaded = loadToolSpecs(stateDir, log)
-    toolSpecs = loaded.specs
+    // a dsh session is never the desktop coordinator: the hub would refuse xmuse_approve, so do not offer it
+    toolSpecs = loaded.specs.filter((t) => !COORDINATOR_ONLY.has(t.name))
     selfCheck.tools = `${toolSpecs.length} from ${loaded.source}`
   } catch (e) {
     selfCheck.tools = `unavailable: ${errText(e)}`

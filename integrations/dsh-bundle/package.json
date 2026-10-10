@@ -9,12 +9,19 @@
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
-  "scripts": { "test": "node --import ./test/register.mjs --test test/bundle.test.mjs" },
-  "files": ["index.js", "tools.json", "cordis.patch.yml", "locale/*.json"],
+  "scripts": {
+    "test": "node --import ./test/register.mjs --test test/bundle.test.mjs"
+  },
+  "files": [
+    "index.js",
+    "tools.json",
+    "cordis.patch.yml",
+    "locale/*.json"
+  ],
   "peerDependencies": {
-    "@deepseek-ai/dsh-commands": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-commands": ">=0.2.0-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0"
   },
   "dsh": {
     "bundle": {
