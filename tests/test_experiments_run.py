@@ -34,6 +34,7 @@ def test_rot_text_is_the_blockquote_of_that_rot():
         for n in (1, 2):
             t = run.rot_text(seed, n)
             assert t.startswith("决定（supersedes") and "\n" in t
+            assert t.endswith("把涉及这条约定的断言改成新约定，其余测试不要动。")  # what to do with the old-convention tests
     assert "十进制字符串" in run.rot_text("ledger", 1) and "uncategorized" in run.rot_text("ledger", 2)
 
 
@@ -53,6 +54,7 @@ def test_parse_counts_reads_verbose_unittest_output():
     c = run.parse_counts(txt)
     assert c["tests"] == {"test_rot1_a": "ok", "test_rot1_b": "fail", "test_rot2_c": "fail"}
     assert (c["passed"], c["failed"]) == (1, 2)
+    assert c["ids"] == {"R.test_rot1_a": "ok", "R.test_rot1_b": "fail", "R.test_rot2_c": "fail"}  # Class.method
 
 
 @pytest.mark.parametrize("seed,bug", [("ledger", "1"), ("ledger", "2"), ("minisql", "1"), ("pipeline", "2")])

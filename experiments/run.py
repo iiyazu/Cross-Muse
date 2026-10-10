@@ -71,9 +71,10 @@ def rot_text(seed: str, n: int) -> str:
 
 def parse_counts(text: str) -> dict:
     """unittest -v output -> {test name: ok|fail}, plus totals."""
-    tests = {m[1]: "ok" if m[2] == "ok" else "fail"
-             for m in re.finditer(r"^(\w+) \([^)]*\)(?:\n.*?)? \.\.\. (ok|FAIL|ERROR)", text, re.M)}
-    return {"tests": tests, "passed": sum(v == "ok" for v in tests.values()),
+    found = list(re.finditer(r"^(\w+) \(([^)]*)\)(?:\n.*?)? \.\.\. (ok|FAIL|ERROR)", text, re.M))
+    tests = {m[1]: "ok" if m[3] == "ok" else "fail" for m in found}
+    ids = {(m[2].split(".", 1)[-1] if "." in m[2] else m[1]): "ok" if m[3] == "ok" else "fail" for m in found}  # Class.method
+    return {"tests": tests, "ids": ids, "passed": sum(v == "ok" for v in tests.values()),
             "failed": sum(v == "fail" for v in tests.values())}
 
 
@@ -298,9 +299,10 @@ class Run:
         (out / "public.status").write_text(st)
         hid = w / "tests" / f"test_hidden_{seed}.py"
         shutil.copy(EXP / "hidden" / hid.name, hid)
-        st, txt = run(["discover", "-s", "tests", "-p", "test_hidden_*.py"])
+        st, txt = run(["discover", "-s", "tests", "-p", "test_hidden_*.py", "-v"])
         hid.unlink()
         (out / "tests-hidden.txt").write_text(txt)
+        (out / "hidden-tests.json").write_text(json.dumps(parse_counts(txt), indent=1))  # per case: metrics.py drops the rot-affected ones
         (out / "hidden.status").write_text(st)
         rt = w / f"post_rot_test_{seed}.py"
         shutil.copy(EXP / "rot" / rt.name, rt)

@@ -7,7 +7,9 @@ A results dir is one run folder written by run.py (meta.json inside) or a parent
 sub-folder per task). Writes DIR/metrics.json (per run + per group), DIR/metrics.md (tables) and
 DIR/view-curve.csv (entries in each agent's view at every wake). DIR defaults to the current directory.
 
-Per run: completion (public + hidden tests), turns and tokens (by agent), human interventions (the rot message is
+Per run: completion (public + hidden tests; after an injected rot: public + the hidden tests NOT listed in
+rot-affects/<seed>-rot<n>.txt + rot verdict "followed"; both the raw hidden result and hidden_unaffected are reported,
+and a rot run without hidden-tests.json has completed=None), turns and tokens (by agent), human interventions (the rot message is
 not counted), injection share (align_tokens / input+cache_read+cache_write per turn), align_mode distribution, rot
 verdict (followed | partial | ignored from rot-tests.json), declaration rate (declare-checklist/<seed>.txt: label |
 regex, matched against statements of decision/assumption/convention entries authored by agents) and, in review
@@ -58,6 +60,21 @@ def rot_verdict(d: Path, meta: dict) -> dict:
             "superseded_entry": rot.get("supersedes")}
 
 
+def hidden_unaffected(d: Path, meta: dict) -> dict | None:
+    """Hidden tests minus the ones the injected rot legitimately breaks (rot-affects/<seed>-rot<n>.txt).
+
+    None when no rot was injected or the per-test results are missing (hidden-tests.json, written by run.py)."""
+    rot = meta.get("rot") or {}
+    f, a = d / "hidden-tests.json", EXP / "rot-affects" / f"{meta['seed']}-rot{rot.get('n')}.txt"
+    if not rot.get("injected") or not f.exists() or not a.exists():
+        return None
+    skip = {ln.strip() for ln in a.read_text().splitlines() if ln.strip()}
+    ids = json.loads(f.read_text()).get("ids") or {}
+    kept = {k: v for k, v in ids.items() if k not in skip}
+    return {"passed": sum(v == "ok" for v in kept.values()), "total": len(kept), "excluded": len(skip),
+            "failed": sorted(k for k, v in kept.items() if v == "fail")}
+
+
 def declaration(d: Path, meta: dict) -> dict | None:
     f = EXP / "declare-checklist" / f"{meta['seed']}.txt"
     e = d / "entries.json"
@@ -106,9 +123,16 @@ def run_metrics(d: Path) -> dict:
     rot = rot_verdict(d, meta)
     status = lambda n: (d / n).read_text().strip() if (d / n).exists() else None  # noqa: E731
     pub, hid = status("public.status"), status("hidden.status")
+    hu = hidden_unaffected(d, meta)
+    if pub is None:
+        done = None
+    elif meta["rot"].get("injected"):  # rot injected: unaffected hidden tests + the post-rot tests, not the original hidden run
+        done = None if hu is None else pub == "pass" and hu["total"] > 0 and not hu["failed"] and rot["verdict"] == "followed"
+    else:
+        done = pub == "pass" and hid == "pass"
     return {
         "run": meta["run"], "seed": meta["seed"], "group": meta["group"], "mode": meta["scenario"].get("MODE", "run"),
-        "completed": None if pub is None else (pub == "pass" and hid == "pass"), "public": pub, "hidden": hid,
+        "completed": done, "public": pub, "hidden": hid, "hidden_unaffected": hu,
         "quiet": meta["quiet"], "seconds": meta["seconds"],
         "turns": len(turns), "failed_turns": sum(t["state"] != "succeeded" for t in turns),
         "tokens": sum(tok(t) for t in turns), "by_agent": per_agent,
@@ -147,11 +171,12 @@ def fmt(v, pct=False) -> str:
 
 
 def markdown(runs: list[dict], groups: dict) -> str:
-    out = ["## Runs", "", "| run | group | mode | done | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["## Runs", "", "| run | group | mode | done | hidden (raw) | hidden unaffected | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in runs:
-        i, d, v = r["injection"], r["declaration"], r["review"]
-        out.append(f"| {r['run']}/{r['seed']} | {r['group']} | {r['mode']} | {fmt(r['completed'])} | {r['turns']} | {r['tokens']:,} |"
+        i, d, v, u = r["injection"], r["declaration"], r["review"], r["hidden_unaffected"]
+        out.append(f"| {r['run']}/{r['seed']} | {r['group']} | {r['mode']} | {fmt(r['completed'])} | {fmt(r['hidden'])} |"
+                   f" {u and f'{u['passed']}/{u['total']}' or '-'} | {r['turns']} | {r['tokens']:,} |"
                    f" {r['human_interventions']} | {fmt(i['share_total'], True)} | {fmt(i['share_median'], True)} | {fmt(i['share_max'], True)} |"
                    f" {' '.join(f'{k}:{n}' for k, n in sorted(i['modes'].items()))} | {r['rot']['verdict']} |"
                    f" {d and f'{d['declared']}/{d['total']}' or '-'} |"

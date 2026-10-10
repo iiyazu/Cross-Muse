@@ -15,7 +15,7 @@ def turn(i, agent, mode, align, view, inp=1000, cr=9000):
             "input": inp, "cache_read": cr, "cache_write": 0, "output": 100}
 
 
-def forge(root: Path, name, group="C", rot=None, tests=None, review=None, bug="1", seed="ledger", entries=()):
+def forge(root: Path, name, group="C", rot=None, tests=None, review=None, bug="1", seed="ledger", entries=(), hidden_ids=None, rot_tests=None):
     d = root / name
     d.mkdir(parents=True)
     scenario = {"GROUP": group, "SEED": seed, **({"MODE": "review", "BUG": bug} if review else {})}
@@ -35,7 +35,9 @@ def forge(root: Path, name, group="C", rot=None, tests=None, review=None, bug="1
         (d / "public.status").write_text("pass")
         (d / "hidden.status").write_text(tests)
     if rot.get("injected"):
-        (d / "rot-tests.json").write_text(json.dumps({"tests": {"test_rot1_a": "ok", "test_rot1_b": "fail", "test_rot2_c": "fail"}}))
+        (d / "rot-tests.json").write_text(json.dumps({"tests": rot_tests or {"test_rot1_a": "ok", "test_rot1_b": "fail", "test_rot2_c": "fail"}}))
+    if hidden_ids is not None:
+        (d / "hidden-tests.json").write_text(json.dumps({"ids": hidden_ids}))
     if review:
         (d / "review.md").write_text(review)
     return d
@@ -43,7 +45,8 @@ def forge(root: Path, name, group="C", rot=None, tests=None, review=None, bug="1
 
 def test_run_metrics_and_groups(tmp_path):
     rot = {"expected": True, "injected": True, "n": 1, "kind": "decision", "supersedes": "E1"}
-    forge(tmp_path, "ledger-C-1", rot=rot, tests="pass", entries=[
+    hid = {"TestParseAmountHidden.test_exact_cents_never_through_float": "fail", "TestRulesHidden.test_a": "ok", "TestRulesHidden.test_b": "ok"}
+    forge(tmp_path, "ledger-C-1", rot=rot, tests="fail", hidden_ids=hid, entries=[
         ("decision", "opencode-1", "Amounts are integer cents everywhere"), ("decision", "human", "wildcard rules"),
         ("question", "dsh-1", "float?"), ("assumption", "dsh-1", "Currencies are never mixed in a bucket")])
     forge(tmp_path, "ledger-B-1", group="B", rot={"expected": True, "injected": False}, tests="fail")
@@ -51,7 +54,8 @@ def test_run_metrics_and_groups(tmp_path):
     metrics.main([str(tmp_path / "ledger-C-1"), str(tmp_path / "ledger-B-1"), "--out", str(out)])
     m = json.loads((out / "metrics.json").read_text())
     c, b = m["runs"]
-    assert (c["completed"], c["turns"], c["tokens"]) == (True, 3, 3 * 10100)
+    assert (c["completed"], c["turns"], c["tokens"]) == (False, 3, 3 * 10100)  # rot only partial -> not complete
+    assert c["hidden"] == "fail" and c["hidden_unaffected"] == {"passed": 2, "total": 2, "excluded": 11, "failed": []}
     assert c["human_messages"] == 2 and c["human_interventions"] == 0 and c["notices"] == 1  # the rot message is not an intervention
     inj = c["injection"]
     assert inj["modes"] == {"snapshot": 1, "delta": 1, "none": 1} and inj["align_tokens"] == 500
@@ -60,12 +64,30 @@ def test_run_metrics_and_groups(tmp_path):
     assert c["declaration"]["declared"] == 2 and "line-numbers-1-based" in c["declaration"]["missing"]
     assert c["view_curve"] == {"opencode-1": [4, 6], "dsh-1": [6]}
     assert b["completed"] is False and b["rot"]["verdict"] == "not_injected" and b["review"] is None
-    assert m["groups"]["C"]["completion_rate"] == 1.0 and m["groups"]["B"]["completion_rate"] == 0.0
+    assert m["groups"]["C"]["completion_rate"] == 0.0 and m["groups"]["B"]["completion_rate"] == 0.0
     assert m["groups"]["C"]["rot"] == {"partial": 1}
     rows = list(csv.reader((out / "view-curve.csv").open()))
     assert rows[0][-2:] == ["wake_no", "view_entries"] and ["ledger-C-1", "ledger", "C", "opencode-1", "2", "6"] in rows
     md = (out / "metrics.md").read_text()
-    assert "| ledger-C-1/ledger | C |" in md and "## Groups" in md
+    assert "| ledger-C-1/ledger | C |" in md and "## Groups" in md and "| fail | 2/2 |" in md
+
+
+def test_completion_after_rot_ignores_only_the_listed_hidden_cases(tmp_path):
+    rot = {"expected": True, "injected": True, "n": 1, "kind": "decision", "supersedes": None}
+    listed = "TestParseAmountHidden.test_exact_cents_never_through_float"
+    all_ok = {"test_rot1_a": "ok", "test_rot1_b": "ok"}
+    forge(tmp_path, "followed", rot=rot, tests="fail", rot_tests=all_ok, hidden_ids={listed: "fail", "TestX.t": "ok"})
+    forge(tmp_path, "broke-unlisted", rot=rot, tests="fail", rot_tests=all_ok, hidden_ids={listed: "fail", "TestX.t": "fail"})
+    forge(tmp_path, "not-followed", rot=rot, tests="pass", hidden_ids={"TestX.t": "ok"})
+    forge(tmp_path, "no-per-case-data", rot=rot, tests="pass", rot_tests=all_ok)
+    forge(tmp_path, "no-rot", tests="pass")  # unchanged: public + raw hidden
+    runs = {r["run"]: r for r in (metrics.run_metrics(tmp_path / n) for n in
+                                  ("followed", "broke-unlisted", "not-followed", "no-per-case-data", "no-rot"))}
+    assert runs["followed"]["completed"] is True and runs["followed"]["hidden"] == "fail"
+    assert runs["broke-unlisted"]["completed"] is False and runs["broke-unlisted"]["hidden_unaffected"]["failed"] == ["TestX.t"]
+    assert runs["not-followed"]["completed"] is False  # raw hidden passes, but the rot was not followed
+    assert runs["no-per-case-data"]["completed"] is None and runs["no-per-case-data"]["hidden_unaffected"] is None
+    assert runs["no-rot"]["completed"] is True and runs["no-rot"]["hidden_unaffected"] is None
 
 
 def test_review_detection_and_false_positives(tmp_path):

@@ -47,8 +47,12 @@ experiments/
 │   ├── BUGS.md                      #   每个 bug 的类型、位置、抓它的隐藏测试方法名
 │   ├── bug-1/<pkg>/<file>.py        #   整文件替换，路径与 reference 一致
 │   └── bug-2/<pkg>/<file>.py        #   两个 bug 永远在不同文件
-└── rot/<task>.md                    # 中途被推翻的约定：新约定正文、时机、检查方法
-    post_rot_test_<task>.py          #   检测器：在参考实现上必须失败，改对了才通过
+├── rot/<task>.md                    # 中途被推翻的约定：新约定正文、时机、检查方法
+│   post_rot_test_<task>.py          #   检测器：在参考实现上必须失败，改对了才通过
+├── reference-rot/<task>-rot<n>/<pkg>/   # 按新约定改过的参考实现（n = 1, 2，各自独立基于 reference）：
+│                                    #   只放与 reference 不同的文件，用法是叠在 reference/<task>/<pkg> 上
+├── rot-affects/<task>-rot<n>.txt    # 该 rot 按设计会弄挂的隐藏用例（Class.method，一行一个），由 rot_affects.py 生成
+└── rot_affects.py                   # 生成/核对上面的清单：`python3 rot_affects.py [--check]`
 ```
 
 两点说明：
@@ -74,7 +78,7 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 - 没上架的任务会被跳过并打印 `[SKIP] ...`（`TASKS` 全集在 `verify.py` 顶部；
   `pipeline` 曾经就是靠这一条跳过的）。
 
-每个任务跑 **7 项检查**：
+每个任务跑 **7 项检查**，外加每个 rot 的 **3 项轮换检查**（见表后）：
 
 | 检查 | 期望 | 为什么 |
 |---|---|---|
@@ -85,6 +89,9 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 | bug-1 被隐藏测试抓到 | **失败** | 预埋 bug 是活的（≥1 条隐藏用例挂） |
 | bug-2 被隐藏测试抓到 | **失败** | 同上，且和 bug-1 不在同一个文件 |
 | rot 检测器在原约定上失败 | **失败** | rot 用例编码的是新约定，不是空转 |
+
+轮换检查（`<task>-rot<n>`，n = 1, 2）：轮换参考实现过对应的 post-rot 用例；`rot-affects/<task>-rot<n>.txt`
+与它在隐藏测试上实际失败的用例一致；去掉清单里的用例后，隐藏测试在它上面全过。
 
 ### 加一个新任务
 
@@ -120,7 +127,7 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 
 | 指标 | 定义 | 数据来源 |
 |---|---|---|
-| **完成率** | 公开测试 + 隐藏测试都通过的任务数 / 该组任务数（每个任务至少 5 次） | 复跑 `tests/test_public.py` 与 `hidden/test_hidden_<task>.py` |
+| **完成率** | 公开测试 + 隐藏测试都通过的任务数 / 该组任务数（每个任务至少 5 次）。**注入过 rot 的 run**：公开测试通过 + 隐藏测试中**不在** `rot-affects/<task>-rot<n>.txt` 里的用例全过 + rot 遵守为 `followed`（旧约定的隐藏用例按设计会挂，不计入）；`metrics.json` 同时给出原始 `hidden` 与 `hidden_unaffected`（过/总） | 复跑 `tests/test_public.py` 与 `hidden/test_hidden_<task>.py`（`-v`，逐用例结果存 `hidden-tests.json`） |
 | **轮次** | 一次 run 的 `turns` 行数；按 agent、按 `mode`（chat/code）拆开看 | `turns` |
 | **token** | `Σ(input + cache_read + cache_write + output)`，按 agent / 按组汇总 | `turns` |
 | **人介入次数** | 人类消息数 − 1（首条任务消息不算介入）；公告类 notice 单独列出 | `messages`（`check.py` 的 `human_interventions` / `notices`） |
