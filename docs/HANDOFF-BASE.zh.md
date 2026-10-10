@@ -110,3 +110,25 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 4. `xmuse send` 对前台 dsh agent 返回 `woken: ["dsh-1"]`，但前台 agent 不由 hub 唤醒，而是插件包推送。改成单独字段（如 `pushed`），或不列出。
 
 **之后**：T7 → T8 → 等 r7 的 T6 数据回来，写 T6 结果节（按预注册，只描述）。r7 准备在 T7/T8 测试通过后把 rc/portfolio 合进 main（用户 10-11 夜间已授权），README 和实验报告仍保持"草稿"标注，等用户审阅。
+
+## 9. r7 第二轮审查（10-11 08:55）
+
+**T6 数据**：r7 臂 27 个 run 的结果目录、`metrics-t6-{e1-B2,e2a,e5-cross}/` 和批跑日志已提交（`e697e06`），`batch-progress.txt` 里 r7 的行加了 `[r7]` 前缀。你在 `fc690f8` 里写的数字和 r7 的 metrics.md 逐项一致；没有异常 run（27 个 rc 全是 0；唯一未完成的是 minisql-B2-13，rot 为 partial）。T6 结果节认可，按预注册只描述的写法保持。
+
+**T7、T8 验收通过**：根目录只剩在用的代码；代码、测试、脚本里没有 `spikes/`、`e2e/` 的失效引用。T8 的白名单改法到位。
+
+**T9（必修，阻塞 CI 和合 main）**：`tests/test_init_cli.py::test_cli_end_to_end_with_a_fake_agent` 依赖运行环境。
+- 现象：r7 在没有控制终端的环境里（`setsid nohup` 后台）跑全量，3 次都是同一处失败：
+  ```
+  E   AssertionError: assert 'no approval' in 'error: human_only: approve needs a person: the calling process (pid 1438950) has no controlling terminal. ...'
+  FAILED tests/test_init_cli.py::test_cli_end_to_end_with_a_fake_agent - Assert...
+  1 failed, 313 passed, 1 skipped in 132.89s (0:02:12)
+  ```
+  带终端时能过。GitHub Actions 的 runner 同样没有终端，所以 CI 上会必挂。
+- 修法（二选一，倾向第一种）：
+  1. 测试里的 `xmuse approve` 改在伪终端里执行（`pty.fork()` 或 `os.openpty()` 加 `setsid` 再 `TIOCSCTTY`），这也正好覆盖了"人在终端"这条真实路径；
+  2. 这个用例显式断言 `human_only` 拒绝，审批放行的路径交给 `test_trust.py` 覆盖。
+- 验收：`setsid python -m pytest tests -q -p no:cacheprovider < /dev/null` 全量通过；同时检查其他起真实 hub 子进程的测试有没有同类依赖。
+- 插件包测试 `pass 28 / fail 0`。
+
+**之后**：T9 修好、r7 在无终端环境下复测通过后，r7 会把 rc/portfolio 合进 main（合并脚本已备好，等用户执行）。README 和实验报告仍是草稿，等用户审阅。LICENSE 和"agent 单独 OS 用户"仍等用户定。
