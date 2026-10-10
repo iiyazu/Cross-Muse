@@ -1,0 +1,10 @@
+# T6 E1 arm B2 (r7: needs dsh)
+ledger-B2 1
+minisql-B2 1
+pipeline-B2 1
+ledger-B2 2
+minisql-B2 2
+pipeline-B2 2
+ledger-B2 3
+minisql-B2 3
+pipeline-B2 3

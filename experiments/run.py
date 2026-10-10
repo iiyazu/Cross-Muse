@@ -7,7 +7,8 @@ group (README section 4). The runner rebuilds the workspace under $E2E_WS_ROOT (
 hub into the group's mode, sends the task, injects the rot message at its moment, waits for the hub to go
 quiet and collects everything into experiments/results/<scenario>-<n>/ (hub state: experiments/state-*/).
 
-Scenario keys: SEED | SEEDS (group L: tasks in order, same hub and same sessions), GROUP (A|B|C|L), MODE (run|review),
+Scenario keys: SEED | SEEDS (group L: tasks in order, same hub and same sessions), GROUP (A|B|C|L|S; S = one agent,
+REVIEW equal to IMPL: it implements and reviews itself), OVERLAY (files from overlays/<name>/<seed>/ over the seed), MODE (run|review),
 IMPL, REVIEW (one id, or two separated by a comma), GOAL (optional), AGENTS ("id:vendor[:model] ..."; a claude agent
 MUST carry a model, there is no fallback to the default Opus), ROT (1|2|none), ROT_AT (review_request |
 review_reply | turn:N), ROT_MATCH (regex over active entries; the newest match is superseded by the rot decision),
@@ -36,7 +37,9 @@ from pathlib import Path
 EXP = Path(__file__).resolve().parent
 REPO = EXP.parent
 XMUSE = [str(REPO / "bin" / "xmuse")]
-GROUPS = {"A": ("all", "off"), "B": ("mention", "off"), "C": ("mention", "on"), "L": ("mention", "on")}
+# S (T6): a single agent, so wake mode is moot; alignment off, like B
+GROUPS = {"A": ("all", "off"), "B": ("mention", "off"), "C": ("mention", "on"), "L": ("mention", "on"),
+          "S": ("mention", "off")}
 PKG = {"ledger": "ledger", "minisql": "minisql", "pipeline": "pipeline"}
 VENDORS = ("claude", "opencode", "dsh")
 
@@ -143,10 +146,13 @@ def scrub(src: str, module: str) -> str:
     return "".join(ln for ln in src.splitlines(True) if not ln.lstrip().startswith("#"))
 
 
-def add_seed(ws: Path, seed: str, sub: str, review_bug: str | None = None) -> None:
-    """Copy seeds/<seed> to ws/<sub>; review mode: the finished reference implementation with the planted bug."""
+def add_seed(ws: Path, seed: str, sub: str, review_bug: str | None = None, overlay: str | None = None) -> None:
+    """Copy seeds/<seed> to ws/<sub>; review mode: the finished reference implementation with the planted bug.
+    overlay: files from overlays/<overlay>/<seed>/ replace the seed's (T6: SPEC with its ambiguities settled)."""
     dst = ws / sub if sub else ws
     shutil.copytree(EXP / "seeds" / seed, dst, dirs_exist_ok=True)
+    if overlay and (EXP / "overlays" / overlay / seed).is_dir():
+        shutil.copytree(EXP / "overlays" / overlay / seed, dst, dirs_exist_ok=True)
     if review_bug:
         shutil.rmtree(dst / PKG[seed], ignore_errors=True)
         shutil.copytree(EXP / "reference" / seed / PKG[seed], dst / PKG[seed])
@@ -169,6 +175,11 @@ def task_text(sc: dict, seed: str, sub: str, thread: str) -> str:
                               "in the package with a working implementation; tests/test_public.py must pass")
     revs = review.split(",")
     run = f"(run: {'cd ' + sub + ' && ' if sub else ''}python3 -m unittest discover -s tests)"
+    if revs == [impl]:  # T6 group S: one agent implements and reviews its own work, nobody else in the room
+        roles = (f"Role: {impl} works alone. Implement, then review your own work against SPEC.md: run the tests and "
+                 "probe every SPEC rule with edge cases of your own (in a throwaway script, not committed), fix every "
+                 "problem you find, and repeat until you are confident it is correct. Then report the result to human.")
+        return f"Task: {where}{goal} {run}. {roles} Do not push, merge or touch files outside this repo."
     who = (f"{revs[0]} and {revs[1]} both review" if len(revs) > 1 else f"{review} reviews")
     roles = (f"Roles: {impl} implements; {who}. When the implementation is ready, {impl} sends a review_request in "
              f"{thread} that mentions {' and '.join(revs)}. Each reviewer checks the code against SPEC.md, runs the tests, "
@@ -176,6 +187,26 @@ def task_text(sc: dict, seed: str, sub: str, thread: str) -> str:
              f"in {thread} with concrete findings or an explicit approval. {impl} fixes every finding and asks again "
              f"until all reviewers approve. Then {impl} reports the result to human.")
     return f"Task: {where}{goal} {run}. {roles} Do not push, merge or touch files outside this repo."
+
+
+def provenance(agents) -> dict:
+    """What produced this run (audit C2-2): hub commit, dirty flag, each agent's model, vendor CLI versions."""
+    def out(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=REPO).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    vendors = {v for _, v, _ in agents}
+    return {"hub_commit": out(["git", "rev-parse", "HEAD"]), "hub_dirty": bool(out(["git", "status", "--porcelain",
+                                                                                    "--", "hub", "shim"])),
+            "models": {aid: model or default_model(v) for aid, v, model in agents},
+            "versions": {v: out([v, "--version"]) for v in sorted(vendors) if v in ("claude", "opencode")}}
+
+
+def default_model(vendor: str) -> str | None:
+    """The hub's default for a vendor (xmuse.config.MODELS), read from the hub source next to this runner."""
+    m = re.search(r'"%s":\s*"([^"]+)"' % vendor, (REPO / "hub" / "src" / "xmuse" / "config.py").read_text())
+    return m and m.group(1)
 
 
 class Run:
@@ -189,7 +220,7 @@ class Run:
         self.agents = parse_agents(sc.get("AGENTS", "opencode-1:opencode dsh-1:dsh"))
         ids = {a[0] for a in self.agents}
         if self.group not in GROUPS or not {sc["IMPL"], *sc["REVIEW"].split(",")} <= ids:
-            raise SystemExit(f"{scenario}: GROUP must be A|B|C|L and IMPL/REVIEW must be in AGENTS ({', '.join(sorted(ids))})")
+            raise SystemExit(f"{scenario}: GROUP must be A|B|C|L|S and IMPL/REVIEW must be in AGENTS ({', '.join(sorted(ids))})")
         self.seeds = sc["SEEDS"].split() if self.group == "L" else [sc["SEED"]]
         self.root = Path(os.environ.get("E2E_WS_ROOT") or f"/mnt/c/Users/{os.environ['USER']}/xmuse-exp")
         self.ws, self.res = self.root / f"ws-{self.name}", EXP / "results" / self.name
@@ -336,7 +367,7 @@ class Run:
         self.ws.mkdir(parents=True)
         git(self.ws, "init", "-q")
         review = self.sc.get("BUG") if self.sc.get("MODE") == "review" else None
-        add_seed(self.ws, self.seeds[0], self.seeds[0] if self.group == "L" else "", review)
+        add_seed(self.ws, self.seeds[0], self.seeds[0] if self.group == "L" else "", review, self.sc.get("OVERLAY"))
         self.x("init", ".")
         cfgf = next(self.state_root.glob("*/config.json"))
         wake, alignment = GROUPS[self.group]
@@ -436,7 +467,7 @@ class Run:
             (out / "summary.json").write_text(r.stdout)
         meta = {"run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
                 "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
-                "rot": rot}
+                "rot": rot, "provenance": provenance(self.agents)}
         if self.mo_enabled():
             meta["memoryos"] = {"enabled": True, "url": self.mo_url, "capabilities": self.mo_caps, **mo_stats}
         (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
@@ -485,7 +516,7 @@ class Run:
                     git(self.ws, "add", "-A")
                     git(self.ws, "commit", "-qm", f"end of {self.seeds[i - 1]}", check=False)
                     self.x("thread", "close", f"#task-{self.seeds[i - 1]}")
-                    add_seed(self.ws, seed, seed)
+                    add_seed(self.ws, seed, seed, overlay=self.sc.get("OVERLAY"))
                 stages.append(self.stage(seed, i))
         finally:
             try:
