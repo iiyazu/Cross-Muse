@@ -259,12 +259,24 @@ class Replay(unittest.TestCase):
         self.assertEqual(set(r["recall"]["memoryos_only"]) & set(r["recall"]["newest_only"]), set())
         self.assertGreaterEqual(r["cost"]["curate"][0]["usage"]["output_tokens"], 1)
         self.assertEqual(r["cost"]["unmetered_attempts"], 0)
+        # usage_total sums every curate response, in the run and across runs in totals
+        curates = r["cost"]["curate"]
+        self.assertEqual(len(curates), 3)
+        self.assertEqual(r["cost"]["usage_total"]["output_tokens"], sum(c["usage"]["output_tokens"] for c in curates))
+        self.assertEqual(r["cost"]["usage_total"]["attempts"], sum(c["usage"]["attempts"] for c in curates))
+        self.assertGreater(r["cost"]["usage_total"]["attempts"], 1)
+        self.assertEqual(report["totals"]["usage_total"], r["cost"]["usage_total"])
         self.assertTrue((out / "report.md").read_text(encoding="utf-8").startswith("# MemoryOS offline replay report"))
         # the response files carry status and seconds so an interrupted run can be diagnosed
         resp = json.loads((out / run["name"] / "recall.resp.json").read_text(encoding="utf-8"))
         self.assertEqual(resp["status"], 200)
         self.assertIsInstance(resp["seconds"], float)
         self.assertGreater(len(resp["body"]["ranked"]), 0)
+
+    def test_sum_usage_adds_across_runs(self):
+        tot = rmo.sum_usage([{"attempts": 2, "total_tokens": 10, "unmetered_attempts": 1, "note": "x"},
+                             {"attempts": 3, "total_tokens": 5, "prompt_tokens": 4}, {}, None])
+        self.assertEqual(tot, {"attempts": 5, "total_tokens": 15, "unmetered_attempts": 1, "prompt_tokens": 4})
 
     def test_send_is_resumable_and_health_gated(self):
         out = self.build(synthetic(n=20))
