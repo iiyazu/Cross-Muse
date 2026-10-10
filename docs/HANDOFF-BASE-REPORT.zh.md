@@ -94,3 +94,40 @@ FAILED tests/test_mail.py::test_handoff_keeps_why_first_fields - IndexError: ...
 - `grep` 剩下的唯一命中是 host.py 报错信息里的示例 `XMUSE_WSL_DISTRO=Ubuntu-24.04`，这是有意保留的。`tests/fixtures/*.jsonl` 里的 `/home/user` 是录制数据，没改。`spikes/`、`e2e/` 不在 T3 范围，留给 T7。
 - 在 r7（interop 正常、装了 dsh）上没跑过 doctor，dsh 那几项只有单测覆盖。
 - 插件包没有自动推导 state：它跑在 Windows 侧，不知道是哪个工作区。现在的做法是 doctor 打印出值，由用户填进去。
+
+## T4 门面（草稿，未对外发布；2026-10-11）
+
+**提交**：`05bbca3`（实验报告）、`c4478aa`（README、README.en、CI）
+
+**做了什么**
+- **实验报告**：`docs/design/XMUSE2-M2B-EXP-REPORT.zh.md` 按审计 C 节改写，并补了三节。
+  - **长会话组**：5 个 run，含 long-L-2 的残留数据。指标用仓库自带的 `experiments/metrics.py` 重新算，结果存进 `experiments/results/metrics-long-all/`。
+  - **T1 回放**：数据来自 r7 上的 `~/dsh-tasks/runs/t1-replay/report.md/report.md`，那份报告没进仓库。我只读了它，汇总数是逐表加出来的。
+  - **MemoryOS 运维**：数据来自 long-L-mo-1、long-L-mo-2 的 `memoryos.log` 和指标。
+  - 复核组补上了 review-ledger-bug1-1（6/6），指标在 `metrics-review-all/`。
+- **按审计改的措辞**：
+  - 删掉 minisql 的 p≈0.03，改为 3/7 对 0/6、单侧 p≈0.12，并写明审计列的五个问题；
+  - 删掉"有利于对齐层的信号"；
+  - 注入占比改说"便宜，不等于有效"；
+  - 写明后 21 个 run 不算跨模型；
+  - rot 和复核注明有天花板效应、没有基线；
+  - "无人工干预"改成"完成或失败都不需要人插手"，并列出两个例外。
+- **README.md（中文）和 README.en.md**：一句话定位、要解决的问题、mermaid 架构图、快速开始（bootstrap → init → agent add → doctor → hub start）、关键设计、实验摘要（分"支持"和"不支持"两部分）和局限、目录结构。信任模型按审计照实写成"防误操作，不防恶意 agent"。许可证写的是"待定"。
+- **`.github/workflows/ci.yml`**：两个 job。一个跑 hub 测试（uv、Python 3.12、node 22、shim `npm ci`），另一个跑 dsh 插件包的 `npm test`。没有推到 GitHub。
+
+**测试结果原文**（模拟 CI：/tmp 下的全新克隆加未提交的文件，Python 3.12.14，去掉 `WSL_DISTRO_NAME` 等 WSL 变量和 /mnt 下的 PATH）
+```
+FAILED tests/test_claude_engine.py::test_stop_interrupts_running_turn_and_cancels_queue
+1 failed, 301 passed, 1 skipped in 98.49s (0:01:38)
+ℹ pass 27
+ℹ fail 0
+```
+- 失败的是第 203 行的断言（`canceled_deliveries == 1 and interrupted_turns == [1]`），只在这次全量里出现过。之后单独跑 3 次、并行跑 6 份，都没有复现。原因没查清，归为负载下偶发，和 T2 里 sweep 用例的情况类似。**需要 r7 在原生盘上多跑几次确认。**
+- 原生盘上全量用时 98 s，达到 2 分钟目标。
+
+**没做 / 拿不准**
+- **LICENSE 没加**：交接要求先问用户，我已在对话里问了，等回复。
+- 实验报告第九节的 MemoryOS token 列取的是 metrics 输出里最后一个阶段的数，看起来是整个 run 的累计值，没有逐条核实。
+- 我数出的 T1 回放 curate 调用是 22 次（3 次 502），审计写的是 25 次。报告里以 22 为准，并注明了差异。
+- README 的快速开始命令，我在 /tmp 的全新克隆上跑通了 bootstrap、init、agent add 和 doctor；`hub start` 以后的步骤（会真的唤醒 agent、花 token）没有跑。
+- README 目录表里写了 `spikes/`、`e2e/` "计划移到 archive/"，这要等 T7 做完才成立。
