@@ -11,18 +11,26 @@ Scenario keys: SEED | SEEDS (group L: tasks in order, same hub and same sessions
 IMPL, REVIEW (one id, or two separated by a comma), GOAL (optional), AGENTS ("id:vendor[:model] ..."; a claude agent
 MUST carry a model, there is no fallback to the default Opus), ROT (1|2|none), ROT_AT (review_request |
 review_reply | turn:N), ROT_MATCH (regex over active entries; the newest match is superseded by the rot decision),
-MAX_CHAIN_WAKES, TIMEOUT, SETTLE, BUG (MODE=review: planted bug number), HUB_CFG (JSON merged into config.json).
+MAX_CHAIN_WAKES, TIMEOUT, SETTLE, BUG (MODE=review: planted bug number), HUB_CFG (JSON merged into config.json),
+MEMORYOS (on: start a MemoryOS service for this run and point the hub at it; anything else: off).
 Environment AGENTS / E2E_WS_ROOT override the scenario.
+MemoryOS env: MEMORYOS_CMD (default `memoryos api --host 127.0.0.1 --port <free port>`; use {port} for the port),
+MEMORYOS_DIR (required when MEMORYOS=on), plus MEMORYOS_EMBEDDING_PROVIDER=fastembed, HF_HUB_OFFLINE=1,
+MEMORYOS_CURATE_TIMEOUT_S=200 forced; FASTEMBED_CACHE_PATH, MEMORYOS_LLM_PROVIDER, OPENCODE_API_KEY inherited.
 """
+import atexit
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
+import socket
 import sqlite3
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 EXP = Path(__file__).resolve().parent
@@ -31,6 +39,35 @@ XMUSE = [str(REPO / "bin" / "xmuse")]
 GROUPS = {"A": ("all", "off"), "B": ("mention", "off"), "C": ("mention", "on"), "L": ("mention", "on")}
 PKG = {"ledger": "ledger", "minisql": "minisql", "pipeline": "pipeline"}
 VENDORS = ("claude", "opencode", "dsh")
+
+
+def free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+def memoryos_cmd(port: int) -> list[str]:
+    raw = os.environ.get("MEMORYOS_CMD")
+    if not raw:
+        return ["memoryos", "api", "--host", "127.0.0.1", "--port", str(port)]
+    parts = shlex.split(raw)
+    if "{port}" in raw:
+        return [a.replace("{port}", str(port)) for a in parts]
+    if "--port" not in parts:
+        return [*parts, "--port", str(port)]
+    return parts
+
+
+def memoryos_env() -> dict:
+    d = os.environ.get("MEMORYOS_DIR")
+    if not d:
+        raise SystemExit("MEMORYOS=on needs MEMORYOS_DIR set to your MemoryOS checkout "
+                         "(the directory where `uv sync --frozen --no-dev --extra remote --extra full-local` was run)")
+    return {**os.environ, "MEMORYOS_EMBEDDING_PROVIDER": "fastembed",
+            "HF_HUB_OFFLINE": "1", "MEMORYOS_CURATE_TIMEOUT_S": "200"}
 
 
 def parse_env(path: Path) -> dict:
@@ -155,6 +192,7 @@ class Run:
         self.state_root = EXP / f"state-{self.name}"
         self.env = {**os.environ, "XMUSE_STATE_ROOT": str(self.state_root)}
         self.db = None
+        self.mo_proc, self.mo_log, self.mo_url, self.mo_caps = None, None, "", []
 
     def x(self, *args, check=True) -> str:
         return sh([*XMUSE, *map(str, args)], cwd=self.ws, env=self.env, check=check)
@@ -169,11 +207,121 @@ class Run:
             "select 1 from deliveries d join agents a on a.id=d.recipient"
             " where d.state='queued' and d.wake=1 and a.paused=0")
 
+    def mo_enabled(self) -> bool:
+        return self.sc.get("MEMORYOS") == "on"
+
+    def mo_start(self) -> None:
+        if not self.mo_enabled():
+            return
+        env = memoryos_env()
+        mdir = env["MEMORYOS_DIR"]
+        port = free_port()
+        cmd = memoryos_cmd(port)
+        self.res.mkdir(parents=True, exist_ok=True)
+        self.mo_log = (self.res / "memoryos.log").open("wb")
+        self.mo_proc = subprocess.Popen(cmd, cwd=mdir, env=env, stdout=self.mo_log,
+                                        stderr=subprocess.STDOUT, start_new_session=True)
+        self.mo_url = f"http://127.0.0.1:{port}"
+        atexit.register(self.mo_stop)
+        caps, last, deadline = [], "", time.time() + 120
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(self.mo_url + "/health", timeout=5) as r:
+                    body = json.loads(r.read())
+                if isinstance(body, dict) and body.get("status") == "ok":
+                    c = body.get("capabilities")
+                    caps = list(c) if isinstance(c, (list, tuple)) else []
+                    break
+                last = f"bad /health: {str(body)[:200]}"
+            except Exception as e:
+                last = repr(e)[:200]
+            if self.mo_proc.poll() is not None:
+                raise SystemExit(f"MemoryOS exited during startup; see {self.res / 'memoryos.log'}")
+            time.sleep(1)
+        else:
+            self.mo_stop()
+            raise SystemExit(f"MemoryOS did not become ready in 120s ({last}); see {self.res / 'memoryos.log'}")
+        self.mo_caps = caps
+
+    def mo_stop(self) -> None:
+        p, self.mo_proc = getattr(self, "mo_proc", None), None
+        if not p:
+            return
+        try:
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait(timeout=10)
+        except Exception:
+            pass
+        finally:
+            try:
+                if getattr(self, "mo_log", None):
+                    self.mo_log.close()
+            except Exception:
+                pass
+            self.mo_log = None
+
+    def mo_parse_hub_log(self, hublog: Path) -> list:
+        calls, usages = [], []
+        if not hublog.exists():
+            return calls
+        call_re = re.compile(r"memoryos-call (\{.*\})")
+        use_re = re.compile(r"curate (\S+) usage (\{.*\})")
+        for line in hublog.read_text(errors="replace").splitlines():
+            m = call_re.search(line)
+            if m:
+                try:
+                    o = json.loads(m.group(1))
+                    calls.append({"path": o.get("path"), "ms": o.get("ms"), "ok": bool(o.get("ok")),
+                                  "usage": None, "raw": line[-500:]})
+                except Exception:
+                    continue
+                continue
+            m2 = use_re.search(line)
+            if m2:
+                try:
+                    usages.append(json.loads(m2.group(2)))
+                except Exception:
+                    pass
+        ui = 0
+        for c in calls:
+            if c["path"] == "/curate" and ui < len(usages):
+                c["usage"] = usages[ui]
+                ui += 1
+        for u in usages[ui:]:
+            calls.append({"path": "/curate", "ms": None, "ok": True, "usage": u, "raw": "curate usage"})
+        return calls
+
+    def mo_collect(self, out: Path) -> dict:
+        if not self.mo_enabled():
+            return {}
+        calls = self.mo_parse_hub_log(out / "hub.log")
+        (out / "memoryos-calls.json").write_text(json.dumps(calls, indent=1, ensure_ascii=False))
+        proposals, conflicts = 0, 0
+        try:
+            ej = json.loads((out / "entries.json").read_text())
+            proposals = sum(1 for e in ej.get("entries", [])
+                            if e.get("author") == "curate" and e.get("status") == "proposed")
+        except Exception:
+            pass
+        try:
+            lj = json.loads((out / "log.json").read_text())
+            conflicts = sum(1 for m in lj.get("messages", [])
+                            if m.get("kind") == "notice" and isinstance(m.get("body"), str) and "curate:" in m["body"])
+        except Exception:
+            pass
+        return {"proposals": proposals, "conflicts": conflicts}
+
     # ---- setup ---------------------------------------------------------------------
     def setup(self) -> None:
         for d in (self.ws, self.res, self.state_root):
             shutil.rmtree(d, ignore_errors=True)
         self.res.mkdir(parents=True)
+        self.mo_start()
         self.ws.mkdir(parents=True)
         git(self.ws, "init", "-q")
         review = self.sc.get("BUG") if self.sc.get("MODE") == "review" else None
@@ -183,6 +331,8 @@ class Run:
         wake, alignment = GROUPS[self.group]
         cfg = {**json.loads(cfgf.read_text()), "wake": wake, "alignment": alignment,
                "max_chain_wakes": int(self.sc.get("MAX_CHAIN_WAKES", 20)), **json.loads(self.sc.get("HUB_CFG", "{}"))}
+        if self.mo_enabled():
+            cfg["memoryos_url"] = self.mo_url
         cfgf.write_text(json.dumps(cfg, indent=2))
         for aid, vendor, model in self.agents:
             self.x("agent", "add", aid, "--vendor", vendor, *(["--model", model] if model else []))
@@ -258,6 +408,7 @@ class Run:
         log = next(self.state_root.glob("*/logs/hub.log"), None)
         if log:
             shutil.copy(log, out / "hub.log")
+        mo_stats = self.mo_collect(out)
         git(self.ws, "add", "-A")
         (out / "git-diff-stat.txt").write_text(git(self.ws, "diff", "--cached", "--stat", base, "--", sub or "."))
         (out / "git-status.txt").write_text(git(self.ws, "status", "--short"))
@@ -272,10 +423,12 @@ class Run:
                                 (out / "public.status").read_text(), (out / "hidden.status").read_text(), str(elapsed),
                                 str(rc)], capture_output=True, text=True)
             (out / "summary.json").write_text(r.stdout)
-        (out / "meta.json").write_text(json.dumps({
-            "run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
-            "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
-            "rot": rot}, indent=1, ensure_ascii=False))
+        meta = {"run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
+                "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
+                "rot": rot}
+        if self.mo_enabled():
+            meta["memoryos"] = {"enabled": True, "url": self.mo_url, "capabilities": self.mo_caps, **mo_stats}
+        (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
 
     def dump_tables(self, out: Path, first_turn: int) -> None:
         db = sqlite3.connect(f"file:{next(self.state_root.glob('*/hub.db'))}?mode=ro", uri=True)
@@ -313,18 +466,28 @@ class Run:
 
     def go(self) -> None:
         t0 = time.time()
-        self.setup()
-        stages = []
-        for i, seed in enumerate(self.seeds):
-            if i:  # long session: same hub, same sessions; the finished task's thread is closed, the next seed added
-                git(self.ws, "add", "-A")
-                git(self.ws, "commit", "-qm", f"end of {self.seeds[i - 1]}", check=False)
-                self.x("thread", "close", f"#task-{self.seeds[i - 1]}")
-                add_seed(self.ws, seed, seed)
-            stages.append(self.stage(seed, i))
-        self.x("hub", "stop", check=False)
+        try:
+            self.setup()
+            stages = []
+            for i, seed in enumerate(self.seeds):
+                if i:  # long session: same hub, same sessions; the finished task's thread is closed, the next seed added
+                    git(self.ws, "add", "-A")
+                    git(self.ws, "commit", "-qm", f"end of {self.seeds[i - 1]}", check=False)
+                    self.x("thread", "close", f"#task-{self.seeds[i - 1]}")
+                    add_seed(self.ws, seed, seed)
+                stages.append(self.stage(seed, i))
+        finally:
+            try:
+                self.x("hub", "stop", check=False)
+            except Exception:
+                pass
+            self.mo_stop()
+        self.db = None
         (self.res / "run.json").write_text(json.dumps({"run": self.name, "group": self.group, "stages": stages,
-                                                       "seconds": int(time.time() - t0)}, indent=1, default=str))
+                                                       "seconds": int(time.time() - t0),
+                                                       "memoryos": {"enabled": self.mo_enabled(),
+                                                                    "url": self.mo_url,
+                                                                    "capabilities": self.mo_caps} if self.mo_enabled() else {"enabled": False}}, indent=1, default=str))
         print(json.dumps({k: v for k, v in stages[-1].items() if k != "rot"} | {"rot_injected": stages[-1]["rot"]["injected"],
                                                                                  "results": str(self.res)}))
 

@@ -14,6 +14,9 @@ not counted), injection share (align_tokens / input+cache_read+cache_write per t
 verdict (followed | partial | ignored from rot-tests.json), declaration rate (declare-checklist/<seed>.txt: label |
 regex, matched against statements of decision/assumption/convention entries authored by agents) and, in review
 mode, whether the planted bug was named (review-keys/<seed>.json) plus false positives on modules without a bug.
+When the run enabled MemoryOS (meta memoryos.enabled), an ops section reports /recall and curate counts and
+median latencies, failures, summed curate usage (flagged as a lower bound when unmetered_attempts > 0),
+proposed curate entries and curate: conflict notices. Runs without MemoryOS omit this section.
 """
 import csv
 import json
@@ -44,6 +47,70 @@ def units(paths) -> list[Path]:
     for p in map(Path, paths):
         out += [p] if (p / "meta.json").exists() else sorted(d for d in p.iterdir() if (d / "meta.json").exists())
     return out
+
+
+def memoryos_metrics(d: Path, meta: dict) -> dict | None:
+    """Ops metrics for a MemoryOS-enabled run; None when MemoryOS was off.
+
+    Reads memoryos-calls.json (per-call path/ms/ok/usage from hub.log), entries.json
+    (author='curate' proposed count) and log.json (curate: conflict notices).
+    """
+    mo = meta.get("memoryos") or {}
+    enabled = bool(mo.get("enabled")) or meta.get("scenario", {}).get("MEMORYOS") == "on"
+    if not enabled:
+        return None
+    calls = []
+    try:
+        if (d / "memoryos-calls.json").exists():
+            calls = json.loads((d / "memoryos-calls.json").read_text())
+    except Exception:
+        calls = []
+    recall = [c for c in calls if c.get("path") == "/recall"]
+    curate = [c for c in calls if c.get("path") == "/curate"]
+    r_ms = [c["ms"] for c in recall if isinstance(c.get("ms"), (int, float))]
+    c_ms = [c["ms"] for c in curate if isinstance(c.get("ms"), (int, float))]
+    usages = [c["usage"] for c in calls if isinstance(c.get("usage"), dict)]
+    usage_total: dict = {}
+    attempts, unmetered = 0, 0
+    for u in usages:
+        for k, v in u.items():
+            if k in ("attempts", "unmetered_attempts"):
+                continue
+            if isinstance(v, (int, float)):
+                usage_total[k] = usage_total.get(k, 0) + v
+        a = u.get("attempts")
+        attempts += a if isinstance(a, int) else 1
+        um = u.get("unmetered_attempts")
+        unmetered += um if isinstance(um, int) else 0
+    try:
+        ej = json.loads((d / "entries.json").read_text()) if (d / "entries.json").exists() else {"entries": []}
+        proposals = sum(1 for e in ej.get("entries", [])
+                        if e.get("author") == "curate" and e.get("status") == "proposed")
+    except Exception:
+        proposals = mo.get("proposals", 0)
+    try:
+        lj = json.loads((d / "log.json").read_text()) if (d / "log.json").exists() else {"messages": []}
+        conflicts = sum(1 for m in lj.get("messages", [])
+                        if m.get("kind") == "notice" and isinstance(m.get("body"), str) and "curate:" in m["body"])
+    except Exception:
+        conflicts = mo.get("conflicts", 0)
+    if not proposals and isinstance(mo.get("proposals"), int):
+        proposals = mo["proposals"]
+    if not conflicts and isinstance(mo.get("conflicts"), int):
+        conflicts = mo["conflicts"]
+    return {
+        "enabled": True,
+        "capabilities": mo.get("capabilities", []),
+        "recall_calls": len(recall), "recall_ms_median": median(r_ms),
+        "recall_failures": sum(1 for c in recall if not c.get("ok")),
+        "curate_calls": len(curate), "curate_ms_median": median(c_ms),
+        "curate_failures": sum(1 for c in curate if not c.get("ok")),
+        "failures": sum(1 for c in calls if not c.get("ok")),
+        "usage_total": usage_total, "usage_calls": len(usages),
+        "usage_attempts": attempts, "unmetered_attempts": unmetered,
+        "usage_lower_bound": unmetered > 0,
+        "proposals": proposals, "conflicts": conflicts,
+    }
 
 
 def rot_verdict(d: Path, meta: dict) -> dict:
@@ -158,6 +225,7 @@ def run_metrics(d: Path) -> dict:
                       "share_median_injected": median([r for r in ratios if r]),
                       "modes": dict(Counter(t.get("align_mode") or "none" for t in turns))},
         "rot": rot, "declaration": declaration(d, meta), "review": review(d, meta),
+        "memoryos": memoryos_metrics(d, meta),
         "view_curve": {a: [t["view_entries"] for t in turns if t["agent_id"] == a] for a in per_agent},
     }
 
@@ -185,6 +253,14 @@ def fmt(v, pct=False) -> str:
     return "-" if v is None else f"{v:.1%}" if pct else f"{v:,.0f}" if isinstance(v, float) and abs(v) >= 100 else str(round(v, 2) if isinstance(v, float) else v)
 
 
+def fmt_usage(mo: dict) -> str:
+    if not mo or not mo.get("usage_total"):
+        return "-" if not mo or not mo.get("usage_calls") else "{} (n={})".format(
+            ", ".join(f"{k}={v}" for k, v in sorted(mo["usage_total"].items())), mo["usage_calls"]) + (" lower-bound" if mo.get("usage_lower_bound") else "")
+    s = ", ".join(f"{k}={v}" for k, v in sorted(mo["usage_total"].items()))
+    return f"{s} (n={mo['usage_calls']})" + (" lower-bound" if mo.get("usage_lower_bound") else "")
+
+
 def markdown(runs: list[dict], groups: dict) -> str:
     out = ["## Runs", "", "| run | group | mode | done | hidden (raw) | hidden unaffected | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |",
            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -203,6 +279,16 @@ def markdown(runs: list[dict], groups: dict) -> str:
                    f" {fmt(g['interventions_mean'])} | {fmt(g['injection_share_total'], True)} | {fmt(g['injection_share_max'], True)} |"
                    f" {' '.join(f'{a}:{n}' for a, n in sorted(g['rot'].items()))} | {fmt(g['declaration_rate_mean'], True)} |"
                    f" {fmt(g['review_detection_rate'], True)} | {fmt(g['review_false_positive_rate'], True)} |")
+    mo_runs = [r for r in runs if r.get("memoryos")]
+    if mo_runs:
+        out += ["", "## MemoryOS (ops; unattended: proposals are never confirmed)", "",
+                "| run | recall calls | recall ms median | curate calls | curate ms median | failures | usage total | proposals | conflicts |",
+                "|---|---|---|---|---|---|---|---|---|"]
+        for r in mo_runs:
+            m = r["memoryos"]
+            out.append(f"| {r['run']}/{r['seed']} | {m['recall_calls']} | {fmt(m['recall_ms_median'])} |"
+                       f" {m['curate_calls']} | {fmt(m['curate_ms_median'])} | {m['failures']} |"
+                       f" {fmt_usage(m)} | {m['proposals']} | {m['conflicts']} |")
     return "\n".join(out) + "\n"
 
 

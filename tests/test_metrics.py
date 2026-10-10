@@ -128,3 +128,64 @@ def test_parent_dir_with_stages_is_expanded(tmp_path):
     forge(parent, "ledger", group="L", tests="pass")
     forge(parent, "minisql", group="L", seed="minisql", tests="pass")
     assert [p.name for p in metrics.units([parent])] == ["ledger", "minisql"]
+
+
+def _forge_mo(root: Path, name):
+    d = forge(root, name, group="L", seed="ledger", tests="pass")
+    meta = json.loads((d / "meta.json").read_text())
+    meta["scenario"]["MEMORYOS"] = "on"
+    meta["memoryos"] = {"enabled": True, "url": "http://127.0.0.1:1", "capabilities": ["recall", "curate.collab"],
+                        "proposals": 2, "conflicts": 1}
+    (d / "meta.json").write_text(json.dumps(meta))
+    (d / "memoryos-calls.json").write_text(json.dumps([
+        {"path": "/recall", "ms": 20, "ok": True, "usage": None},
+        {"path": "/recall", "ms": 40, "ok": False, "usage": None},
+        {"path": "/recall", "ms": 30, "ok": True, "usage": None},
+        {"path": "/curate", "ms": 15000, "ok": True,
+         "usage": {"prompt_tokens": 800, "completion_tokens": 1200, "attempts": 1, "unmetered_attempts": 0}},
+        {"path": "/curate", "ms": 25000, "ok": True,
+         "usage": {"prompt_tokens": 700, "completion_tokens": 900, "attempts": 2, "unmetered_attempts": 1}},
+    ]))
+    (d / "entries.json").write_text(json.dumps({"entries": [
+        {"kind": "decision", "author": "curate", "statement": "a", "status": "proposed", "refs": "[2]"},
+        {"kind": "decision", "author": "curate", "statement": "b", "status": "proposed", "refs": "[2]"},
+        {"kind": "decision", "author": "opencode-1", "statement": "c", "status": "active", "refs": "[2]"}], "events": []}))
+    log = json.loads((d / "log.json").read_text())
+    log["messages"].append({"id": 10, "sender": "hub", "kind": "notice", "body": "curate: E1 and E2 may contradict each other: x"})
+    (d / "log.json").write_text(json.dumps(log))
+    return d
+
+
+def test_memoryos_absent_by_default(tmp_path):
+    d = forge(tmp_path, "plain", tests="pass")
+    m = metrics.run_metrics(d)
+    assert m["memoryos"] is None
+    out = tmp_path / "o"
+    metrics.main([str(d), "--out", str(out)])
+    assert "## MemoryOS" not in (out / "metrics.md").read_text()
+
+
+def test_memoryos_ops_metrics(tmp_path):
+    d = _forge_mo(tmp_path, "mo-run")
+    m = metrics.run_metrics(d)
+    mo = m["memoryos"]
+    assert mo["recall_calls"] == 3 and mo["recall_ms_median"] == 30 and mo["recall_failures"] == 1
+    assert mo["curate_calls"] == 2 and mo["curate_ms_median"] == 20000 and mo["curate_failures"] == 0
+    assert mo["failures"] == 1
+    assert mo["usage_total"] == {"prompt_tokens": 1500, "completion_tokens": 2100}
+    assert mo["usage_lower_bound"] is True and mo["unmetered_attempts"] == 1
+    assert (mo["proposals"], mo["conflicts"]) == (2, 1)
+    out = tmp_path / "o"
+    metrics.main([str(d), "--out", str(out)])
+    md = (out / "metrics.md").read_text()
+    assert "## MemoryOS" in md and "lower-bound" in md and "| mo-run/ledger | 3 | 30 | 2 | 20,000 | 1 |" in md
+
+
+def test_memoryos_mixed_runs_only_mo_shows_section(tmp_path):
+    _forge_mo(tmp_path, "mo")
+    forge(tmp_path, "plain", tests="pass")
+    out = tmp_path / "o"
+    metrics.main([str(tmp_path / "mo"), str(tmp_path / "plain"), "--out", str(out)])
+    runs = {r["run"]: r for r in json.loads((out / "metrics.json").read_text())["runs"]}
+    assert runs["mo"]["memoryos"] is not None and runs["plain"]["memoryos"] is None
+    assert "## MemoryOS" in (out / "metrics.md").read_text()
