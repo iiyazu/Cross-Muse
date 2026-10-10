@@ -9,11 +9,13 @@ import logging
 import queue
 import re
 import threading
+import time
 import urllib.request
 
 from . import align, db, mail
 
 log = logging.getLogger("xmuse.memoryos")
+logging.basicConfig(level=logging.INFO)  # hub.log keeps INFO memoryos-call lines for the runner
 KINDS = ("decision", "convention", "assumption", "question", "lesson")  # what collab may propose
 MSGS = ("message", "handoff", "review_request", "decision", "assumption", "question")  # what curate reads
 EVERY, WINDOW, CONTEXT, ACTIVE, SIMILAR = 8, 32, 8, 60, 0.88
@@ -31,14 +33,17 @@ class Client:
     def call(self, cap: str | None, path: str, body: dict | None, timeout: float | None = None) -> dict | None:
         if cap and cap not in self.caps:
             return None
+        t0 = time.monotonic()
         try:
             req = urllib.request.Request(self.url + path, data=body and json.dumps(body).encode(),
                                          headers={"content-type": "application/json"})
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
                 out = json.load(r)
+            log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": True}))
             return out if isinstance(out, dict) else None
         except Exception as e:  # noqa: BLE001 - every failure has the same meaning
             log.warning("memoryos %s failed: %r", path, e)
+            log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": False}))
             return None
 
     def rank(self, es: list[dict], scope: str, role: str, query: str, cap: int, budget: int) -> list[str] | None:
