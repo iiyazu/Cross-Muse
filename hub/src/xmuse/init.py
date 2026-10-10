@@ -76,7 +76,7 @@ def init(ws: Path) -> Path:
         claude_md.write_text("@AGENTS.md\n")
     elif "@AGENTS.md" not in claude_md.read_text():
         claude_md.write_text(claude_md.read_text().rstrip() + "\n\n@AGENTS.md\n")
-    _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/"])
+    _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/", ".xmuse-tmp/"])
     return state
 
 
@@ -92,10 +92,15 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     if not agent_id.replace("-", "").isalnum() or agent_id in (config.HUMAN, config.HUB):
         raise SystemExit("agent id: letters, digits and '-', not 'human' or 'hub'")
     if (settings or {}).get("desktop") and vendor != "claude":
-        raise SystemExit("--desktop is only for --vendor claude")
+        raise SystemExit("--desktop is only for --vendor claude or --vendor dsh")
+    if (settings or {}).get("foreground") and vendor != "dsh":
+        raise SystemExit("foreground mode is only for --vendor dsh")
     cfg = config.load(state)
     ws = Path(cfg["workspace"])
     conn = db.connect(state / "hub.db")
+    old = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
+    if old and old["vendor"] != vendor:
+        raise SystemExit(f"agent {agent_id} exists with vendor {old['vendor']}")
     other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
     if other:  # project configs carry one identity per vendor (M1 limit)
         raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
@@ -106,12 +111,18 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
             "(probe 2026-10-10: ENOTSUP on file writes); move the workspace under /mnt/c/ and retry")
     s = {"allowed_tools": cfg.get("claude_allow", CLAUDE_ALLOW)} if vendor == "claude" else {}
     s.update(settings or {})
-    tok = _token(state / "tokens" / agent_id)
     with db.tx(conn):
-        conn.execute("insert or replace into agents(id, vendor, model, family, role, settings, token_digest,"
-                     " created_at) values(?,?,?,?,?,?,?,?)",
-                     (agent_id, vendor, model or config.MODELS[vendor], config.FAMILIES[vendor], role,
-                      json.dumps(s), digest(tok), db.now()))
+        if old:  # re-add: new settings, same token and history
+            conn.execute("update agents set model=?, role=?, settings=? where id=?",
+                         (model or old["model"], role or old["role"], json.dumps(s), agent_id))
+        else:
+            tok = _token(state / "tokens" / agent_id)
+            conn.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at)"
+                         " values(?,?,?,?,?,?,?,?)",
+                         (agent_id, vendor, model or config.MODELS[vendor], config.FAMILIES[vendor], role,
+                          json.dumps(s), digest(tok), db.now()))
     agent = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
     WRITERS[vendor](ws, agent, state)
+    if s.get("foreground"):
+        _exclude(ws, [".xmuse-tmp/"])
     return agent

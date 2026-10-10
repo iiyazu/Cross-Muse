@@ -1,5 +1,6 @@
 """xmuse command line. Writes go through the hub (so the engine is kicked); reads go straight to hub.db."""
 import argparse
+import codecs
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -17,16 +19,22 @@ from .env import clean_env
 HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
 
 
-def call(state: Path, path: str, body: dict | None = None) -> dict:
+def call(state: Path, path: str, body: dict | None = None, token: str = "_admin") -> dict:
     hub = state / "hub.json"
     if not hub.exists():
         raise SystemExit("hub is not running (xmuse hub start)")
     port = json.loads(hub.read_text())["port"]
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body or {}).encode(),
-                                 headers={"authorization": "Bearer " + (state / "tokens" / "_admin").read_text().strip(),
+                                 headers={"authorization": "Bearer " + (state / "tokens" / token).read_text().strip(),
                                           "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        out = json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            out = json.loads(r.read())
+    except urllib.error.HTTPError as e:  # the hub answers 400/401 with a JSON error body too
+        try:
+            out = json.loads(e.read())
+        except ValueError:
+            raise SystemExit(f"error: http {e.code}")
     if "error" in out:
         raise SystemExit(f"error: {out['error']['code']}: {out['error']['message']}")
     return out["result"]
@@ -78,9 +86,10 @@ def status(state: Path) -> dict:
                         " s.wakes, a.settings from agents a left join sessions s on s.agent_id=a.id"
                         " and s.state='current'"), set()
     for a in agents:
-        if db.settings(a).get("desktop"):
+        if db.polled(a):
             desktop.add(a["id"])
-            a.update(desktop=True, **mail.pending(conn, a["id"]))
+            a.update({"foreground": True} if db.settings(a).get("foreground") else {"desktop": True},
+                     **mail.pending(conn, a["id"]))
         del a["settings"]
     return {
         "hub": json.loads((state / "hub.json").read_text()) if (state / "hub.json").exists() else None,
@@ -96,27 +105,68 @@ def status(state: Path) -> dict:
     }
 
 
-def watch(state: Path, agent: str, interval: float, out=None) -> None:
+def watch(state: Path, agent: str, interval: float, out=None, once: bool = False) -> int:
     """Long-running, read-only: one stdout line per poll that found new deliveries for .
 
     Reads hub.db directly like  (no token, nothing marked read or acked). Starts after the current
-    newest delivery, so only arrivals during the watch are reported; exits when hub.json disappears."""
+    newest delivery, so only arrivals during the watch are reported; exits when hub.json disappears.
+
+    once: for a foreground agent that runs this as a background task whose completion wakes it. Unacked, unread
+    deliveries already waiting are printed at once; otherwise block for the first new one. Print, return 0; return 1
+    when the hub stopped."""
     out = out or sys.stdout
     conn = db.connect(state / "hub.db")
     last = conn.execute("select coalesce(max(id), 0) from deliveries where recipient=?", (agent,)).fetchone()[0]
+    sel = ("select d.id, m.thread_id, m.sender, m.kind, m.body from deliveries d join messages m on m.id=d.message_id"
+           " where d.recipient=? and d.state != 'canceled' and ")
+
+    def report(rs) -> None:
+        items = "; ".join(f'{r["thread_id"]} from {r["sender"]} [{r["kind"]}] "{" ".join(r["body"].split())[:80]}"'
+                          for r in rs)
+        print(f"[xmuse] {len(rs)} new for {agent}: {items}", file=out, flush=True)
+
+    if once:
+        rs = db.rows(conn.execute(sel + "d.acked_at is null and d.read_at is null order by d.id", (agent,)))
+        if rs:
+            report(rs)
+            return 0
     while True:
         if not (state / "hub.json").exists():
             print("[xmuse] hub stopped", file=out, flush=True)
-            return
-        rs = db.rows(conn.execute(
-            "select d.id, m.thread_id, m.sender, m.kind, m.body from deliveries d join messages m on m.id=d.message_id"
-            " where d.recipient=? and d.id>? and d.state != 'canceled' order by d.id", (agent, last)))
+            return 1 if once else 0
+        rs = db.rows(conn.execute(sel + "d.id>? order by d.id", (agent, last)))
         if rs:
             last = rs[-1]["id"]
-            items = "; ".join(f'{r["thread_id"]} from {r["sender"]} [{r["kind"]}] "{" ".join(r["body"].split())[:80]}"'
-                              for r in rs)
-            print(f"[xmuse] {len(rs)} new for {agent}: {items}", file=out, flush=True)
+            report(rs)
+            if once:
+                return 0
         time.sleep(interval)
+
+
+def read_args(path: str | None) -> dict:
+    """Tool arguments from a file or piped stdin; UTF-8 (BOM or not) and BOM-marked UTF-16 (Windows PowerShell)."""
+    if path:
+        raw = Path(path).read_bytes()
+    elif not sys.stdin.isatty():
+        raw = sys.stdin.buffer.read()
+    else:
+        return {}
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        text = raw.decode("utf-16")
+    else:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as e:
+            raise SystemExit(f"error: args are not UTF-8 or BOM-marked UTF-16: {e}")
+    if not text.strip():
+        return {}
+    try:
+        args = json.loads(text)
+    except ValueError as e:
+        raise SystemExit(f"error: args are not valid JSON: {e}")
+    if not isinstance(args, dict):
+        raise SystemExit("error: args must be a JSON object")
+    return args
 
 
 def who(name: str, via: str | None) -> str:
@@ -199,7 +249,7 @@ def main(argv=None) -> None:
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
-    p.add_argument("--desktop", action="store_true", help="Claude desktop app session (claude only; no push)")
+    p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
@@ -240,6 +290,11 @@ def main(argv=None) -> None:
     p = sub.add_parser("watch", help="print a line per batch of new messages for an agent (read-only; for Monitor)")
     p.add_argument("--agent", required=True)
     p.add_argument("--interval", type=float, default=5)
+    p.add_argument("--once", action="store_true", help="print waiting or the first new messages, then exit (0; 1 if the hub stopped)")
+    p = sub.add_parser("tool", help="call a hub tool as an agent (for foreground sessions without MCP)")
+    p.add_argument("--agent", required=True)
+    p.add_argument("name", help="send, inbox, ack, thread, context, whoami, done (with or without xmuse_)")
+    p.add_argument("--args-file", help="JSON arguments (default: piped stdin, else {})")
     p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
     p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
@@ -268,7 +323,7 @@ def main(argv=None) -> None:
             print(json.dumps(status(state)["agents"], indent=1))
             return
         from .init import add_agent
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role, {"desktop": True} if a.desktop else None)
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role, {("foreground" if a.vendor == "dsh" else "desktop"): True} if a.desktop else None)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -315,6 +370,10 @@ def main(argv=None) -> None:
     elif a.cmd == "approve":
         print(json.dumps(call(state, "/v1/admin/approve", {"id": a.id, "decision": a.decision})))
     elif a.cmd == "watch":
-        watch(state, a.agent, a.interval)
+        sys.exit(watch(state, a.agent, a.interval, once=a.once))
+    elif a.cmd == "tool":
+        name = a.name if a.name.startswith("xmuse_") else "xmuse_" + a.name
+        print(json.dumps(call(state, "/v1/tools/" + name, {"args": read_args(a.args_file)}, a.agent),
+                         indent=2, ensure_ascii=False))
     elif a.cmd == "attach":
         print(call(state, "/v1/admin/attach", {"agent": a.agent})["command"])

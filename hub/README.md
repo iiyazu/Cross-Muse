@@ -30,3 +30,30 @@ Limits:
 - The desktop app must trust the workspace and enable the project MCP server; if it ignores the project hooks or
   `.mcp.json`, the agent simply works without the reminder or the tools.
 - `xmuse hub status` shows `"desktop": true` and `"pending": n` for these agents.
+
+## dsh desktop (foreground) mode
+
+Lets the user see and steer dsh's work: the dsh agent lives in a dsh desktop session that the hub never runs. (The hub's
+background dsh runner cannot continue sessions created in the desktop app, and headless sessions never show in the
+desktop sidebar.)
+
+1. Put the workspace under `/mnt/<drive>/`, then `xmuse init <workspace>` and
+   `xmuse agent add dsh-1 --vendor dsh --desktop` (stores `{"foreground": true}`; running it again updates the settings
+   and re-renders files, the token stays). `--desktop` on dsh means foreground; on claude it still means the coordinator.
+2. `xmuse hub start`, then open the workspace in the dsh desktop app and start a session. The generated `AGENTS.md`
+   section (`<!-- xmuse:fg dsh-1 ... -->`) holds the exact commands, with this machine's python and workspace paths baked in.
+3. The loop the agent follows: start `xmuse watch --agent dsh-1 --once` as a background task (its completion wakes the
+   session); when woken, run `xmuse tool --agent dsh-1 inbox`, do the work, reply with
+   `xmuse tool --agent dsh-1 send --args-file .xmuse-tmp/send.json`, `ack`, and start the watch again.
+
+Details:
+
+- `watch --once` prints deliveries that are already unread and unacked right away and exits 0; otherwise it blocks for
+  the first new delivery. It exits 1 ("hub stopped") if the hub goes away. It is read-only.
+- `xmuse tool --agent <id> <name> [--args-file PATH]` calls `/v1/tools/xmuse_<name>` with that agent's token and prints
+  the JSON result (non-zero exit with the error otherwise). Arguments come from the file or piped stdin, as UTF-8 (BOM or
+  not) or BOM-marked UTF-16 (Windows PowerShell). Message text goes through the file, never the wsl.exe command line.
+- The engine never wakes a foreground agent, and `hub status` shows `"foreground": true` and `"pending": n`. The
+  coordinator-only behaviors (hub notices cc'd, `on_behalf_of`, prompt injection) do not apply to it.
+- No dsh presence hooks are written for a foreground agent (they would register the desktop session as the agent's
+  current session for the hub to continue); stale ones are removed. `.xmuse-tmp/` is git-excluded.

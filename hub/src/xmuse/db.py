@@ -141,6 +141,12 @@ def settings(agent: dict) -> dict:
     return json.loads(agent["settings"] or "{}")
 
 
+def polled(agent: dict) -> bool:
+    """Lives in a desktop session the hub never runs (Claude coordinator or dsh foreground): only polled."""
+    s = settings(agent)
+    return bool(s.get("desktop") or s.get("foreground"))
+
+
 class Pool:
     """One connection per thread (HTTP handlers, engine, adapter watchers)."""
 
