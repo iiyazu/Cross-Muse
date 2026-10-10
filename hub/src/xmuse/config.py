@@ -30,7 +30,7 @@ DEFAULTS = {
     "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
     "compact_drop_ratio": 0.5,       # a turn's context below this share of the last one's means the vendor compacted
     "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
-    "curate_timeout_s": 420,         # /curate collab (background) takes 92-370 s with a reasoning model
+    "curate_timeout_s": 480,         # /curate collab (background): 2 attempts x 200 s worst case (max_repairs 1)
     "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
 }
 
