@@ -1,0 +1,104 @@
+{
+ "runs": [
+  {
+   "run": "ledger-A-2",
+   "seed": "ledger",
+   "group": "A",
+   "mode": "run",
+   "completed": false,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 24,
+    "total": 25,
+    "excluded": 14,
+    "failed": [
+     "TestParseAmountHidden.test_rejects_non_ascii_digits"
+    ]
+   },
+   "quiet": true,
+   "seconds": 419,
+   "turns": 13,
+   "failed_turns": 0,
+   "tokens": 2703659,
+   "by_agent": {
+    "dsh-1": {
+     "turns": 6,
+     "tokens": 1257534
+    },
+    "opencode-1": {
+     "turns": 7,
+     "tokens": 1446125
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 13
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 5,
+    "total": 5,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 7,
+    "total": 9,
+    "rate": 0.7777777777777778,
+    "missing": [
+     "line-numbers-1-based",
+     "rot-uncategorized"
+    ],
+    "agent_entries": 3
+   },
+   "review": null,
+   "view_curve": {
+    "dsh-1": [
+     0,
+     0,
+     2,
+     2,
+     3,
+     3
+    ],
+    "opencode-1": [
+     0,
+     2,
+     2,
+     2,
+     3,
+     3,
+     3
+    ]
+   }
+  }
+ ],
+ "groups": {
+  "A": {
+   "runs": 1,
+   "completion_rate": 0.0,
+   "turns_mean": 13,
+   "tokens_mean": 2703659,
+   "tokens_median": 2703659,
+   "interventions_mean": 0,
+   "injection_share_total": 0.0,
+   "injection_share_max": 0.0,
+   "rot": {
+    "followed": 1
+   },
+   "declaration_rate_mean": 0.7777777777777778,
+   "review_detection_rate": null,
+   "review_false_positive_rate": null
+  }
+ }
+}

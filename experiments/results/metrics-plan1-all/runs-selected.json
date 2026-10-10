@@ -1,0 +1,47 @@
+{
+ "keep": [
+  "ledger-B-1",
+  "minisql-C-1",
+  "pipeline-A-1",
+  "ledger-C-1",
+  "minisql-A-1",
+  "pipeline-B-1",
+  "ledger-A-1",
+  "minisql-B-1",
+  "pipeline-C-1",
+  "ledger-C-2",
+  "minisql-A-2",
+  "pipeline-B-2",
+  "long-L-1",
+  "review-ledger-bug2-1",
+  "review-minisql-bug1-1",
+  "review-minisql-bug2-1",
+  "review-pipeline-bug1-1",
+  "review-pipeline-bug2-1",
+  "ledger-A-2",
+  "minisql-B-2",
+  "pipeline-C-2",
+  "ledger-B-2",
+  "minisql-C-2",
+  "pipeline-A-2",
+  "ledger-A-3",
+  "minisql-B-3",
+  "pipeline-C-3",
+  "ledger-B-3",
+  "minisql-C-3",
+  "pipeline-A-3",
+  "ledger-C-3",
+  "minisql-A-3",
+  "pipeline-B-3"
+ ],
+ "drop": [
+  [
+   "review-ledger-bug1-1",
+   [
+    "rc=1",
+    "no meta.json",
+    "agent without a succeeded turn: no turns"
+   ]
+  ]
+ ]
+}
