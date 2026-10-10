@@ -211,6 +211,8 @@ def test_equal_state_renders_byte_identical(make):
     h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
     declare(h, "b rule", scope="global")
     declare(h, "a rule")
+    with db.tx(h.conn()) as c:  # no concurrent admission: it would mark the passive mail read between renders
+        c.execute("update agents set paused=1 where id='claude-1'")
     agent = agent_row(h)
     m = h.send("claude-1", "go")
     msgs = db.rows(h.conn().execute("select * from messages where id=?", (m["id"],)))

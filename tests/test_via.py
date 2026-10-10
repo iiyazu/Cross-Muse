@@ -1,4 +1,5 @@
 """A desktop coordinator relays the user's own decisions: sender/author `human`, `via` the coordinator."""
+import time
 
 from xmuse import cli, db
 
@@ -31,6 +32,13 @@ def test_group_relay_mentions_wake_peers_not_the_coordinator(make):
     h.tool("dog", "xmuse_send", to="#task", body="oc please start", mentions=["oc"], on_behalf_of="human")
     assert {(d["recipient"], d["wake"]) for d in h.q("select recipient, wake from deliveries")} == {("oc", 1)}
     h.wait_quiet()
+
+
+def test_woken_never_lists_the_desktop_coordinator(make):
+    h = make(TWO)
+    assert h.tool("oc", "xmuse_send", to="dog", body="fyi")["result"]["woken"] == []  # DM to the coordinator
+    time.sleep(0.5)
+    assert h.turns() == []  # and the hub never starts a turn for it (its delivery waits to be polled)
 
 
 def test_handoff_assignment_author_is_human_via(make):

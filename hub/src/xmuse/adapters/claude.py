@@ -246,6 +246,7 @@ class ClaudeResume:
 class ClaudeChannel:
     """Push into a live TUI through the shim's channel endpoint; the TUI's Stop hook ends the turn."""
     name = "claude_channel"
+    flush_wait = 3.0  # seconds to wait for a turn's transcript records after its Stop hook
 
     def __init__(self, sink, dbf):
         self.sink, self.db, self.turns = sink, dbf, {}  # session -> turn info
@@ -273,8 +274,22 @@ class ClaudeChannel:
         if t is None:
             return False
         path = Path(transcript_path) if transcript_path else transcript(t["cwd"], session)
-        usage = transcript_usage(path, since=t["since"] - 1) if path.exists() else Usage()
-        self.sink.turn_ended(TurnEnd(t["turn_id"], "succeeded", session, usage))
+        read = lambda: transcript_usage(path, since=t["since"] - 1) if path.exists() else Usage()  # noqa: E731
+        usage = read()
+        if usage.calls:
+            self.sink.turn_ended(TurnEnd(t["turn_id"], "succeeded", session, usage))
+            return True
+
+        def settle(usage=usage):
+            # The Stop hook can run before the TUI flushes the turn's assistant records (r7 2026-10-11: a one-call
+            # turn was logged ctx=0, its records landed ~0.1 s after Stop): wait for them briefly off the hook path.
+            for _ in range(int(self.flush_wait / 0.1)):
+                if usage.calls:
+                    break
+                time.sleep(0.1)
+                usage = read()
+            self.sink.turn_ended(TurnEnd(t["turn_id"], "succeeded", session, usage))
+        threading.Thread(target=settle, daemon=True).start()
         return True
 
     def interrupt(self, turn_id: int) -> None:
