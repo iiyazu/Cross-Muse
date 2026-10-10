@@ -53,7 +53,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["summary", "next"], "properties": {
          "summary": _s("what you did"),
          "next": _s("peer id or 'human' who must act next, or 'none' if the work is finished"),
-         "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on",
+         "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on; one decision per cross-module convention (representation, units, errors, ordering, output format)",
                       "items": {"type": "object", "additionalProperties": False, "required": ["kind", "statement"],
                                 "properties": {"kind": {"type": "string", "enum": DECLARE}, "statement": _s("one sentence"),
                                                "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}}}}},

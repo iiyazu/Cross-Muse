@@ -71,7 +71,10 @@ When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
 Before you stop, ask: **"Does this end with me? If not, who moves next?"**
 
 1. If someone must act, send them a message (mention them in a group) — otherwise nobody wakes.
-2. Did this turn make a decision or assumption someone else will depend on? Put it in the `declares`
+2. Did this turn make a decision or assumption someone else will depend on? When you finish a first
+   implementation, declare every cross-module convention you rely on or set (data representation, units,
+   error types, sort/tie-break rules, output format) as its own `decision`, even if the spec already states
+   it. Put them in the `declares`
    of `xmuse_done` (`[{kind, statement, scope?, supersedes?}]`) or send it as
    `xmuse_send(kind=decision|assumption)`.
 3. Then call `xmuse_done(summary, next, declares?)`: `next` is that peer's id, `human`, or `none`
