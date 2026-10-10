@@ -54,3 +54,43 @@ FAILED tests/test_mail.py::test_handoff_keeps_why_first_fields - IndexError: ...
 - 2 分钟目标：/mnt/d 上约 140 s。r7 原生盘上应该更快，但我没在 r7 上跑。
 - OpenCode transcript 的字段是按 r7 上 opencode v2.0.21 的 `/openapi.json` 写的（起了一个一次性服务器、空目录、没有模型调用，只读取 schema）。没有在真实会话上试过。
 - 桌面版 Claude 的 transcript 在 Windows 侧，路径推不出来时会提示用 `--path` 指定。
+
+## T3 可移植性（2026-10-11）
+
+**提交**：`0152899`
+
+**做了什么**
+- 新增 `hub/src/xmuse/host.py`，统一推导两件事：
+  - WSL 发行版：先看 `XMUSE_WSL_DISTRO`，再看 `WSL_DISTRO_NAME`。
+  - Windows 家目录：先看 `XMUSE_WIN_HOME`，再用 `cmd.exe` 取 `%USERPROFILE%`，经 `wslpath` 转换。
+  - 推导不出就报错，并写明该设哪个变量。原先的 `Ubuntu-24.04` 和 `/mnt/c/Users/$USER` 默认值都去掉了，`base.to_win`、`claude._distro`、`dsh._distro` 以及 dsh 的 exe/clijs/home 都改为调用它。dsh 的 exe 和 home 在 config.json 里显式配置时，仍以配置为准。
+- dsh 插件包：
+  - 删掉内置的 `\\wsl.localhost\Ubuntu-24.04\home\user\...` 默认值。没配 `config.state` 时，自检和工具调用都给出明确提示，并指向 `xmuse doctor`。
+  - `sync.sh` 的默认目标改为推导；`cordis.patch.yml` 和 README 里的路径改成占位符。
+  - 新增一条 node 测试。
+- `scripts/bootstrap.sh`：检查 uv、node、npm → `uv sync --python 3.12` → shim `npm ci` → `xmuse doctor`。可以重复执行。
+- `xmuse doctor`（只读）：
+  - 检查 Python 版本和依赖、node 和 shim 依赖、WSL 推导结果、各厂商 CLI（只在已配置的 agent 用到时判 FAIL）、hub 是否在跑和陈旧的 hub.json、tools.json、skill、AGENTS.md 的 xmuse 段，以及每个 agent 的 .mcp.json 或 opencode.json（是否指向本 agent、本状态目录、本 checkout 的 shim）。
+  - 有前台 dsh agent 时，打印插件 `config.state` 应填的 UNC 路径。
+  - 每个问题都附修复命令；有 FAIL 时退出码为 1。
+- conftest 固定了 host 推导结果（`WSL_DISTRO_NAME=Ubuntu-Test`，`XMUSE_WIN_HOME` 指向临时目录），这样在普通 Linux CI 上跑结果一样。原来断言默认值是 `Ubuntu-24.04` 的测试，改为断言"必须报错，设了覆盖变量后生效"。
+
+**验收：全新克隆**（`/tmp` 原生盘。克隆的是已推送的 rc/portfolio，再叠加本地 T3 文件）
+- `scripts/bootstrap.sh` 一次跑通：uv 自动下载了 CPython 3.12.14，npm ci 成功，doctor 输出 `0 failed, 2 warnings`。两条 warn 是：本机 Arch 的 WSL interop 取不到 Windows 家目录（提示只有 dsh 需要它）；当前不在任何工作区。
+- 再执行 `xmuse init` 和 `agent add c1 --vendor claude`，doctor 全 ok，只剩 "hub: not running"，修复命令是 `xmuse --ws … hub start`。
+
+**测试结果原文**
+```
+302 passed, 1 skipped in 146.70s (0:02:26)
+```
+插件包（`cd integrations/dsh-bundle && npm test`）：
+```
+ℹ tests 27
+ℹ pass 27
+ℹ fail 0
+```
+
+**没做 / 拿不准**
+- `grep` 剩下的唯一命中是 host.py 报错信息里的示例 `XMUSE_WSL_DISTRO=Ubuntu-24.04`，这是有意保留的。`tests/fixtures/*.jsonl` 里的 `/home/user` 是录制数据，没改。`spikes/`、`e2e/` 不在 T3 范围，留给 T7。
+- 在 r7（interop 正常、装了 dsh）上没跑过 doctor，dsh 那几项只有单测覆盖。
+- 插件包没有自动推导 state：它跑在 Windows 侧，不知道是哪个工作区。现在的做法是 doctor 打印出值，由用户填进去。
