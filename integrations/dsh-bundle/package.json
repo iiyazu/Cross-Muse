@@ -1,6 +1,6 @@
 {
   "name": "xmuse-dsh-bundle",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "xmuse 2 smoke-test bundle: /xmuse command, xmuse_whoami tool, follow-up delivery into the current session",
   "private": true,
   "type": "module",

@@ -17,9 +17,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const name = 'xmuse'
-// Only commands/tools are hard requirements for activation; the rest is self-checked at
-// runtime so the plugin still loads (and reports) when a service is missing.
-export const inject = ['commands']
+// Cordis refuses ctx.<service> access for services not declared here (smoke 10-11: ping failed with
+// 'cannot get property "sessionController" without inject'). Same set dsh-schedule declares.
+export const inject = ['commands', 'agents', 'sessions', 'tools', 'sessionController']
 
 const DEFAULT_STATE = String.raw`\\wsl.localhost\Ubuntu-24.04\home\user\.local\state\xmuse\xmuse-desk-c9ddc1e5`
 const HERE = (() => {
@@ -119,7 +119,7 @@ export function apply(ctx, config) {
   }
 
   const statusText = () => {
-    const lines = ['xmuse smoke bundle 0.0.1', `state dir: ${stateDir}`, 'self-check:']
+    const lines = ['xmuse smoke bundle 0.0.2', `state dir: ${stateDir}`, 'self-check:']
     for (const [k, v] of Object.entries(selfCheck.services)) lines.push(`  ${k}: ${v ? 'yes' : 'NO'}`)
     lines.push(`  hub state: ${selfCheck.hubState}`, `  bindings file: ${selfCheck.persistedBindings}`)
     lines.push(`bindings (${bindings.size}):`)
