@@ -92,10 +92,18 @@ def test_long_L_mo_copies_long_L_plus_memoryos():
     assert {k: v for k, v in mo.items() if k != "MEMORYOS"} == base
 
 
-def test_memoryos_cmd_default_and_port(monkeypatch):
+def test_memoryos_cmd_default_and_port(monkeypatch, tmp_path):
     monkeypatch.delenv("MEMORYOS_CMD", raising=False)
+    monkeypatch.delenv("MEMORYOS_DIR", raising=False)
     cmd = run.memoryos_cmd(8123)
     assert cmd == ["memoryos", "api", "--host", "127.0.0.1", "--port", "8123"]
+    monkeypatch.setenv("MEMORYOS_DIR", str(tmp_path))  # no .venv/bin/memoryos there: still PATH
+    assert run.memoryos_cmd(8123)[0] == "memoryos"
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    (tmp_path / ".venv" / "bin" / "memoryos").write_text("#!/bin/sh\n")
+    assert run.memoryos_cmd(8123) == [str(tmp_path / ".venv" / "bin" / "memoryos"), "api", "--host", "127.0.0.1",
+                                      "--port", "8123"]
+    monkeypatch.delenv("MEMORYOS_DIR")
     monkeypatch.setenv("MEMORYOS_CMD", "python f.py --port {port} --host 127.0.0.1")
     assert run.memoryos_cmd(8123) == ["python", "f.py", "--port", "8123", "--host", "127.0.0.1"]
     monkeypatch.setenv("MEMORYOS_CMD", "python f.py")

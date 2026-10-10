@@ -52,7 +52,11 @@ def free_port() -> int:
 def memoryos_cmd(port: int) -> list[str]:
     raw = os.environ.get("MEMORYOS_CMD")
     if not raw:
-        return ["memoryos", "api", "--host", "127.0.0.1", "--port", str(port)]
+        exe = "memoryos"
+        d = os.environ.get("MEMORYOS_DIR")
+        if d and (Path(d) / ".venv" / "bin" / "memoryos").exists():  # the checkout's own install, not whatever PATH has
+            exe = str((Path(d) / ".venv" / "bin" / "memoryos").absolute())
+        return [exe, "api", "--host", "127.0.0.1", "--port", str(port)]
     parts = shlex.split(raw)
     if "{port}" in raw:
         return [a.replace("{port}", str(port)) for a in parts]
@@ -249,11 +253,18 @@ class Run:
             return
         try:
             if p.poll() is None:
-                p.terminate()
+                # started with start_new_session=True: the pid is the process group, so uvicorn workers die too
+                try:
+                    os.killpg(p.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
                 try:
                     p.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    p.kill()
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     p.wait(timeout=10)
         except Exception:
             pass

@@ -15,7 +15,6 @@ import urllib.request
 from . import align, db, mail
 
 log = logging.getLogger("xmuse.memoryos")
-logging.basicConfig(level=logging.INFO)  # hub.log keeps INFO memoryos-call lines for the runner
 KINDS = ("decision", "convention", "assumption", "question", "lesson")  # what collab may propose
 MSGS = ("message", "handoff", "review_request", "decision", "assumption", "question")  # what curate reads
 EVERY, WINDOW, CONTEXT, ACTIVE, SIMILAR = 8, 32, 8, 60, 0.88

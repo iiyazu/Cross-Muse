@@ -1,6 +1,7 @@
 """xmuse command line. Writes go through the hub (so the engine is kicked); reads go straight to hub.db."""
 import argparse
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -206,6 +207,7 @@ def main(argv=None) -> None:
         return
     if a.cmd == "hub" and a.action == "run":
         from .server import Hub
+        logging.basicConfig(level=logging.INFO)  # hub service process only: stderr is hub.log (memoryos-call lines)
         Hub(Path(os.environ["XMUSE_STATE"])).serve()
         return
     state = config.find_state(a.ws)
