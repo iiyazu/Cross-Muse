@@ -171,11 +171,25 @@ def test_shell_auto_ok_strips_env_prefix_but_keeps_consequential_asks():
     assert shell_auto_ok("shell", ["PYTHONPATH=x python -m unittest"])
     assert shell_auto_ok("shell", ["PYTHONPATH=/a/b python3 /tmp/p.py", "echo ---", "tail -4"])
     assert not shell_auto_ok("shell", ["rm -rf /"])
-    assert not shell_auto_ok("shell", ["PYTHONPATH=x python -m unittest", "rm -f /tmp/x"])
+    assert not shell_auto_ok("shell", ["PYTHONPATH=x python -m unittest", "rm -rf /tmp/x"])
     assert not shell_auto_ok("shell", ["FOO=1 git push origin main"])
     assert not shell_auto_ok("shell", ["git push origin main"])
     assert not shell_auto_ok("edit", ["a.py"])
     assert not shell_auto_ok("shell", [])
+
+
+def test_safe_rm_f_is_auto_approved_and_everything_riskier_still_asks():
+    from xmuse.adapters.opencode import shell_auto_ok
+    ok = lambda *cmds: shell_auto_ok("shell", list(cmds))  # noqa: E731
+    assert ok("rm -f /tmp/opencode_probe.py")
+    assert ok("rm -f build/x.o")
+    assert ok("FOO=1 rm -f /tmp/a /tmp/b")
+    for bad in ("rm -f ../x", "rm -f /etc/passwd", "rm -rf /tmp/x", "rm -f -r x", "rm -f /tmp/*.py", "rm -f",
+                "rm -f /tmp/../etc/passwd", "rm -f ~/x", "rm -f x /etc/passwd", "rm -f /tmp/x; rm -rf /",
+                "rm -f /tmp/x && git push", "rm -f $(echo /etc/passwd)"):
+        assert not ok(bad), bad
+    assert ok("python3 -c 'print(1)'", "git status --short", "rm -f /tmp/opencode_minisql_probe.py")
+    assert not ok("git status --short", "rm -f /tmp/x", "git push origin main")
 
 
 def test_env_prefixed_harmless_shell_is_auto_approved(make):

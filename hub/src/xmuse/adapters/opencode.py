@@ -9,6 +9,7 @@ import fnmatch
 import json
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import threading
@@ -40,6 +41,29 @@ def strip_env(cmd: str) -> str:
     return cmd
 
 
+def _safe_path(p: str) -> bool:
+    """A path an agent may delete without asking: under /tmp/, or relative inside its workspace; no globs."""
+    if not p or p.startswith("-") or any(c in p for c in "*?[") or ".." in p.split("/"):
+        return False
+    return p.startswith("/tmp/") or not p.startswith(("/", "~"))
+
+
+def safe_rm_f(cmd: str) -> bool:
+    """`rm -f PATH...` with only -f and only safe paths (agents clean up their own probe files, e.g. /tmp/x.py).
+
+    Without this the plain `rm -f*` ask rule parks unattended runs on a human until the turn times out.
+    Recursive flags, absolute paths outside /tmp, `..`, `~` and wildcards all stay with the human."""
+    if any(c in cmd for c in ";&|<>$`()\n\\"):  # chaining, redirection or substitution: not a plain rm
+        return False
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return False
+    if argv[:2] != ["rm", "-f"] or len(argv) < 3:
+        return False
+    return all(_safe_path(a) for a in argv[2:])
+
+
 def shell_auto_ok(action: str | None, resources) -> bool:
     """True when every shell command in a permission request is outside ASK_SHELL once env prefixes are removed.
 
@@ -50,7 +74,8 @@ def shell_auto_ok(action: str | None, resources) -> bool:
     """
     if action != "shell" or not isinstance(resources, list) or not resources:
         return False
-    return all(isinstance(r, str) and not any(fnmatch.fnmatchcase(strip_env(r), p) for p in ASK_SHELL)
+    return all(isinstance(r, str) and (safe_rm_f(strip_env(r))
+                                       or not any(fnmatch.fnmatchcase(strip_env(r), p) for p in ASK_SHELL))
                for r in resources)
 
 
