@@ -66,6 +66,8 @@ def apply_rules(transactions, rules):
     buckets = {}
     unmatched = []
     for transaction in transactions:
+        if not isinstance(transaction.amount, str):  # ROT-1: amounts are decimal strings, old integer-cent inputs are off-contract
+            raise TypeError("amount must be a decimal string, got %r" % (transaction.amount,))
         hit = None
         for rule, regex in compiled:
             if regex.match(transaction.description):

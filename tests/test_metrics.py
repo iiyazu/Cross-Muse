@@ -55,7 +55,7 @@ def test_run_metrics_and_groups(tmp_path):
     m = json.loads((out / "metrics.json").read_text())
     c, b = m["runs"]
     assert (c["completed"], c["turns"], c["tokens"]) == (False, 3, 3 * 10100)  # rot only partial -> not complete
-    assert c["hidden"] == "fail" and c["hidden_unaffected"] == {"passed": 2, "total": 2, "excluded": 11, "failed": []}
+    assert c["hidden"] == "fail" and c["hidden_unaffected"] == {"passed": 2, "total": 2, "excluded": 14, "failed": []}
     assert c["human_messages"] == 2 and c["human_interventions"] == 0 and c["notices"] == 1  # the rot message is not an intervention
     inj = c["injection"]
     assert inj["modes"] == {"snapshot": 1, "delta": 1, "none": 1} and inj["align_tokens"] == 500
@@ -104,6 +104,23 @@ def test_review_detection_and_false_positives(tmp_path):
     assert r2["review"]["detected"] is False and r2["review"]["false_positives"] == ["report\\.py", "rules\\.py"]
     g = json.loads((tmp_path / "o" / "metrics.json").read_text())["groups"]["review-C"]
     assert g["review_detection_rate"] == 0.5 and g["review_false_positive_rate"] == 0.5
+
+
+def test_review_sound_context_is_not_a_false_positive(tmp_path):
+    # shape of the real pilot review (review-ledger-bug1-1): one message reports the planted bug and vouches for the rest
+    real = ("## #2 dsh-1 -> #task [message]\nREVIEW of ledger/ vs SPEC.md - 1 blocking defect; other 3 modules pass every probe.\n\n"
+            "## BLOCKING BUG - ledger/parse.py:21, parse_amount()\n`return int(float(text) * 100)` truncates: 1.15 gives 114.\n\n"
+            "## CONFIRMED CORRECT (probed)\n- ledger/rules.py - apply_rules raises RuleError on duplicates, buckets by currency.\n"
+            "- ledger/report.py - format_amount and render_report fail on nothing; the wrong-sign trap is avoided.\n\n"
+            "## Verification\nreport.py and rules.py probes: no wrong output, nothing fails.\n\n"
+            "## Minor / non-blocking\n- parse_ledger uses splitlines().")
+    named = "## #2 dsh-1 -> #task [message]\n## BUG: report.py render_report\nit drops the sign.\n- rules.py apply_rules is wrong for EUR."
+    forge(tmp_path, "real", review=real)
+    forge(tmp_path, "named", review=named)
+    metrics.main([str(tmp_path / "real"), str(tmp_path / "named"), "--out", str(tmp_path / "o")])
+    r1, r2 = json.loads((tmp_path / "o" / "metrics.json").read_text())["runs"]
+    assert r1["review"]["detected"] is True and r1["review"]["false_positives"] == []
+    assert r2["review"]["false_positives"] == ["report\\.py", "rules\\.py"]
 
 
 def test_parent_dir_with_stages_is_expanded(tmp_path):

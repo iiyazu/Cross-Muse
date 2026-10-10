@@ -27,7 +27,8 @@ EXP = Path(__file__).resolve().parent
 DECLARED = ("decision", "assumption", "convention")
 DEFECT = re.compile(r"\b(bug|wrong|incorrect|broken|fails?|violat\w*|mismatch\w*|defect)\b", re.I)
 SOUND = re.compile(r"\bno (bugs?|issues?|problems?|defects?|findings)\b|\bcorrect\b|\bconforms?\b|\bapprove\w*\b|"
-                   r"\bmatches (the )?spec\b|\bpasses\b|\blooks good\b", re.I)
+                   r"\bmatches (the )?spec\b|\bpass(es|ed)?\b|\blooks good\b", re.I)
+SOUND_HEADING = re.compile(r"confirmed|correct|verif|passes|passing|no (bugs?|issues?|findings)|clean|\bok\b|looks good", re.I)
 
 
 def tok(t: dict) -> int:
@@ -89,6 +90,19 @@ def declaration(d: Path, meta: dict) -> dict | None:
             "missing": [k for k, v in hit.items() if not v], "agent_entries": len(stmts)}
 
 
+def claim_lines(block: str) -> list[str]:
+    """Lines of a review message that can name a defect: a line is judged alone (a message that says "other modules pass"
+    and also reports a bug elsewhere must not taint the passing modules), and lines under a heading that declares the
+    section sound (CONFIRMED CORRECT, Verification, ...) are skipped."""
+    out, sound_section = [], False
+    for ln in block.splitlines():
+        if ln.lstrip().startswith("#"):
+            sound_section = bool(SOUND_HEADING.search(ln))
+        if not sound_section:
+            out += [x for x in re.split(r"(?<=[.;:])\s+(?=[A-Z`])|;\s+", ln) if x.strip()]
+    return out
+
+
 def review(d: Path, meta: dict) -> dict | None:
     f = EXP / "review-keys" / f"{meta['seed']}.json"
     r = d / "review.md"
@@ -100,8 +114,9 @@ def review(d: Path, meta: dict) -> dict | None:
     k = keys[planted]
     detected = any(has(b, k["file"]) and has(b, k["function"]) and has(b, k["symptom"]) for b in blocks)
     clean = keys["clean"] + [{"file": v["file"]} for n, v in keys.items() if n.startswith("bug-") and n != planted]
-    flagged = [c["file"] for c in clean if any((has(b, c["file"]) or (c.get("function") and has(b, c["function"]))) and DEFECT.search(b)
-                                              and not SOUND.search(b) for b in blocks)]
+    lines = [ln for b in blocks for ln in claim_lines(b)]
+    flagged = [c["file"] for c in clean if any((has(ln, c["file"]) or (c.get("function") and has(ln, c["function"]))) and DEFECT.search(ln)
+                                              and not SOUND.search(ln) for ln in lines)]
     return {"planted": planted, "detected": detected, "false_positives": flagged, "modules_without_bug": len(clean)}
 
 
