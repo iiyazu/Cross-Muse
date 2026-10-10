@@ -285,3 +285,22 @@ experiments/batch.sh experiments/plans/t6-e5-cross.txt   # 6 run，dsh 复核
 **没做 / 拿不准**
 - `sed` 现在只放行一种写法，agent 用 `sed 's/…//' file`（不带 -i，只输出）查看替换效果时也会转人工。
 - `xmuse_send` 工具的描述里没有提到 `pushed`，模型是从返回值里看到的。
+
+## T6 结果（r7 臂回来后；2026-10-11 07:20）
+
+r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），**数据还在 r7 的工作树里，没有提交**（`~/dev/xmuse2-rc/experiments/results/`）。下面的数是我通过 ssh 只读取的 r7 `metrics-t6-*/metrics.md`；统计按预注册：Newcombe 95% CI，Fisher 只作参考。完整的表在 `docs/design/XMUSE2-T6-PREREG.zh.md` 的"结果"一节。
+
+| 比较 | 计数 | 差值 | 95% CI |
+|---|---|---|---|
+| E1 S 对 B2（完成率） | 9/9 对 9/9 | 0 | −0.30 至 +0.30 |
+| E2a C2 对 B2（minisql） | 6/6 对 5/6 | +0.17 | −0.25 至 +0.56 |
+| E5 SELF 对 CROSS（检出率） | 6/6 对 6/6 | 0 | −0.39 至 +0.39 |
+
+- 主指标都碰到天花板或者差 1 个 run，置信区间都跨 0。按预注册只描述，不下结论。
+- 次指标的差别都在成本上：
+  - E1：单 agent 每个 run 约 83 万 token、2 个回合；多 agent 约 410 万 token、8 个回合，约 4.9 倍。
+  - E5：OpenCode 复核约 25 万 token、1 条误报；dsh（deepseek-v4-flash）复核约 75 万 token、4 条误报。
+- E2a：去掉 SPEC 歧义后，12 个 run 的"开引号"一项全部通过，和预注册写下的预期一致。唯一没完成的 B2-13 原因是 rot 遵守为 partial。
+- 混杂：base 臂和 r7 臂的 hub 提交不同（`59407f8` 对 `b97919c`），OpenCode 版本也不同（v2.0.21 对 v2.0.26）。
+
+**待办（r7）**：把 27 个 run 的结果目录和 `metrics-t6-*` 提交到 rc/portfolio。提交后我这里的数字可以直接对照。
