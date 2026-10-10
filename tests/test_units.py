@@ -68,6 +68,26 @@ def test_transcript_usage_counts_only_new_calls_once(tmp_path):
     assert (got.calls, got.cache_read, got.output, got.context, got.mode) == (2, 200, 10, 111, "chat")
 
 
+def test_host_facts_are_derived_or_a_clear_error(tmp_path, monkeypatch):
+    import pytest
+    from xmuse import host
+    monkeypatch.setenv("XMUSE_WSL_DISTRO", "Debian")
+    assert host.distro() == "Debian"  # the override wins over WSL_DISTRO_NAME
+    monkeypatch.delenv("XMUSE_WSL_DISTRO")
+    monkeypatch.delenv("WSL_DISTRO_NAME")
+    with pytest.raises(SystemExit, match="XMUSE_WSL_DISTRO"):
+        host.distro()
+    assert host.win_home() == tmp_path / "winhome"  # XMUSE_WIN_HOME (conftest)
+    monkeypatch.delenv("XMUSE_WIN_HOME")
+    monkeypatch.setenv("PATH", str(tmp_path))  # no cmd.exe / wslpath: not WSL, or interop off
+    host._userprofile.cache_clear()
+    try:
+        with pytest.raises(SystemExit, match="XMUSE_WIN_HOME"):
+            host.win_home()
+    finally:
+        host._userprofile.cache_clear()
+
+
 def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
     """The Stop hook can beat the TUI's transcript write; the turn's usage must not be recorded as 0."""
     import threading

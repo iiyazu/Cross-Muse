@@ -9,7 +9,8 @@ Run a Claude agent from the Claude desktop app (Windows) against a workspace in 
 
 1. `xmuse init <workspace>` (once), then `xmuse agent add <id> --vendor claude --desktop`. This writes a
    project `.mcp.json` and `.claude/settings.json` whose commands go through `wsl.exe -d <distro> -- ...`
-   (distro from `WSL_DISTRO_NAME`, default `Ubuntu-24.04`). No channel is configured.
+   (distro from `XMUSE_WSL_DISTRO`, else `WSL_DISTRO_NAME`; outside WSL it is an error, never a guess). No channel
+   is configured.
 2. `xmuse hub start`.
 3. In the desktop app open the workspace (`\\wsl.localhost\<distro>\...`, `xmuse attach <id>` prints the exact
    path), trust it, and enable the project MCP server `xmuse`.

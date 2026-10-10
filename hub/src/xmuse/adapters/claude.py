@@ -126,7 +126,8 @@ def _alive(pid: int | None) -> bool:
 
 
 def _distro() -> str:
-    return os.environ.get("WSL_DISTRO_NAME", "Ubuntu-24.04")
+    from ..host import distro
+    return distro()
 
 
 def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:

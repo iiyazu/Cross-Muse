@@ -258,8 +258,8 @@ def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 20
                                                         " pass --path)" if db.settings(a).get("desktop") else ""))
         return tr.render(tr.claude(p), clip)
     if a["vendor"] == "dsh":
-        from .adapters.dsh import WIN_HOME
-        home = Path(cfg.get("dsh_home", WIN_HOME / ".dsh"))
+        from .host import win_home
+        home = Path(cfg.get("dsh_home") or win_home() / ".dsh")
         logs = sorted(home.glob(f"sessions/*/{sid}/session.v4.jsonl.zstd"))
         if not logs:
             raise SystemExit(f"no dsh session log for {sid} under {home}/sessions (set dsh_home in config.json"
@@ -326,6 +326,7 @@ def main(argv=None) -> None:
     p.add_argument("--agent", required=True)
     p.add_argument("name", help="send, inbox, ack, thread, context, whoami, done (with or without xmuse_)")
     p.add_argument("--args-file", help="JSON arguments (default: piped stdin, else {})")
+    sub.add_parser("doctor", help="check the install and this workspace; prints a fix for each problem (read-only)")
     p = sub.add_parser("transcript", help="an agent's current session as readable text (read-only)")
     p.add_argument("agent")
     p.add_argument("--path", type=Path, help="read this Claude .jsonl or dsh .jsonl.zstd file instead")
@@ -343,6 +344,9 @@ def main(argv=None) -> None:
             pass
         return
 
+    if a.cmd == "doctor":  # also runs outside any workspace (fresh clone)
+        from . import doctor
+        sys.exit(doctor.report(doctor.run(doctor.find_state(a.ws))))
     if a.cmd == "init":
         from .init import init
         print(f"state: {init(a.workspace)}")

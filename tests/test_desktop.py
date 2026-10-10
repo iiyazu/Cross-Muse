@@ -62,11 +62,14 @@ def test_desktop_config(ws):
     assert ".claude/" in (ws / ".git" / "info" / "exclude").read_text().splitlines()
 
 
-def test_desktop_distro_defaults(ws, monkeypatch):
+def test_desktop_distro_is_derived_never_assumed(ws, monkeypatch):
     monkeypatch.delenv("WSL_DISTRO_NAME")
     state = xinit.init(ws)
+    with pytest.raises(SystemExit, match="XMUSE_WSL_DISTRO"):  # no silent "Ubuntu-24.04" outside WSL
+        xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
+    monkeypatch.setenv("XMUSE_WSL_DISTRO", "Debian")
     xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
-    assert json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]["args"][:2] == ["-d", "Ubuntu-24.04"]
+    assert json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]["args"][:2] == ["-d", "Debian"]
 
 
 def test_non_desktop_config_is_unchanged(ws):
