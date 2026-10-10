@@ -86,3 +86,27 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 
   按审计 C、E5 节设计，先提交实验配置和预注册的指标、样本量，再跑。base 跑不了的（需要 dsh 或 Windows 的）写清楚，留给 r7。
 - **T7 隔离不删**：`spikes/`、`e2e/results/` 等审计点名的历史产物移到 `archive/` 目录（或从主线移出、在一个 `archive/*` 分支保留），不删除，git 历史保留。先在报告里列出移动清单，再动手。
+
+## 8. r7 审查结论与后续（10-11 04:10）
+
+**总评**：T1–T5 验收通过，T6 预注册和 T7 清单认可。r7 原生盘复测（`59407f8`）全量连跑 3 次：`313 passed, 1 skipped in 132.79s`，三次均无失败；插件包 `pass 27 / fail 0`。你报的 `test_stop_interrupts_running_turn_and_cancels_queue`、sweep 超时在 r7 上没复现，暂按 /mnt/d 负载偶发处理，不必再查。
+
+**对"拿不准"的回复**
+1. B2-3 去抖：不做。
+2. 令牌隔离到单独 OS 用户：保持现状（"防误操作，不防恶意 agent"），文档已写清，交用户回来再定。
+3. 插件包过滤 `xmuse_approve`：要做，dsh 会话不注册这个工具。
+4. LICENSE：仍等用户。
+5. T6 模型：r7 的 dsh 臂统一用 `deepseek-official/deepseek-v4-flash`（`AGENTS` 环境变量覆盖，`meta.json` 的 provenance 会记录），这样 B2/C2/CROSS 才是真正跨模型。这是预注册里"dsh 由 r7 决定"的取值，不算偏离。r7 已在 04:05 开跑 `t6-e1-B2` → `t6-e2a` → `t6-e5-cross`（27 个 run），结果推回时会单独提交。base 跑 S 臂和 SELF 臂。
+6. T7：清单认可，**现在就可以动手**，不用等 T6（r7 的批跑用的是本地工作树，跑完前不会拉你的提交）。注意 `experiments/check.py` 移动后 run.py 路径同步改。
+
+**T8 追加（小修，按顺序）**
+1. 白名单漏洞（审查发现，均为"误操作也可能触发"的写文件或执行路径），每条配绕过测试：
+   - `sed`：`-ni`、`-Ei` 这类组合短标志里的 `i` 没拦（只查了 `-i` 开头）；sed 脚本的 `w`/`W`/`e` 命令能写文件或执行命令。建议直接把 sed 移出自动放行，或只放行 `sed -n '<数字>,<数字>p'` 这一种形式。
+   - `git grep -O`/`--open-files-in-pager=<cmd>` 会执行命令；`git diff/log/show --output=<file>` 会写文件；`git restore` 会丢弃改动，移出 GIT_LOCAL。
+   - `rg --pre <cmd>`、`--pre-glob` 会执行命令。
+   - `sort -o`、`tree -o`、`find -fprintf`/`-fprint0` 会写文件。
+2. `config.FAMILIES`：家族按模型推导（审计 C 节），不按外壳；`muse-spark` → opencode 家族，`deepseek-*` → deepseek。唤醒包和 whoami 同步。
+3. 插件包 `peerDependencies` 精确钉死 `0.2.0-rc.2`（审计列出）：改成范围或去掉，并在 README 写明 dsh 升级后的处理方式。
+4. `xmuse send` 对前台 dsh agent 返回 `woken: ["dsh-1"]`，但前台 agent 不由 hub 唤醒，而是插件包推送。改成单独字段（如 `pushed`），或不列出。
+
+**之后**：T7 → T8 → 等 r7 的 T6 数据回来，写 T6 结果节（按预注册，只描述）。r7 准备在 T7/T8 测试通过后把 rc/portfolio 合进 main（用户 10-11 夜间已授权），README 和实验报告仍保持"草稿"标注，等用户审阅。
