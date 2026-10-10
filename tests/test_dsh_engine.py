@@ -155,14 +155,25 @@ def test_parse_and_human_turn_units(tmp_path):
     assert not human_turn(tmp_path / "missing.zstd")
 
 
-def test_dsh_agent_needs_a_workspace_on_c(tmp_path, monkeypatch):
+def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     (tmp_path / "ws").mkdir()
     state = xinit.init(tmp_path / "ws")
-    with pytest.raises(SystemExit, match="dsh needs the workspace on C:"):
+    with pytest.raises(SystemExit, match="dsh needs the workspace on a Windows drive") as e:
         xinit.add_agent(state, "dsh-1", "dsh")
+    assert "move the workspace under /mnt/c/" in str(e.value)
     assert json.loads(overlay({"id": "d", "model": "p/m"}, tmp_path, mcp=False))[1] == {"id": "tool-web",
                                                                                        "disabled": True}
+    assert xinit._dsh_ws_ok("/mnt/c/Users/w") and xinit._dsh_ws_ok("/mnt/d/work")
+    assert not xinit._dsh_ws_ok("/home/user/dev/ws")
+
+
+def test_to_win_maps_mnt_drives_and_wsl_paths(monkeypatch):
+    from xmuse.adapters.base import to_win
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-24.04")
+    assert to_win("/mnt/c/Users/a/b") == r"C:\Users\a\b"
+    assert to_win("/mnt/d/work") == r"D:\work"
+    assert to_win("/home/user/dev/ws") == r"\\wsl.localhost\Ubuntu-24.04\home\user\dev\ws"
 
 
 def test_hub_prompt_hook_is_ignored(make):

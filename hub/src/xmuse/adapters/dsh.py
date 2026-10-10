@@ -7,8 +7,12 @@
   never touched.
 - Providers the headless profile does not register (PI_AI_PROVIDERS, e.g. opencode-go) get an extra
   llm-pi-ai row first in the overlay; dsh reads the API key itself from its own (Windows) environment.
-- Every path the Windows child sees is Windows-shaped. The workspace must be under C:\\ (dsh cannot
-  write through \\\\wsl.localhost), and a session resumes only in the cwd it was created in.
+- Every path the Windows child sees is Windows-shaped (to_win maps /mnt/<drive>/... to its
+  DRIVE-colon form, anything else to the wsl.localhost UNC form). The workspace must be under
+  /mnt/<drive>/, because dsh cannot write through the wsl.localhost UNC form (probe 2026-10-10:
+  both UNC spellings fail file writes with ENOTSUP on atomic renames and GetNamedSecurityInfoW
+  Win32 1; session init and patch reads work, so the failure only shows at write time), and a
+  session resumes only in the cwd it was created in.
 - Clean env plus DSH_TELEMETRY_DISABLED=1 and ELECTRON_RUN_AS_NODE=1, listed in WSLENV: WSL drops
   variables a Win32 process is not told about (the M0-dsh runs set telemetry without WSLENV, so it
   never reached dsh).
@@ -34,7 +38,7 @@ import zstandard
 from .. import db
 from ..config import DSH_HOOK, SHIM
 from ..env import clean_env
-from .base import Presence, TurnEnd, TurnSpec, Usage
+from .base import Presence, TurnEnd, TurnSpec, Usage, to_win
 
 log = logging.getLogger(__name__)
 
@@ -54,13 +58,6 @@ ENV = {"DSH_TELEMETRY_DISABLED": "1", "ELECTRON_RUN_AS_NODE": "1", "WSLENV": "DS
 # provider -> env var holding its API key, registered through dsh-llm-pi-ai (add new providers here)
 PI_AI_PROVIDERS = {"opencode-go": "OPENCODE_GO_API_KEY"}
 OWNED, UNKNOWN = "is already owned by an active write handle", "does not exist"
-
-
-def to_win(p) -> str:
-    s = str(p)
-    if s.startswith("/mnt/c/"):
-        return "C:\\" + s[len("/mnt/c/"):].replace("/", "\\")
-    return "\\\\wsl.localhost\\" + os.environ.get("WSL_DISTRO_NAME", "Ubuntu-24.04") + s.replace("/", "\\")
 
 
 def overlay(agent: dict, state: Path, mcp: bool = True) -> str:

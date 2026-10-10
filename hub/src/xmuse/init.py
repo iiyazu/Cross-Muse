@@ -4,6 +4,7 @@ Nothing global is touched. Generated files that should not be committed are list
 .git/info/exclude (not in the project's .gitignore).
 """
 import json
+import re
 import secrets
 import shutil
 from pathlib import Path
@@ -79,6 +80,11 @@ def init(ws: Path) -> Path:
     return state
 
 
+def _dsh_ws_ok(ws) -> bool:
+    """Any /mnt/<drive>/ workspace maps to its DRIVE-colon form; native WSL paths do not."""
+    return re.match(r"/mnt/[a-zA-Z]/", str(ws)) is not None
+
+
 def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None, role: str = "",
               settings: dict | None = None) -> dict:
     if vendor not in WRITERS:
@@ -93,8 +99,11 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
     if other:  # project configs carry one identity per vendor (M1 limit)
         raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
-    if vendor == "dsh" and not str(ws).startswith("/mnt/c/"):  # dsh cannot write through \\wsl.localhost
-        raise SystemExit(f"dsh needs the workspace on C:\\ (under /mnt/c/), not {ws}")
+    if vendor == "dsh" and not _dsh_ws_ok(ws):  # dsh cannot write through the wsl.localhost UNC form
+        raise SystemExit(
+            "dsh needs the workspace on a Windows drive (under /mnt/<drive>/, e.g. /mnt/c/), not " + str(ws) + ": "
+            "dsh runs as a Windows app and its sandbox cannot write through the wsl.localhost UNC form "
+            "(probe 2026-10-10: ENOTSUP on file writes); move the workspace under /mnt/c/ and retry")
     s = {"allowed_tools": cfg.get("claude_allow", CLAUDE_ALLOW)} if vendor == "claude" else {}
     s.update(settings or {})
     tok = _token(state / "tokens" / agent_id)
