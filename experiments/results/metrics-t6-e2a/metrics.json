@@ -1,0 +1,958 @@
+{
+ "runs": [
+  {
+   "run": "minisql-B2-11",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 375,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 3570793,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1487408
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 2083385
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 8
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 9,
+    "total": 10,
+    "rate": 0.9,
+    "missing": [
+     "values-int-str-none"
+    ],
+    "agent_entries": 7
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     5,
+     6,
+     6
+    ],
+    "dsh-1": [
+     0,
+     5,
+     6
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-11",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 320,
+   "turns": 7,
+   "failed_turns": 0,
+   "tokens": 2808867,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1203833
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1605034
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 1078,
+    "share_total": 0.0003923208471218826,
+    "share_median": 0.000435559555860842,
+    "share_max": 0.0014058484996495996,
+    "share_median_injected": 0.0006293710279372437,
+    "modes": {
+     "none": 3,
+     "delta": 4
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 5,
+    "total": 10,
+    "rate": 0.5,
+    "missing": [
+     "parse-error-position-char-index",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "last-column-not-padded",
+     "output-no-trailing-newline"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     4,
+     5
+    ],
+    "dsh-1": [
+     0,
+     4,
+     6
+    ]
+   }
+  },
+  {
+   "run": "minisql-B2-12",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 358,
+   "turns": 6,
+   "failed_turns": 0,
+   "tokens": 3134296,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1125532
+    },
+    "dsh-1": {
+     "turns": 2,
+     "tokens": 2008764
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 6
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 5,
+    "total": 10,
+    "rate": 0.5,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "last-column-not-padded",
+     "output-no-trailing-newline"
+    ],
+    "agent_entries": 3
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     1,
+     3
+    ],
+    "dsh-1": [
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-12",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 401,
+   "turns": 6,
+   "failed_turns": 0,
+   "tokens": 3033603,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1633407
+    },
+    "dsh-1": {
+     "turns": 2,
+     "tokens": 1400196
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 410,
+    "share_total": 0.0001382902868275466,
+    "share_median": 9.948822269542638e-05,
+    "share_max": 0.00024010009172573818,
+    "share_median_injected": 0.00023029283351541058,
+    "modes": {
+     "none": 3,
+     "delta": 3
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E1"
+   },
+   "declaration": {
+    "declared": 5,
+    "total": 10,
+    "rate": 0.5,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "last-column-not-padded",
+     "rot-null-largest"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     3,
+     3,
+     3
+    ],
+    "dsh-1": [
+     0,
+     3
+    ]
+   }
+  },
+  {
+   "run": "minisql-B2-13",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": false,
+   "public": "pass",
+   "hidden": "pass",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 495,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 3039262,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1222307
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1816955
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 8
+    }
+   },
+   "rot": {
+    "verdict": "partial",
+    "passed": 1,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 8
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     7,
+     8,
+     10,
+     10
+    ],
+    "dsh-1": [
+     0,
+     8,
+     9
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-13",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 352,
+   "turns": 6,
+   "failed_turns": 0,
+   "tokens": 2513577,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1387209
+    },
+    "dsh-1": {
+     "turns": 2,
+     "tokens": 1126368
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 544,
+    "share_total": 0.00022196815573024666,
+    "share_median": 0.0,
+    "share_max": 0.0008755975470392249,
+    "share_median_injected": 0.0006389991705945137,
+    "modes": {
+     "none": 4,
+     "delta": 2
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 4,
+    "total": 10,
+    "rate": 0.4,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "sort-stable",
+     "last-column-not-padded",
+     "output-no-trailing-newline"
+    ],
+    "agent_entries": 4
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     4,
+     4
+    ],
+    "dsh-1": [
+     0,
+     4
+    ]
+   }
+  },
+  {
+   "run": "minisql-B2-14",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 358,
+   "turns": 9,
+   "failed_turns": 0,
+   "tokens": 3875016,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 2079900
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 1795116
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 9
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 11
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     4,
+     5,
+     6,
+     6
+    ],
+    "dsh-1": [
+     0,
+     5,
+     6,
+     7
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-14",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 352,
+   "turns": 7,
+   "failed_turns": 0,
+   "tokens": 2894879,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1371764
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1523115
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 746,
+    "share_total": 0.00026254533834210714,
+    "share_median": 0.0002151435766986851,
+    "share_max": 0.0006174901555872736,
+    "share_median_injected": 0.0004856467162683695,
+    "modes": {
+     "none": 3,
+     "delta": 4
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 5,
+    "total": 10,
+    "rate": 0.5,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "last-column-not-padded",
+     "output-no-trailing-newline"
+    ],
+    "agent_entries": 4
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     4,
+     5
+    ],
+    "dsh-1": [
+     0,
+     4,
+     5
+    ]
+   }
+  },
+  {
+   "run": "minisql-B2-15",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 317,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 2546955,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1104354
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1442601
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 8
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 7,
+    "total": 10,
+    "rate": 0.7,
+    "missing": [
+     "parse-error-position-char-index",
+     "ne-normalized",
+     "column-names-case-insensitive"
+    ],
+    "agent_entries": 6
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     3,
+     3,
+     7
+    ],
+    "dsh-1": [
+     0,
+     3,
+     3
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-15",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 308,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 2047931,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1136704
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 911227
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 919,
+    "share_total": 0.0004597887473333253,
+    "share_median": 0.0004467107327814828,
+    "share_max": 0.001255457753846583,
+    "share_median_injected": 0.0007120770213720651,
+    "modes": {
+     "none": 3,
+     "delta": 5
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 3,
+    "total": 10,
+    "rate": 0.3,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "sort-stable",
+     "last-column-not-padded",
+     "output-no-trailing-newline",
+     "rot-tsv"
+    ],
+    "agent_entries": 6
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     0,
+     3,
+     4,
+     6
+    ],
+    "dsh-1": [
+     0,
+     3,
+     6
+    ]
+   }
+  },
+  {
+   "run": "minisql-B2-16",
+   "seed": "minisql",
+   "group": "B",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 371,
+   "turns": 7,
+   "failed_turns": 0,
+   "tokens": 3020824,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 4,
+     "tokens": 1324939
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1695885
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 7
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "message",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 10
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     6,
+     8,
+     8
+    ],
+    "dsh-1": [
+     0,
+     8,
+     9
+    ]
+   }
+  },
+  {
+   "run": "minisql-C2-16",
+   "seed": "minisql",
+   "group": "C",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 388,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 3462867,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1832355
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 1630512
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 1553,
+    "share_total": 0.00045684599759663116,
+    "share_median": 0.0006448254005191102,
+    "share_max": 0.001067876541927142,
+    "share_median_injected": 0.0007405603597467666,
+    "modes": {
+     "none": 2,
+     "delta": 6
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E4"
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 9
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     4,
+     7,
+     8,
+     8
+    ],
+    "dsh-1": [
+     0,
+     7,
+     8
+    ]
+   }
+  }
+ ],
+ "groups": {
+  "B": {
+   "runs": 6,
+   "completion_rate": 0.8333333333333334,
+   "turns_mean": 7.666666666666667,
+   "tokens_mean": 3197857.6666666665,
+   "tokens_median": 3086779.0,
+   "interventions_mean": 0,
+   "injection_share_total": 0.0,
+   "injection_share_max": 0.0,
+   "rot": {
+    "followed": 5,
+    "partial": 1
+   },
+   "declaration_rate_mean": 0.85,
+   "review_detection_rate": null,
+   "review_false_positive_rate": null
+  },
+  "C": {
+   "runs": 6,
+   "completion_rate": 1.0,
+   "turns_mean": 7,
+   "tokens_mean": 2793620.6666666665,
+   "tokens_median": 2851873.0,
+   "interventions_mean": 0,
+   "injection_share_total": 0.0003219598954919566,
+   "injection_share_max": 0.0014058484996495996,
+   "rot": {
+    "followed": 6
+   },
+   "declaration_rate_mean": 0.5333333333333333,
+   "review_detection_rate": null,
+   "review_false_positive_rate": null
+  }
+ }
+}

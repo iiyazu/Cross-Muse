@@ -1,0 +1,23 @@
+## Runs
+
+| run | group | mode | done | hidden (raw) | hidden unaffected | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| minisql-B2-11/minisql | B | run | True | fail | 46/46 | 8 | 3,570,793 | 0 | 0.0% | 0.0% | 0.0% | none:8 | followed | 9/10 | - |
+| minisql-C2-11/minisql | C | run | True | fail | 46/46 | 7 | 2,808,867 | 0 | 0.0% | 0.0% | 0.1% | delta:4 none:3 | followed | 5/10 | - |
+| minisql-B2-12/minisql | B | run | True | fail | 46/46 | 6 | 3,134,296 | 0 | 0.0% | 0.0% | 0.0% | none:6 | followed | 5/10 | - |
+| minisql-C2-12/minisql | C | run | True | fail | 46/46 | 6 | 3,033,603 | 0 | 0.0% | 0.0% | 0.0% | delta:3 none:3 | followed | 5/10 | - |
+| minisql-B2-13/minisql | B | run | False | pass | 46/46 | 8 | 3,039,262 | 0 | 0.0% | 0.0% | 0.0% | none:8 | partial | 10/10 | - |
+| minisql-C2-13/minisql | C | run | True | fail | 46/46 | 6 | 2,513,577 | 0 | 0.0% | 0.0% | 0.1% | delta:2 none:4 | followed | 4/10 | - |
+| minisql-B2-14/minisql | B | run | True | fail | 46/46 | 9 | 3,875,016 | 0 | 0.0% | 0.0% | 0.0% | none:9 | followed | 10/10 | - |
+| minisql-C2-14/minisql | C | run | True | fail | 46/46 | 7 | 2,894,879 | 0 | 0.0% | 0.0% | 0.1% | delta:4 none:3 | followed | 5/10 | - |
+| minisql-B2-15/minisql | B | run | True | fail | 46/46 | 8 | 2,546,955 | 0 | 0.0% | 0.0% | 0.0% | none:8 | followed | 7/10 | - |
+| minisql-C2-15/minisql | C | run | True | fail | 46/46 | 8 | 2,047,931 | 0 | 0.0% | 0.0% | 0.1% | delta:5 none:3 | followed | 3/10 | - |
+| minisql-B2-16/minisql | B | run | True | fail | 46/46 | 7 | 3,020,824 | 0 | 0.0% | 0.0% | 0.0% | none:7 | followed | 10/10 | - |
+| minisql-C2-16/minisql | C | run | True | fail | 46/46 | 8 | 3,462,867 | 0 | 0.0% | 0.1% | 0.1% | delta:6 none:2 | followed | 10/10 | - |
+
+## Groups
+
+| group | runs | completion | turns | tokens (mean) | interv. | inject total | inject max | rot | declared | detection | false pos. |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| B | 6 | 83.3% | 7.67 | 3,197,858 | 0 | 0.0% | 0.0% | followed:5 partial:1 | 85.0% | - | - |
+| C | 6 | 100.0% | 7 | 2,793,621 | 0 | 0.0% | 0.1% | followed:6 | 53.3% | - | - |
