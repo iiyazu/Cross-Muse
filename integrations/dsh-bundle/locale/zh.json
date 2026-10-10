@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "xmuse（冒烟测试）",
+    "description": "连接 xmuse hub 的冒烟测试插件：/xmuse 命令和 xmuse_whoami 工具。"
+  }
+}

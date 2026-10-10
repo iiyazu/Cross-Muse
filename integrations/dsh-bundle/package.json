@@ -1,0 +1,19 @@
+{
+  "name": "xmuse-dsh-bundle",
+  "version": "0.0.1",
+  "description": "xmuse 2 smoke-test bundle: /xmuse command, xmuse_whoami tool, follow-up delivery into the current session",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "scripts": { "test": "node --import ./test/register.mjs --test test/bundle.test.mjs" },
+  "files": ["index.js", "cordis.patch.yml", "locale/*.json"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

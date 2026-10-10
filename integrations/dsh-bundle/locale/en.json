@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "xmuse (smoke test)",
+    "description": "Smoke-test bridge to the xmuse hub: /xmuse command and the xmuse_whoami tool."
+  }
+}

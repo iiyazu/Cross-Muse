@@ -1,0 +1,7 @@
+# xmuse 2 smoke-test bundle: one Host plugin row. `state` is the xmuse hub state
+# directory (contains hub.json and tokens/<agent>); only paths here, never tokens.
+- insert:
+    - id: xmuse
+      name: 'xmuse-dsh-bundle'
+      config:
+        state: '\\wsl.localhost\Ubuntu-24.04\home\user\.local\state\xmuse\xmuse-desk-c9ddc1e5'
