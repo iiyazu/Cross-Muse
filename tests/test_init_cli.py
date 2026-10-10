@@ -139,7 +139,7 @@ def test_cli_end_to_end_with_a_fake_agent(ws):
         assert sent["woken"] == ["claude-1"]
         assert run(ws, "wait", "--timeout", "30", "--settle", "1").stdout.strip() == "quiet"
         log = run(ws, "log").stdout
-        assert "#1" in log and "human → dm:claude-1+human" in log and "pong" in log
+        assert "#1" in log and "human (via cli) → dm:claude-1+human" in log and "pong" in log
         assert "turn 1 claude-1 claude_resume fresh" in log and "succeeded chat tokens=" in log
         usage = run(ws, "usage", "--json").stdout
         [u] = json.loads(usage)
