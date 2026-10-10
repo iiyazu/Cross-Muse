@@ -1,0 +1,11 @@
+# label | regex (case-insensitive); see ledger.txt for the rule
+values-int-str-none | float|int.*str|only (int|str)|value types
+parse-error-position-char-index | position|0-based|character (index|offset)|char offset
+ne-normalized | <>|!=|not.equal
+column-names-case-insensitive | case.insens|column name|table spelling|table definition
+null-ordering | null|none.*(first|last|order|sort)
+sort-stable | stable
+last-column-not-padded | pad|trailing (space|whitespace)|last column
+output-no-trailing-newline | newline
+rot-null-largest | null.*(largest|last|max|greatest|after)
+rot-tsv | tsv|tab

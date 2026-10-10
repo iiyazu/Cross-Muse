@@ -1,0 +1,11 @@
+# label | regex (case-insensitive) matched against statements of decision/assumption/convention entries authored by agents.
+# The denominator of the declaration rate: cross-slice conventions of SPEC.md/README.md plus the conventions the rot overturns.
+amounts-integer-cents | cent|integer
+no-float | float|binary
+currency-three-letters | currenc.*(upper|3|three|case)|(upper|three|3).*currenc
+currencies-never-mixed | currenc.*(mix|add|sum|bucket|separate|key)|bucket.*currenc|(category|key).*currenc
+line-numbers-1-based | 1-based|line number|comment.*line|blank.*line
+wildcards-star-question | wildcard|glob|\*.*\?|literal
+render-deterministic | byte|determinis|stable|trailing newline|no newline
+rot-decimal-string | decimal|string.*amount|amount.*string|two decimal|2 decimal
+rot-uncategorized | uncategorized

@@ -1,0 +1,6 @@
+{
+  "_doc": "Machine-readable match rules for planted/ledger/BUGS.md. A review message names a bug when ONE message matches file AND function AND symptom (regexes, case-insensitive). 'clean' lists modules without a bug (plus the other bug's module): a message that mentions one and uses defect words without a 'correct/no issues' phrase counts as a false positive.",
+  "bug-1": {"file": "parse\\.py", "function": "parse_amount", "symptom": "float|truncat|114|binary|rounding|off.by.one|cent"},
+  "bug-2": {"file": "rules\\.py", "function": "apply_rules", "symptom": "currenc|EUR|USD|bucket|mix|key"},
+  "clean": [{"file": "report\\.py", "function": "render_report|format_amount"}]
+}

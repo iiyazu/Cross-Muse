@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""M2b metrics (README section 5), standard library only.
+
+usage: metrics.py <results-dir>... [--out DIR]
+
+A results dir is one run folder written by run.py (meta.json inside) or a parent holding several (group L: one
+sub-folder per task). Writes DIR/metrics.json (per run + per group), DIR/metrics.md (tables) and
+DIR/view-curve.csv (entries in each agent's view at every wake). DIR defaults to the current directory.
+
+Per run: completion (public + hidden tests), turns and tokens (by agent), human interventions (the rot message is
+not counted), injection share (align_tokens / input+cache_read+cache_write per turn), align_mode distribution, rot
+verdict (followed | partial | ignored from rot-tests.json), declaration rate (declare-checklist/<seed>.txt: label |
+regex, matched against statements of decision/assumption/convention entries authored by agents) and, in review
+mode, whether the planted bug was named (review-keys/<seed>.json) plus false positives on modules without a bug.
+"""
+import csv
+import json
+import re
+import statistics as st
+import sys
+from collections import Counter
+from pathlib import Path
+
+EXP = Path(__file__).resolve().parent
+DECLARED = ("decision", "assumption", "convention")
+DEFECT = re.compile(r"\b(bug|wrong|incorrect|broken|fails?|violat\w*|mismatch\w*|defect)\b", re.I)
+SOUND = re.compile(r"\bno (bugs?|issues?|problems?|defects?|findings)\b|\bcorrect\b|\bconforms?\b|\bapprove\w*\b|"
+                   r"\bmatches (the )?spec\b|\bpasses\b|\blooks good\b", re.I)
+
+
+def tok(t: dict) -> int:
+    return sum(t.get(k) or 0 for k in ("input", "cache_read", "cache_write", "output"))
+
+
+def median(xs):
+    return st.median(xs) if xs else None
+
+
+def units(paths) -> list[Path]:
+    out = []
+    for p in map(Path, paths):
+        out += [p] if (p / "meta.json").exists() else sorted(d for d in p.iterdir() if (d / "meta.json").exists())
+    return out
+
+
+def rot_verdict(d: Path, meta: dict) -> dict:
+    rot = meta.get("rot") or {}
+    if not rot.get("expected"):
+        return {"verdict": "no_rot"}
+    if not rot.get("injected"):
+        return {"verdict": "not_injected"}
+    f = d / "rot-tests.json"
+    tests = {k: v for k, v in (json.loads(f.read_text())["tests"] if f.exists() else {}).items()
+             if k.startswith(f"test_rot{rot['n']}_")}
+    ok = sum(v == "ok" for v in tests.values())
+    verdict = "no_tests" if not tests else "followed" if ok == len(tests) else "ignored" if ok == 0 else "partial"
+    return {"verdict": verdict, "passed": ok, "total": len(tests), "kind": rot.get("kind"),
+            "superseded_entry": rot.get("supersedes")}
+
+
+def declaration(d: Path, meta: dict) -> dict | None:
+    f = EXP / "declare-checklist" / f"{meta['seed']}.txt"
+    e = d / "entries.json"
+    if not f.exists() or not e.exists():
+        return None
+    agents = {a[0] for a in meta["agents"]}
+    stmts = [x["statement"] for x in json.loads(e.read_text())["entries"]
+             if x["kind"] in DECLARED and x["author"] in agents and json.loads(x["refs"] or "[0]")[0] >= meta["first_message_id"]]
+    items = [ln.split("|", 1) for ln in f.read_text().splitlines() if "|" in ln and not ln.startswith("#")]
+    hit = {label.strip(): any(re.search(rx.strip(), s, re.I) for s in stmts) for label, rx in items}
+    return {"declared": sum(hit.values()), "total": len(hit), "rate": sum(hit.values()) / len(hit),
+            "missing": [k for k, v in hit.items() if not v], "agent_entries": len(stmts)}
+
+
+def review(d: Path, meta: dict) -> dict | None:
+    f = EXP / "review-keys" / f"{meta['seed']}.json"
+    r = d / "review.md"
+    if meta["scenario"].get("MODE") != "review" or not f.exists() or not r.exists():
+        return None
+    keys, planted = json.loads(f.read_text()), f"bug-{meta['scenario']['BUG']}"
+    blocks = re.split(r"\n(?=## #)", r.read_text())
+    has = lambda b, rx: re.search(rx, b, re.I)  # noqa: E731
+    k = keys[planted]
+    detected = any(has(b, k["file"]) and has(b, k["function"]) and has(b, k["symptom"]) for b in blocks)
+    clean = keys["clean"] + [{"file": v["file"]} for n, v in keys.items() if n.startswith("bug-") and n != planted]
+    flagged = [c["file"] for c in clean if any((has(b, c["file"]) or (c.get("function") and has(b, c["function"]))) and DEFECT.search(b)
+                                              and not SOUND.search(b) for b in blocks)]
+    return {"planted": planted, "detected": detected, "false_positives": flagged, "modules_without_bug": len(clean)}
+
+
+def run_metrics(d: Path) -> dict:
+    meta = json.loads((d / "meta.json").read_text())
+    log = json.loads((d / "log.json").read_text())
+    turns, msgs = log["turns"], log["messages"]
+    ratios, align, per_agent = [], 0, {}
+    for t in turns:
+        total_in = sum(t.get(k) or 0 for k in ("input", "cache_read", "cache_write"))
+        align += t.get("align_tokens") or 0
+        if total_in:
+            ratios.append((t.get("align_tokens") or 0) / total_in)
+        a = per_agent.setdefault(t["agent_id"], {"turns": 0, "tokens": 0})
+        a["turns"] += 1
+        a["tokens"] += tok(t)
+    inj_total = sum(sum(t.get(k) or 0 for k in ("input", "cache_read", "cache_write")) for t in turns)
+    human = sum(m["sender"] == "human" for m in msgs)
+    rot = rot_verdict(d, meta)
+    status = lambda n: (d / n).read_text().strip() if (d / n).exists() else None  # noqa: E731
+    pub, hid = status("public.status"), status("hidden.status")
+    return {
+        "run": meta["run"], "seed": meta["seed"], "group": meta["group"], "mode": meta["scenario"].get("MODE", "run"),
+        "completed": None if pub is None else (pub == "pass" and hid == "pass"), "public": pub, "hidden": hid,
+        "quiet": meta["quiet"], "seconds": meta["seconds"],
+        "turns": len(turns), "failed_turns": sum(t["state"] != "succeeded" for t in turns),
+        "tokens": sum(tok(t) for t in turns), "by_agent": per_agent,
+        "human_messages": human, "human_interventions": max(human - 1 - bool(meta["rot"].get("injected")), 0),
+        "notices": sum(m["kind"] == "notice" for m in msgs),
+        "injection": {"align_tokens": align, "share_total": align / inj_total if inj_total else None,
+                      "share_median": median(ratios), "share_max": max(ratios, default=None),
+                      "share_median_injected": median([r for r in ratios if r]),
+                      "modes": dict(Counter(t.get("align_mode") or "none" for t in turns))},
+        "rot": rot, "declaration": declaration(d, meta), "review": review(d, meta),
+        "view_curve": {a: [t["view_entries"] for t in turns if t["agent_id"] == a] for a in per_agent},
+    }
+
+
+def group_metrics(rs: list[dict]) -> dict:
+    mean = lambda xs: st.mean(xs) if xs else None  # noqa: E731
+    done = [r["completed"] for r in rs if r["completed"] is not None]
+    rev = [r["review"] for r in rs if r["review"]]
+    decl = [r["declaration"]["rate"] for r in rs if r["declaration"]]
+    return {
+        "runs": len(rs), "completion_rate": mean([float(x) for x in done]),
+        "turns_mean": mean([r["turns"] for r in rs]), "tokens_mean": mean([r["tokens"] for r in rs]),
+        "tokens_median": median([r["tokens"] for r in rs]),
+        "interventions_mean": mean([r["human_interventions"] for r in rs]),
+        "injection_share_total": mean([r["injection"]["share_total"] for r in rs if r["injection"]["share_total"] is not None]),
+        "injection_share_max": max([r["injection"]["share_max"] for r in rs if r["injection"]["share_max"] is not None], default=None),
+        "rot": dict(Counter(r["rot"]["verdict"] for r in rs)),
+        "declaration_rate_mean": mean(decl),
+        "review_detection_rate": mean([float(x["detected"]) for x in rev]),
+        "review_false_positive_rate": mean([len(x["false_positives"]) / x["modules_without_bug"] for x in rev]),
+    }
+
+
+def fmt(v, pct=False) -> str:
+    return "-" if v is None else f"{v:.1%}" if pct else f"{v:,.0f}" if isinstance(v, float) and abs(v) >= 100 else str(round(v, 2) if isinstance(v, float) else v)
+
+
+def markdown(runs: list[dict], groups: dict) -> str:
+    out = ["## Runs", "", "| run | group | mode | done | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in runs:
+        i, d, v = r["injection"], r["declaration"], r["review"]
+        out.append(f"| {r['run']}/{r['seed']} | {r['group']} | {r['mode']} | {fmt(r['completed'])} | {r['turns']} | {r['tokens']:,} |"
+                   f" {r['human_interventions']} | {fmt(i['share_total'], True)} | {fmt(i['share_median'], True)} | {fmt(i['share_max'], True)} |"
+                   f" {' '.join(f'{k}:{n}' for k, n in sorted(i['modes'].items()))} | {r['rot']['verdict']} |"
+                   f" {d and f'{d['declared']}/{d['total']}' or '-'} |"
+                   f" {v and ('hit' if v['detected'] else 'miss') + f' (fp {len(v['false_positives'])})' or '-'} |")
+    out += ["", "## Groups", "", "| group | runs | completion | turns | tokens (mean) | interv. | inject total | inject max | rot | declared | detection | false pos. |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for k, g in sorted(groups.items()):
+        out.append(f"| {k} | {g['runs']} | {fmt(g['completion_rate'], True)} | {fmt(g['turns_mean'])} | {fmt(g['tokens_mean'])} |"
+                   f" {fmt(g['interventions_mean'])} | {fmt(g['injection_share_total'], True)} | {fmt(g['injection_share_max'], True)} |"
+                   f" {' '.join(f'{a}:{n}' for a, n in sorted(g['rot'].items()))} | {fmt(g['declaration_rate_mean'], True)} |"
+                   f" {fmt(g['review_detection_rate'], True)} | {fmt(g['review_false_positive_rate'], True)} |")
+    return "\n".join(out) + "\n"
+
+
+def main(argv) -> None:
+    out = Path(argv[argv.index("--out") + 1]) if "--out" in argv else Path(".")
+    paths = [a for i, a in enumerate(argv) if a != "--out" and (i == 0 or argv[i - 1] != "--out")]
+    runs = [run_metrics(d) for d in units(paths)]
+    if not runs:
+        raise SystemExit("no results (a folder with meta.json) found")
+    groups = {}
+    for r in runs:
+        groups.setdefault(("review-" if r["mode"] == "review" else "") + r["group"], []).append(r)
+    groups = {k: group_metrics(v) for k, v in groups.items()}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "metrics.json").write_text(json.dumps({"runs": runs, "groups": groups}, indent=1, ensure_ascii=False))
+    (out / "metrics.md").write_text(markdown(runs, groups))
+    with (out / "view-curve.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["run", "seed", "group", "agent", "wake_no", "view_entries"])
+        for r in runs:
+            for agent, curve in r["view_curve"].items():
+                w.writerows([r["run"], r["seed"], r["group"], agent, i, v] for i, v in enumerate(curve, 1))
+    print((out / "metrics.md").read_text())
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        raise SystemExit(__doc__)
+    main(sys.argv[1:])
