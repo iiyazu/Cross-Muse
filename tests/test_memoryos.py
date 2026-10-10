@@ -1,6 +1,7 @@
 """MemoryOS client against a fake that follows the contract: /recall ranking with fallback, background /curate
 collab (triggers, proposed entries, conflicts), /similar, capability gating, and zero calls when disabled."""
 import json
+import time
 
 import pytest
 
@@ -236,3 +237,45 @@ def test_similar_is_asked_above_120_percent_of_the_layer_cap(make, mo, n, called
     else:
         assert all(c["id"] != "hub-similar" for c in fake.calls[0][1]["context"])
 
+
+
+@pytest.mark.parametrize("timeout_s, ok", [(10, True), (1, False)])
+def test_curate_uses_the_configured_timeout(make, mo, timeout_s, ok):
+    fake = mo()
+    h = hub(make, fake.url, curate_timeout_s=timeout_s)
+
+    def slow(req):
+        time.sleep(3)
+        return {"scope_id": "#g", "memories": [memory("ids are Decimal")]}
+    fake.curate = slow
+    talk(h, 8, 0)
+    assert len(proposed(h)) == ok
+    assert h.q("select count(*) n from curated")[0]["n"] == ok  # a timeout keeps the cursor for the next trigger
+
+
+def test_confirm_supersede_and_resolve_of_the_same_question_is_quiet(make, mo):
+    fake = mo()
+    h = hub(make, fake.url)
+    fake.curate = lambda req: {"scope_id": "#g", "memories": [
+        memory("floats are Decimal", supersedes_id="E1", resolves_ids=["E1"])]}
+    decl(h, "which float?", "question")                                                      # E1
+    h.tool("claude-2", "xmuse_send", to="#g", body="after the answer", kind="handoff", why=WHY, mentions=["claude-3"],
+           depends_on=["E1"])
+    h.hub.curator.join()                                                                     # the handoff kicks curate
+    (p,) = proposed(h)
+    assert view(h, agent="claude-3")["ready"] == []
+    assert h.admin("align", op="confirm", id=f"E{p['id']}")["result"] == {"ok": True}
+    assert h.q("select op from entry_events where entry_id=1 order by seq") == [{"op": "add"}, {"op": "supersede"}]
+    assert view(h, agent="claude-3")["ready"] == ["E2"]
+
+
+@pytest.mark.parametrize("active, warmed", [(3, False), (5, True)])  # the cap is 5: warm above 80%
+def test_curate_warms_recall_only_near_the_cap(make, mo, active, warmed):
+    fake = mo()
+    fake.curate = lambda req: {"scope_id": "#g", "memories": [memory("something new")]}
+    h = hub(make, fake.url, align_thread_cap=5)
+    for i in range(active):
+        decl(h, f"rule {i}")
+    talk(h, 8 - active, active)
+    assert fake.paths() == ["/curate"] + ["/recall"] * warmed
+    assert not warmed or fake.calls[-1][1]["query"] == ""

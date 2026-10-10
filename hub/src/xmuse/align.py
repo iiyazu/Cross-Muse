@@ -99,11 +99,13 @@ def _pub(e: dict) -> dict:
 
 def _blocked(conn, e: dict):
     """A dependency is met when resolved/archived, or when it is a decision-like entry that exists
-    (active, or superseded: a newer version does not re-block work). Questions and assignments must resolve."""
+    (active, or superseded: a newer version does not re-block work). Assignments and active questions must
+    resolve; a superseded question counts as answered (the newer entry replaces it)."""
     deps = json.loads(e["depends_on"] or "[]")
     return conn.execute(
         f"select 1 from entries where id in ({','.join('?' * len(deps))}) and status not in ('resolved','archived')"
-        " and not (kind in ('decision','convention','assumption','lesson') and status in ('active','superseded'))",
+        " and not (kind in ('decision','convention','assumption','lesson') and status in ('active','superseded'))"
+        " and not (kind='question' and status='superseded')",
         deps).fetchone()
 
 

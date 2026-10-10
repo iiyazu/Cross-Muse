@@ -250,3 +250,12 @@ def test_cli_thread_close(make, capsys):
     assert json.loads(capsys.readouterr().out) == {"archived": 1}
     cli.main(["--ws", str(h.ws), "thread", "#g", "--owner", "claude-2"])  # the old form still works
     assert h.q("select owner from threads")[0]["owner"] == "claude-2"
+
+
+def test_superseding_a_question_unblocks_its_dependents(make):
+    h = three(make)
+    decl(h, "claude-1", "int or float?", "question")                                        # E1
+    h.tool("claude-1", "xmuse_send", to="claude-2", body="then execute", kind="handoff", why=WHY, depends_on=["E1"])
+    assert view(h, "claude-2")["ready"] == []
+    decl(h, "claude-1", "ids are Decimal strings", supersedes="E1")
+    assert entry(h, "E1")["status"] == "superseded" and view(h, "claude-2")["ready"] == ["E2"]

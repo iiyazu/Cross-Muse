@@ -122,7 +122,7 @@ class Curator:
         if len(active) <= self.cfg["align_thread_cap"] * 1.2:
             return None
         r = self.mo.call("similar", "/similar", {"schema": "memoryos_similar/v1", "threshold": SIMILAR,
-                         "items": [{"id": f"E{e['id']}", "text": e["statement"]} for e in active[:500]]}, 10)
+                         "items": [{"id": f"E{e['id']}", "text": e["statement"]} for e in active[:500]]}, self.cfg["similar_timeout_s"])
         try:
             pairs = ", ".join(f"{p['a']}~{p['b']} ({p['score']:.2f})" for p in r["pairs"])
         except (KeyError, TypeError, ValueError):
@@ -137,7 +137,7 @@ class Curator:
             "active": [{"id": f"E{e['id']}", "kind": e["kind"], "topic_key": f"e{e['id']}", "statement": e["statement"],
                         "version": e["seq"]} for e in active],
             "context": [_act(m) for m in ctx][-(CONTEXT - bool(note)):] + [note] * bool(note),
-            "window": [_act(m) for m in win]}, 120)
+            "window": [_act(m) for m in win]}, self.cfg["curate_timeout_s"])
         if r is None:
             return
         conn, wid, aid = self.pool(), {m["id"] for m in win}, {e["id"] for e in active}
@@ -163,3 +163,5 @@ class Curator:
                          (tid, win[-1]["id"]))
         for body in notes:
             mail.notice(conn, tid, body)
+        if made and len(active) > self.cfg["align_thread_cap"] * 0.8:  # warm MemoryOS's embedding cache; result unused
+            self.mo.rank(active, f"thread:{tid}", "", "", self.cfg["align_thread_cap"], self.cfg["recall_budget_tokens"])

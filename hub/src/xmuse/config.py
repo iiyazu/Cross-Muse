@@ -28,6 +28,8 @@ DEFAULTS = {
     "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
     "compact_drop_ratio": 0.5,       # a turn's context below this share of the last one's means the vendor compacted
     "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
+    "curate_timeout_s": 420,         # /curate collab (background) takes 92-370 s with a reasoning model
+    "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
