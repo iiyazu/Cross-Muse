@@ -264,3 +264,24 @@ experiments/batch.sh experiments/plans/t6-e5-cross.txt   # 6 run，dsh 复核
 **没做 / 拿不准**
 - `docs/design/` 里的历史文档仍然写着 `spikes/…`、`e2e/…` 的旧路径，没有改：它们是当时的记录。
 - `archive/` 里录制文件中的 `/home/user/...` 路径保持原样。
+
+## T8 小修（r7 审查后追加；2026-10-11）
+
+**提交**：``a25089b``
+
+| 项 | 做法 | 测试 |
+|---|---|---|
+| 1 白名单漏洞 | `sed` 只放行 `sed -n 'N[,M]p' 相对路径…` 这一种形式；git 去掉 `restore`，并拒绝 `--output`、`--open-files-in-pager`、`-O`（含 `-Ovim` 这类写法）、`--ext-diff`、`--textconv`；`rg` 拒绝 `--pre*`；`sort` 拒绝 `-o`（包括组合标志里的，例如 `-uo`）和 `--output`、`--compress-program`；`tree -o`；`find -fprint*`、`-fls*`。管道后面的过滤器同样检查（`ls \| sort -o x` 会被拦） | `BYPASSES` 新增 25 条，共 75 条全部拦下；`ALLOWED` 新增 5 条常用写法（`git log --oneline`、`grep -o`、`sort -u`、`sed -n 5p`、`rg -n`），全部仍然放行 |
+| 2 家族按模型推导 | `config.family(vendor, model)`：模型名含 claude→anthropic、deepseek→deepseek、muse-spark→opencode，另有 gpt/gemini/qwen/glm/kimi，都不匹配时按外壳。`agent add` 和重新 add 时写入；hub 启动时修正旧库里的值（10-11 之前 dsh 跑 muse-spark 被标成 deepseek） | `test_units.py::test_family_follows_the_model_not_the_shell`（含 whoami 和旧库修正） |
+| 3 插件包 | `peerDependencies` 改为 `>=0.2.0-rc.2 <0.3.0`；README 新增"升级 dsh 本身"一节（自检、看日志、改范围、重跑测试）。另外按 r7 回复第 3 条：dsh 会话不注册 `xmuse_approve`（插件包过滤掉；随包的 tools.json 仍是 hub 的完整 8 个） | node 测试新增 1 条：hub 列出了这个工具，dsh 会话里也没有 |
+| 4 `woken` 和前台 agent | `send` 的返回里，`woken` 不再列出前台 dsh agent，改为单独的 `pushed`（由插件包推送）；`pushed` 只在非空时出现，旧的返回格式不变 | `test_foreground.py::test_engine_never_wakes_foreground_agent` |
+
+**测试结果原文**
+```
+314 passed, 1 skipped in 143.93s (0:02:23)
+```
+插件包：`ℹ pass 28`、`ℹ fail 0`
+
+**没做 / 拿不准**
+- `sed` 现在只放行一种写法，agent 用 `sed 's/…//' file`（不带 -i，只输出）查看替换效果时也会转人工。
+- `xmuse_send` 工具的描述里没有提到 `pushed`，模型是从返回值里看到的。
