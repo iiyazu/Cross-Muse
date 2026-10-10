@@ -137,9 +137,11 @@ class Curator:
             "active": [{"id": f"E{e['id']}", "kind": e["kind"], "topic_key": f"e{e['id']}", "statement": e["statement"],
                         "version": e["seq"]} for e in active],
             "context": [_act(m) for m in ctx][-(CONTEXT - bool(note)):] + [note] * bool(note),
-            "window": [_act(m) for m in win]}, self.cfg["curate_timeout_s"])
+            "window": [_act(m) for m in win], "max_repairs": 1}, self.cfg["curate_timeout_s"])  # worst case 2 x 180 s
         if r is None:
             return
+        u = (r.get("diagnostics") or {}).get("usage") or {}  # a lower bound when unmetered_attempts > 0
+        log.info("curate %s usage %s", tid, json.dumps(u, sort_keys=True))
         conn, wid, aid = self.pool(), {m["id"] for m in win}, {e["id"] for e in active}
         questions = {e["id"] for e in active if e["kind"] == "question"}
         made, notes = {}, []
