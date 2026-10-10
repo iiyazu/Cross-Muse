@@ -202,7 +202,7 @@ class Run:
         self.x("send", thread, task, "--mention", sc["IMPL"] if sc.get("MODE") != "review" else sc["REVIEW"].split(",")[0])
         rot = {"injected": False}
         rot_n = sc.get("ROT", "1" if sc.get("MODE") != "review" else "none")
-        at, timeout, settle = sc.get("ROT_AT", "review_request"), float(sc.get("TIMEOUT", 3600)), float(sc.get("SETTLE", 30))
+        at, timeout, settle = sc.get("ROT_AT", "review_reply"), float(sc.get("TIMEOUT", 3600)), float(sc.get("SETTLE", 30))
         revs, calm, rc = sc["REVIEW"].split(","), None, 1
         while time.time() - start < timeout:
             if rot_n != "none" and not rot["injected"] and self.rot_due(at, revs, first_msg, first_turn):
@@ -230,12 +230,15 @@ class Run:
                            rr, *revs))
 
     def inject(self, seed: str, n: int, thread: str) -> dict:
-        """The rot message, from human: a decision (superseding the matching entry) in C/L, a plain message in A/B."""
+        """The rot message, from human: a decision (superseding the matching entry) in C/L, a plain message in A/B.
+        Every group mentions the implementer and the reviewers, as a person announcing a change would, so delivery
+        is equal across groups and what differs is only how the change is carried (alignment entry or not)."""
         text, kind = rot_text(seed, n), "decision" if self.group in ("C", "L") else "message"
+        ment = [a for m in [self.sc["IMPL"], *self.sc["REVIEW"].split(",")] for a in ("--mention", m)]
         sup = match_entry(self.x("align", "list"), self.sc["ROT_MATCH"]) if kind == "decision" and self.sc.get("ROT_MATCH") else None
-        out = self.x("send", thread, text, "--kind", kind, *(["--supersedes", sup] if sup else []), check=False)
+        out = self.x("send", thread, text, "--kind", kind, *ment, *(["--supersedes", sup] if sup else []), check=False)
         if sup and "error" in out:  # the entry changed under us; send without
-            sup, out = None, self.x("send", thread, text, "--kind", kind)
+            sup, out = None, self.x("send", thread, text, "--kind", kind, *ment)
         return {"injected": True, "n": n, "kind": kind, "supersedes": sup, "text": text, "at": time.time(), "reply": out.strip()}
 
     # ---- collect ---------------------------------------------------------------------
