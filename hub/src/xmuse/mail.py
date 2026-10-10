@@ -68,6 +68,12 @@ def _desktop_agents(conn) -> list[str]:
             if db.settings(a).get("desktop")]
 
 
+def _foreground_agents(conn) -> list[str]:
+    """dsh foreground agents: never woken by the hub; the bundle's relay pushes their mail into the bound session."""
+    return [a["id"] for a in db.rows(conn.execute("select id, settings from agents order by id"))
+            if db.settings(a).get("foreground")]
+
+
 def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
     """The desktop coordinator is the user's interface: whatever reaches  also lands, unread and never
     woken, in each coordinator's inbox (unless it sent it or already has a delivery of it)."""
@@ -147,7 +153,10 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         else:
             eids = []
         align.resolve(conn, resolves or [])
-        return {**db.row(conn.execute("select * from messages where id=?", (mid,))), "woken": sorted(wake - set(_desktop_agents(conn))),  # the hub never wakes a coordinator
+        fg = set(_foreground_agents(conn))
+        return {**db.row(conn.execute("select * from messages where id=?", (mid,))),
+                # the hub never wakes a coordinator or a foreground agent; the latter gets the message pushed
+                "woken": sorted(wake - set(_desktop_agents(conn)) - fg), "pushed": sorted(wake & fg),
                 "entries": [f"E{i}" for i in eids]}
 
 

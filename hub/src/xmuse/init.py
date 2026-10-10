@@ -135,14 +135,15 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     s.update(settings or {})
     with db.tx(conn):
         if old:  # re-add: new settings, same token and history
-            conn.execute("update agents set model=?, role=?, settings=? where id=?",
-                         (model or old["model"], role or old["role"], json.dumps(s), agent_id))
+            m = model or old["model"]
+            conn.execute("update agents set model=?, family=?, role=?, settings=? where id=?",
+                         (m, config.family(vendor, m), role or old["role"], json.dumps(s), agent_id))
         else:
             tok = _token(state / "tokens" / agent_id)
+            m = model or config.MODELS[vendor]
             conn.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at)"
                          " values(?,?,?,?,?,?,?,?)",
-                         (agent_id, vendor, model or config.MODELS[vendor], config.FAMILIES[vendor], role,
-                          json.dumps(s), digest(tok), db.now()))
+                         (agent_id, vendor, m, config.family(vendor, m), role, json.dumps(s), digest(tok), db.now()))
     agent = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
     WRITERS[vendor](ws, agent, state)
     if s.get("foreground"):

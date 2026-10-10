@@ -191,6 +191,13 @@ BYPASSES = [
     "xargs git push", "git status | sh", "git log | xargs rm", "cat x | /bin/sh", "git reset --hard",
     "git merge main", "git rebase main", "git clean -fdx", "git branch -D x", "git checkout -- .",
     "rm -rf /tmp/x", "rm -f /etc/passwd", "FOO=1 bash -c 'git push'", "nohup git push", "timeout 5 git push",
+    # r7 review (T8): writers and launchers hiding in read-only tools
+    "sed -ni s/a/b/ f.py", "sed -Ei s/a/b/ f.py", "sed -n 'w /tmp/x' f.py", "sed -n '1e date' f.py", "sed 1d f.py",
+    "sed -n 1p /etc/passwd", "git grep -O vim foo", "git grep -Ovim foo", "git grep --open-files-in-pager=sh foo",
+    "git diff --output=/tmp/x", "git log --output /tmp/x", "git show --output=x HEAD", "git restore .",
+    "git diff --ext-diff", "rg --pre sh foo", "rg --pre=./x foo", "rg --pre-glob '*' --pre sh foo",
+    "sort -o x y", "sort -uo x y", "sort --output=x y", "tree -o x", "find . -fprintf x %p", "find . -fprint0 x",
+    "ls | sort -o x",
 ]
 ALLOWED = [
     "python -m pytest -q", "PYTHONPATH=src python3 -m unittest -v", "pytest tests/test_a.py -x",
@@ -198,6 +205,7 @@ ALLOWED = [
     "git status --short", "git diff HEAD~1", "git log --oneline -5", "git add a.py", "git commit -m 'x y'",
     "ls -la", "cat SPEC.md", "grep -n foo src/a.py | head -5", "find . -name '*.py'", "sed -n 1,20p a.py",
     "rm -f /tmp/opencode_probe.py", "mkdir -p build/out", "wc -l a.py b.py",
+    "git log --oneline -5", "grep -o foo a.py", "sort -u a.txt", "sed -n 5p a.py", "rg -n foo src",
 ]
 
 

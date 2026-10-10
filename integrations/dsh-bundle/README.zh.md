@@ -44,8 +44,12 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
 1. 源码在本仓库 `integrations/dsh-bundle/`。运行 `bash sync.sh [目标目录]` 同步，默认目标是 Windows 用户目录下的
    `dsh-work\xmuse-bundle`（由 `%USERPROFILE%` 推导，或设 `XMUSE_WIN_HOME`；不含 test、node_modules；`bindings.json` 保留）。
 2. 首次安装：dsh 桌面端 **插件 → 添加插件**，路径填 `%USERPROFILE%\dsh-work\xmuse-bundle`（`sync.sh` 最后会打印实际路径）（本地路径安装是链接方式）。
-3. **升级**：再跑一次 `sync.sh`，然后**重启 dsh**（链接方式不需要重装，但要重启才会加载新代码）。重启后绑定和游标自动恢复，
+3. **升级插件包**：再跑一次 `sync.sh`，然后**重启 dsh**（链接方式不需要重装，但要重启才会加载新代码）。重启后绑定和游标自动恢复，
    循环自动重新开始轮询。
+4. **升级 dsh 本身**：`package.json` 的 `peerDependencies` 声明支持 `>=0.2.0-rc.2 <0.3.0`，只在 0.2.0-rc.2 上实测过。dsh 升级后：
+   - 重启 dsh，在会话里执行 `/xmuse status`，确认自检里的 services、hub state、tools 都正常；
+   - 0.2.x 范围内有不兼容，或者升到 0.3 及以上：看自检和 dsh 日志里 `xmuse:` 开头的报错。插件用到的接口有 `commands`、`agents`、
+     `sessions`、`tools`、`sessionController`（`index.js` 的 `inject`）。修好后改 `peerDependencies` 的范围，并重跑 `npm test`。
 
 ## 把试用工作区的 dsh-1 切到前台模式（用户自己操作，我没有执行）
 
