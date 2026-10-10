@@ -5,7 +5,9 @@ Validation is ported from v1 room_mcp_server._validate_tool_call/_schema_violati
 type checks: errors name the field and the allowed values, because some hosts call MCP
 tools through a wrapper and never see the schema (#470).
 """
-KINDS = ["message", "handoff", "review_request", "decision", "question"]
+DECLARE = ["decision", "assumption", "question"]  # kinds that create an active alignment entry
+KINDS = ["message", "handoff", "review_request", *DECLARE]
+SCOPE = "global | role:<role> | thread (default)"
 WHY_FIELDS = ["what", "why", "tradeoff", "open_questions", "next_action"]
 
 
@@ -22,8 +24,13 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["to", "body"], "properties": {
          "to": _s("peer id, 'human', or '#thread'"),
          "body": _s("message text"),
-         "kind": {"type": "string", "enum": KINDS, "description": "default message"},
+         "kind": {"type": "string", "enum": KINDS, "description": "default message; decision/assumption/question "
+                                                                  "also record a shared entry"},
          "mentions": {"type": "array", "items": {"type": "string"}, "description": "peers to wake (groups)"},
+         "scope": _s("entry scope: " + SCOPE),
+         "supersedes": _s("entry id (E7) this decision/assumption/question replaces"),
+         "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
+         "depends_on": {"type": "array", "items": {"type": "string"}, "description": "entry ids (handoff only)"},
          "why": {"type": "object", "additionalProperties": False,
                  "description": "Why-First handoff; required when kind=handoff",
                  "properties": {k: {"type": "string"} for k in WHY_FIELDS}},
@@ -39,12 +46,17 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["id"], "properties": {
          "id": _s("thread id, e.g. '#task' or 'dm:a+b'"), "query": _s("text to search for"),
          "limit": {"type": "integer", "description": "default 20"}}}},
-    {"name": "xmuse_context", "description": "Current decisions, owners and open questions of your threads.",
-     "inputSchema": {"type": "object", "required": [], "properties": {"topic": _s("optional filter")}}},
+    {"name": "xmuse_context", "description": "Your alignment view: active decisions, assumptions, open questions, "
+                                             "work assigned to you.",
+     "inputSchema": {"type": "object", "required": [], "properties": {"topic": _s("only this thread (e.g. '#task')")}}},
     {"name": "xmuse_done", "description": "End your turn with the exit check: summary and who moves next.",
      "inputSchema": {"type": "object", "required": ["summary", "next"], "properties": {
          "summary": _s("what you did"),
-         "next": _s("peer id or 'human' who must act next, or 'none' if the work is finished")}}},
+         "next": _s("peer id or 'human' who must act next, or 'none' if the work is finished"),
+         "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on",
+                      "items": {"type": "object", "additionalProperties": False, "required": ["kind", "statement"],
+                                "properties": {"kind": {"type": "string", "enum": DECLARE}, "statement": _s("one sentence"),
+                                               "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}}}}},
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
 _TYPES = {"string": str, "integer": int, "boolean": bool, "array": list, "object": dict}
@@ -89,6 +101,9 @@ def _violation(schema: dict, value, path: str) -> str | None:
         extra = sorted(k for k in value if k not in props)
         if extra:
             return f"{path} got unknown fields: {', '.join(extra)}; allowed: {', '.join(props)}"
+        missing = [k for k in schema.get("required", ()) if k not in value]
+        if missing:
+            return f"{path} is missing: {', '.join(missing)}"
         for k, v in value.items():
             if (v := _violation(props[k], v, f"{path}.{k}")):
                 return v

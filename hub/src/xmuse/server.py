@@ -13,7 +13,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import config, db, mail
+from . import align, config, db, mail, memoryos, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
@@ -32,6 +32,8 @@ class Hub:
         self.ws = Path(self.cfg["workspace"])
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
+        self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"])  # align.view reads it from cfg
+        self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.admin = digest((state / "tokens" / "_admin").read_text().strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin)
@@ -68,10 +70,16 @@ class Hub:
         args = validate(name, args)
         conn = self.db()
         if name == "xmuse_send":
+            if len(args["body"]) > self.cfg["body_limit"]:
+                raise ToolError("body_too_long", f"body is {len(args['body'])} chars, the limit is "
+                                f"{self.cfg['body_limit']}: write the content to a file in the workspace and send its path")
             out = mail.send(conn, self.cfg, agent, args["to"], args["body"], args.get("kind", "message"),
-                            args.get("mentions"), args.get("why"))
+                            args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
+                            args.get("resolves"), args.get("depends_on"))
+            self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
+                    **({"entries": out["entries"]} if out.get("entries") else {}),
                     **({"duplicate": True} if out.get("duplicate") else {})}
         if name == "xmuse_inbox":
             return mail.inbox(conn, agent, args.get("unread_only", True))
@@ -80,9 +88,9 @@ class Hub:
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
         if name == "xmuse_context":
-            return mail.context(conn, agent, args.get("topic"))
+            return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
-            return mail.done(conn, agent, args["summary"], args["next"])
+            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"))
         return mail.whoami(conn, agent, str(self.ws))
 
     def hook(self, agent: str, body: dict):
@@ -100,6 +108,7 @@ class Hub:
     def admin_send(self, body: dict):
         out = mail.send(self.db(), self.cfg, config.HUMAN, body["to"], body["body"], body.get("kind", "message"),
                         body.get("mentions"), body.get("why"), body.get("idem"))
+        self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", [])}
 
@@ -116,6 +125,30 @@ class Hub:
         with db.tx(self.db()) as c:
             c.execute("update threads set owner=? where id=?", (body.get("owner"), body["id"]))
         return {"ok": True}
+
+    def admin_align(self, body: dict):
+        return align.review(self.db(), body["op"], body["id"])
+
+    def admin_close(self, body: dict):
+        self.curator.kick(body["id"], closed=True)  # reads the thread's entries before they are archived
+        return align.close_thread(self.db(), body["id"])
+
+    def admin_compact(self, body: dict):
+        """Claude's SessionStart(compact) hook: the session is re-told the alignment right now, so its
+        watermark is the current version (the next wake sends only a delta)."""
+        return self.engine.call(self._compact, body["session_id"])
+
+    def _compact(self, vendor_session: str):
+        conn = self.db()
+        s = db.row(conn.execute("select id, agent_id from sessions where vendor_session=? order by id desc limit 1",
+                                (vendor_session,)))
+        if s is None:
+            return {"snapshot": None}
+        seq = align.current_seq(conn)
+        text = wakepack.snapshot(conn, self.cfg, s["agent_id"])
+        with db.tx(conn):
+            conn.execute("insert or replace into seen values(?,?)", (s["id"], seq))
+        return {"snapshot": text}
 
     def admin_approve(self, body: dict):
         conn = self.db()
@@ -187,6 +220,7 @@ class Hub:
     def shutdown(self) -> None:
         self.stopping.set()
         self.loop.join(10)
+        self.curator.stop()
         self.httpd.shutdown()
         for d in self.engine.drivers.values():
             d.close()

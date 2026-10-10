@@ -11,6 +11,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -130,6 +131,8 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     hook = f"XMUSE_STATE={state} XMUSE_AGENT={agent['id']} python3 {Path(__file__).parents[1] / 'hook.py'}"
     hooks = {ev: [{"hooks": [{"type": "command", "command": f"{hook} {ev}", "timeout": 10}]}]
              for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop")}
+    hooks["SessionStart"].append({"matcher": "compact", "hooks": [{  # stdout lands in the model's context
+        "type": "command", "timeout": 10, "command": f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"}]})
     settings = {"enabledMcpjsonServers": ["xmuse"], "permissions": {"allow": ["mcp__xmuse__*"]}, "hooks": hooks}
     (ws / ".claude").mkdir(exist_ok=True)
     (ws / ".claude" / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")

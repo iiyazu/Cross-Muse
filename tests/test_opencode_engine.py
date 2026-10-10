@@ -105,16 +105,32 @@ def test_queued_messages_merge(make):
     assert "two" in h.oc.prompts[1]["text"] and "three" in h.oc.prompts[1]["text"]
 
 
-def test_rotation_creates_a_new_session(make):
-    h = make([("opencode-1", "opencode", {"rotate_at": 1000})])
+def test_large_context_session_is_kept(make):
+    h = make(OC)
     h.oc.plan = [{}, {}]
     h.send("opencode-1", "first")
     h.wait_quiet()
     h.send("opencode-1", "second")
     h.wait_quiet()
-    assert [p["session"] for p in h.oc.prompts] == ["ses_fake1", "ses_fake2"]
-    assert "first" in h.oc.prompts[1]["text"]  # bootstrap pack carries the thread's recent messages
-    assert [s["state"] for s in h.q("select state from sessions order by id")] == ["retired", "current"]
+    assert [p["session"] for p in h.oc.prompts] == ["ses_fake1", "ses_fake1"]  # no automatic rotation
+    assert "Earlier in" not in h.oc.prompts[1]["text"]
+    s = h.q("select state, context_tokens from sessions")
+    assert [x["state"] for x in s] == ["current"] and s[0]["context_tokens"] > 1000  # still recorded
+
+
+def test_compaction_ended_resets_the_watermark_failed_does_not(make):
+    h = make(OC)
+    h.oc.plan = [{}]
+    h.send("opencode-1", "first")
+    h.wait_quiet()
+    assert len(h.q("select * from seen")) == 1
+    h.oc._frame("ses_other", "session.compaction.ended")
+    h.oc._frame("ses_fake1", "session.compaction.failed", error={"message": "template"})
+    h.oc._frame("ses_fake1", "session.compaction.started", reason="auto")
+    time.sleep(0.5)
+    assert len(h.q("select * from seen")) == 1
+    h.oc._frame("ses_fake1", "session.compaction.ended", reason="auto")
+    h.wait(lambda: not h.q("select * from seen"), what="watermark reset")
 
 
 def test_permission_request_is_forwarded_and_approved(make):

@@ -100,17 +100,14 @@ def test_thread_read_search_and_membership(make):
     assert e["code"] == "unknown_thread" and "#g" in e["message"]
 
 
-def test_context_lists_decisions_and_open_questions(make):
+def test_context_returns_the_alignment_view(make):
     h = three(make)
     h.tool("claude-1", "xmuse_send", to="#g", body="use snake_case", kind="decision")
     q = h.tool("claude-1", "xmuse_send", to="#g", body="int or float?", kind="question", mentions=["claude-2"])
-    h.tool("claude-1", "xmuse_send", to="#g", body="done yet?", kind="question", mentions=["claude-3"])
-    h.tool("claude-2", "xmuse_ack", ids=[q["result"]["id"]], outcome="float")
-    [t] = h.tool("claude-3", "xmuse_context")["result"]["threads"]
-    assert [d["body"] for d in t["decisions"]] == ["use snake_case"]
-    assert [d["body"] for d in t["open_questions"]] == ["done yet?"]
-    [t] = h.tool("claude-3", "xmuse_context", topic="snake")["result"]["threads"]
-    assert len(t["decisions"]) == 1 and t["open_questions"] == []
+    h.tool("claude-2", "xmuse_send", to="#g", body="float", resolves=["E2"])
+    v = h.tool("claude-3", "xmuse_context")["result"]
+    assert [e["statement"] for e in v["layers"]["thread:#g"]] == ["use snake_case"]
+    assert v["assigned"] == [] and v["ready"] == [] and v["truncated"] == [] and q["result"]["entries"] == ["E2"]
 
 
 def test_whoami(make):

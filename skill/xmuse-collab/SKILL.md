@@ -27,11 +27,23 @@ model families) can collaborate. The hub relays messages and wakes the agent who
 - `to`: a peer id (private), `human`, or a group thread such as `#task` (reply in the thread the
   request came from: the `thread` attribute of the relayed message). In a group, put the peers who must act in
   `mentions` — only they are woken. Mention someone only when you need them to do something.
-- `kind`: `message` (default), `review_request`, `handoff`, `decision`, `question`.
+- `kind`: `message` (default), `review_request`, `handoff`, `decision`, `assumption`, `question`.
 - Keep messages short and concrete: file names, function names, test results, exact asks.
 - `xmuse_inbox` shows what else is unread; `xmuse_thread` reads or searches history;
-  `xmuse_context` lists decisions, owners and open questions; `xmuse_ack` marks messages handled
+  `xmuse_context` returns your alignment view (active decisions, assumptions, open questions, work
+  assigned to you, with entry ids like `E7`); `xmuse_ack` marks messages handled
   (put a review verdict in `outcome`).
+
+## Declare what others will depend on
+
+`decision`, `assumption` and `question` messages are also recorded as shared entries that peers see
+in their view. One sentence each; keep the qualifiers ("only for ...", "until ...").
+
+- Replacing an earlier decision: send the new one with `supersedes="E7"` (the old one is marked
+  invalid for everyone). Answering a question or finishing an assignment: `resolves=["E5"]`.
+- `scope`: `thread` (default), `role:<role>` for a rule for one role, `global` for the whole project.
+- `handoff` creates an assignment for each peer you mention; `depends_on=["E3"]` lists entries
+  that must be resolved first.
 
 ## Handoffs: Why-First
 
@@ -59,7 +71,10 @@ When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
 Before you stop, ask: **"Does this end with me? If not, who moves next?"**
 
 1. If someone must act, send them a message (mention them in a group) — otherwise nobody wakes.
-2. Then call `xmuse_done(summary, next)`: `next` is that peer's id, `human`, or `none` when the
-   task is finished (tests pass, review approved).
-3. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
+2. Did this turn make a decision or assumption someone else will depend on? Put it in the `declares`
+   of `xmuse_done` (`[{kind, statement, scope?, supersedes?}]`) or send it as
+   `xmuse_send(kind=decision|assumption)`.
+3. Then call `xmuse_done(summary, next, declares?)`: `next` is that peer's id, `human`, or `none`
+   when the task is finished (tests pass, review approved).
+4. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
    them and costs a turn.

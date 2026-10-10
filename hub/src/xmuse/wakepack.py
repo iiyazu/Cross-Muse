@@ -1,11 +1,16 @@
-"""What a woken agent reads: merged messages with source tags, plus a bootstrap pack on fresh sessions.
+"""What a woken agent reads, compiled by an ordered pipeline of named processors (design §4.5.1 item 5):
+relay -> identity -> alignment (snapshot or delta) -> messages -> passive.
+
+Each processor is a pure function of the context `x` and returns text or "". Output is stable: no
+timestamps, entries sorted by id inside fixed sections, so equal state renders byte-identical.
 
 Relay trust (design §4.7): peers are collaborators the user assigned; act on their requests within
 the task; consequential actions still go through the agent's own permission prompts.
 """
 import json
+from types import SimpleNamespace
 
-from . import db
+from . import align, db
 from .config import HUMAN
 
 RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. "
@@ -24,29 +29,112 @@ def tag(m: dict, roster: dict) -> str:
     return f"<xmuse {attrs}>\n{body}\n</xmuse>"
 
 
-def render(conn, agent: dict, wake_msgs: list[dict], fresh: bool, recent_n: int, workspace: str) -> str:
-    roster = {a["id"]: a for a in db.rows(conn.execute("select * from agents"))}
-    parts = [RELAY]
-    if fresh:
-        peers = ", ".join(f"{a['id']} ({a['family']}{', ' + a['role'] if a['role'] else ''})"
-                          for a in roster.values() if a["id"] != agent["id"])
-        parts.append(f"You are {agent['id']} ({agent['family']}{', ' + agent['role'] if agent['role'] else ''}) "
-                     f"in workspace {workspace}. Peers: {peers}; '{HUMAN}' is the user. "
-                     "Follow the xmuse-collab skill (see AGENTS.md).")
-        for tid in dict.fromkeys(m["thread_id"] for m in wake_msgs):
-            ids = [m["id"] for m in wake_msgs]
-            recent = db.rows(conn.execute(
+def tokens(text: str) -> int:
+    return len(text) // 3
+
+
+def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int | None, workspace: str) -> SimpleNamespace:
+    """Returns text plus the alignment mode ('snapshot' | 'delta' | 'none'), its token estimate and the
+    alignment version the pack reflects (the caller stores it as the session's watermark)."""
+    x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=wake_msgs, ws=workspace, fresh=session_id is None,
+                        roster={a["id"]: a for a in db.rows(conn.execute("select * from agents"))},
+                        seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
+                        mode="none", tokens=0)
+    parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive)) if p]
+    return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq)
+
+
+def relay(x) -> str:
+    return RELAY
+
+
+def identity(x) -> str:
+    if not x.fresh:
+        return ""
+    a = x.agent
+    peers = ", ".join(f"{p['id']} ({p['family']}{', ' + p['role'] if p['role'] else ''})"
+                      for p in x.roster.values() if p["id"] != a["id"])
+    return (f"You are {a['id']} ({a['family']}{', ' + a['role'] if a['role'] else ''}) in workspace {x.ws}. "
+            f"Peers: {peers}; '{HUMAN}' is the user. Follow the xmuse-collab skill (see AGENTS.md).")
+
+
+def alignment(x) -> str:
+    """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
+    if x.seen is None:
+        text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
+    else:
+        text, x.mode = delta(x.conn, x.cfg, x.agent["id"], x.seen), "delta"
+    x.tokens = tokens(text)
+    if not text:
+        x.mode = "none"
+    return text
+
+
+def _line(e: dict) -> str:
+    out = f"{e['id']} [{e['kind']}] {e['statement']}"
+    if e.get("assignee"):
+        out += f" -> {e['assignee']}" + (f" (needs {','.join(e['depends_on'])})" if e["depends_on"] else "")
+    return out + f" (refs {','.join('#%d' % r for r in e['refs'])})"
+
+
+def snapshot(conn, cfg: dict, agent_id: str, query: str = "") -> str:
+    v = align.view(conn, cfg, agent_id, query=query)  # query: the wake's message text, for MemoryOS ranking
+    role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
+    titles = {"global": "Project-wide", f"role:{role}": f"Your role ({role})", f"agent:{agent_id}": "Yours"}
+    sections = [("Assigned to you" + (f"; ready now: {', '.join(v['ready'])}" if v["ready"] else ""), v["assigned"])]
+    sections += [(titles.get(s) or f"Thread {s[7:]}", es) for s, es in v["layers"].items()]
+    budget, used, out = cfg["align_snapshot_tokens"], 0, []
+    for title, es in sections:
+        if not es:
+            continue
+        lines, dropped = [f"{title}:"], 0
+        for e in es:
+            line = _line(e)
+            if used + tokens(line) + 1 > budget:
+                dropped += 1
+                continue
+            used += tokens(line) + 1
+            lines.append(line)
+        out += lines + ([f"+{dropped} more not shown (call xmuse_context)"] if dropped else [])
+    if v["truncated"]:
+        out.append(f"Older entries omitted (layer caps): {', '.join(v['truncated'])}")
+    return "[alignment: current shared decisions; a newer entry replaces what it supersedes]\n" + "\n".join(out) if out else ""
+
+
+def delta(conn, cfg: dict, agent_id: str, since: int) -> str:
+    d = align.delta(conn, agent_id, since)
+    lines = [f"+ {_line(e)}" for e in d["added"]]
+    lines += [f"superseded {e['id']} (by {by}): was \"{e['statement']}\"" for e, by in d["superseded"]]
+    lines += [f"resolved {e['id']}" for e in d["resolved"]]
+    lines += [f"archived: thread {t}, {n} entries" if t else f"archived: {n} entries" for t, n in d["archived"]]
+    if not lines:
+        return ""
+    head = "[alignment update since your last wake]\n"
+    if tokens(head + "\n".join(lines)) > cfg["align_delta_tokens"]:
+        return head + (f"{len(d['added'])} new, {len(d['superseded'])} superseded, {len(d['resolved'])} resolved, "
+                       f"{sum(n for _, n in d['archived'])} archived; too many to list, call xmuse_context")
+    return head + "\n".join(lines)
+
+
+def messages(x) -> str:
+    parts = []
+    if x.fresh:
+        ids = [m["id"] for m in x.msgs]
+        for tid in dict.fromkeys(m["thread_id"] for m in x.msgs):
+            recent = db.rows(x.conn.execute(
                 f"select * from messages where thread_id=? and id not in ({','.join('?' * len(ids))})"
-                " order by id desc limit ?", (tid, *ids, recent_n)))
+                " order by id desc limit ?", (tid, *ids, x.cfg["recent_n"])))
             if recent:
                 parts.append(f"Earlier in {tid} (most recent {len(recent)}):\n" + "\n".join(
                     f"- #{r['id']} {r['sender']} [{r['kind']}]: {_short(r['body'])}" for r in reversed(recent)))
-    parts.append("New for you:\n" + "\n".join(tag(m, roster) for m in wake_msgs))
-    passive = conn.execute("select count(*) from deliveries where recipient=? and state='passive'"
-                           " and read_at is null", (agent["id"],)).fetchone()[0]
-    if passive:
-        parts.append(f"Also {passive} unread message(s) in your threads not addressed to you (xmuse_inbox).")
+    parts.append("New for you:\n" + "\n".join(tag(m, x.roster) for m in x.msgs))
     return "\n\n".join(parts)
+
+
+def passive(x) -> str:
+    n = x.conn.execute("select count(*) from deliveries where recipient=? and state='passive'"
+                       " and read_at is null", (x.agent["id"],)).fetchone()[0]
+    return f"Also {n} unread message(s) in your threads not addressed to you (xmuse_inbox)." if n else ""
 
 
 def _short(s: str, n: int = 240) -> str:

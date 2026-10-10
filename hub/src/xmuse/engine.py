@@ -11,9 +11,9 @@ import threading
 import time
 from pathlib import Path
 
-from . import db, mail, wakepack
+from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
-from .config import HUMAN, ROTATE_AT
+from .config import HUMAN
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,15 @@ class Engine:
 
     def approval(self, agent_id, session: str, request: dict) -> None:
         self.q.put(("approval", agent_id, session, request))
+
+    def compacted(self, vendor_session: str) -> None:
+        """The vendor compacted this session: its next wake gets a full alignment snapshot."""
+        self.q.put(("compacted", vendor_session))
+
+    def _on_compacted(self, vendor_session: str) -> None:
+        conn = self.db()
+        for r in conn.execute("select id from sessions where vendor_session=?", (vendor_session,)).fetchall():
+            align.reset_watermark(conn, r[0])
 
     def call(self, fn, *args, timeout: float = 60):
         """Run fn on the engine thread (state changes stay single-threaded) and return its result."""
@@ -107,11 +116,8 @@ class Engine:
             adapter, fresh = driver.push, False
         else:
             adapter = driver.headless
-            rotate_at = db.settings(agent).get("rotate_at", ROTATE_AT.get(agent["vendor"], 120_000))
-            fresh = session is None or session["context_tokens"] >= rotate_at
+            fresh = session is None  # never rotated automatically (design §4.1 principle 9)
         with db.tx(conn):
-            if fresh and session:
-                conn.execute("update sessions set state='retired', retired_at=? where id=?", (db.now(), session["id"]))
             chain = pending[-1]["chain_id"]
             tid = conn.execute("insert into turns(agent_id, session_id, adapter, chain_id, fresh, state, started_at)"
                                " values(?,?,?,?,?,?,?)", (agent["id"], None if fresh else session["id"], adapter.name,
@@ -120,11 +126,14 @@ class Engine:
                              [(tid, db.now(), db.now(), p["did"]) for p in pending])
             for c in {p["chain_id"] for p in pending}:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
-        prompt = wakepack.render(conn, agent, pending, fresh, self.cfg["recent_n"], str(self.ws))
-        with db.tx(conn):  # passive messages are now summarized to the agent
+        pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(self.ws))
+        with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))
-        spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], prompt, self.ws,
+            conn.execute("update turns set align_tokens=?, align_mode=? where id=?", (pack.tokens, pack.mode, tid))
+            if not fresh:
+                conn.execute("insert or replace into seen values(?,?)", (session["id"], pack.seq))
+        spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], pack.text, self.ws,
                         self.state / "runs" / f"turn-{tid}.jsonl")
         self.adapters[tid] = adapter
         try:
@@ -138,6 +147,8 @@ class Engine:
                 (agent["id"], info.get("handle"), info.get("cwd", str(self.ws)), "hub", db.now())).lastrowid
             conn.execute("update turns set pid=?, handle=?, session_id=coalesce(session_id, ?) where id=?",
                          (info.get("pid"), info.get("handle"), sid, tid))
+            if sid:
+                conn.execute("insert or replace into seen values(?,?)", (sid, pack.seq))
 
     def _cap_chain(self, conn, chain_id: int, thread_id: str, why: str) -> None:
         with db.tx(conn):
@@ -193,14 +204,25 @@ class Engine:
                          (turn["id"], agent["id"], agent["vendor"], u.model or agent["model"], u.mode, u.input,
                           u.cache_read, u.cache_write, u.output, u.context, u.calls, db.now()))
             if turn["session_id"]:
+                prev = conn.execute("select context_tokens from sessions where id=?", (turn["session_id"],)).fetchone()[0]
                 conn.execute("update sessions set vendor_session=coalesce(?, vendor_session), context_tokens=?,"
                              " total_tokens=total_tokens+?, wakes=wakes+1 where id=?",
                              (end.session, u.context, u.total, turn["session_id"]))
+                # the pack may not have been read: re-send the snapshot next time. A context that fell sharply
+                # means the vendor compacted (the signal every vendor shares, and dsh's only one)
+                if end.status != "succeeded" or 0 < u.context < prev * self.cfg["compact_drop_ratio"]:
+                    conn.execute("delete from seen where session_id=?", (turn["session_id"],))
             if turn["chain_id"]:
                 conn.execute("update chains set tokens=tokens+? where id=?", (u.total, turn["chain_id"]))
         self.adapters.pop(turn["id"], None)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
+        if turn["session_id"] and u.context >= self.cfg["session_notice_tokens"] and conn.execute(
+                "update sessions set notified=1 where id=? and notified=0", (turn["session_id"],)).rowcount:
+            mail.notice(conn, thread or mail.dm_id(agent["id"], HUMAN),
+                        f"{agent['id']} session holds about {u.context // 1000}k tokens; one wake now costs about "
+                        f"{u.total // 1000}k. A new session would start from the maintained alignment view "
+                        "(handover pack ready) if you want one.", turn["chain_id"])
         if end.requeue == "hold":
             mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} paused: {end.error}. Its messages are"
                                                               f" requeued; `xmuse resume --agent {agent['id']}` to retry.")
@@ -222,7 +244,7 @@ class Engine:
                    "code": self.cfg["code_warn_tokens"]}.get(u.mode)
         if end.status == "succeeded" and warn_at and u.total > warn_at:
             log.warning("%s wake over %s tokens: turn %s of %s used %s (input %s + cache_read %s"
-                        " + cache_write %s + output %s); its session may be due a rotation",
+                        " + cache_write %s + output %s)",
                         u.mode, warn_at, turn["id"], agent["id"], u.total,
                         u.input, u.cache_read, u.cache_write, u.output)
         self._on_kick()

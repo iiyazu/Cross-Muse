@@ -18,11 +18,19 @@ DEFAULTS = {
     "turn_timeout": 1800,            # seconds before a running turn is interrupted
     "sweep_interval": 15,            # low-frequency fallback scan
     "recent_n": 8,                   # thread messages in a fresh-session bootstrap pack
+    "align_global_cap": 40,          # active entries per view layer (design §4.5.1 item 4)
+    "align_role_cap": 20,
+    "align_thread_cap": 15,
+    "align_snapshot_tokens": 12_000,  # injected alignment budgets, estimated as len(text)//3
+    "align_delta_tokens": 2_000,
+    "body_limit": 4_000,             # chars per xmuse_send body; bigger content goes in a workspace file
+    "session_notice_tokens": 400_000,  # one notice per session when its context first passes this
+    "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
+    "compact_drop_ratio": 0.5,       # a turn's context below this share of the last one's means the vendor compacted
+    "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
+    "curate_timeout_s": 420,         # /curate collab (background) takes 92-370 s with a reasoning model
+    "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
 }
-
-# Rotate to a fresh session once the context read by the last model call of a turn
-# exceeds this (design §4.1 principle 9). See report for the choice.
-ROTATE_AT = {"claude": 120_000, "opencode": 120_000, "dsh": 120_000}
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
           "dsh": "deepseek-official/deepseek-v4-flash"}

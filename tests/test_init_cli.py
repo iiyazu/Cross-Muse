@@ -71,6 +71,9 @@ def test_claude_config(ws):
     assert s["permissions"] == {"allow": ["mcp__xmuse__*"]} and s["enabledMcpjsonServers"] == ["xmuse"]
     assert set(s["hooks"]) == {"SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"}
     assert "XMUSE_AGENT=claude-1" in s["hooks"]["Stop"][0]["hooks"][0]["command"]
+    [plain, compact] = s["hooks"]["SessionStart"]
+    assert "matcher" not in plain and compact["matcher"] == "compact"
+    assert compact["hooks"][0]["command"] == f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"
     assert mode(state / "tokens" / "claude-1") == 0o600
     with pytest.raises(SystemExit, match="already has a claude agent"):
         xinit.add_agent(state, "claude-2", "claude")
@@ -80,7 +83,7 @@ def test_claude_config(ws):
 
 def test_opencode_config_asks_for_consequential_commands(ws):
     state = xinit.init(ws)
-    xinit.add_agent(state, "opencode-1", "opencode", settings={"rotate_at": 9})
+    xinit.add_agent(state, "opencode-1", "opencode", settings={"note": 9})
     cfg = json.loads((ws / "opencode.json").read_text())
     srv = cfg["mcp"]["servers"]["xmuse"]
     assert srv["environment"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "opencode-1"}

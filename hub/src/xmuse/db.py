@@ -61,6 +61,24 @@ create table if not exists usage(
   input integer not null, cache_read integer not null, cache_write integer not null,
   output integer not null, context integer not null, calls integer not null,
   created_at real not null);
+create table if not exists entries(          -- alignment library (design §4.5.1); never deleted
+  id integer primary key,                    -- shown as E<id>
+  kind text not null,                        -- decision|convention|assumption|question|lesson|assignment
+  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id>
+  thread_id text, statement text not null, refs text not null default '[]',  -- refs: source message ids
+  author text not null,
+  status text not null,                      -- proposed|active|superseded|resolved|archived|rejected
+  supersedes integer, assignee text, depends_on text,  -- depends_on: JSON list of entry ids (assignments)
+  valid_at real not null, recorded_at real not null, invalid_at real,
+  seq integer not null);                     -- alignment version of the last change
+create table if not exists entry_events(
+  seq integer primary key,                   -- global monotonic alignment version
+  entry_id integer not null, op text not null,  -- add|supersede|resolve|archive|confirm|reject
+  at real not null);
+create table if not exists seen(             -- watermark: alignment version this session has been shown
+  session_id integer primary key, seq integer not null);
+create table if not exists curated(          -- last message of each thread already sent to MemoryOS /curate
+  thread_id text primary key, msg_id integer not null);
 create table if not exists approvals(
   id text primary key, agent_id text not null, vendor_session text, action text,
   resources text, state text not null default 'pending', decision text,
@@ -76,9 +94,17 @@ def connect(path) -> sqlite3.Connection:
     return conn
 
 
+COLUMNS = [("turns", "align_tokens", "integer"), ("turns", "align_mode", "text"),  # added after M1: per-turn metrics
+           ("sessions", "notified", "integer not null default 0"),               # size notice sent
+           ("entries", "resolves", "text")]  # proposed entries: JSON ids of questions they answer, applied on confirm
+
+
 def init(path) -> sqlite3.Connection:
     conn = connect(path)
     conn.executescript(SCHEMA)
+    for table, col, decl in COLUMNS:
+        if col not in {r[1] for r in conn.execute(f"pragma table_info({table})")}:
+            conn.execute(f"alter table {table} add column {col} {decl}")
     return conn
 
 
