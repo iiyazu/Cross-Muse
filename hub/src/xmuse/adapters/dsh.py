@@ -95,6 +95,9 @@ def parse(lines) -> tuple[dict, Usage]:
             info["owned"], info["unknown"] = OWNED in msg, UNKNOWN in msg
         elif typ == "tool_call" and o.get("tool") in CODE_TOOLS:
             u.mode = "code"
+            info["active"] = True
+        elif typ in ("tool_call", "tool_result", "text", "final"):
+            info["active"] = True  # the agent already acted or spoke: a failure now is not a failed launch
         elif typ == "status" and o.get("phase") == "step_end" and o.get("usage"):
             s = o["usage"]
             u.input += s.get("inputTokens", 0)
@@ -138,29 +141,76 @@ class DshHeadless:
         self.exe = cfg.get("dsh_exe", str(APP / "DeepSeek Harness.exe"))
         self.clijs = cfg.get("dsh_clijs", to_win(APP) + "\\" + CLIJS)
         self.backoff, self.refusals = cfg.get("dsh_backoff", 10), cfg.get("dsh_refusals", 4)
+        self.retry_wait = cfg.get("dsh_retry_wait", 3)  # seconds before the one launch retry
+        self.first_event = cfg.get("dsh_first_event_timeout_s", 180)  # 0 disables the watchdog
         self.runs: dict[int, dict] = {}
 
     def command(self, patch: Path, session: str | None) -> list[str]:
         return [self.exe, "--expose-internals", self.clijs, "--profile", "headless", "--patch", to_win(patch),
                 "--json", *(["--session-id", session] if session else []), "-"]  # task text on stdin
 
-    def run(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None = None):
+    @staticmethod
+    def launch_failed(info: dict) -> bool:
+        """Exited non-zero before the agent did anything (exit 1 with empty stderr, TRANSPORT errors, a hang
+        killed by the first-event watchdog). Unknown model / bad request / held session fail the same way
+        next time, and a failure after the agent acted must never be replayed."""
+        return (info.get("rc") != 0 and not info.get("active") and not info.get("owned") and not info.get("unknown")
+                and "INVALID_REQUEST" not in info.get("error", ""))
+
+    def run(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None = None,
+            retry: bool = True):
+        """One headless process; a failed launch is retried once, in place, with the same arguments.
+
+        The retry lives here (below the engine) so the turn is still one turn: one prompt delivery, one turn
+        record. Nothing the agent could have seen or done was lost, because `active` is still false."""
+        info, usage = self._run_once(cwd, patch, session, prompt, log, st)
+        if retry and self.launch_failed(info) and not (st and st["stop"].is_set()):
+            log_ = logging.getLogger(__name__)
+            log_.warning("dsh launch failed (%s); retrying once", info.get("error") or f"exit {info.get('rc')}")
+            if st is not None:
+                if st["stop"].wait(self.retry_wait):
+                    return info, usage
+            else:
+                time.sleep(self.retry_wait)
+            info, usage = self._run_once(cwd, patch, session, prompt, log, st)
+        return info, usage
+
+    def _run_once(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None):
+        got, hung = threading.Event(), threading.Event()
         with log.open("a") as out, log.with_suffix(".err").open("a") as err:
             p = subprocess.Popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=err, text=True, encoding="utf-8", start_new_session=True,
                                  env=clean_env(ENV))
             if st is not None:
                 st["p"] = p
-            p.stdin.write(prompt)
-            p.stdin.close()
+
+            def watchdog():  # no NDJSON line at all within the limit: the launch is stuck, not slow
+                if not got.wait(self.first_event) and p.poll() is None:
+                    hung.set()
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+            if self.first_event:
+                threading.Thread(target=watchdog, daemon=True).start()
+            try:
+                p.stdin.write(prompt)
+                p.stdin.close()
+            except OSError:  # died before reading its stdin (BrokenPipe): the exit code tells the story
+                pass
             lines = []
             for line in p.stdout:
+                got.set()
                 out.write(line)
                 out.flush()
                 lines.append(line)
+            got.set()
         p.wait()
         info, usage = parse(lines)
         info["rc"] = p.returncode
+        if hung.is_set() and not lines:
+            info["error"] = f"dsh produced no output within {self.first_event}s (killed)"
         return info, usage
 
     def start(self, spec: TurnSpec) -> dict:
@@ -244,8 +294,16 @@ class DshDriver:
         patch = self.state / "runs" / f"precheck-{agent['id']}.patch.yml"
         patch.write_text(overlay(agent, self.state, mcp=False))
         log = self.state / "logs" / f"precheck-{agent['id']}.jsonl"
-        info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log)
-        return None if info.get("ok") and info["rc"] == 0 else info.get("error") or f"exit {info['rc']}"
+        err = None
+        for attempt in (0, 1):  # one retry: dsh headless sometimes exits 1 (empty stderr) on a cold start
+            info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log, retry=False)
+            if info.get("ok") and info["rc"] == 0:
+                return None
+            err = info.get("error") or f"exit {info['rc']}"
+            if attempt or info.get("unknown") or "INVALID_REQUEST" in err or "unknown" in err.lower():
+                break  # an unknown model or provider fails the same way again
+            time.sleep(self.headless.retry_wait)
+        return err
 
     def on_hook(self, agent: dict, event: str, p: dict) -> bool:
         """Live hook report from dsh_hook.py: {event, session_id, cwd, prompt, source, ...}.

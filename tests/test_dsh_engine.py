@@ -280,3 +280,54 @@ def test_overlay_registers_opencode_go_through_pi_ai_but_not_deepseek(tmp_path):
     assert oc[1]["id"] == "agent-default-model"
     ds = json.loads(overlay({"id": "d", "model": "deepseek-official/m"}, tmp_path, mcp=False))
     assert ds[0]["id"] == "agent-default-model" and not any(r.get("id") == "llm-pi-ai" for r in ds)
+
+
+def test_launch_failure_is_retried_once_inside_the_same_turn(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_start": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()  # one turn record, one prompt delivery
+    assert t["state"] == "succeeded" and len(h.dsh_calls()) == 2
+    assert h.dsh_calls()[0]["prompt"] == h.dsh_calls()[1]["prompt"] and "--session-id" not in h.dsh_calls()[1]["argv"]
+
+
+def test_launch_failing_twice_fails_the_turn_after_one_retry(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_start": True}, {"fail_start": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "failed" and "exit 1" in t["error"] and len(h.dsh_calls()) == 2
+
+
+def test_failure_after_the_agent_acted_is_not_retried(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_mid": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "failed" and len(h.dsh_calls()) == 1
+
+
+def test_stuck_launch_is_killed_by_the_first_event_watchdog_and_retried(make):
+    h = make(DSH, dsh_retry_wait=0.1, dsh_first_event_timeout_s=1)
+    h.plan_dsh({"hang": 30}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "succeeded" and len(h.dsh_calls()) == 2
+
+
+def test_precheck_retries_a_flaky_start_once_but_not_an_unknown_model(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    drv = h.hub.engine.drivers["dsh"]
+    good = {"id": "dsh-1", "model": "deepseek-official/deepseek-v4-flash"}
+    h.plan_dsh({"fail_start": True}, {})
+    assert drv.precheck(good, h.ws) is None and len(h.dsh_calls()) == 2
+    h.plan_dsh({"fail_start": True}, {"fail_start": True}, {})
+    assert "exit 1" in drv.precheck(good, h.ws)
+    bad = {"id": "dsh-1", "model": "deepseek-official/bogus-model"}
+    h.plan_dsh({}, {})
+    n = len(h.dsh_calls())
+    assert "INVALID_REQUEST" in drv.precheck(bad, h.ws) and len(h.dsh_calls()) == n + 1
