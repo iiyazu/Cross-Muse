@@ -100,7 +100,8 @@ def _quote(text: str) -> str:
 
 
 def canon(req: dict) -> str:
-    return json.dumps({k: v for k, v in req.items() if k != "_replay"}, sort_keys=True)
+    # `send` drops `schema` from /curate bodies (the real service rejects it), so it must not take part in matching
+    return json.dumps({k: v for k, v in req.items() if k not in ("_replay", "schema")}, sort_keys=True)
 
 
 def load_seeds(outdir: Path) -> dict:

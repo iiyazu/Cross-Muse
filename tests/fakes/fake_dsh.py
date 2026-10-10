@@ -13,6 +13,7 @@ per invocation (counter in $HOME/fake-dsh/n). Step keys:
   result    "error": end the turn with turn_end{error}, exit 1
   fail_start true: exit 1 at once with no output (the flaky cold start)
   fail_mid  true: exit 1 right after the first tool_call event (agent already acted)
+  stall     seconds to sleep after the session/turn_start/step_start events were printed (started, then stuck)
   hang      seconds to sleep before any output (stuck launch)
 Sessions live in $HOME/fake-dsh/sessions.json ({id: cwd}); an unknown --session-id is an error, as in dsh.
 A model containing "bogus" replays the INVALID_REQUEST recording. Every invocation is logged to calls.jsonl.
@@ -79,7 +80,7 @@ def tool(name, args):
 
 
 lines = [json.loads(x) for x in (HERE.parent / "fixtures" / fixture).open()]
-for o in lines:
+for i, o in enumerate(lines):
     if o["type"] == "session":
         o.update(sessionId=sid, cwd=os.getcwd())
     if o["type"] == "status" and o.get("phase") == "turn_end":
@@ -89,6 +90,8 @@ for o in lines:
         if step.get("result") == "error":
             o["reason"] = {"kind": "error", "error": {"code": "PROVIDER_ERROR", "message": "upstream 500"}}
     print(json.dumps(o), flush=True)
+    if step.get("stall") and i == 2:  # session + turn_start + step_start are out, then silence (stuck run)
+        time.sleep(step["stall"])
     if step.get("fail_mid") and o["type"] == "tool_call":  # died after the agent already acted
         sys.exit(1)
 ok = all(o.get("reason", {}).get("kind", "completed") == "completed" for o in lines if o.get("phase") == "turn_end")

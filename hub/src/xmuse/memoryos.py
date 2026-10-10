@@ -167,6 +167,9 @@ class Curator:
                     notes.append(f"curate: E{a} and E{b} may contradict each other: {c.get('reason', '')}")
             conn.execute("insert into curated values(?,?) on conflict(thread_id) do update set msg_id=excluded.msg_id",
                          (tid, win[-1]["id"]))
+        log.info("curate %s result %s", tid, json.dumps({  # what came back vs what the hub kept (ops metrics)
+            "memories": len(r.get("memories") or []), "added": len(made), "conflicts": len(r.get("conflicts") or []),
+            "notices": len(notes)}, sort_keys=True))
         for body in notes:
             mail.notice(conn, tid, body)
         if made and len(active) > self.cfg["align_thread_cap"] * 0.8:  # warm MemoryOS's embedding cache; result unused

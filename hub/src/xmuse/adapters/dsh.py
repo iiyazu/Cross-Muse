@@ -158,12 +158,13 @@ class DshHeadless:
                 and "INVALID_REQUEST" not in info.get("error", ""))
 
     def run(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None = None,
-            retry: bool = True):
+            retry: bool = True, limit: float | None = None):
         """One headless process; a failed launch is retried once, in place, with the same arguments.
 
         The retry lives here (below the engine) so the turn is still one turn: one prompt delivery, one turn
-        record. Nothing the agent could have seen or done was lost, because `active` is still false."""
-        info, usage = self._run_once(cwd, patch, session, prompt, log, st)
+        record. Nothing the agent could have seen or done was lost, because `active` is still false.
+        `limit` (seconds) kills a run that does not finish in time; only the precheck uses it."""
+        info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit)
         if retry and self.launch_failed(info) and not (st and st["stop"].is_set()):
             log_ = logging.getLogger(__name__)
             log_.warning("dsh launch failed (%s); retrying once", info.get("error") or f"exit {info.get('rc')}")
@@ -172,11 +173,12 @@ class DshHeadless:
                     return info, usage
             else:
                 time.sleep(self.retry_wait)
-            info, usage = self._run_once(cwd, patch, session, prompt, log, st)
+            info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit)
         return info, usage
 
-    def _run_once(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None):
-        got, hung = threading.Event(), threading.Event()
+    def _run_once(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None,
+                  limit: float | None = None):
+        got, hung, late = threading.Event(), threading.Event(), threading.Event()
         with log.open("a") as out, log.with_suffix(".err").open("a") as err:
             p = subprocess.Popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=err, text=True, encoding="utf-8", start_new_session=True,
@@ -192,8 +194,19 @@ class DshHeadless:
                     except ProcessLookupError:
                         pass
 
+            def overall():  # a precheck that started but never finishes (seen: step_start, then 10 min of silence)
+                late.set()
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
             if self.first_event:
                 threading.Thread(target=watchdog, daemon=True).start()
+            timer = threading.Timer(limit, overall) if limit else None
+            if timer:
+                timer.daemon = True
+                timer.start()
             try:
                 p.stdin.write(prompt)
                 p.stdin.close()
@@ -207,10 +220,14 @@ class DshHeadless:
                 lines.append(line)
             got.set()
         p.wait()
+        if timer:
+            timer.cancel()
         info, usage = parse(lines)
         info["rc"] = p.returncode
         if hung.is_set() and not lines:
             info["error"] = f"dsh produced no output within {self.first_event}s (killed)"
+        if late.is_set() and p.returncode != 0:
+            info["error"] = f"dsh did not finish within {limit}s (killed)"
         return info, usage
 
     def start(self, spec: TurnSpec) -> dict:
@@ -296,7 +313,8 @@ class DshDriver:
         log = self.state / "logs" / f"precheck-{agent['id']}.jsonl"
         err = None
         for attempt in (0, 1):  # one retry: dsh headless sometimes exits 1 (empty stderr) on a cold start
-            info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log, retry=False)
+            info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log, retry=False,
+                                        limit=self.cfg.get("dsh_precheck_timeout_s", 120))
             if info.get("ok") and info["rc"] == 0:
                 return None
             err = info.get("error") or f"exit {info['rc']}"

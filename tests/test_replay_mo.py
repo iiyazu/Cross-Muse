@@ -230,6 +230,13 @@ class Replay(unittest.TestCase):
         self.assertEqual(len(fake.Handler.calls), 5)
         self.assertTrue(all("_replay" not in body for _, body in fake.Handler.calls),
                         "offline metadata must not reach the service")
+        by_path = {}
+        for path, body in fake.Handler.calls:
+            by_path.setdefault(path, []).append(body)
+        self.assertTrue(by_path["/curate"] and all("schema" not in b for b in by_path["/curate"]),
+                        "/curate rejects extra keys (422 extra_forbidden)")
+        self.assertEqual(by_path["/recall"][0]["schema"], "memoryos_recall/v1")
+        self.assertIn("schema", by_path["/similar"][0])
         self.assertIn("_replay", json.loads((out / run["name"] / "curate-1.json").read_text(encoding="utf-8")))
         for name in ("curate-1", "curate-2", "curate-3", "recall", "similar"):
             self.assertTrue((out / run["name"] / f"{name}.resp.json").exists(), name)

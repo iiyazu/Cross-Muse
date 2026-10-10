@@ -431,6 +431,8 @@ def cmd_send(a) -> int:
         calls += 1
         body = json.loads(dest.read_text(encoding="utf-8"))
         body.pop("_replay", None)  # offline scoring metadata stays on disk (score reads it there); never sent
+        if r["type"] == "curate":  # /curate forbids extra keys (422 extra_forbidden); the hub sends no schema either
+            body.pop("schema", None)
         out = post(a.url, URLS[r["type"]], body, TIMEOUTS[r["type"]])
         write_json(resp, out)
         print(f"{r['type']:7} {r['file']:22} status={out['status']} {out['seconds']}s"

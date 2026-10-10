@@ -319,6 +319,18 @@ def test_stuck_launch_is_killed_by_the_first_event_watchdog_and_retried(make):
     assert t["state"] == "succeeded" and len(h.dsh_calls()) == 2
 
 
+def test_precheck_that_starts_but_never_finishes_is_killed_by_the_time_limit_and_retried_once(make):
+    h = make(DSH, dsh_retry_wait=0.1, dsh_precheck_timeout_s=1)
+    drv = h.hub.engine.drivers["dsh"]
+    good = {"id": "dsh-1", "model": "deepseek-official/deepseek-v4-flash"}
+    h.plan_dsh({"stall": 30}, {})
+    assert drv.precheck(good, h.ws) is None and len(h.dsh_calls()) == 2
+    h.plan_dsh({"stall": 30}, {"stall": 30})
+    n = len(h.dsh_calls())
+    err = drv.precheck(good, h.ws)
+    assert "did not finish within 1s" in err and len(h.dsh_calls()) == n + 2
+
+
 def test_precheck_retries_a_flaky_start_once_but_not_an_unknown_model(make):
     h = make(DSH, dsh_retry_wait=0.1)
     drv = h.hub.engine.drivers["dsh"]

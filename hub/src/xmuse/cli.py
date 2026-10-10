@@ -14,6 +14,8 @@ from pathlib import Path
 from . import config, db
 from .env import clean_env
 
+HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
+
 
 def call(state: Path, path: str, body: dict | None = None) -> dict:
     hub = state / "hub.json"
@@ -40,7 +42,10 @@ def hub_start(state: Path) -> None:
     log = (state / "logs" / "hub.log").open("a")
     p = subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state)}),
                          stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-    for _ in range(600):  # model prechecks run first (dsh: about 10 s each)
+    # model prechecks run first: dsh about 10 s, but a cold start may be retried once after the 180 s first-event
+    # watchdog, so allow 600 s
+    deadline = time.time() + HUB_START_TIMEOUT_S
+    while time.time() < deadline:
         if (state / "hub.json").exists():
             print(f"hub started: {json.loads((state / 'hub.json').read_text())}")
             return
@@ -48,7 +53,8 @@ def hub_start(state: Path) -> None:
             tail = (state / "logs" / "hub.log").read_text().strip().splitlines()[-6:]
             raise SystemExit("hub exited:\n" + "\n".join(tail))
         time.sleep(0.25)
-    raise SystemExit(f"hub did not start; see {state / 'logs' / 'hub.log'}")
+    os.killpg(p.pid, signal.SIGTERM)  # never leave a hub running that its caller has given up on
+    raise SystemExit(f"hub did not start in {HUB_START_TIMEOUT_S} s (stopped it); see {state / 'logs' / 'hub.log'}")
 
 
 def hub_stop(state: Path) -> None:

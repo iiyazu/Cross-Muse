@@ -102,6 +102,26 @@ def run(ws, *args, check=True):
     return r
 
 
+def test_hub_start_gives_up_after_the_deadline_and_stops_the_hub(tmp_path, monkeypatch):
+    from xmuse import cli
+    state = tmp_path / "state"
+    (state / "logs").mkdir(parents=True)
+    procs = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(argv, **kw):  # a "hub" that never writes hub.json
+        p = real_popen(["sleep", "60"], **kw)
+        procs.append(p)
+        return p
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli, "HUB_START_TIMEOUT_S", 1)
+    with pytest.raises(SystemExit) as e:
+        cli.hub_start(state)
+    assert "did not start" in str(e.value) and "stopped it" in str(e.value)
+    assert procs[0].wait(timeout=10) == -15  # SIGTERM from killpg
+
+
 def test_cli_end_to_end_with_a_fake_agent(ws):
     run(ws, "init", ".")
     run(ws, "agent", "add", "claude-1", "--vendor", "claude", "--allow", "Bash(make test)")
