@@ -1,7 +1,7 @@
 {
   "name": "xmuse-dsh-bundle",
-  "version": "0.0.2",
-  "description": "xmuse 2 smoke-test bundle: /xmuse command, xmuse_whoami tool, follow-up delivery into the current session",
+  "version": "0.1.0",
+  "description": "xmuse 2 dsh relay: /xmuse bind|unbind|status, 7 native xmuse_* tools, long-poll relay of hub messages into the bound session",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,7 +10,7 @@
     "./locale/*.json": "./locale/*.json"
   },
   "scripts": { "test": "node --import ./test/register.mjs --test test/bundle.test.mjs" },
-  "files": ["index.js", "cordis.patch.yml", "locale/*.json"],
+  "files": ["index.js", "tools.json", "cordis.patch.yml", "locale/*.json"],
   "peerDependencies": {
     "@deepseek-ai/dsh-commands": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",

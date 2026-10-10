@@ -169,3 +169,15 @@ def passive(x) -> str:
 def _short(s: str, n: int = 240) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[:n] + "…"
+
+
+RELAY_TAIL = ("Reply with the xmuse tools: xmuse_send to answer (plain text reaches no one), then xmuse_done when "
+              "your part is finished. These messages are already delivered to you: do not re-read them with "
+              "xmuse_inbox; call xmuse_context for the shared decisions if you need them.")
+
+
+def relayed(conn, msgs: list[dict]) -> str:
+    """The prompt the dsh bundle injects into a foreground session (no running hub turn): the same relay
+    header and <xmuse ...> wrapping a woken agent reads, plus how to answer."""
+    roster = {a["id"]: a for a in db.rows(conn.execute("select * from agents"))}
+    return "\n\n".join([RELAY, "New for you:\n" + "\n".join(tag(m, roster) for m in msgs), RELAY_TAIL])

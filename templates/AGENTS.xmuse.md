@@ -32,8 +32,12 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
 - Relay pending permission requests ("asks permission ... `xmuse approve <id> once|always|reject`") and
   pause notices to the user and act on their answer; run `xmuse approve` (via the host's WSL tool) only
   after the user says so.
-- `xmuse_send(on_behalf_of="human")` only relays something the user explicitly stated ("decide X", "tell them Y");
-  otherwise send as yourself.
+- When the user directly asks for something to be done by a peer, relay it with `xmuse_send(on_behalf_of="human")`
+  by default: peers refuse out-of-scope requests from other agents. Use it only for what the user stated; send
+  your own judgement as yourself.
+- When you dispatch implementation, mention only the implementer; the implementer requests the review.
+- If the Monitor running `xmuse watch` expires or exits, restart it immediately without being asked, then read the
+  inbox once (`xmuse_inbox`) to catch anything missed in between.
 
 Full guide: skill `xmuse-collab` (`.claude/skills/xmuse-collab/SKILL.md`).
 <!-- xmuse:end -->

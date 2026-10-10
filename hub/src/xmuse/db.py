@@ -41,7 +41,7 @@ create table if not exists messages(
 create table if not exists deliveries(
   id integer primary key, message_id integer not null, recipient text not null,
   wake integer not null,
-  state text not null,   -- queued | admitted | done | failed | canceled | held | passive
+  state text not null,   -- queued | admitted | done | failed | canceled | held | passive | delivered (relay)
   turn_id integer, read_at real, acked_at real, outcome text, updated_at real not null,
   unique(message_id, recipient));
 create index if not exists deliveries_open on deliveries(recipient, state);
@@ -99,7 +99,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("sessions", "notified", "integer not null default 0"),               # size notice sent
            ("sessions", "online", "integer not null default 0"),                 # desktop session between SessionStart/End
            ("messages", "via", "text"), ("entries", "via", "text"),  # coordinator that relayed a human decision
-           ("entries", "resolves", "text")]  # proposed entries: JSON ids of questions they answer, applied on confirm
+           ("entries", "resolves", "text"),  # proposed entries: JSON ids of questions they answer, applied on confirm
+           # dsh relay: a polled agent's delivery reported into its desktop session
+           ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text")]
 
 
 def init(path) -> sqlite3.Connection:

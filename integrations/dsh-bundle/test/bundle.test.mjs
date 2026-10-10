@@ -4,30 +4,66 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { apply, inject, name } from '../index.js'
+import { apply, inject, name, toDsl } from '../index.js'
 
-const tick = () => new Promise((r) => setTimeout(r, 30))
+const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms))
+const until = async (cond, what = 'condition', ms = 4000) => {
+  const t0 = Date.now()
+  while (!cond()) {
+    if (Date.now() - t0 > ms) assert.fail(`timed out waiting for ${what}`)
+    await tick(10)
+  }
+}
+const TOOL_NAMES = ['xmuse_whoami', 'xmuse_send', 'xmuse_inbox', 'xmuse_ack', 'xmuse_thread', 'xmuse_context', 'xmuse_done']
 
+/** handler(url, body, req) -> [code, obj] | Promise of the same. */
 function fakeHub(handler) {
   const seen = []
   const server = http.createServer((req, res) => {
     let b = ''
     req.on('data', (c) => (b += c))
-    req.on('end', () => {
-      seen.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(b || '{}') })
-      const [code, obj] = handler(req)
+    req.on('end', async () => {
+      const body = JSON.parse(b || '{}')
+      seen.push({ url: req.url, auth: req.headers.authorization, body })
+      const [code, obj] = await handler(req.url, body, req)
+      if (res.destroyed) return
       res.writeHead(code, { 'content-type': 'application/json' })
       res.end(JSON.stringify(obj))
     })
   })
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, seen, port: server.address().port })))
+  const close = () => { server.closeAllConnections?.(); server.close() }
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, seen, port: server.address().port, close })))
 }
 
-function setup({ hubPort, flushOk = true, resolveError = false, noSessionController = false, bindingsFile: bf, preAgents = [] } = {}) {
+/** A hub whose relay endpoints behave like the real one: unreported deliveries stay pollable. */
+async function relayHub({ deliveredFail = 0 } = {}) {
+  const st = { queue: [], delivered: new Set(), deliveredCalls: [], polls: [], deliveredFail }
+  const h = await fakeHub(async (url, body) => {
+    if (url === '/v1/relay/poll') {
+      st.polls.push(body.cursor)
+      const pending = st.queue.filter((i) => i.delivery_id > body.cursor && !st.delivered.has(i.delivery_id))
+      if (!pending.length) { await tick(40); return [200, { result: { cursor: body.cursor, items: [], text: '' } }] }
+      return [200, { result: { cursor: pending.at(-1).delivery_id, items: pending, text: `TEXT[${pending.map((i) => i.delivery_id)}]` } }]
+    }
+    if (url === '/v1/relay/delivered') {
+      st.deliveredCalls.push(body)
+      if (st.deliveredFail > 0) { st.deliveredFail--; return [500, { error: { code: 'boom', message: 'down' } }] }
+      for (const id of body.delivery_ids) st.delivered.add(id)
+      return [200, { result: { delivered: body.delivery_ids.length, session: body.session_id } }]
+    }
+    return [200, { result: { echo: url, args: body.args } }]
+  })
+  const add = (id) => st.queue.push({ delivery_id: id, message_id: id + 100, thread: 'dm:dsh-1+human', from: 'human', kind: 'message', mentions: [], wake: true })
+  return { ...h, st, add }
+}
+
+function setup({ hubPort, flushOk = true, resolveError = false, noSessionController = false, bindingsFile: bf, preAgents = [], toolsJson, extra = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xmuse-bundle-'))
   fs.mkdirSync(path.join(dir, 'tokens'))
   if (hubPort) fs.writeFileSync(path.join(dir, 'hub.json'), JSON.stringify({ port: hubPort, pid: 1 }))
   fs.writeFileSync(path.join(dir, 'tokens', 'dsh-1'), 'tok-dsh-1\n')
+  fs.writeFileSync(path.join(dir, 'tokens', 'dsh-2'), 'tok-dsh-2\n')
+  if (toolsJson) fs.writeFileSync(path.join(dir, 'tools.json'), toolsJson)
   const bindingsFile = bf ?? path.join(dir, 'bindings.json')
 
   const logs = []
@@ -36,13 +72,15 @@ function setup({ hubPort, flushOk = true, resolveError = false, noSessionControl
   const followups = []
   const flushed = []
   const agents = new Map()
+  const disposers = []
+  const t = { flushOk, order: [] }
   const mkAgent = (id) => {
     const tools = new Map()
     const agent = {
       id, session: { id },
-      followup: (m) => followups.push({ id, m }),
+      followup: (m) => { followups.push({ id, m }); t.order.push(`followup:${id}`) },
       ctx: {
-        tools: { register: (t) => { tools.set(t.name, t); return () => tools.delete(t.name) } },
+        tools: { register: (tool) => { tools.set(tool.name, tool); return () => tools.delete(tool.name) } },
         effect: (fn) => fn(),
       },
       tools,
@@ -52,23 +90,26 @@ function setup({ hubPort, flushOk = true, resolveError = false, noSessionControl
   }
   const ctx = {
     logger: { info: (m) => logs.push(['info', m]), warn: (m) => logs.push(['warn', m]) },
-    effect: (fn) => fn(),
+    effect: (fn) => { const off = fn(); if (typeof off === 'function') disposers.push(off); return off },
     on: (ev, fn) => { (listeners[ev] ||= []).push(fn); return () => {} },
     commands: { register: (c) => { commands.set(c.name, c); return () => commands.delete(c.name) } },
     agents: { roots: () => [...agents.values()] },
-    sessions: { flush: async (s) => { flushed.push(s.id); return flushOk } },
+    sessions: { flush: async (s) => { flushed.push(s.id); t.order.push(`flush:${s.id}`); return typeof t.flushOk === 'function' ? t.flushOk() : t.flushOk } },
     ...(noSessionController ? {} : {
       sessionController: {
-        resolveAgent: async (id) => (resolveError ? { error: new Error('session/not-found') } : { agent: agents.get(id) }),
+        resolveAgent: async (id) => (resolveError ? { error: new Error('session/not-found') } : agents.has(id) ? { agent: agents.get(id) } : { error: new Error('session/not-found') }),
       },
     }),
   }
   const emit = async (ev, payload) => { for (const fn of listeners[ev] || []) await fn(payload) }
   for (const id of preAgents) mkAgent(id)
-  apply(ctx, { state: dir, bindingsFile })
+  apply(ctx, { state: dir, bindingsFile, pollWaitS: 1, backoffMinMs: 20, backoffMaxMs: 80, ...extra })
   const run = (sessionId, rawInput) => commands.get('xmuse').handler({ agent: agents.get(sessionId) ?? { id: sessionId }, rawInput })
-  return { ctx, dir, bindingsFile, logs, commands, followups, flushed, agents, mkAgent, emit, run }
+  const dispose = () => { for (const off of disposers) off() }
+  Object.assign(t, { ctx, dir, bindingsFile, logs, commands, followups, flushed, agents, mkAgent, emit, run, dispose })
+  return t
 }
+const readBindings = (f) => JSON.parse(fs.readFileSync(f, 'utf8'))
 
 test('exports and command registration', async () => {
   assert.equal(name, 'xmuse')
@@ -76,22 +117,24 @@ test('exports and command registration', async () => {
   const t = setup()
   assert.ok(t.commands.has('xmuse'))
   assert.equal(t.commands.get('xmuse').recordInput, false)
+  t.dispose()
 })
 
-test('self-check logs services and hub state, never throws', async () => {
-  const { server, port } = await fakeHub(() => [200, {}])
+test('self-check logs services, hub state and tools, never throws', async () => {
+  const { close, port } = await fakeHub(() => [200, {}])
   const t = setup({ hubPort: port })
   await tick()
   const line = t.logs.find(([, m]) => m.includes('self-check'))
   assert.ok(line, 'self-check log present')
   assert.match(line[1], /"sessionController":true/)
   assert.match(line[1], new RegExp(`ok \\(port ${port}\\)`))
-  server.close()
-  // missing everything: still no throw
+  assert.match(line[1], /"tools":"7 from bundled tools.json"/)
+  close()
   const bad = setup({ noSessionController: true })
   await tick()
   assert.match(bad.logs.find(([, m]) => m.includes('self-check'))[1], /"sessionController":false/)
   assert.match(bad.logs.find(([, m]) => m.includes('self-check'))[1], /unreadable/)
+  t.dispose(); bad.dispose()
 })
 
 test('ping delivers followup with source.kind xmuse and flushes', async () => {
@@ -105,6 +148,7 @@ test('ping delivers followup with source.kind xmuse and flushes', async () => {
   assert.equal(m.content[0].type, 'text')
   assert.match(m.content[0].text, /^\[xmuse\] smoke delivery \d{4}-\d\d-\d\dT.*: reply "pong" in one line\.$/)
   assert.deepEqual(t.flushed, ['s1'])
+  t.dispose()
 })
 
 test('ping failure modes return errors instead of throwing', async () => {
@@ -119,24 +163,41 @@ test('ping failure modes return errors instead of throwing', async () => {
   const c = setup({ noSessionController: true })
   c.mkAgent('s1')
   assert.match((await c.run('s1', 'ping')).text, /not available/)
+  for (const x of [a, b, c]) x.dispose()
 })
 
-test('bind persists to file and status shows it; usage errors', async () => {
+test('bind/unbind/status persist to file; usage errors; restart restores; legacy flat file loads', async () => {
   const t = setup()
   t.mkAgent('s1')
   assert.equal((await t.run('s1', 'bind')).kind, 'error')
+  assert.equal((await t.run('s1', 'bind ../x')).kind, 'error')
   const r = await t.run('s1', ' bind dsh-1 ')
   assert.equal(r.kind, 'success')
-  assert.deepEqual(JSON.parse(fs.readFileSync(t.bindingsFile, 'utf8')), { s1: 'dsh-1' })
+  assert.deepEqual(readBindings(t.bindingsFile).bindings, { s1: 'dsh-1' })
   const s = await t.run('s1', 'status')
   assert.match(s.text, /s1 -> dsh-1/)
+  assert.match(s.text, /relay: (polling|idle|error)/)
   assert.match(s.text, /sessionController: yes/)
+  assert.match(s.text, /tools: 7 from bundled/)
   assert.equal((await t.run('s1', 'nope')).kind, 'error')
   assert.equal((await t.run('s1', '')).kind, 'error')
-  // bindings survive a "restart": a second instance over the same file loads them
+  // bindings survive a "restart"
   const t2 = setup({ bindingsFile: t.bindingsFile })
   await tick()
   assert.match((await t2.run('s1', 'status')).text, /s1 -> dsh-1/)
+  t2.dispose()
+  // unbind
+  assert.equal((await t.run('s1', 'unbind')).kind, 'success')
+  assert.deepEqual(readBindings(t.bindingsFile).bindings, {})
+  assert.equal((await t.run('s1', 'unbind')).kind, 'error')
+  assert.match((await t.run('s1', 'status')).text, /\(none\)/)
+  // legacy 0.0.x flat file
+  const legacy = path.join(t.dir, 'legacy.json')
+  fs.writeFileSync(legacy, JSON.stringify({ s9: 'dsh-2' }))
+  const t3 = setup({ bindingsFile: legacy })
+  await tick()
+  assert.match((await t3.run('s9', 'status')).text, /s9 -> dsh-2/)
+  t.dispose(); t3.dispose()
 })
 
 test('bind persist failure does not throw', async () => {
@@ -146,28 +207,81 @@ test('bind persist failure does not throw', async () => {
   const r = await t.run('s1', 'bind dsh-1')
   assert.equal(r.kind, 'success')
   assert.match(r.text, /write failed/)
+  t.dispose()
 })
 
-test('xmuse_whoami: registered on agent/created, unbound message, then hub call after late bind', async () => {
-  const { server, seen, port } = await fakeHub(() => [200, { result: { id: 'dsh-1', vendor: 'dsh' } }])
+// ---- tools ----
+
+test('all 7 tools register per session with hub-derived schemas and unbound-safe descriptions', async () => {
+  const t = setup()
+  const agent = t.mkAgent('s1')
+  await t.emit('agent/created', { agent })
+  assert.deepEqual([...agent.tools.keys()], TOOL_NAMES)
+  for (const tool of agent.tools.values()) assert.match(tool.description, /^Only for sessions the user bound with `\/xmuse bind/)
+  const send = agent.tools.get('xmuse_send').parameters
+  assert.equal(send.to.required, true)
+  assert.equal(send.body.required, true)
+  assert.equal(send.kind.required, undefined)
+  assert.deepEqual(send.kind.enum.slice(0, 2), ['message', 'handoff'])
+  assert.equal(send.mentions.type, 'array')
+  assert.equal(send.mentions.items.type, 'string')
+  assert.equal(send.why.type, 'object')
+  assert.equal(send.why.additionalProperties, false)
+  assert.equal(send.why.properties.what.type, 'string')
+  assert.deepEqual(agent.tools.get('xmuse_whoami').parameters, {})
+  const done = agent.tools.get('xmuse_done').parameters
+  assert.equal(done.declares.items.additionalProperties, false)
+  assert.equal(done.declares.items.properties.kind.required, true)
+  assert.deepEqual(done.declares.items.properties.kind.enum, ['decision', 'assumption', 'question'])
+  t.dispose()
+})
+
+test('tool specs: hub state tools.json wins, broken file falls back to the bundled copy', async () => {
+  const custom = JSON.stringify([{ name: 'xmuse_whoami', description: 'x', inputSchema: { type: 'object', properties: {}, required: [] } }])
+  const a = setup({ toolsJson: custom })
+  const agentA = a.mkAgent('s1')
+  await a.emit('agent/created', { agent: agentA })
+  assert.deepEqual([...agentA.tools.keys()], ['xmuse_whoami'])
+  const b = setup({ toolsJson: '{not json' })
+  const agentB = b.mkAgent('s1')
+  await b.emit('agent/created', { agent: agentB })
+  assert.equal(agentB.tools.size, 7)
+  assert.ok(b.logs.some(([l, m]) => l === 'warn' && /bundled copy/.test(m)))
+  a.dispose(); b.dispose()
+})
+
+test('toDsl converts JSON Schema to the dsh author DSL', () => {
+  assert.deepEqual(toDsl({ type: 'string', description: 'd', enum: ['a'] }, true), { type: 'string', description: 'd', required: true, enum: ['a'] })
+  assert.deepEqual(toDsl({ type: 'object', properties: { a: { type: 'integer' } }, required: ['a'] }),
+    { type: 'object', additionalProperties: true, properties: { a: { type: 'integer', required: true } } })
+})
+
+test('every tool proxies args to /v1/tools/<name> with the bound agent token and returns the result', async () => {
+  const { close, seen, port } = await fakeHub((url, body) => [200, { result: { echo: url, args: body.args } }])
   const t = setup({ hubPort: port })
   const agent = t.mkAgent('s1')
   await t.emit('agent/created', { agent })
-  const tool = agent.tools.get('xmuse_whoami')
-  assert.ok(tool, 'tool registered')
-  assert.match(await tool.execute({}, { signal: new AbortController().signal }), /\/xmuse bind/)
+  for (const n of TOOL_NAMES) assert.match(await agent.tools.get(n).execute({}, {}), /\/xmuse bind/)
   assert.equal(seen.length, 0)
   await t.run('s1', 'bind dsh-1') // bound after agent/created
-  const out = await tool.execute({}, { signal: new AbortController().signal })
-  assert.equal(out, JSON.stringify({ id: 'dsh-1', vendor: 'dsh' }))
-  assert.equal(seen[0].url, '/v1/tools/xmuse_whoami')
-  assert.equal(seen[0].auth, 'Bearer tok-dsh-1')
-  assert.deepEqual(seen[0].body, { args: {} })
-  server.close()
+  const argsFor = {
+    xmuse_whoami: {}, xmuse_send: { to: 'oc', body: 'hi', mentions: ['oc'], kind: 'message' }, xmuse_inbox: { unread_only: false },
+    xmuse_ack: { ids: [1, 2], outcome: 'ok' }, xmuse_thread: { id: '#t', limit: 5 }, xmuse_context: { topic: '#t' },
+    xmuse_done: { summary: 's', next: 'none', declares: [{ kind: 'decision', statement: 'x' }] },
+  }
+  for (const n of TOOL_NAMES) {
+    seen.length = 0
+    const out = await agent.tools.get(n).execute(argsFor[n], {})
+    assert.deepEqual(JSON.parse(out), { echo: `/v1/tools/${n}`, args: argsFor[n] })
+    const call = seen.find((s) => s.url === `/v1/tools/${n}`)
+    assert.equal(call.auth, 'Bearer tok-dsh-1')
+    assert.deepEqual(call.body, { args: argsFor[n] })
+  }
+  t.dispose(); close()
 })
 
-test('xmuse_whoami: hub errors, missing token, hub down all return text', async () => {
-  const { server, port } = await fakeHub(() => [200, { error: { code: 'forbidden', message: 'nope' } }])
+test('tools: hub errors, missing token, hub down all return text', async () => {
+  const { close, port } = await fakeHub(() => [200, { error: { code: 'forbidden', message: 'nope' } }])
   const t = setup({ hubPort: port })
   const agent = t.mkAgent('s1')
   await t.emit('agent/created', { agent })
@@ -176,19 +290,177 @@ test('xmuse_whoami: hub errors, missing token, hub down all return text', async 
   assert.match(await tool.execute({}, {}), /hub error forbidden: nope/)
   await t.run('s1', 'bind ghost')
   assert.match(await tool.execute({}, {}), /failed/)
-  server.close()
+  close()
   await t.run('s1', 'bind dsh-1')
   assert.match(await tool.execute({}, {}), /failed/) // connection refused
+  t.dispose()
 })
 
 test('agent backfill at apply time, creation, idempotence and disposal', async () => {
   const t = setup({ preAgents: ['pre'] })
-  assert.ok(t.agents.get('pre').tools.has('xmuse_whoami'), 'backfilled from roots()')
+  assert.equal(t.agents.get('pre').tools.size, 7, 'backfilled from roots()')
   t.mkAgent('late')
   await t.emit('agent/created', { agent: t.agents.get('late') })
-  assert.ok(t.agents.get('late').tools.has('xmuse_whoami'))
+  assert.equal(t.agents.get('late').tools.size, 7)
   await t.emit('agent/created', { agent: t.agents.get('late') })
-  assert.equal(t.agents.get('late').tools.size, 1)
+  assert.equal(t.agents.get('late').tools.size, 7)
   await t.emit('agent/disposed', { agent: t.agents.get('late') })
-  assert.ok(!t.agents.get('late').tools.has('xmuse_whoami'))
+  assert.equal(t.agents.get('late').tools.size, 0)
+  t.dispose()
+})
+
+// ---- relay ----
+
+test('relay delivers like ping, reports delivered, advances and persists the cursor only after flush', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  hub.add(5)
+  await until(() => hub.st.deliveredCalls.length === 1, 'delivered report')
+  assert.equal(t.followups.length, 1)
+  const m = t.followups[0].m
+  assert.equal(m.source.kind, 'xmuse')
+  assert.deepEqual(m.content, [{ type: 'text', text: 'TEXT[5]' }])
+  assert.deepEqual(t.order.slice(0, 2), ['followup:s1', 'flush:s1'])
+  assert.deepEqual(hub.st.deliveredCalls[0], { delivery_ids: [5], session_id: 's1' })
+  const poll = hub.seen.find((s) => s.url === '/v1/relay/poll')
+  assert.equal(poll.auth, 'Bearer tok-dsh-1')
+  assert.deepEqual(poll.body, { cursor: 0, wait_s: 1 })
+  await until(() => readBindings(t.bindingsFile).cursors?.['dsh-1'] === 5, 'persisted cursor')
+  await until(() => hub.st.polls.includes(5), 'poll with advanced cursor')
+  assert.match((await t.run('s1', 'status')).text, /cursor 5, last delivery \d{4}-/)
+  hub.add(6)
+  await until(() => hub.st.deliveredCalls.length === 2, 'second delivery')
+  assert.equal(t.followups.length, 2)
+  t.dispose(); hub.close()
+})
+
+test('cursor survives a restart (loop resumes from the persisted cursor)', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  hub.add(3)
+  await until(() => readBindings(t.bindingsFile).cursors?.['dsh-1'] === 3, 'cursor persisted')
+  t.dispose()
+  hub.st.polls.length = 0
+  const t2 = setup({ hubPort: hub.port, bindingsFile: t.bindingsFile })
+  t2.mkAgent('s1')
+  await until(() => hub.st.polls.length > 0, 'restored loop polls')
+  assert.equal(hub.st.polls[0], 3)
+  t2.dispose(); hub.close()
+})
+
+test('flush failure: cursor stays, nothing is reported, the retry delivers and then reports once', async () => {
+  const hub = await relayHub()
+  let calls = 0
+  const t = setup({ hubPort: hub.port, flushOk: () => ++calls > 2 }) // first two flushes fail
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  hub.add(1)
+  await until(() => calls >= 1, 'first flush')
+  assert.equal(hub.st.deliveredCalls.length, 0)
+  await until(() => hub.st.deliveredCalls.length === 1, 'eventual report')
+  assert.ok(t.logs.some(([l, m]) => l === 'warn' && /did not acknowledge/.test(m)))
+  assert.equal(calls, 3)
+  assert.deepEqual(hub.st.deliveredCalls[0].delivery_ids, [1])
+  assert.ok(hub.st.polls.slice(0, 3).every((c) => c === 0), 'cursor did not move before a successful flush')
+  assert.equal(readBindings(t.bindingsFile).cursors['dsh-1'], 1)
+  t.dispose(); hub.close()
+})
+
+test('resolveAgent failure also retries with backoff and never loses the message', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  hub.add(1)
+  await t.run('s-missing', 'bind dsh-1') // session not resolvable yet
+  await until(() => t.logs.some(([, m]) => /session\/not-found/.test(m)), 'failure logged')
+  assert.match((await t.run('s-missing', 'status')).text, /relay: (error|polling|idle)/)
+  t.mkAgent('s-missing') // the session appears
+  await until(() => hub.st.deliveredCalls.length === 1, 'delivered after recovery')
+  t.dispose(); hub.close()
+})
+
+test('delivered report failure is retried without delivering the text twice', async () => {
+  const hub = await relayHub({ deliveredFail: 2 })
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  hub.add(1)
+  await until(() => hub.st.delivered.has(1), 'delivered accepted')
+  assert.equal(hub.st.deliveredCalls.length, 3)
+  assert.equal(t.followups.length, 1, 'the session got the text once')
+  t.dispose(); hub.close()
+})
+
+test('hub down: loop backs off, reports error state, recovers when the hub is back', async () => {
+  const t = setup() // no hub.json
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  await until(() => t.logs.filter(([, m]) => /relay dsh-1/.test(m)).length >= 2, 'repeated backoff')
+  assert.match((await t.run('s1', 'status')).text, /relay: error.*last error [^-]/)
+  const hub = await relayHub()
+  fs.writeFileSync(path.join(t.dir, 'hub.json'), JSON.stringify({ port: hub.port, pid: 1 }))
+  hub.add(1)
+  await until(() => hub.st.deliveredCalls.length === 1, 'recovery')
+  t.dispose(); hub.close()
+})
+
+test('unbind stops the loop and aborts the in-flight poll', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  await until(() => hub.st.polls.length >= 2, 'polling')
+  assert.equal((await t.run('s1', 'unbind')).kind, 'success')
+  await tick(120)
+  const n = hub.st.polls.length
+  hub.add(1)
+  await tick(300)
+  assert.equal(hub.st.polls.length, n, 'no further polls after unbind')
+  assert.equal(t.followups.length, 0)
+  assert.match((await t.run('s1', 'status')).text, /\(none\)/)
+  t.dispose(); hub.close()
+})
+
+test('dispose stops every loop', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1'); t.mkAgent('s2')
+  await t.run('s1', 'bind dsh-1')
+  await t.run('s2', 'bind dsh-2')
+  await until(() => hub.st.polls.length >= 2, 'polling')
+  t.dispose()
+  await tick(150)
+  const n = hub.st.polls.length
+  await tick(300)
+  assert.equal(hub.st.polls.length, n)
+  hub.close()
+})
+
+test('duplicate binding: one loop per agent, last binding wins, replacement is reported', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1'); t.mkAgent('s2')
+  await t.run('s1', 'bind dsh-1')
+  const r = await t.run('s2', 'bind dsh-1')
+  assert.match(r.text, /replaced: session s1 no longer bound to "dsh-1"/)
+  assert.deepEqual(readBindings(t.bindingsFile).bindings, { s2: 'dsh-1' })
+  await tick(300)
+  hub.add(1)
+  await until(() => hub.st.deliveredCalls.length === 1, 'delivery')
+  assert.deepEqual(t.followups.map((f) => f.id), ['s2'])
+  assert.equal(hub.st.deliveredCalls[0].session_id, 's2')
+  // exactly one loop polls: sample poll starts over a window (each empty poll lasts ~40ms + 250ms guard)
+  const before = hub.st.polls.length
+  await tick(700)
+  const rate = hub.st.polls.length - before
+  assert.ok(rate <= 4, `single loop expected, saw ${rate} polls in 700ms`)
+  // rebinding a session to another agent stops the old agent's loop
+  await t.run('s2', 'bind dsh-2')
+  const status = (await t.run('s2', 'status')).text
+  assert.match(status, /s2 -> dsh-2/)
+  assert.doesNotMatch(status, /dsh-1/)
+  t.dispose(); hub.close()
 })

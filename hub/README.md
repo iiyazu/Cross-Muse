@@ -57,3 +57,17 @@ Details:
   coordinator-only behaviors (hub notices cc'd, `on_behalf_of`, prompt injection) do not apply to it.
 - No dsh presence hooks are written for a foreground agent (they would register the desktop session as the agent's
   current session for the hub to continue); stale ones are removed. `.xmuse-tmp/` is git-excluded.
+
+### Relay endpoints (dsh bundle)
+
+Polled (foreground or desktop) agents can have messages pushed into their session by a host-side plugin
+(`integrations/dsh-bundle`), instead of running `watch --once`. Agent-token auth like `/v1/tools/*`; both calls work
+without a running turn, and other agents get `invalid_arguments`.
+
+- `POST /v1/relay/poll {cursor, wait_s<=25}` blocks (own handler thread; the server is a `ThreadingHTTPServer`) until the
+  caller has queued wake deliveries with id > cursor (not acked, not canceled, not held/passive), or the wait ends. Returns
+  `{cursor, items:[{delivery_id, message_id, thread, from, kind, mentions, wake}], text}`; `text` is the prompt to inject
+  (`wakepack.relayed`: relay header, `<xmuse from=... thread=... kind=...>` blocks, how to answer). Up to 20 per call.
+- `POST /v1/relay/delivered {delivery_ids, session_id}` sets those deliveries to state `delivered` (+ `delivered_at`,
+  `delivered_session`, `read_at`), so they leave the queued lists, and records `session_id` as the agent's current session
+  with origin `relay` (the engine never runs it). Reporting twice is harmless (0 changed).

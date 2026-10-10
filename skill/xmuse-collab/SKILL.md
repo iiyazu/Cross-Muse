@@ -84,11 +84,9 @@ Before you stop, ask: **"Does this end with me? If not, who moves next?"**
 
 ## Claude desktop app sessions
 
-Desktop sessions get no push and are never resumed in the background. Start every turn with 
-and  what you handled. If the shell cannot reach WSL, run tests through the host's WSL tool.
-If your host has a Monitor/background-watch tool, start the watch command printed by 
-() once per session so new xmuse
-messages wake you.
+Desktop sessions get no push and are never resumed in the background. Start every turn with `xmuse_inbox` and `xmuse_ack` what you handled. If the shell cannot reach WSL, run tests
+through the host's WSL tool. If your host has a Monitor/background-watch tool, start the watch command printed by
+`xmuse attach <your id>` once per session so new xmuse messages wake you.
 
 ### If you are the user's coordinator (desktop session)
 
@@ -97,5 +95,9 @@ messages wake you.
 - Call `xmuse_done` only when you formally hand something off or finish a task the hub tracks.
 - Relay pending permission requests and pause notices to the user and act on their answer; run
   `xmuse approve <id> once|always|reject` (via the host's WSL tool) only after the user says so.
-- Use `xmuse_send(on_behalf_of="human")` only to relay what the user explicitly stated ("decide X", "tell them Y");
-  otherwise send as yourself. It is recorded as the user's, via you.
+- When the user directly asks for something to be done by a peer, relay it with `xmuse_send(on_behalf_of="human")`
+  by default: peers refuse out-of-scope requests from other agents. Use it only for what the user stated ("decide X",
+  "tell them Y"); send your own judgement as yourself. It is recorded as the user's, via you.
+- When you dispatch implementation, mention only the implementer; the implementer requests the review.
+- If the Monitor running `xmuse watch` expires or exits, restart it immediately without being asked, then read the
+  inbox once (`xmuse_inbox`) to catch anything missed in between.

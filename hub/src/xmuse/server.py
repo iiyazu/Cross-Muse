@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -38,6 +39,8 @@ class Hub:
         db.init(state / "hub.db").close()
         self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"])  # align.view reads it from cfg
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
+        self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
+        self.stopping = threading.Event()
         self.admin = digest((state / "tokens" / "_admin").read_text().strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
@@ -198,7 +201,56 @@ class Hub:
                               (a["id"],)).fetchone()
         return {"command": self.engine.drivers[a["vendor"]].attach_command(a, s and s[0])}
 
+    # ---- dsh relay: a polled (foreground) agent's bundle long-polls instead of the engine waking it ----
+    def _polled_agent(self, agent: str) -> dict:
+        a = db.row(self.db().execute("select * from agents where id=?", (agent,)))
+        if a is None or not db.polled(a):
+            raise ToolError("invalid_arguments", "relay is only for polled agents (xmuse agent add <id> --vendor dsh --desktop)")
+        return a
+
+    def relay_poll(self, agent: str, body: dict):
+        self._polled_agent(agent)
+        cursor = int(body.get("cursor") or 0)
+        deadline = time.monotonic() + max(0.0, min(float(body.get("wait_s") or 0), 25.0))
+        while True:
+            rs = db.rows(self.db().execute(
+                "select d.id did, d.wake, m.* from deliveries d join messages m on m.id=d.message_id"
+                " where d.recipient=? and d.id>? and d.state='queued' and d.wake=1 and d.acked_at is null"
+                " order by d.id limit 20", (agent, cursor)))
+            if rs or time.monotonic() >= deadline or self.stopping.is_set():
+                break
+            with self.relay_cv:
+                self.relay_cv.wait(min(0.5, max(0.0, deadline - time.monotonic())))
+        if not rs:
+            return {"cursor": cursor, "items": [], "text": ""}
+        return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs),
+                "items": [{"delivery_id": r["did"], "message_id": r["id"], "thread": r["thread_id"], "from": r["sender"],
+                           "kind": r["kind"], "mentions": json.loads(r["mentions"]), "wake": bool(r["wake"])}
+                          for r in rs]}
+
+    def relay_delivered(self, agent: str, body: dict):
+        self._polled_agent(agent)
+        ids, sid = body.get("delivery_ids"), body.get("session_id")
+        if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids) or not isinstance(sid, str) or not sid:
+            raise ToolError("invalid_arguments", "relay/delivered needs delivery_ids (integers) and session_id (string)")
+        conn, t = self.db(), db.now()
+        with db.tx(conn):
+            n = sum(conn.execute("update deliveries set state='delivered', delivered_at=?, delivered_session=?,"
+                                 " read_at=coalesce(read_at, ?), updated_at=? where id=? and recipient=?"
+                                 " and state in ('queued', 'held', 'passive')", (t, sid, t, t, i, agent)).rowcount
+                    for i in ids)
+            cur = db.row(conn.execute("select * from sessions where agent_id=? and state='current'", (agent,)))
+            if cur is None or cur["vendor_session"] != sid:  # the bundle's bound dsh session; the engine never runs it
+                conn.execute("update sessions set state='retired', retired_at=? where agent_id=? and state='current'",
+                             (t, agent))
+                conn.execute("insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
+                             (agent, sid, str(self.ws), "relay", t))
+            conn.execute("update sessions set wakes=wakes+1 where agent_id=? and state='current'", (agent,))
+        return {"delivered": n, "session": sid}
+
     def route(self, method: str, path: str, caller: str, body: dict):
+        if path in ("/v1/relay/poll", "/v1/relay/delivered") and caller != config.HUMAN:
+            return (self.relay_poll if path.endswith("poll") else self.relay_delivered)(caller, body)
         if path.startswith("/v1/tools/") and caller != config.HUMAN:
             return self.tool(caller, path.rsplit("/", 1)[1], body.get("args", {}))
         if path in ("/v1/hooks/claude", "/v1/hooks/dsh") and caller != config.HUMAN:
@@ -223,7 +275,11 @@ class Hub:
                 n = int(self.headers.get("content-length") or 0)
                 try:
                     body = json.loads(self.rfile.read(n) or b"{}")
-                    self._send(200, {"result": hub.route("POST", self.path, caller, body)})
+                    out = hub.route("POST", self.path, caller, body)
+                    if not self.path.startswith("/v1/relay/"):
+                        with hub.relay_cv:
+                            hub.relay_cv.notify_all()
+                    self._send(200, {"result": out})
                 except ToolError as e:
                     self._send(200, {"error": {"code": e.code, "message": e.message}})
                 except (KeyError, TypeError, ValueError) as e:
@@ -241,7 +297,6 @@ class Hub:
                 pass
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        self.stopping = threading.Event()
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
