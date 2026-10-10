@@ -101,7 +101,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("messages", "via", "text"), ("entries", "via", "text"),  # coordinator that relayed a human decision
            ("entries", "resolves", "text"),  # proposed entries: JSON ids of questions they answer, applied on confirm
            # dsh relay: a polled agent's delivery reported into its desktop session
-           ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text")]
+           ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text"),
+           # the dsh session a foreground agent is bound to (/v1/relay/bind); its tool calls must come from it
+           ("agents", "bound_session", "text")]
 
 
 def init(path) -> sqlite3.Connection:

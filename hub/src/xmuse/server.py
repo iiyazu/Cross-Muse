@@ -73,7 +73,8 @@ class Hub:
         return r and r[0]
 
     # ---- request handlers: (caller, body) -> result -----------------------------------
-    def tool(self, agent: str, name: str, args: dict):
+    def tool(self, agent: str, name: str, args: dict, session: str | None = None):
+        self.check_session(agent, session)
         args = validate(name, args)
         conn = self.db()
         if name == "xmuse_send":
@@ -140,8 +141,10 @@ class Hub:
         return {"ok": True}
 
     def admin_send(self, body: dict):
+        # `xmuse send` is the admin token, readable by any local process: recorded as the user's, but visibly via the CLI
         out = mail.send(self.db(), self.cfg, config.HUMAN, body["to"], body["body"], body.get("kind", "message"),
-                        body.get("mentions"), body.get("why"), body.get("idem"), body.get("scope"), body.get("supersedes"))
+                        body.get("mentions"), body.get("why"), body.get("idem"), body.get("scope"), body.get("supersedes"),
+                        via=config.VIA_CLI)
         self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", [])}
@@ -208,8 +211,56 @@ class Hub:
             raise ToolError("invalid_arguments", "relay is only for polled agents (xmuse agent add <id> --vendor dsh --desktop)")
         return a
 
-    def relay_poll(self, agent: str, body: dict):
+    def check_session(self, agent: str, session: str | None, required: bool = False) -> None:
+        """Identity enforcement for foreground agents: once /v1/relay/bind named the dsh session that acts as this
+        agent, every tool call must carry that session id (header x-xmuse-session). With no binding, tool calls stay
+        open (`xmuse tool --agent <id>` for a foreground session without the bundle); relay calls always need one."""
+        a = db.row(self.db().execute("select * from agents where id=?", (agent,)))
+        if a is None or not db.settings(a).get("foreground"):
+            return
+        bound = a["bound_session"]
+        if bound is None and not required:
+            return
+        if bound is None:
+            raise ToolError("not_bound_session", f"{agent} is not bound to a dsh session; run /xmuse bind {agent} in the "
+                                                 f"session that should act as {agent}")
+        if session != bound:
+            raise ToolError("not_bound_session", f"this agent is bound to dsh session {bound}; run /xmuse bind in the "
+                                                 f"session that should act as {agent}")
+
+    def relay_bind(self, agent: str, body: dict, session: str | None = None):
+        a = self._polled_agent(agent)
+        sid = body.get("session_id")
+        if not isinstance(sid, str) or not sid:
+            raise ToolError("invalid_arguments", "relay/bind needs session_id (string)")
+        if session is not None and session != sid:
+            raise ToolError("invalid_arguments", "session_id differs from the x-xmuse-session header")
+        old = a["bound_session"]
+        if old == sid:
+            return {"bound": sid, "replaced": None}
+        conn = self.db()
+        with db.tx(conn):
+            conn.execute("update agents set bound_session=? where id=?", (sid, agent))
+        mail.notice(conn, mail.dm_id(agent, config.HUMAN),
+                    f"{agent} is now bound to dsh session {sid}" + (f" (was {old}): only that session can act as {agent}"
+                                                                     if old else ": only that session can act as " + agent))
+        return {"bound": sid, "replaced": old}
+
+    def relay_unbind(self, agent: str, body: dict, session: str | None = None):
+        a = self._polled_agent(agent)
+        old = a["bound_session"]
+        if old is None:
+            return {"unbound": None}
+        self.check_session(agent, session, True)
+        conn = self.db()
+        with db.tx(conn):
+            conn.execute("update agents set bound_session=null where id=?", (agent,))
+        mail.notice(conn, mail.dm_id(agent, config.HUMAN), f"{agent} is no longer bound to dsh session {old}")
+        return {"unbound": old}
+
+    def relay_poll(self, agent: str, body: dict, session: str | None = None):
         self._polled_agent(agent)
+        self.check_session(agent, session, True)
         cursor = int(body.get("cursor") or 0)
         deadline = time.monotonic() + max(0.0, min(float(body.get("wait_s") or 0), 25.0))
         while True:
@@ -225,11 +276,13 @@ class Hub:
             return {"cursor": cursor, "items": [], "text": ""}
         return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs),
                 "items": [{"delivery_id": r["did"], "message_id": r["id"], "thread": r["thread_id"], "from": r["sender"],
-                           "kind": r["kind"], "mentions": json.loads(r["mentions"]), "wake": bool(r["wake"])}
+                           "kind": r["kind"], "mentions": json.loads(r["mentions"]), "wake": bool(r["wake"]),
+                           **({"via": r["via"]} if r["via"] else {})}
                           for r in rs]}
 
-    def relay_delivered(self, agent: str, body: dict):
+    def relay_delivered(self, agent: str, body: dict, session: str | None = None):
         self._polled_agent(agent)
+        self.check_session(agent, session, True)
         ids, sid = body.get("delivery_ids"), body.get("session_id")
         if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids) or not isinstance(sid, str) or not sid:
             raise ToolError("invalid_arguments", "relay/delivered needs delivery_ids (integers) and session_id (string)")
@@ -248,11 +301,14 @@ class Hub:
             conn.execute("update sessions set wakes=wakes+1 where agent_id=? and state='current'", (agent,))
         return {"delivered": n, "session": sid}
 
-    def route(self, method: str, path: str, caller: str, body: dict):
-        if path in ("/v1/relay/poll", "/v1/relay/delivered") and caller != config.HUMAN:
-            return (self.relay_poll if path.endswith("poll") else self.relay_delivered)(caller, body)
+    RELAY = {"/v1/relay/bind": "relay_bind", "/v1/relay/unbind": "relay_unbind", "/v1/relay/poll": "relay_poll",
+             "/v1/relay/delivered": "relay_delivered"}
+
+    def route(self, method: str, path: str, caller: str, body: dict, session: str | None = None):
+        if path in self.RELAY and caller != config.HUMAN:
+            return getattr(self, self.RELAY[path])(caller, body, session)
         if path.startswith("/v1/tools/") and caller != config.HUMAN:
-            return self.tool(caller, path.rsplit("/", 1)[1], body.get("args", {}))
+            return self.tool(caller, path.rsplit("/", 1)[1], body.get("args", {}), session)
         if path in ("/v1/hooks/claude", "/v1/hooks/dsh") and caller != config.HUMAN:
             return self.hook(caller, body)
         if path == "/v1/shim/register" and caller != config.HUMAN:
@@ -275,7 +331,7 @@ class Hub:
                 n = int(self.headers.get("content-length") or 0)
                 try:
                     body = json.loads(self.rfile.read(n) or b"{}")
-                    out = hub.route("POST", self.path, caller, body)
+                    out = hub.route("POST", self.path, caller, body, self.headers.get("x-xmuse-session") or None)
                     if not self.path.startswith("/v1/relay/"):
                         with hub.relay_cv:
                             hub.relay_cv.notify_all()

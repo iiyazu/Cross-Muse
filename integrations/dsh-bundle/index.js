@@ -33,8 +33,9 @@ const BACKOFF_MAX_MS = 30000
 
 const errText = (e) => (e && e.message) || String(e)
 
-/** POST <urlPath> on the hub with a JSON body. node:http directly (no global-proxy interference). */
-export function hubCall(port, token, urlPath, body, { timeoutMs = HTTP_TIMEOUT_MS, onReq } = {}) {
+/** POST <urlPath> on the hub with a JSON body (+ x-xmuse-session when sessionId is given). node:http directly
+ * (no global-proxy interference). */
+export function hubCall(port, token, urlPath, body, { timeoutMs = HTTP_TIMEOUT_MS, onReq, sessionId } = {}) {
   return new Promise((resolve, reject) => {
     const payload = Buffer.from(JSON.stringify(body ?? {}))
     const req = http.request({
@@ -43,6 +44,8 @@ export function hubCall(port, token, urlPath, body, { timeoutMs = HTTP_TIMEOUT_M
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
         'content-length': payload.length,
+        // The hub checks it against the session this agent is bound to (identity enforcement).
+        ...(sessionId ? { 'x-xmuse-session': sessionId } : {}),
       },
       timeout: timeoutMs,
     }, (res) => {
@@ -203,6 +206,11 @@ export function apply(ctx, config) {
       try {
         const hub = await readHub()
         const token = await readToken(entry.agentId)
+        // The hub's binding is the authority: (re)assert it (a no-op when unchanged), e.g. after a dsh restart.
+        if (entry.needBind) {
+          await hubBind(hub, token, entry.sessionId)
+          entry.needBind = false
+        }
         // Delivered into the session but not yet reported: report first, never deliver twice.
         if (entry.pendingAck) {
           await reportDelivered(hub, token, entry)
@@ -210,12 +218,11 @@ export function apply(ctx, config) {
         entry.state = 'polling'
         const t0 = Date.now()
         const res = await hubCall(hub.port, token, '/v1/relay/poll', { cursor: entry.cursor, wait_s: pollWaitS }, {
-          timeoutMs: (pollWaitS + 10) * 1000, onReq: (r) => { entry.req = r },
+          timeoutMs: (pollWaitS + 10) * 1000, onReq: (r) => { entry.req = r }, sessionId: entry.sessionId,
         })
         entry.req = null
         if (entry.stop) break
-        if (res.body?.error) throw new Error(`hub error ${res.body.error.code}: ${res.body.error.message}`)
-        if (res.status !== 200) throw new Error(`hub HTTP ${res.status}`)
+        checkHub(res)
         const out = res.body.result
         const items = Array.isArray(out?.items) ? out.items : []
         entry.state = 'idle'
@@ -235,6 +242,11 @@ export function apply(ctx, config) {
       } catch (e) {
         entry.req = null
         if (entry.stop || disposed) break
+        if (e && e.code === 'not_bound_session') { // another session was bound to this agent: this one lost the role
+          log('warn', `relay ${entry.agentId}: ${errText(e)}; dropping the local binding`)
+          dropBinding(entry)
+          break
+        }
         entry.state = 'error'
         entry.lastError = errText(e)
         log('warn', `relay ${entry.agentId}: ${errText(e)} (retry in ${backoff}ms)`)
@@ -245,11 +257,25 @@ export function apply(ctx, config) {
     entry.state = 'stopped'
   }
 
+  /** Throws on a hub error (keeping its code on the Error) or a non-200 reply. */
+  const checkHub = (res) => {
+    if (res.body?.error) {
+      const e = new Error(`hub error ${res.body.error.code}: ${res.body.error.message}`)
+      e.code = res.body.error.code
+      throw e
+    }
+    if (res.status !== 200) throw new Error(`hub HTTP ${res.status}`)
+  }
+  const hubBind = async (hub, token, sessionId) => {
+    const res = await hubCall(hub.port, token, '/v1/relay/bind', { session_id: sessionId }, { sessionId })
+    checkHub(res)
+    return res.body.result
+  }
+
   const reportDelivered = async (hub, token, entry) => {
     const res = await hubCall(hub.port, token, '/v1/relay/delivered',
-      { delivery_ids: entry.pendingAck, session_id: entry.sessionId })
-    if (res.body?.error) throw new Error(`hub error ${res.body.error.code}: ${res.body.error.message}`)
-    if (res.status !== 200) throw new Error(`hub HTTP ${res.status}`)
+      { delivery_ids: entry.pendingAck, session_id: entry.sessionId }, { sessionId: entry.sessionId })
+    checkHub(res)
     entry.pendingAck = null
     cursors.set(entry.agentId, entry.cursor)
     await persist()
@@ -263,15 +289,23 @@ export function apply(ctx, config) {
     try { entry.req?.destroy() } catch { /* ignore */ }
     try { entry.wake?.() } catch { /* ignore */ }
   }
-  const startRelay = (agentId, sessionId) => {
+  const startRelay = (agentId, sessionId, needBind = false) => {
     stopRelay(agentId)
     if (disposed) return
     const entry = {
       agentId, sessionId, cursor: cursors.get(agentId) ?? 0, state: 'idle', stop: false,
-      lastDeliveryAt: null, lastError: null, pendingAck: null, req: null, wake: null,
+      lastDeliveryAt: null, lastError: null, pendingAck: null, req: null, wake: null, needBind,
     }
     relays.set(agentId, entry)
     relayLoop(entry).catch((e) => log('warn', `relay ${agentId} crashed: ${errText(e)}`))
+  }
+  /** The hub bound another session to this agent: forget the local binding (nothing to tell the hub). */
+  const dropBinding = (entry) => {
+    if (relays.get(entry.agentId) === entry) relays.delete(entry.agentId)
+    if (bindings.get(entry.sessionId) === entry.agentId) bindings.delete(entry.sessionId)
+    entry.stop = true
+    entry.state = 'stopped'
+    persist()
   }
   const stopAll = () => {
     disposed = true
@@ -307,7 +341,7 @@ export function apply(ctx, config) {
       selfCheck.services['sessions.flush'] = typeof ctx.sessions?.flush === 'function'
       await checkHubState()
       await restore()
-      for (const [s, a] of bindings) startRelay(a, s)
+      for (const [s, a] of bindings) startRelay(a, s, true)
       log('info', `self-check ${JSON.stringify(selfCheck)} stateDir=${stateDir}`)
     } catch (e) {
       log('warn', `self-check failed: ${errText(e)}`)
@@ -350,16 +384,32 @@ export function apply(ctx, config) {
           const agentId = rest[0]
           if (!agentId) return { kind: 'error', text: 'Usage: /xmuse bind <agent-id>' }
           if (!/^[A-Za-z0-9._-]+$/.test(agentId)) return { kind: 'error', text: `bad agent id "${agentId}"` }
+          // The hub is the authority: it must accept the binding (agent exists, is a foreground agent) before
+          // anything is recorded locally; its own token is read here, never by the model.
+          let hubSays
+          try {
+            hubSays = await hubBind(await readHub(), await readToken(agentId), sessionId)
+          } catch (e) {
+            return { kind: 'error', text: `xmuse: the hub did not accept the binding: ${errText(e)}` }
+          }
           const replaced = bind(sessionId, agentId)
+          if (hubSays?.replaced) replaced.push(`the hub had session ${hubSays.replaced} bound to "${agentId}"`)
           await persist()
           const extra = replaced.length ? `\nreplaced: ${replaced.join('; ')}` : ''
-          return { kind: 'success', text: `session ${sessionId} bound to xmuse agent "${agentId}"; relay started (persist: ${selfCheck.persistedBindings})${extra}` }
+          return { kind: 'success', text: `session ${sessionId} bound to xmuse agent "${agentId}" (hub confirmed); relay started (persist: ${selfCheck.persistedBindings})${extra}` }
         }
         case 'unbind': {
           const agentId = unbind(sessionId)
           if (!agentId) return { kind: 'error', text: `session ${sessionId} is not bound` }
           await persist()
-          return { kind: 'success', text: `session ${sessionId} unbound from "${agentId}"; relay stopped (persist: ${selfCheck.persistedBindings})` }
+          let hubNote = 'hub binding cleared'
+          try {
+            const res = await hubCall((await readHub()).port, await readToken(agentId), '/v1/relay/unbind', {}, { sessionId })
+            checkHub(res)
+          } catch (e) {
+            hubNote = `hub NOT told (${errText(e)}); it may still list this session as bound`
+          }
+          return { kind: 'success', text: `session ${sessionId} unbound from "${agentId}"; relay stopped; ${hubNote} (persist: ${selfCheck.persistedBindings})` }
         }
         case 'status':
           await checkHubState()
@@ -396,7 +446,7 @@ export function apply(ctx, config) {
         if (!agentId) return 'This session is not bound to an xmuse agent. Ask the user to run `/xmuse bind <agent>` (do not retry this tool until they have).'
         const hub = await readHub()
         const token = await readToken(agentId)
-        const res = await hubCall(hub.port, token, `/v1/tools/${spec.name}`, { args: args ?? {} })
+        const res = await hubCall(hub.port, token, `/v1/tools/${spec.name}`, { args: args ?? {} }, { sessionId: agent.id })
         if (res.body && res.body.error) return `hub error ${res.body.error.code}: ${res.body.error.message}`
         if (res.status !== 200) return `hub HTTP ${res.status}: ${JSON.stringify(res.body)}`
         return JSON.stringify(res.body.result)

@@ -66,10 +66,11 @@ class Harness:
     def q(self, sql, *args):
         return db.rows(self.conn().execute(sql, args))
 
-    def post(self, path, body, token):
+    def post(self, path, body, token, session=None):
         port = json.loads((self.state / "hub.json").read_text())["port"]
         req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body).encode(),
-                                     headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
+                                     headers={"authorization": f"Bearer {token}", "content-type": "application/json",
+                                              **({"x-xmuse-session": session} if session else {})})
         try:
             return json.loads(urllib.request.urlopen(req, timeout=10).read())
         except urllib.error.HTTPError as e:
@@ -86,8 +87,8 @@ class Harness:
         assert "result" in out, out
         return out["result"]
 
-    def tool(self, agent, name, **args):
-        return self.post(f"/v1/tools/{name}", {"args": args}, self.token(agent))
+    def tool(self, agent, name, _session=None, **args):
+        return self.post(f"/v1/tools/{name}", {"args": args}, self.token(agent), _session)
 
     def hook(self, agent, event, **payload):
         return self.post("/v1/hooks/claude", {"event": event, **payload}, self.token(agent))

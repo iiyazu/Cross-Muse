@@ -5,10 +5,23 @@ import time
 from xmuse import db
 
 FG = {"foreground": True}
+SID = "dsh-sess-1"
+
+
+def bound(h, agent, sid=SID):
+    """Bind `sid` as the agent's session once (the bundle does this on /xmuse bind)."""
+    if not h.q("select 1 from agents where id=? and bound_session=?", agent, sid):
+        out = h.post("/v1/relay/bind", {"session_id": sid}, h.token(agent), sid)
+        assert "result" in out, out
+    return sid
 
 
 def poll(h, agent, cursor=0, wait_s=0):
-    return h.post("/v1/relay/poll", {"cursor": cursor, "wait_s": wait_s}, h.token(agent))
+    return h.post("/v1/relay/poll", {"cursor": cursor, "wait_s": wait_s}, h.token(agent), bound(h, agent))
+
+
+def delivered(h, agent, ids, sid=SID):
+    return h.post("/v1/relay/delivered", {"delivery_ids": ids, "session_id": sid}, h.token(agent), bound(h, agent, sid))
 
 
 def test_poll_returns_rendered_text_and_items(make):
@@ -21,7 +34,7 @@ def test_poll_returns_rendered_text_and_items(make):
     it = r["items"][0]
     assert it["from"] == "human" and it["kind"] == "message" and it["thread"] == "dm:dsh-1+human" and it["wake"] is True
     assert "[xmuse] Messages relayed by xmuse" in r["text"]
-    assert '<xmuse from="human" family="human" thread="dm:dsh-1+human" kind="message"' in r["text"]
+    assert '<xmuse from="human" via="cli" family="human" thread="dm:dsh-1+human" kind="message"' in r["text"]
     assert "please do X" in r["text"] and "xmuse_send" in r["text"] and "not for dsh-1" not in r["text"]
     # same cursor -> same items until delivered; higher cursor -> none
     assert poll(h, "dsh-1")["result"]["items"] == r["items"]
@@ -44,11 +57,12 @@ def test_poll_blocks_until_a_message_arrives(make):
 
 def test_poll_timeout_returns_empty_and_other_calls_stay_responsive(make):
     h = make([("dsh-1", "dsh", FG)])
+    bound(h, "dsh-1")
     t = threading.Thread(target=lambda: poll(h, "dsh-1", wait_s=1.5))
     t.start()
     time.sleep(0.3)
     t1 = time.time()
-    assert h.tool("dsh-1", "xmuse_whoami")["result"]["id"] == "dsh-1"  # not blocked by the poll
+    assert h.tool("dsh-1", "xmuse_whoami", SID)["result"]["id"] == "dsh-1"  # not blocked by the poll
     assert time.time() - t1 < 1
     t.join(5)
     assert not t.is_alive()
@@ -70,9 +84,10 @@ def test_poll_works_for_group_mentions_and_skips_passive_acked_canceled(make):
 
 def test_relay_only_for_polled_agents_and_agent_tokens(make):
     h = make([("dsh-1", "dsh", FG), ("oc", "opencode")])
-    assert poll(h, "oc")["error"]["code"] == "invalid_arguments"
-    assert h.post("/v1/relay/delivered", {"delivery_ids": [1], "session_id": "s"}, h.token("oc"))["error"]["code"] == "invalid_arguments"
-    assert poll(h, "human")["error"]["code"] == "not_found"  # admin token has no relay
+    assert h.post("/v1/relay/poll", {}, h.token("oc"), "s")["error"]["code"] == "invalid_arguments"
+    assert h.post("/v1/relay/bind", {"session_id": "s"}, h.token("oc"), "s")["error"]["code"] == "invalid_arguments"
+    assert h.post("/v1/relay/delivered", {"delivery_ids": [1], "session_id": "s"}, h.token("oc"), "s")["error"]["code"] == "invalid_arguments"
+    assert h.post("/v1/relay/poll", {}, h.token("human"), "s")["error"]["code"] == "not_found"  # admin token has no relay
     assert h.post("/v1/relay/poll", {}, "nope")["status"] == 401
 
 
@@ -83,7 +98,7 @@ def test_delivered_marks_state_session_and_never_wakes(make):
     h.send("dsh-1", "two")
     r = poll(h, "dsh-1")["result"]
     ids = [i["delivery_id"] for i in r["items"]]
-    out = h.post("/v1/relay/delivered", {"delivery_ids": ids, "session_id": "dsh-sess-1"}, h.token("dsh-1"))
+    out = delivered(h, "dsh-1", ids)
     assert out["result"] == {"delivered": 2, "session": "dsh-sess-1"}
     ds = h.q("select state, delivered_at, delivered_session, read_at from deliveries order by id")
     assert all(d["state"] == "delivered" and d["delivered_session"] == "dsh-sess-1" and d["delivered_at"] and d["read_at"]
@@ -97,9 +112,10 @@ def test_delivered_marks_state_session_and_never_wakes(make):
     # a second delivery in another session retires the first; idempotent re-report counts 0
     h.send("dsh-1", "three")
     r = poll(h, "dsh-1")["result"]
-    h.post("/v1/relay/delivered", {"delivery_ids": [i["delivery_id"] for i in r["items"]], "session_id": "dsh-sess-2"},
-           h.token("dsh-1"))
-    assert h.post("/v1/relay/delivered", {"delivery_ids": ids, "session_id": "dsh-sess-2"}, h.token("dsh-1"))["result"]["delivered"] == 0
+    bound(h, "dsh-1", "dsh-sess-2")  # the user re-bound: the old session loses the role
+    r = h.post("/v1/relay/poll", {}, h.token("dsh-1"), "dsh-sess-2")["result"]
+    delivered(h, "dsh-1", [i["delivery_id"] for i in r["items"]], "dsh-sess-2")
+    assert delivered(h, "dsh-1", ids, "dsh-sess-2")["result"]["delivered"] == 0
     cur = h.q("select vendor_session, state from sessions where agent_id='dsh-1' order by id")
     assert [(c["vendor_session"], c["state"]) for c in cur] == [("dsh-sess-1", "retired"), ("dsh-sess-2", "current")]
 
@@ -108,9 +124,10 @@ def test_delivered_cannot_touch_other_agents_and_validates(make):
     h = make([("dsh-1", "dsh", FG), ("dsh-2", "dsh", FG)])
     h.send("dsh-2", "for 2")
     did = poll(h, "dsh-2")["result"]["items"][0]["delivery_id"]
-    assert h.post("/v1/relay/delivered", {"delivery_ids": [did], "session_id": "s"}, h.token("dsh-1"))["result"]["delivered"] == 0
+    bound(h, "dsh-1", "s")
+    assert delivered(h, "dsh-1", [did], "s")["result"]["delivered"] == 0
     assert h.q("select state from deliveries where id=?", did)[0]["state"] == "queued"
-    bad = h.post("/v1/relay/delivered", {"delivery_ids": "x", "session_id": "s"}, h.token("dsh-1"))
+    bad = h.post("/v1/relay/delivered", {"delivery_ids": "x", "session_id": "s"}, h.token("dsh-1"), "s")
     assert bad["error"]["code"] == "invalid_arguments"
 
 
@@ -119,9 +136,9 @@ def test_reply_via_tools_after_relay_reaches_the_sender(make):
     h.tool("dog", "xmuse_send", to="dsh-1", body="do it")
     r = poll(h, "dsh-1")["result"]
     assert 'from="dog"' in r["text"]
-    h.post("/v1/relay/delivered", {"delivery_ids": [r["items"][0]["delivery_id"]], "session_id": "s"}, h.token("dsh-1"))
-    assert h.tool("dsh-1", "xmuse_send", to="dog", body="done")["result"]["id"]
-    assert [m["body"] for m in h.tool("dog", "xmuse_inbox")["result"]] == ["done"]
+    delivered(h, "dsh-1", [r["items"][0]["delivery_id"]])
+    assert h.tool("dsh-1", "xmuse_send", SID, to="dog", body="done")["result"]["id"]
+    assert [m["body"] for m in h.tool("dog", "xmuse_inbox")["result"] if m["from"] != "hub"] == ["done"]  # + the bind notice
 
 
 def test_coordinator_rule_text():

@@ -76,6 +76,11 @@ Loop:
 3. Never put message text on the wsl.exe command line: wsl.exe re-joins arguments and breaks on `#` and spaces.
    Always pass text through `--args-file`.
 
+Identity: you are {id} only through the commands above. Never read `tokens/` under the xmuse state directory or any
+other agent's credentials, and never use the admin `xmuse send` command to speak (it is recorded as `human (via
+cli)`, which impersonates the user). If this session was bound with the dsh bundle (`/xmuse bind {id}`), use its
+native `xmuse_*` tools instead: the hub then refuses `X tool` calls until `/xmuse unbind`.
+
 Tests and any Linux tooling go through
 `wsl.exe -d {distro} -- bash -lc "cd {ws} && <command>"`.
 """

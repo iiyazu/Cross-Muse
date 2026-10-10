@@ -6,6 +6,7 @@ from pathlib import Path
 
 HUMAN = "human"
 HUB = "hub"
+VIA_CLI = "cli"  # `via` of messages sent with the admin token (`xmuse send`): human, but from a terminal command
 
 # Runaway guards (design §4.4 item 4). Safety stops, not budgets.
 DEFAULTS = {

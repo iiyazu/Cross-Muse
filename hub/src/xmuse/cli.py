@@ -83,7 +83,7 @@ def status(state: Path) -> dict:
     conn = db.connect(state / "hub.db")
     q = lambda sql, *a: db.rows(conn.execute(sql, a))  # noqa: E731
     agents, desktop = q("select a.id, a.vendor, a.model, a.paused, s.vendor_session session, s.context_tokens context,"
-                        " s.wakes, a.settings from agents a left join sessions s on s.agent_id=a.id"
+                        " s.wakes, a.settings, a.bound_session from agents a left join sessions s on s.agent_id=a.id"
                         " and s.state='current'"), set()
     for a in agents:
         if db.polled(a):

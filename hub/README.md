@@ -71,3 +71,12 @@ without a running turn, and other agents get `invalid_arguments`.
 - `POST /v1/relay/delivered {delivery_ids, session_id}` sets those deliveries to state `delivered` (+ `delivered_at`,
   `delivered_session`, `read_at`), so they leave the queued lists, and records `session_id` as the agent's current session
   with origin `relay` (the engine never runs it). Reporting twice is harmless (0 changed).
+- `POST /v1/relay/bind {session_id}` / `POST /v1/relay/unbind` record (or clear) the agent's single bound dsh session
+  (`agents.bound_session`). Rebinding replaces it; every change posts a hub notice to the agent's DM thread with the
+  human (visible in `xmuse log`). For an agent with `foreground: true` and a bound session, `/v1/tools/*`,
+  `/v1/relay/poll`, `/v1/relay/delivered` (and unbind) must carry header `x-xmuse-session: <bound session>`, else the
+  error `not_bound_session` is returned; poll/delivered also fail while nothing is bound. A foreground agent with no
+  binding keeps working through `xmuse tool --agent <id>` (no bundle). Local processes of the same OS user can still read
+  token files, so this stops honest mistakes and improvising models, not deliberate impersonation.
+- `xmuse send` (the admin token) is recorded as `human` with `via="cli"`: it shows as `human (via cli)` in `xmuse log`,
+  inboxes and the `<xmuse ... via="cli">` wake tag, so agents can tell a terminal command from the user typing.

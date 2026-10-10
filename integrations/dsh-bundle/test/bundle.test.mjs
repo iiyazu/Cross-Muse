@@ -24,7 +24,7 @@ function fakeHub(handler) {
     req.on('data', (c) => (b += c))
     req.on('end', async () => {
       const body = JSON.parse(b || '{}')
-      seen.push({ url: req.url, auth: req.headers.authorization, body })
+      seen.push({ url: req.url, auth: req.headers.authorization, session: req.headers['x-xmuse-session'], body })
       const [code, obj] = await handler(req.url, body, req)
       if (res.destroyed) return
       res.writeHead(code, { 'content-type': 'application/json' })
@@ -37,8 +37,25 @@ function fakeHub(handler) {
 
 /** A hub whose relay endpoints behave like the real one: unreported deliveries stay pollable. */
 async function relayHub({ deliveredFail = 0 } = {}) {
-  const st = { queue: [], delivered: new Set(), deliveredCalls: [], polls: [], deliveredFail }
-  const h = await fakeHub(async (url, body) => {
+  const st = { queue: [], delivered: new Set(), deliveredCalls: [], polls: [], deliveredFail, bound: {}, binds: [], unbinds: [] }
+  const h = await fakeHub(async (url, body, req) => {
+    const tok = req.headers.authorization, sess = req.headers['x-xmuse-session']
+    if (url === '/v1/relay/bind') {
+      if (st.rejectBind) return [200, { error: { code: 'invalid_arguments', message: st.rejectBind } }]
+      const replaced = st.bound[tok] && st.bound[tok] !== body.session_id ? st.bound[tok] : null
+      st.bound[tok] = body.session_id
+      st.binds.push(body.session_id)
+      return [200, { result: { bound: body.session_id, replaced } }]
+    }
+    if (url === '/v1/relay/unbind') {
+      st.unbinds.push(sess)
+      const old = st.bound[tok] ?? null
+      delete st.bound[tok]
+      return [200, { result: { unbound: old } }]
+    }
+    if ((url.startsWith('/v1/relay/') || url.startsWith('/v1/tools/')) && st.bound[tok] !== sess) {
+      return [200, { error: { code: 'not_bound_session', message: `this agent is bound to dsh session ${st.bound[tok]}` } }]
+    }
     if (url === '/v1/relay/poll') {
       st.polls.push(body.cursor)
       const pending = st.queue.filter((i) => i.delivery_id > body.cursor && !st.delivered.has(i.delivery_id))
@@ -57,10 +74,13 @@ async function relayHub({ deliveredFail = 0 } = {}) {
   return { ...h, st, add }
 }
 
-function setup({ hubPort, flushOk = true, resolveError = false, noSessionController = false, bindingsFile: bf, preAgents = [], toolsJson, extra = {} } = {}) {
+const defaultHub = await relayHub() // for tests that only need /xmuse bind to succeed
+test.after(() => defaultHub.close())
+
+function setup({ hubPort = defaultHub.port, noHub = false, flushOk = true, resolveError = false, noSessionController = false, bindingsFile: bf, preAgents = [], toolsJson, extra = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xmuse-bundle-'))
   fs.mkdirSync(path.join(dir, 'tokens'))
-  if (hubPort) fs.writeFileSync(path.join(dir, 'hub.json'), JSON.stringify({ port: hubPort, pid: 1 }))
+  if (hubPort && !noHub) fs.writeFileSync(path.join(dir, 'hub.json'), JSON.stringify({ port: hubPort, pid: 1 }))
   fs.writeFileSync(path.join(dir, 'tokens', 'dsh-1'), 'tok-dsh-1\n')
   fs.writeFileSync(path.join(dir, 'tokens', 'dsh-2'), 'tok-dsh-2\n')
   if (toolsJson) fs.writeFileSync(path.join(dir, 'tools.json'), toolsJson)
@@ -130,7 +150,7 @@ test('self-check logs services, hub state and tools, never throws', async () => 
   assert.match(line[1], new RegExp(`ok \\(port ${port}\\)`))
   assert.match(line[1], /"tools":"7 from bundled tools.json"/)
   close()
-  const bad = setup({ noSessionController: true })
+  const bad = setup({ noSessionController: true, noHub: true })
   await tick()
   assert.match(bad.logs.find(([, m]) => m.includes('self-check'))[1], /"sessionController":false/)
   assert.match(bad.logs.find(([, m]) => m.includes('self-check'))[1], /unreadable/)
@@ -275,25 +295,112 @@ test('every tool proxies args to /v1/tools/<name> with the bound agent token and
     assert.deepEqual(JSON.parse(out), { echo: `/v1/tools/${n}`, args: argsFor[n] })
     const call = seen.find((s) => s.url === `/v1/tools/${n}`)
     assert.equal(call.auth, 'Bearer tok-dsh-1')
+    assert.equal(call.session, 's1', 'the tool sends the session it runs in')
     assert.deepEqual(call.body, { args: argsFor[n] })
   }
   t.dispose(); close()
 })
 
 test('tools: hub errors, missing token, hub down all return text', async () => {
-  const { close, port } = await fakeHub(() => [200, { error: { code: 'forbidden', message: 'nope' } }])
+  const { close, port } = await fakeHub((url) => url.startsWith('/v1/tools/')
+    ? [200, { error: { code: 'forbidden', message: 'nope' } }] : [200, { result: {} }])
   const t = setup({ hubPort: port })
   const agent = t.mkAgent('s1')
   await t.emit('agent/created', { agent })
   const tool = agent.tools.get('xmuse_whoami')
-  await t.run('s1', 'bind dsh-1')
+  assert.equal((await t.run('s1', 'bind dsh-1')).kind, 'success')
   assert.match(await tool.execute({}, {}), /hub error forbidden: nope/)
-  await t.run('s1', 'bind ghost')
+  const ghost = await t.run('s1', 'bind ghost') // no token file: the bind fails and the old binding stays
+  assert.equal(ghost.kind, 'error')
+  assert.match(await tool.execute({}, {}), /hub error forbidden/)
+  fs.rmSync(path.join(t.dir, 'tokens', 'dsh-1'))
   assert.match(await tool.execute({}, {}), /failed/)
+  fs.writeFileSync(path.join(t.dir, 'tokens', 'dsh-1'), 'tok-dsh-1\n')
   close()
-  await t.run('s1', 'bind dsh-1')
   assert.match(await tool.execute({}, {}), /failed/) // connection refused
   t.dispose()
+})
+
+test('identity: the hub must accept /xmuse bind; nothing is recorded locally otherwise', async () => {
+  const hub = await relayHub()
+  hub.st.rejectBind = 'dsh-1 is not a polled agent'
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  const r = await t.run('s1', 'bind dsh-1')
+  assert.equal(r.kind, 'error')
+  assert.match(r.text, /hub did not accept the binding: hub error invalid_arguments: dsh-1 is not a polled agent/)
+  assert.ok(!fs.existsSync(t.bindingsFile) || Object.keys(readBindings(t.bindingsFile).bindings).length === 0)
+  assert.match((await t.run('s1', 'status')).text, /\(none\)/)
+  assert.equal(hub.st.polls.length, 0, 'no relay loop started')
+  // hub unreachable: same
+  const t2 = setup({ noHub: true })
+  assert.match((await t2.run('s1', 'bind dsh-1')).text, /hub did not accept/)
+  t.dispose(); t2.dispose(); hub.close()
+})
+
+test('identity: bind/poll/delivered/unbind and tool calls all carry x-xmuse-session', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  const agent = t.mkAgent('s1')
+  await t.emit('agent/created', { agent })
+  const r = await t.run('s1', 'bind dsh-1')
+  assert.match(r.text, /hub confirmed/)
+  hub.add(1)
+  await until(() => hub.st.deliveredCalls.length === 1, 'delivered')
+  assert.match(await agent.tools.get('xmuse_whoami').execute({}, {}), /echo/)
+  await t.run('s1', 'unbind')
+  const by = (u) => hub.seen.filter((s) => s.url === u)
+  for (const u of ['/v1/relay/bind', '/v1/relay/poll', '/v1/relay/delivered', '/v1/tools/xmuse_whoami', '/v1/relay/unbind']) {
+    assert.ok(by(u).length >= 1, u)
+    assert.ok(by(u).every((s) => s.session === 's1' && s.auth === 'Bearer tok-dsh-1'), `${u} carries session and agent token`)
+  }
+  assert.deepEqual(hub.st.binds, ['s1'])
+  assert.deepEqual(hub.st.unbinds, ['s1'])
+  assert.match(await agent.tools.get('xmuse_whoami').execute({}, {}), /not bound/) // local binding gone: hub not called
+  t.dispose(); hub.close()
+})
+
+test('identity: unbind with the hub down still unbinds locally and says the hub was not told', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  fs.rmSync(path.join(t.dir, 'hub.json'))
+  const r = await t.run('s1', 'unbind')
+  assert.equal(r.kind, 'success')
+  assert.match(r.text, /hub NOT told/)
+  assert.deepEqual(readBindings(t.bindingsFile).bindings, {})
+  t.dispose(); hub.close()
+})
+
+test('identity: another session took the agent over: poll fails with not_bound_session and the local binding is dropped', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  const agent = t.mkAgent('s1')
+  await t.emit('agent/created', { agent })
+  await t.run('s1', 'bind dsh-1')
+  await until(() => hub.st.polls.length >= 1, 'polling')
+  hub.st.bound['Bearer tok-dsh-1'] = 'other-session' // /xmuse bind in another session
+  assert.match(await agent.tools.get('xmuse_whoami').execute({}, {}), /hub error not_bound_session/)
+  await until(() => Object.keys(readBindings(t.bindingsFile).bindings).length === 0, 'binding dropped')
+  assert.ok(t.logs.some(([, m]) => /dropping the local binding/.test(m)))
+  assert.match((await t.run('s1', 'status')).text, /\(none\)/)
+  t.dispose(); hub.close()
+})
+
+test('identity: a restored binding is re-asserted on the hub before polling (dsh restart / hub db reset)', async () => {
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
+  t.mkAgent('s1')
+  await t.run('s1', 'bind dsh-1')
+  t.dispose()
+  delete hub.st.bound['Bearer tok-dsh-1'] // the hub forgot
+  hub.st.binds.length = 0; hub.st.polls.length = 0
+  const t2 = setup({ hubPort: hub.port, bindingsFile: t.bindingsFile })
+  await until(() => hub.st.polls.length >= 1, 'polls after restart')
+  assert.deepEqual(hub.st.binds, ['s1'])
+  assert.equal(hub.st.bound['Bearer tok-dsh-1'], 's1')
+  t2.dispose(); hub.close()
 })
 
 test('agent backfill at apply time, creation, idempotence and disposal', async () => {
@@ -395,13 +502,14 @@ test('delivered report failure is retried without delivering the text twice', as
 })
 
 test('hub down: loop backs off, reports error state, recovers when the hub is back', async () => {
-  const t = setup() // no hub.json
+  const hub = await relayHub()
+  const t = setup({ hubPort: hub.port })
   t.mkAgent('s1')
   await t.run('s1', 'bind dsh-1')
+  fs.renameSync(path.join(t.dir, 'hub.json'), path.join(t.dir, 'hub.json.off'))
   await until(() => t.logs.filter(([, m]) => /relay dsh-1/.test(m)).length >= 2, 'repeated backoff')
   assert.match((await t.run('s1', 'status')).text, /relay: error.*last error [^-]/)
-  const hub = await relayHub()
-  fs.writeFileSync(path.join(t.dir, 'hub.json'), JSON.stringify({ port: hub.port, pid: 1 }))
+  fs.renameSync(path.join(t.dir, 'hub.json.off'), path.join(t.dir, 'hub.json'))
   hub.add(1)
   await until(() => hub.st.deliveredCalls.length === 1, 'recovery')
   t.dispose(); hub.close()

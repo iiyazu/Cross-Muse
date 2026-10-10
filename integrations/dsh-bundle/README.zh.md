@@ -6,9 +6,12 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
 ## 它做什么
 
 - 斜杠命令 `/xmuse`：
-  - `bind <agent-id>`：把**当前会话**绑定到 hub 里的 agent，并启动该 agent 的中继循环。每个 agent 只有一个循环：
-    同一个 agent 再绑到别的会话，后一次生效，命令返回里会写 `replaced: ...`；同一会话改绑别的 agent，旧循环停止。
-  - `unbind`：解绑当前会话，停止循环（游标保留）。
+  - `bind <agent-id>`：先 `POST /v1/relay/bind {session_id}`，**hub 接受后**才在本地记录并启动该 agent 的中继循环
+    （agent 不存在、不是前台 agent、hub 没起都会直接报错，本地不留任何记录）。每个 agent 只有一个会话：
+    同一个 agent 再绑到别的会话，后一次生效（hub 在 `xmuse log` 里发一条通知，命令返回里写 `replaced: ...`）；
+    同一会话改绑别的 agent，旧循环停止。
+  - `unbind`：停止循环（游标保留），并 `POST /v1/relay/unbind` 清掉 hub 上的绑定；hub 没起时本地照样解绑，
+    返回里会写 `hub NOT told`（hub 仍认为该会话是 agent，直到它被别的会话重绑或你重试）。
   - `status`：启动自检、hub 状态、工具来源，以及每个绑定的中继状态：`polling`（长轮询中）/ `idle` / `error` / `stopped`，
     游标、最近投递时间、最近错误。
   - `ping`：诊断用，往当前会话投递一条 `source.kind='xmuse'` 的 follow-up，不经过 hub。
@@ -20,6 +23,15 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
   4. 出错（hub 没起、会话找不到、flush 失败、delivered 失败）按 1s→2s→…→30s 退避重试，不会丢消息；
      delivered 上报失败时只重试上报，不会把同一条文本投两次。
   - 使用 `node:http`（不用 fetch），所有回调 try/catch，循环自己吞掉异常，解绑 / 插件卸载时立即中止在途请求。
+- 身份强制（hub 侧绑定）：hub 记着每个前台 agent 绑定的唯一 dsh 会话。绑定之后，该 agent 的 `/v1/tools/*`、
+  `/v1/relay/poll`、`/v1/relay/delivered` 必须带请求头 `x-xmuse-session: <绑定的会话 id>`，否则返回
+  `not_bound_session`（"this agent is bound to dsh session X; run /xmuse bind in the session that should act as <agent>"）。
+  bundle 从**工具实际运行的会话**取这个 id，所以未绑定的会话、或别的会话读到 token 直接调 hub，都过不了。
+  poll 收到 `not_bound_session`（说明别的会话重绑了这个 agent）会放弃本地绑定并停止循环。
+  dsh 重启或 hub 数据库重置后，恢复的绑定会在第一次轮询前重新向 hub 声明。
+  限度：同一 OS 用户的进程能读 token 文件，这挡不住有意的冒充，只是让误操作和即兴发挥的模型不能静默地以别人的身份行事，
+  并留下痕迹（绑定通知；管理员 `xmuse send` 记为 `human (via cli)`）。
+  还没有绑定的前台 agent（例如没装 bundle，只用 `xmuse tool --agent <id>`）不受限；一旦绑定，`xmuse tool` 会被拒绝。
 - 原生模型工具：hub 的 7 个工具全部注册到每个会话（`agent/created` 时），`xmuse_whoami / send / inbox / ack / thread /
   context / done`。参数 schema 优先读 hub 状态目录的 `tools.json`（`xmuse init` 写出），读不到用 bundle 里的
   `tools.json` 副本（由 Python 测试对照 `tools.py` 保证一致）。调用时才查绑定；未绑定会提示让用户先 `/xmuse bind`。
@@ -53,8 +65,11 @@ xmuse --ws /mnt/c/Users/user/xmuse-desk agent add dsh-1 --vendor dsh --desktop
 
 1. 在该会话输入 `/xmuse bind dsh-1`，然后 `/xmuse status`：应看到 `tools: 7 from hub state tools.json`，
    绑定表有 `<session> -> dsh-1`，`relay: polling`。（命令结果卡片要在会话有过第一条消息之后才会显示，这是 dsh UI 行为。）
+   再确认：未绑定的另一个 dsh 会话里模型调用 `xmuse_*` 工具只会得到"This session is not bound"，
+   终端 `xmuse tool --agent dsh-1 whoami` 返回 `not_bound_session`；`xmuse log` 里有 `dsh-1 is now bound to dsh session …` 的 hub 通知。
 2. claude-d（桌面协调者）发：`xmuse_send(to="dsh-1", body="…一个小任务…", on_behalf_of="human")`
-   或在终端 `xmuse send dsh-1 "…"`。
+   或在终端 `xmuse send dsh-1 "…"`（后者在日志和唤醒文本里显示为 `human (via cli)`，
+   claude-d 应先向你确认再执行重要请求）。
 3. 几秒内 dsh 会话里出现一张"收到执行请求"卡片（`source.kind='xmuse'`），内容以 `[xmuse] Messages relayed by xmuse…` 开头，
    带 `<xmuse from=… thread=… kind=…>` 块；会话被唤醒并开始处理。`xmuse status` 里 dsh-1 的 `pending` 不再增加，
    消息状态为 `delivered`（不再是 queued）。
