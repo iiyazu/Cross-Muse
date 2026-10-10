@@ -166,6 +166,14 @@ def inbox(conn, agent_id: str, unread_only: bool = True) -> list[dict]:
     return [_public(r) for r in rs]
 
 
+def pending(conn, agent_id: str) -> dict:
+    """Unread deliveries (what  would return) and how many of them mention the agent. Read-only."""
+    rs = conn.execute("select m.mentions from deliveries d join messages m on m.id=d.message_id"
+                      " where d.recipient=? and d.acked_at is null and d.read_at is null and d.state != 'canceled'",
+                      (agent_id,)).fetchall()
+    return {"pending": len(rs), "mentions": sum(agent_id in json.loads(r[0]) for r in rs)}
+
+
 def ack(conn, agent_id: str, ids: list[int], outcome: str | None) -> int:
     with db.tx(conn):
         n = 0

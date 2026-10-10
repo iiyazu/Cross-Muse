@@ -97,6 +97,7 @@ def connect(path) -> sqlite3.Connection:
 COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view at wake (experiment curve)
            ("turns", "align_tokens", "integer"),("turns", "align_mode", "text"),  # added after M1: per-turn metrics
            ("sessions", "notified", "integer not null default 0"),               # size notice sent
+           ("sessions", "online", "integer not null default 0"),                 # desktop session between SessionStart/End
            ("entries", "resolves", "text")]  # proposed entries: JSON ids of questions they answer, applied on confirm
 
 

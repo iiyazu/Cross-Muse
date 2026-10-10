@@ -17,6 +17,10 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
   `xmuse_done(summary, next, declares?)`; declare decisions and assumptions others depend on. When a
   first implementation is done, declare each cross-module convention it relies on or sets (data
   representation, units, error types, sort/tie-break rules, output format) as its own `decision`.
+- Claude desktop app sessions get no push: start every turn with  and  what you
+  handled. If the shell cannot reach WSL, run tests through the host's WSL tool. If your host has a
+  Monitor/background-watch tool, start the watch command printed by  once per
+  session so new xmuse messages wake you.
 
 Full guide: skill `xmuse-collab` (`.claude/skills/xmuse-collab/SKILL.md`).
 <!-- xmuse:end -->

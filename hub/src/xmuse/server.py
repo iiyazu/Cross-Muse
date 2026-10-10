@@ -36,7 +36,7 @@ class Hub:
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.admin = digest((state / "tokens" / "_admin").read_text().strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
-        self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin)
+        self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
         if self.db().execute("select 1 from agents where vendor='opencode'").fetchone():
             srv = Server(self.ws, state, base=oc_base)
             if oc_base is None:
@@ -101,6 +101,8 @@ class Hub:
         a = db.row(self.db().execute("select * from agents where id=?", (agent,)))
         if self.engine.drivers[a["vendor"]].on_hook(a, body["event"], body):
             self.engine.kick()
+        if body.get("desktop"):  # the hook prints a reminder from these counts (stdout reaches the model)
+            return {"ok": True, **mail.pending(self.db(), agent)}
         return {"ok": True}
 
     def register(self, agent: str, body: dict):

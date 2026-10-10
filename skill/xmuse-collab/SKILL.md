@@ -81,3 +81,11 @@ Before you stop, ask: **"Does this end with me? If not, who moves next?"**
    when the task is finished (tests pass, review approved).
 4. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
    them and costs a turn.
+
+## Claude desktop app sessions
+
+Desktop sessions get no push and are never resumed in the background. Start every turn with 
+and  what you handled. If the shell cannot reach WSL, run tests through the host's WSL tool.
+If your host has a Monitor/background-watch tool, start the watch command printed by 
+() once per session so new xmuse
+messages wake you.

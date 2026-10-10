@@ -23,6 +23,7 @@ from .. import db
 from ..config import SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
+from .dsh import to_win as win_path  # WSL path -> Windows form (\wsl.localhost\... or C:\...)
 
 CODE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"}
 
@@ -124,7 +125,41 @@ def _alive(pid: int | None) -> bool:
         return True
 
 
+def _distro() -> str:
+    return os.environ.get("WSL_DISTRO_NAME", "Ubuntu-24.04")
+
+
+def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:
+    """Claude desktop app (Windows side): shim and hooks run in WSL through wsl.exe. No channel, no bash syntax in
+    commands (the host may run them with Git Bash or cmd); hook.py and  swallow their own errors."""
+    aid, wsl = agent["id"], f"wsl.exe -d {_distro()} --"
+    old = None
+    try:
+        srv = json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]
+        if srv.get("command") != "wsl.exe":  # a CLI-mode identity is being replaced
+            old = (srv.get("env") or {}).get("XMUSE_AGENT")
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    if old:
+        print(f"one interactive Claude identity per workspace; {aid} (desktop) replaces {old}")
+    pre = f"{wsl} env XMUSE_STATE={state}"
+    mcp = {"mcpServers": {"xmuse": {"command": "wsl.exe", "args": [
+        "-d", _distro(), "--", "env", f"XMUSE_STATE={state}", f"XMUSE_AGENT={aid}", "node", str(SHIM)]}}}
+    (ws / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n")
+    hook = f"{pre} XMUSE_AGENT={aid} XMUSE_DESKTOP=1 python3 {Path(__file__).parents[1] / 'hook.py'}"
+    hooks = {ev: [{"hooks": [{"type": "command", "command": f"{hook} {ev}", "timeout": 10}]}]
+             for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop")}
+    hooks["SessionStart"].append({"matcher": "compact", "hooks": [{
+        "type": "command", "timeout": 10, "command": f"{pre} {sys.executable} -m xmuse hook compact"}]})
+    settings = {"enabledMcpjsonServers": ["xmuse"], "permissions": {"allow": ["mcp__xmuse__*"]}, "hooks": hooks}
+    (ws / ".claude").mkdir(exist_ok=True)
+    (ws / ".claude" / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+    return [ws / ".mcp.json", ws / ".claude" / "settings.json"]
+
+
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
+    if db.settings(agent).get("desktop"):
+        return _write_desktop_config(ws, agent, state)
     env = {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"], "XMUSE_CHANNEL": "1"}
     mcp = {"mcpServers": {"xmuse": {"command": "node", "args": [str(SHIM)], "env": env}}}
     (ws / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n")
@@ -248,8 +283,8 @@ class ClaudeChannel:
 class ClaudeDriver:
     vendor = "claude"
 
-    def __init__(self, sink, dbf, claude_bin: str = "claude"):
-        self.db = dbf
+    def __init__(self, sink, dbf, claude_bin: str = "claude", ws: Path | None = None):
+        self.db, self.ws = dbf, ws
         self.headless = ClaudeResume(sink, claude_bin)
         self.push = ClaudeChannel(sink, dbf)
 
@@ -266,6 +301,8 @@ class ClaudeDriver:
 
     def on_hook(self, agent: dict, event: str, p: dict) -> bool:
         """Hook report from hook.py: {event, session_id, pid (CLAUDE_PID), entrypoint, channels, prompt, ...}."""
+        if p.get("desktop"):
+            return self._desktop_hook(agent, event, p)
         if p.get("entrypoint") != "cli":  # headless runs are hub-owned; their hooks carry no news
             return False
         pid, sid, now = p["pid"], p.get("session_id"), db.now()
@@ -288,6 +325,21 @@ class ClaudeDriver:
             self.push.stopped(sid, p.get("transcript_path"))
         return True
 
+    def _desktop_hook(self, agent: dict, event: str, p: dict) -> bool:
+        """Claude desktop app: its pid is a Windows pid (never probe /proc), no TUI lease, no push, no headless
+        resume. SessionStart makes the session current; SessionEnd only marks it offline."""
+        sid = p.get("session_id")
+        if sid and event in ("SessionStart", "SessionEnd"):
+            with db.tx(self.db()):
+                if event == "SessionStart":
+                    self._adopt(agent["id"], sid, "desktop")
+                    self.db().execute("update sessions set online=1 where agent_id=? and vendor_session=?",
+                                      (agent["id"], sid))
+                else:
+                    self.db().execute("update sessions set online=0 where agent_id=? and vendor_session=?",
+                                      (agent["id"], sid))
+        return False
+
     def register_shim(self, agent: dict, p: dict) -> None:
         """The shim inside a TUI announces its push endpoint (dynamic port) and nonce."""
         with db.tx(self.db()):
@@ -300,23 +352,29 @@ class ClaudeDriver:
                 (p["claude_pid"], agent["id"], p.get("session_id"), "tui", "cli",
                  f"http://127.0.0.1:{int(p['port'])}/push", p["nonce"], db.now()))
 
-    def _adopt(self, agent_id: str, sid: str) -> None:
+    def _adopt(self, agent_id: str, sid: str, origin: str = "tui") -> None:
         """A TUI opened for this agent becomes its current session: the hub continues it after."""
         cur = db.row(self.db().execute("select * from sessions where agent_id=? and state='current'", (agent_id,)))
         if cur and cur["vendor_session"] == sid:
             return
         if cur:
-            self.db().execute("update sessions set state='retired', retired_at=? where id=?", (db.now(), cur["id"]))
+            self.db().execute("update sessions set state='retired', retired_at=?, online=0 where id=?",
+                              (db.now(), cur["id"]))
         old = db.row(self.db().execute("select * from sessions where agent_id=? and vendor_session=?", (agent_id, sid)))
         if old:
             self.db().execute("update sessions set state='current', retired_at=null where id=?", (old["id"],))
         else:
             self.db().execute("insert into sessions(agent_id, vendor_session, origin, created_at) values(?,?,?,?)",
-                              (agent_id, sid, "tui", db.now()))
+                              (agent_id, sid, origin, db.now()))
 
     write_config = staticmethod(write_config)
 
     def attach_command(self, agent: dict, session: str | None) -> str:
+        if db.settings(agent).get("desktop"):
+            where = win_path(self.ws) if self.ws else "the workspace"
+            monitor = (f"wsl.exe -d {_distro()} -- {sys.executable} -m xmuse --ws {self.ws} watch --agent {agent['id']}")
+            return (f"Open {where} in the Claude desktop app (Code tab), start a new session and call xmuse_whoami "
+                    f"to verify.\nMonitor command (run once per session): {monitor}")
         return (f"claude --model {agent['model']} {'--resume ' + session if session else ''}"
                 " --dangerously-load-development-channels server:xmuse")
 

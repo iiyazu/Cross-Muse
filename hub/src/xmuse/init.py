@@ -85,6 +85,8 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
         raise SystemExit(f"vendor must be one of: {', '.join(WRITERS)}")
     if not agent_id.replace("-", "").isalnum() or agent_id in (config.HUMAN, config.HUB):
         raise SystemExit("agent id: letters, digits and '-', not 'human' or 'hub'")
+    if (settings or {}).get("desktop") and vendor != "claude":
+        raise SystemExit("--desktop is only for --vendor claude")
     cfg = config.load(state)
     ws = Path(cfg["workspace"])
     conn = db.connect(state / "hub.db")

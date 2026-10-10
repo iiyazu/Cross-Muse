@@ -11,7 +11,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db
+from . import config, db, mail
 from .env import clean_env
 
 HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
@@ -74,18 +74,49 @@ def hub_stop(state: Path) -> None:
 def status(state: Path) -> dict:
     conn = db.connect(state / "hub.db")
     q = lambda sql, *a: db.rows(conn.execute(sql, a))  # noqa: E731
+    agents, desktop = q("select a.id, a.vendor, a.model, a.paused, s.vendor_session session, s.context_tokens context,"
+                        " s.wakes, a.settings from agents a left join sessions s on s.agent_id=a.id"
+                        " and s.state='current'"), set()
+    for a in agents:
+        if db.settings(a).get("desktop"):
+            desktop.add(a["id"])
+            a.update(desktop=True, **mail.pending(conn, a["id"]))
+        del a["settings"]
     return {
         "hub": json.loads((state / "hub.json").read_text()) if (state / "hub.json").exists() else None,
-        "agents": q("select a.id, a.vendor, a.model, a.paused, s.vendor_session session, s.context_tokens context,"
-                    " s.wakes from agents a left join sessions s on s.agent_id=a.id and s.state='current'"),
+        "agents": agents,
         "running": q("select id, agent_id, adapter, chain_id, started_at from turns where state='running'"),
-        "queued": q("select recipient, count(*) n from deliveries where state='queued' and wake=1 group by recipient"),
+        "queued": [r for r in q("select recipient, count(*) n from deliveries where state='queued' and wake=1"
+                                " group by recipient") if r["recipient"] not in desktop],  # desktop agents poll
         "leases": q("select pid, agent_id, vendor_session, holder, human_turn, channel_url is not null push"
                     " from leases"),
         "chains": q("select id, thread_id, state, wakes, tokens, note from chains where origin='human'"
                     " order by id desc limit 5"),
         "approvals": q("select id, agent_id, action, resources from approvals where state='pending'"),
     }
+
+
+def watch(state: Path, agent: str, interval: float, out=None) -> None:
+    """Long-running, read-only: one stdout line per poll that found new deliveries for .
+
+    Reads hub.db directly like  (no token, nothing marked read or acked). Starts after the current
+    newest delivery, so only arrivals during the watch are reported; exits when hub.json disappears."""
+    out = out or sys.stdout
+    conn = db.connect(state / "hub.db")
+    last = conn.execute("select coalesce(max(id), 0) from deliveries where recipient=?", (agent,)).fetchone()[0]
+    while True:
+        if not (state / "hub.json").exists():
+            print("[xmuse] hub stopped", file=out, flush=True)
+            return
+        rs = db.rows(conn.execute(
+            "select d.id, m.thread_id, m.sender, m.kind, m.body from deliveries d join messages m on m.id=d.message_id"
+            " where d.recipient=? and d.id>? and d.state != 'canceled' order by d.id", (agent, last)))
+        if rs:
+            last = rs[-1]["id"]
+            items = "; ".join(f'{r["thread_id"]} from {r["sender"]} [{r["kind"]}] "{" ".join(r["body"].split())[:80]}"'
+                              for r in rs)
+            print(f"[xmuse] {len(rs)} new for {agent}: {items}", file=out, flush=True)
+        time.sleep(interval)
 
 
 def quiet(state: Path) -> bool:
@@ -157,6 +188,7 @@ def main(argv=None) -> None:
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
+    p.add_argument("--desktop", action="store_true", help="Claude desktop app session (claude only; no push)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
@@ -194,6 +226,9 @@ def main(argv=None) -> None:
     p.add_argument("decision", choices=["once", "always", "reject"])
     p = sub.add_parser("attach")
     p.add_argument("agent")
+    p = sub.add_parser("watch", help="print a line per batch of new messages for an agent (read-only; for Monitor)")
+    p.add_argument("--agent", required=True)
+    p.add_argument("--interval", type=float, default=5)
     p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
     p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
@@ -222,7 +257,7 @@ def main(argv=None) -> None:
             print(json.dumps(status(state)["agents"], indent=1))
             return
         from .init import add_agent
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role)
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role, {"desktop": True} if a.desktop else None)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -270,5 +305,7 @@ def main(argv=None) -> None:
         raise SystemExit("timeout")
     elif a.cmd == "approve":
         print(json.dumps(call(state, "/v1/admin/approve", {"id": a.id, "decision": a.decision})))
+    elif a.cmd == "watch":
+        watch(state, a.agent, a.interval)
     elif a.cmd == "attach":
         print(call(state, "/v1/admin/attach", {"agent": a.agent})["command"])
