@@ -384,7 +384,7 @@ class ClaudeDriver:
     def attach_command(self, agent: dict, session: str | None) -> str:
         if db.settings(agent).get("desktop"):
             where = win_path(self.ws) if self.ws else "the workspace"
-            monitor = (f"wsl.exe -d {_distro()} -- {sys.executable} -m xmuse --ws {self.ws} watch --agent {agent['id']}")
+            monitor = (f"MSYS_NO_PATHCONV=1 wsl.exe -d {_distro()} -- {sys.executable} -m xmuse --ws {self.ws} watch --agent {agent['id']}")
             return (f"Open {where} in the Claude desktop app (Code tab), start a new session and call xmuse_whoami "
                     f"to verify.\nMonitor command (run once per session): {monitor}")
         return (f"claude --model {agent['model']} {'--resume ' + session if session else ''}"

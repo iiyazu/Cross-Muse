@@ -15,7 +15,7 @@ Run a Claude agent from the Claude desktop app (Windows) against a workspace in 
    path), trust it, and enable the project MCP server `xmuse`.
 4. Start a new session and call `xmuse_whoami` to verify.
 5. Optional: if the session has a Monitor tool, run the command that `xmuse attach <id>` prints on its second line
-   (`wsl.exe -d <distro> -- <python> -m xmuse --ws <workspace> watch --agent <id>`); it prints a line whenever
+   (`MSYS_NO_PATHCONV=1 wsl.exe -d <distro> -- <python> -m xmuse --ws <workspace> watch --agent <id>`); it prints a line whenever
    new messages arrive for the agent, without marking anything read.
 
 Limits:

@@ -128,7 +128,7 @@ def test_attach_for_desktop_agent(make, monkeypatch):
     first, second = cmd.split("\n")
     assert first == (f"Open {win} in the Claude desktop app (Code tab), start a new session "
                      "and call xmuse_whoami to verify.")
-    assert second == ("Monitor command (run once per session): wsl.exe -d Ubuntu-Test -- "
+    assert second == ("Monitor command (run once per session): MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-Test -- "
                       f"{sys.executable} -m xmuse --ws {h.ws} watch --agent dog")
     h.hub.engine.drivers["claude"].ws = Path("/mnt/c/work/dog")
     assert h.admin("attach", agent="dog")["result"]["command"].startswith(r"Open C:\work\dog in the Claude")
