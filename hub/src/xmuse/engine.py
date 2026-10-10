@@ -65,6 +65,8 @@ class Engine:
         while not stop.is_set():
             try:
                 ev = self.q.get(timeout=1)
+                if ev[0] == "stop":  # sentinel from Hub.shutdown: do not sit out the get timeout
+                    break
                 getattr(self, "_on_" + ev[0])(*ev[1:])
             except queue.Empty:
                 pass
@@ -93,6 +95,13 @@ class Engine:
     def _admit(self, conn, agent: dict) -> None:
         if db.polled(agent):
             return  # desktop / foreground sessions live on the Windows side: never woken in the background, only polled
+        with db.tx(conn):  # no wake for mail already handled (audit B2-3): acked, or read (xmuse_inbox mid-turn) and
+            # answered in its thread afterwards. Read but unanswered mail still wakes: a missed wake breaks the chain.
+            conn.execute(
+                "update deliveries set state='done', updated_at=? where recipient=? and wake=1 and state='queued'"
+                " and (acked_at is not null or (read_at is not null and exists (select 1 from messages m0 join"
+                " messages r on r.thread_id=m0.thread_id where m0.id=deliveries.message_id and r.sender=?"
+                " and r.created_at>=deliveries.read_at)))", (db.now(), agent["id"], agent["id"]))
         pending = db.rows(conn.execute(
             "select d.id did, m.*, c.state cstate, c.wakes cwakes, c.max_wakes, c.tokens ctokens, c.max_tokens"
             " from deliveries d join messages m on m.id=d.message_id join chains c on c.id=m.chain_id"

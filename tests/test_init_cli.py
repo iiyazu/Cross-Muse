@@ -27,6 +27,18 @@ def ws(tmp_path, monkeypatch):
     return w
 
 
+def test_init_in_a_linked_worktree_writes_the_common_exclude(ws, tmp_path):
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git + ["-C", str(ws), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    wt = tmp_path / "wt"
+    subprocess.run(git + ["-C", str(ws), "worktree", "add", "-q", str(wt)], check=True)
+    assert (wt / ".git").is_file()
+    xinit.init(wt)
+    assert ".xmuse.json" in (ws / ".git" / "info" / "exclude").read_text().splitlines()
+    st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain", "--ignored"], capture_output=True, text=True)
+    assert "!! .xmuse.json" in st.stdout  # git really ignores it in the worktree
+
+
 def mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
 

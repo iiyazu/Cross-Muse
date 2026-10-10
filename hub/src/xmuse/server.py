@@ -12,6 +12,7 @@ import os
 import signal
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -204,6 +205,21 @@ class Hub:
                               (a["id"],)).fetchone()
         return {"command": self.engine.drivers[a["vendor"]].attach_command(a, s and s[0])}
 
+    def admin_oc_messages(self, body: dict):
+        """`xmuse transcript` for an OpenCode agent: its session's messages from the hub-owned server (read-only)."""
+        drv = self.engine.drivers.get("opencode")
+        if drv is None:
+            raise ToolError("invalid_arguments", "no opencode server in this hub")
+        sid, out, cursor = urllib.parse.quote(body["session"], safe=""), [], None
+        for _ in range(100):  # pages of 200
+            page = drv.server.api("GET", f"/api/session/{sid}/message?limit=200"
+                                  + (f"&cursor={urllib.parse.quote(cursor, safe='')}" if cursor else ""))
+            out += page.get("data") or []
+            cursor = (page.get("cursor") or {}).get("next")
+            if not cursor or not page.get("data"):
+                break
+        return {"messages": out}
+
     # ---- dsh relay: a polled (foreground) agent's bundle long-polls instead of the engine waking it ----
     def _polled_agent(self, agent: str) -> dict:
         a = db.row(self.db().execute("select * from agents where id=?", (agent,)))
@@ -353,7 +369,7 @@ class Hub:
                 pass
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid()}))
@@ -361,6 +377,7 @@ class Hub:
 
     def shutdown(self) -> None:
         self.stopping.set()
+        self.engine.q.put(("stop",))
         self.loop.join(10)
         self.curator.stop()
         self.httpd.shutdown()

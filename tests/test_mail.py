@@ -11,6 +11,13 @@ def three(make):
     return h
 
 
+def pause(h, agent):
+    """Keep the engine from admitting (and so marking read) the agent's mail while a test reads its inbox."""
+    from xmuse import db
+    with db.tx(h.conn()) as c:
+        c.execute("update agents set paused=1 where id=?", (agent,))
+
+
 def test_send_writes_message_and_one_delivery_per_member(make):
     h = three(make)
     out = h.send("#g", "hello", mentions=["claude-2"])
@@ -61,6 +68,7 @@ def test_handoff_keeps_why_first_fields(make):
     h = three(make)
     why = {"what": "added sub()", "why": "spec", "tradeoff": "no bigints", "open_questions": "none",
            "next_action": "review calc.py"}
+    pause(h, "claude-2")
     h.tool("claude-1", "xmuse_send", to="claude-2", body="handing over", kind="handoff", why=why)
     inbox = h.tool("claude-2", "xmuse_inbox")["result"]
     assert inbox[0]["why"] == why and inbox[0]["kind"] == "handoff"
@@ -68,6 +76,7 @@ def test_handoff_keeps_why_first_fields(make):
 
 def test_inbox_orders_mentions_first_and_marks_read(make):
     h = three(make)
+    pause(h, "claude-2")
     h.send("#g", "fyi for all")
     h.send("#g", "claude-2 act", mentions=["claude-2"])
     first = h.tool("claude-2", "xmuse_inbox")["result"]

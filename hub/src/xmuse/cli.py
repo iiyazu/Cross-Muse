@@ -237,6 +237,37 @@ def usage(state: Path, as_json: bool) -> None:
               f" {r['cache_read']:11,} {r['output']:8,} {r['max_context']:8,}")
 
 
+def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 2000) -> str:
+    """An agent's current session as readable text (read-only; see transcript.py)."""
+    from . import transcript as tr
+    if path is not None:  # an explicit file: a Claude JSONL transcript or a dsh session log
+        return tr.render((tr.dsh if path.name.endswith(".zstd") else tr.claude)(path), clip)
+    conn = db.connect(state / "hub.db")
+    a = db.row(conn.execute("select * from agents where id=?", (agent,)))
+    if a is None:
+        raise SystemExit(f"no agent {agent}")
+    s = db.row(conn.execute("select * from sessions where agent_id=? and state='current'", (agent,)))
+    if s is None or not s["vendor_session"]:
+        raise SystemExit(f"{agent} has no current session yet")
+    sid, cfg = s["vendor_session"], config.load(state)
+    if a["vendor"] == "claude":
+        from .adapters.claude import transcript as claude_path
+        p = claude_path(Path(s["cwd"] or cfg["workspace"]), sid)
+        if not p.exists():
+            raise SystemExit(f"no transcript at {p}" + (" (a desktop session's transcript is on the Windows side:"
+                                                        " pass --path)" if db.settings(a).get("desktop") else ""))
+        return tr.render(tr.claude(p), clip)
+    if a["vendor"] == "dsh":
+        from .adapters.dsh import WIN_HOME
+        home = Path(cfg.get("dsh_home", WIN_HOME / ".dsh"))
+        logs = sorted(home.glob(f"sessions/*/{sid}/session.v4.jsonl.zstd"))
+        if not logs:
+            raise SystemExit(f"no dsh session log for {sid} under {home}/sessions (set dsh_home in config.json"
+                             " or pass --path)")
+        return tr.render(tr.dsh(logs[-1]), clip)
+    return tr.render(tr.opencode(call(state, "/v1/admin/oc_messages", {"session": sid})["messages"]), clip)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="xmuse")
     ap.add_argument("--ws", type=Path, help="workspace (default: search upward from cwd)")
@@ -295,6 +326,10 @@ def main(argv=None) -> None:
     p.add_argument("--agent", required=True)
     p.add_argument("name", help="send, inbox, ack, thread, context, whoami, done (with or without xmuse_)")
     p.add_argument("--args-file", help="JSON arguments (default: piped stdin, else {})")
+    p = sub.add_parser("transcript", help="an agent's current session as readable text (read-only)")
+    p.add_argument("agent")
+    p.add_argument("--path", type=Path, help="read this Claude .jsonl or dsh .jsonl.zstd file instead")
+    p.add_argument("--clip", type=int, default=2000, help="max characters per entry (0: no limit)")
     p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
     p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
@@ -375,5 +410,7 @@ def main(argv=None) -> None:
         name = a.name if a.name.startswith("xmuse_") else "xmuse_" + a.name
         print(json.dumps(call(state, "/v1/tools/" + name, {"args": read_args(a.args_file)}, a.agent),
                          indent=2, ensure_ascii=False))
+    elif a.cmd == "transcript":
+        print(transcript(state, a.agent, a.path, a.clip))
     elif a.cmd == "attach":
         print(call(state, "/v1/admin/attach", {"agent": a.agent})["command"])

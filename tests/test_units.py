@@ -1,6 +1,7 @@
 """Pure pieces: vendor stream parsing, transcript usage and forks, wake-pack rendering, sweep."""
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from xmuse import db, mail, wakepack
@@ -65,6 +66,28 @@ def test_transcript_usage_counts_only_new_calls_once(tmp_path):
         f.write(json.dumps({"type": "user", "timestamp": new}) + "\n")
     got = transcript_usage(p, since=time.time())
     assert (got.calls, got.cache_read, got.output, got.context, got.mode) == (2, 200, 10, 111, "chat")
+
+
+def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
+    """The Stop hook can beat the TUI's transcript write; the turn's usage must not be recorded as 0."""
+    import threading
+    from xmuse.adapters.claude import ClaudeChannel
+
+    class Sink:
+        def __init__(self): self.ended, self.done = [], threading.Event()
+        def turn_ended(self, e): self.ended.append(e); self.done.set()
+
+    sink, p = Sink(), tmp_path / "t.jsonl"
+    p.write_text("")
+    ch = ClaudeChannel(sink, None)
+    ch.turns["s1"] = {"turn_id": 7, "since": time.time(), "cwd": tmp_path}
+    assert ch.stopped("s1", str(p)) and not sink.ended  # nothing flushed yet: not ended with zeros
+    ts = datetime.now(timezone.utc).isoformat()
+    u = {"input_tokens": 2, "cache_read_input_tokens": 300, "cache_creation_input_tokens": 0, "output_tokens": 9}
+    p.write_text(json.dumps({"type": "assistant", "timestamp": ts, "message": {
+        "id": "m1", "model": "x", "usage": u, "content": [{"type": "text", "text": "ok"}]}}) + "\n")
+    assert sink.done.wait(5)
+    assert (sink.ended[0].turn_id, sink.ended[0].usage.context, sink.ended[0].usage.calls) == (7, 302, 1)
 
 
 def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):

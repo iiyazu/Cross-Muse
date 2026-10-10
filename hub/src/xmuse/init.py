@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import shutil
+import subprocess
 from pathlib import Path
 
 from . import config, db
@@ -34,10 +35,31 @@ def _token(path: Path) -> str:
     return tok
 
 
+def _git_common_dir(ws: Path) -> Path | None:
+    """The repository's shared git dir. In a linked worktree `.git` is a file and info/exclude lives under the
+    common dir (git ignores <worktree gitdir>/info/exclude)."""
+    if not (ws / ".git").exists():
+        return None
+    try:
+        out = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=ws, capture_output=True, text=True,
+                             timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        out = None
+    if out and out.returncode == 0 and out.stdout.strip():
+        return (ws / out.stdout.strip()).resolve()
+    if (ws / ".git").is_dir():
+        return ws / ".git"
+    gitdir = (ws / (ws / ".git").read_text().split("gitdir:", 1)[-1].strip()).resolve()  # no git binary
+    common = gitdir / "commondir"
+    return (gitdir / common.read_text().strip()).resolve() if common.exists() else gitdir
+
+
 def _exclude(ws: Path, paths: list[str]) -> None:
-    ex = ws / ".git" / "info" / "exclude"
-    if not ex.parent.exists():
+    common = _git_common_dir(ws)
+    if common is None:
         return
+    ex = common / "info" / "exclude"
+    ex.parent.mkdir(parents=True, exist_ok=True)
     have = ex.read_text().splitlines() if ex.exists() else []
     ex.write_text("\n".join(have + [p for p in paths if p not in have]) + "\n")
 
