@@ -240,3 +240,27 @@ experiments/batch.sh experiments/plans/t6-e5-cross.txt   # 6 run，dsh 复核
 313 passed, 1 skipped in 143.69s (0:02:23)
 ```
 插件包：`ℹ pass 27`、`ℹ fail 0`
+
+## T7 隔离不删（2026-10-11）
+
+**提交**：`78f2e0e`。按 r7 §8 第 6 条，现在就动手，不等 T6。
+
+**做了什么**（按上面的清单，用 `git mv`，**没有删除任何文件**）
+- `spikes/` → `archive/spikes/`（331 个文件）。
+- `e2e/` 除 `check.py` 外 → `archive/e2e/`（264 个文件）。
+- `e2e/check.py` → `experiments/check.py`，`run.py` 改为 `EXP / "check.py"`。
+- `git status`：596 个 R（重命名），0 个 D。空的 `e2e/` 目录已去掉。
+- 引用同步：`adapters/claude.py` 的两处注释、`.gitignore`（同时把 `experiments/results/_prev/` 加进忽略）、README 中英文的目录表。
+- 新增 `archive/README.md`：说明这两个目录是什么、为什么保留。
+
+**验收**
+- 全量测试：
+  ```
+  313 passed, 1 skipped in 146.16s (0:02:26)
+  ```
+- `experiments/check.py` 在 `results/minisql-S-1` 上重跑，输出和当时记录的 `summary.json` 一致（唯一的差别是我手填的 seconds 参数）。
+- `git grep "e2e/\|spikes/"` 在代码里（不含 archive、docs、实验结果、测试录制）只剩新路径。
+
+**没做 / 拿不准**
+- `docs/design/` 里的历史文档仍然写着 `spikes/…`、`e2e/…` 的旧路径，没有改：它们是当时的记录。
+- `archive/` 里录制文件中的 `/home/user/...` 路径保持原样。
