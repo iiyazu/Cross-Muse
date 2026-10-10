@@ -11,6 +11,11 @@
   },
   "scripts": { "test": "node --import ./test/register.mjs --test test/bundle.test.mjs" },
   "files": ["index.js", "cordis.patch.yml", "locale/*.json"],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-commands": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
