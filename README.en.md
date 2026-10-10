@@ -116,7 +116,7 @@ The [full report](docs/design/XMUSE2-M2B-EXP-REPORT.zh.md) is in Chinese. Setup:
 | `experiments/` | Scenarios, runner, metrics (`metrics.py`), offline replay (`replay_mo.py`), results |
 | `docs/design/` | Design notes, experiment report, audit (Chinese) |
 | `scripts/bootstrap.sh` | One-step environment setup |
-| `spikes/`, `e2e/` | Early probes and end-to-end records (historical; to move under `archive/`) |
+| `archive/` | Early probes (`spikes/`) and M1 end-to-end records (`e2e/`), kept for history, not maintained |
 
 ## Development
 

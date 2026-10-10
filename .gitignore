@@ -1,11 +1,12 @@
 node_modules/
-# disposable agent workspace (nested git repo); recreate with spikes/make-ws.sh
-spikes/ws/
+# disposable agent workspace (nested git repo); recreate with archive/spikes/make-ws.sh
+archive/spikes/ws/
 .venv/
 __pycache__/
 .pytest_cache/
-# e2e: disposable workspaces and hub state are rebuilt by the scenario scripts
-e2e/ws-*/
-e2e/state-*/
-# experiments: runner hub state (results/ is committed)
+# archived e2e: disposable workspaces and hub state rebuilt by its scenario scripts
+archive/e2e/ws-*/
+archive/e2e/state-*/
+# experiments: runner hub state (results/ is committed; results/_prev/ holds voided or replaced runs)
 experiments/state-*/
+experiments/results/_prev/
