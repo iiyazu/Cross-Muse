@@ -91,8 +91,8 @@ class Engine:
                 self._admit(conn, agent)
 
     def _admit(self, conn, agent: dict) -> None:
-        if db.settings(agent).get("desktop"):
-            return  # Claude desktop sessions live on the Windows side: never woken in the background, only polled
+        if db.polled(agent):
+            return  # desktop / foreground sessions live on the Windows side: never woken in the background, only polled
         pending = db.rows(conn.execute(
             "select d.id did, m.*, c.state cstate, c.wakes cwakes, c.max_wakes, c.tokens ctokens, c.max_tokens"
             " from deliveries d join messages m on m.id=d.message_id join chains c on c.id=m.chain_id"

@@ -54,7 +54,7 @@ class Hub:
         errors = []
         for a in db.rows(self.db().execute("select * from agents order by id")):
             check = getattr(self.engine.drivers[a["vendor"]], "precheck", None)
-            err = check and check(a, self.ws)
+            err = check and not db.polled(a) and check(a, self.ws)  # polled agents never run in the background
             if err:
                 errors.append(f"{a['id']}: model {a['model']} unusable: {err}")
         return errors
