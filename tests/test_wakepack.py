@@ -273,3 +273,24 @@ def test_retried_done_in_the_same_turn_declares_once(make):
     c = mail.done(conn, "claude-1", "parsed", "none", decl + [{"kind": "assumption", "statement": "utf-8"}])
     assert c["entries"] == ["E2", "E3"] and "duplicate" not in c
     assert b["thread"] == "#g"
+
+
+def test_alignment_off_keeps_declarations_but_injects_nothing(make):
+    h = two(make, alignment="off")
+    h.plan_claude({})
+    declare(h, "ids are int", scope="global")
+    p = wake(h)
+    assert "[alignment" not in p and "ids are int" not in p
+    t = h.turns()[0]
+    assert (t["align_mode"], t["align_tokens"], t["view_entries"]) == ("none", 0, 1)
+    assert h.q("select statement from entries")[0]["statement"] == "ids are int"
+
+
+def test_view_entries_is_recorded_per_wake(make):
+    h = two(make)
+    h.plan_claude({}, {})
+    declare(h, "ids are int", scope="global")
+    wake(h)
+    declare(h, "tokens are tuples")
+    wake(h)
+    assert [t["view_entries"] for t in h.turns()] == [1, 2]

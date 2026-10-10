@@ -130,7 +130,8 @@ class Engine:
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))
-            conn.execute("update turns set align_tokens=?, align_mode=? where id=?", (pack.tokens, pack.mode, tid))
+            conn.execute("update turns set align_tokens=?, align_mode=?, view_entries=? where id=?",
+                         (pack.tokens, pack.mode, pack.view_entries, tid))
             if not fresh:
                 conn.execute("insert or replace into seen values(?,?)", (session["id"], pack.seq))
         spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], pack.text, self.ws,

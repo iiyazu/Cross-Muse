@@ -88,7 +88,7 @@ class Curator:
 
     def kick(self, tid: str, closed: bool = False) -> None:
         """Queue a curation if the thread has 8 new messages, a new handoff, or was just closed."""
-        if "curate.collab" not in self.mo.caps:
+        if "curate.collab" not in self.mo.caps or self.cfg["alignment"] == "off":
             return
         with self.lock:
             conn = self.pool()

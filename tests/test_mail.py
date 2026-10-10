@@ -195,3 +195,20 @@ def test_send_dedupes_across_resumed_turns(make, monkeypatch):
     assert "duplicate" not in m3 and m3["id"] != m1["id"]
     m4 = mail.send(conn, cfg, "claude-1", "human", "K1")
     assert m4["duplicate"] is True and m4["id"] == m3["id"]
+
+
+def test_wake_all_wakes_every_agent_member_but_the_sender(make):
+    h = make([("claude-1", "claude"), ("claude-2", "claude"), ("claude-3", "claude")], wake="all")
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    assert h.send("#g", "hello")["woken"] == ["claude-1", "claude-2", "claude-3"]
+    r = h.tool("claude-1", "xmuse_send", to="#g", body="hi all")["result"]
+    assert r["woken"] == ["claude-2", "claude-3"]
+
+
+def test_context_without_alignment_returns_recent_messages(make):
+    h = make([("claude-1", "claude"), ("claude-2", "claude")], alignment="off")
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    h.tool("claude-1", "xmuse_send", to="#g", body="use snake_case", kind="decision")
+    v = h.tool("claude-2", "xmuse_context")["result"]
+    assert [m["body"] for t in v["threads"] for m in t["messages"]] == ["use snake_case"] and "layers" not in v
+    assert h.tool("claude-2", "xmuse_context", topic="#g")["result"]["threads"][0]["thread"] == "#g"

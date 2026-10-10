@@ -9,6 +9,8 @@ HUB = "hub"
 
 # Runaway guards (design §4.4 item 4). Safety stops, not budgets.
 DEFAULTS = {
+    "wake": "mention",               # experiment switch: mention | all (group threads wake every agent member; group A)
+    "alignment": "on",               # experiment switch: on | off (off: no pack section, no curate, xmuse_context = recent messages)
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain
     "chat_warn_tokens": 50_000,      # chat wakes over this log a warning (M1c task 2)

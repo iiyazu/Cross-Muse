@@ -109,6 +109,8 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         mid = cur.lastrowid
         if thread["kind"] == "dm":
             wake = {to} & set(roster)
+        elif cfg["wake"] == "all":
+            wake = set(mem) & set(roster)
         else:
             wake = (set(mentions) | ({thread["owner"]} if thread["owner"] else set())) & set(roster)
         wake.discard(sender)

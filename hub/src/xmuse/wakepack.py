@@ -41,7 +41,9 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
     parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive)) if p]
-    return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq)
+    v = align.view(conn, {**cfg, "_mo": None}, agent["id"])  # entries in this agent's view now (curve data; recorded even when off)
+    return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq,
+                           view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
 
 
 def relay(x) -> str:
@@ -60,6 +62,8 @@ def identity(x) -> str:
 
 def alignment(x) -> str:
     """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
+    if x.cfg["alignment"] == "off":
+        return ""
     if x.seen is None:
         text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
     else:

@@ -87,6 +87,10 @@ class Hub:
             return {"acked": mail.ack(conn, agent, args["ids"], args.get("outcome"))}
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
+        if name == "xmuse_context" and self.cfg["alignment"] == "off":  # M1 behaviour: recent messages only
+            tids = [args["topic"]] if args.get("topic") else [r[0] for r in conn.execute(
+                "select thread_id from thread_members where member=? order by 1", (agent,))]
+            return {"threads": [mail.thread(conn, agent, t) for t in tids]}
         if name == "xmuse_context":
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
