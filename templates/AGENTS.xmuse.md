@@ -32,6 +32,8 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
 - Relay pending permission requests ("asks permission ... `xmuse approve <id> once|always|reject`") and
   pause notices to the user and act on their answer; run `xmuse approve` (via the host's WSL tool) only
   after the user says so.
+- `xmuse_send(on_behalf_of="human")` only relays something the user explicitly stated ("decide X", "tell them Y");
+  otherwise send as yourself.
 
 Full guide: skill `xmuse-collab` (`.claude/skills/xmuse-collab/SKILL.md`).
 <!-- xmuse:end -->

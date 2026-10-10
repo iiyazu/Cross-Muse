@@ -98,6 +98,7 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("turns", "align_tokens", "integer"),("turns", "align_mode", "text"),  # added after M1: per-turn metrics
            ("sessions", "notified", "integer not null default 0"),               # size notice sent
            ("sessions", "online", "integer not null default 0"),                 # desktop session between SessionStart/End
+           ("messages", "via", "text"), ("entries", "via", "text"),  # coordinator that relayed a human decision
            ("entries", "resolves", "text")]  # proposed entries: JSON ids of questions they answer, applied on confirm
 
 

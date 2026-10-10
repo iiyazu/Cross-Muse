@@ -77,9 +77,15 @@ class Hub:
             if len(args["body"]) > self.cfg["body_limit"]:
                 raise ToolError("body_too_long", f"body is {len(args['body'])} chars, the limit is "
                                 f"{self.cfg['body_limit']}: write the content to a file in the workspace and send its path")
-            out = mail.send(conn, self.cfg, agent, args["to"], args["body"], args.get("kind", "message"),
+            sender, via = agent, None
+            if args.get("on_behalf_of"):  # a desktop coordinator relaying the user's own words
+                a = db.row(conn.execute("select * from agents where id=?", (agent,)))
+                if not db.settings(a).get("desktop"):
+                    raise ToolError("invalid_arguments", "on_behalf_of is only for the desktop coordinator session")
+                sender, via = config.HUMAN, agent
+            out = mail.send(conn, self.cfg, sender, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
-                            args.get("resolves"), args.get("depends_on"))
+                            args.get("resolves"), args.get("depends_on"), via)
             self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),

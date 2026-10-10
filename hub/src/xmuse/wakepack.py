@@ -21,7 +21,8 @@ RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user se
 
 def tag(m: dict, roster: dict) -> str:
     fam = roster[m["sender"]]["family"] if m["sender"] in roster else m["sender"]
-    attrs = f'from="{m["sender"]}" family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}" id="{m["id"]}"'
+    via = f' via="{m["via"]}"' if m.get("via") else ""
+    attrs = f'from="{m["sender"]}"{via} family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}" id="{m["id"]}"'
     body = m["body"]
     if m.get("why"):
         why = json.loads(m["why"])

@@ -65,7 +65,7 @@ def members(conn, thread_id: str) -> list[str]:
 
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
-         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None) -> dict:
+         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag)."""
     mentions = list(dict.fromkeys(mentions or []))
     if kind == "handoff":
@@ -103,9 +103,9 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         chain, depth = _chain(conn, cfg, sender, thread["id"], turn)
         cur = conn.execute(
             "insert into messages(thread_id, sender, kind, body, why, mentions, chain_id, depth, turn_id,"
-            " idem_key, created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+            " idem_key, created_at, via) values(?,?,?,?,?,?,?,?,?,?,?,?)",
             (thread["id"], sender, kind, body, json.dumps(why) if why else None, json.dumps(mentions),
-             chain["id"], depth, turn and turn["id"], idem, db.now()))
+             chain["id"], depth, turn and turn["id"], idem, db.now(), via))
         mid = cur.lastrowid
         if thread["kind"] == "dm":
             wake = {to} & set(roster)
@@ -114,17 +114,18 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         else:
             wake = (set(mentions) | ({thread["owner"]} if thread["owner"] else set())) & set(roster)
         wake.discard(sender)
+        wake.discard(via)  # the relaying coordinator is not a recipient of its own message
         for r in mem:
-            if r in (sender, HUMAN) or r not in roster:
+            if r in (sender, HUMAN, via) or r not in roster:
                 continue
             state = "passive" if r not in wake else ("queued" if chain["state"] == "open" else "held")
             conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
                          " values(?,?,?,?,?)", (mid, r, int(r in wake), state, db.now()))
         if kind in DECLARE:
-            eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes)]
+            eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes, via)]
         elif kind == "handoff":  # one assignment per named peer (a DM names its peer)
             eids = align.assign(conn, sender, thread["id"], mid, body,
-                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [])
+                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [], via)
         else:
             eids = []
         align.resolve(conn, resolves or [])
@@ -249,6 +250,8 @@ def _public(r: dict) -> dict:
         out["why"] = json.loads(r["why"])
     if r.get("mentions") and r["mentions"] != "[]":
         out["mentions"] = json.loads(r["mentions"])
+    if r.get("via"):
+        out["via"] = r["via"]
     if "wake" in r:
         out["mentioned"] = bool(r["wake"])
     return out

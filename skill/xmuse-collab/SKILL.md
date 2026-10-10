@@ -97,3 +97,5 @@ messages wake you.
 - Call `xmuse_done` only when you formally hand something off or finish a task the hub tracks.
 - Relay pending permission requests and pause notices to the user and act on their answer; run
   `xmuse approve <id> once|always|reject` (via the host's WSL tool) only after the user says so.
+- Use `xmuse_send(on_behalf_of="human")` only to relay what the user explicitly stated ("decide X", "tell them Y");
+  otherwise send as yourself. It is recorded as the user's, via you.

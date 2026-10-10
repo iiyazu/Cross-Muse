@@ -31,6 +31,9 @@ TOOLS = [
          "supersedes": _s("entry id (E7) this decision/assumption/question replaces"),
          "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "entry ids (handoff only)"},
+         "on_behalf_of": {"type": "string", "enum": ["human"], "description": "Coordinator (desktop) sessions only. "
+                          "Use only when the user explicitly stated this in the conversation (e.g. 'decide X', 'tell "
+                          "them Y'); never for your own judgement."},
          "why": {"type": "object", "additionalProperties": False,
                  "description": "Why-First handoff; required when kind=handoff",
                  "properties": {k: {"type": "string"} for k in WHY_FIELDS}},

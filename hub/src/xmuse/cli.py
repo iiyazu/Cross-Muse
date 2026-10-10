@@ -119,6 +119,17 @@ def watch(state: Path, agent: str, interval: float, out=None) -> None:
         time.sleep(interval)
 
 
+def who(name: str, via: str | None) -> str:
+    return f"{name} (via {via})" if via else name
+
+
+def align_lines(state: Path, show_all: bool) -> list[str]:
+    return [f"E{e['id']} [{e['kind']}] {e['status']} {e['scope']} {who(e['author'], e['via'])}"
+            f"{' -> ' + e['assignee'] if e['assignee'] else ''}: {e['statement']}"
+            for e in db.rows(db.connect(state / "hub.db").execute(
+                "select * from entries" + ("" if show_all else " where status in ('active','proposed')") + " order by id"))]
+
+
 def quiet(state: Path) -> bool:
     s = status(state)
     return not s["running"] and not s["queued"]
@@ -143,7 +154,7 @@ def log(state: Path, thread: str | None, as_json: bool) -> None:
     for _, kind, x in sorted(ev, key=lambda e: (e[0], e[1])):
         if kind == 0:
             mentions = json.loads(x["mentions"])
-            head = f"#{x['id']} {ts(x['created_at'])} {x['sender']} → {x['thread_id']} [{x['kind']}]" + \
+            head = f"#{x['id']} {ts(x['created_at'])} {who(x['sender'], x['via'])} → {x['thread_id']} [{x['kind']}]" + \
                    (f" @{','.join(mentions)}" if mentions else "") + f" (chain {x['chain_id']}, depth {x['depth']})"
             print(head)
             for line in x["body"].splitlines()[:12]:
@@ -281,10 +292,8 @@ def main(argv=None) -> None:
     elif a.cmd == "thread":
         print(json.dumps(call(state, "/v1/admin/thread", {"id": a.id, "owner": a.owner})))
     elif a.cmd == "align" and a.action == "list":
-        for e in db.rows(db.connect(state / "hub.db").execute(
-                "select * from entries" + ("" if a.all else " where status in ('active','proposed')") + " order by id")):
-            print(f"E{e['id']} [{e['kind']}] {e['status']} {e['scope']} {e['author']}"
-                  f"{' -> ' + e['assignee'] if e['assignee'] else ''}: {e['statement']}")
+        for line in align_lines(state, a.all):
+            print(line)
     elif a.cmd == "align":
         print(json.dumps(call(state, "/v1/admin/align", {"op": a.action, "id": a.id})))
     elif a.cmd == "log":
