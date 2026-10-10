@@ -24,6 +24,7 @@ class Engine:
         self.state, self.cfg, self.db, self.drivers, self.ws = state, cfg, dbf, drivers, workspace
         self.q: queue.Queue = queue.Queue()
         self.adapters = {}  # turn id -> adapter that runs it
+        self.shell_policy = "allowlist"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
         self._recover()
 
     # ---- events from other threads -------------------------------------------------
@@ -267,7 +268,7 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
-        auto = shell_auto_ok(req.get("action"), req.get("resources")) and "opencode" in self.drivers
+        auto = shell_auto_ok(req.get("action"), req.get("resources"), self.shell_policy) and "opencode" in self.drivers
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),

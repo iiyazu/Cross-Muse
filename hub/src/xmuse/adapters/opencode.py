@@ -5,6 +5,7 @@ lease: the hub posts with delivery "queue" and metadata.xmuse; anything enqueued
 metadata is a human, and admission waits for that execution to end.
 """
 import base64
+import fnmatch
 import json
 import re
 import secrets
@@ -34,6 +35,12 @@ READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "di
 GIT_LOCAL = {"status", "diff", "log", "show", "add", "commit", "rev-parse", "ls-files", "blame", "grep",
              "shortlog", "describe", "restore"}
 PIPE_FILTERS = {"head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "nl"}  # may follow `|`
+# Unattended experiments only (XMUSE_SHELL_POLICY=blocklist-experiment, set in the hub's environment by the runner,
+# never by config): the pre-T5 rule, approve unless the env-stripped command starts like one of these. Bypassable
+# (audit B2-2); kept so experiment runs need no human and stay comparable with the M2b runs.
+ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git clean*", "git branch -D*",
+             "git checkout -- *", "rm -r*", "rm -f*", "sudo *", "curl *", "wget *"]
+POLICIES = ("allowlist", "blocklist-experiment")
 _META = re.compile(r";|&&|\|\||&|`|\$\(|\$\{|<\(|>\(|<|\n|\\\n")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
 
@@ -120,12 +127,18 @@ def command_auto_ok(cmd: str) -> bool:
     return all(_argv_ok(argv, i == 0) for i, argv in enumerate(argvs))
 
 
-def shell_auto_ok(action: str | None, resources) -> bool:
-    """True when every shell command in a permission request passes the allowlist (env prefixes removed first:
-    `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs)."""
+def blocklist_ok(cmd: str) -> bool:
+    c = strip_env(cmd)
+    return safe_rm_f(c) or not any(fnmatch.fnmatchcase(c, p) for p in ASK_SHELL)
+
+
+def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> bool:
+    """True when every shell command in a permission request passes the policy's check (env prefixes removed
+    first: `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs)."""
     if action != "shell" or not isinstance(resources, list) or not resources:
         return False
-    return all(isinstance(r, str) and command_auto_ok(r) for r in resources)
+    ok = blocklist_ok if policy == "blocklist-experiment" else command_auto_ok
+    return all(isinstance(r, str) and ok(r) for r in resources)
 
 
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:

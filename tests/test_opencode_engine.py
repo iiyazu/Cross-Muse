@@ -209,6 +209,46 @@ def test_shell_allowlist_blocks_every_known_bypass():
     assert blocked == []
 
 
+def test_experiment_policy_is_the_old_blocklist_and_only_by_name():
+    from xmuse.adapters.opencode import shell_auto_ok
+    probe = ["cat > /tmp/p.py <<'PY'\nprint(1)\nPY", "python3 -c 'print(1)'"]
+    assert not shell_auto_ok("shell", probe)  # default: the human decides
+    assert shell_auto_ok("shell", probe, "blocklist-experiment")  # unattended experiments, as in M2b
+    assert not shell_auto_ok("shell", ["git push origin main"], "blocklist-experiment")
+    assert not shell_auto_ok("shell", probe, "anything-else")
+
+
+def test_hub_takes_the_policy_from_its_environment_only(make, monkeypatch):
+    import pytest
+    monkeypatch.setenv("XMUSE_SHELL_POLICY", "blocklist-experiment")
+    h = make(OC)
+    assert h.hub.engine.shell_policy == "blocklist-experiment"
+    assert json.loads((h.state / "hub.json").read_text())["shell_policy"] == "blocklist-experiment"
+    monkeypatch.setenv("XMUSE_SHELL_POLICY", "yolo")
+    from xmuse.server import Hub
+    with pytest.raises(SystemExit, match="XMUSE_SHELL_POLICY"):  # refused before any driver starts
+        Hub(h.state, oc_base=h.oc.base)
+
+
+def test_hub_start_passes_host_facts_and_policy(monkeypatch, tmp_path):
+    from xmuse import cli
+    seen = {}
+
+    class P:
+        pid = 1
+        def poll(self): return 0
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **kw: seen.update(kw) or P())
+    monkeypatch.setenv("XMUSE_SHELL_POLICY", "blocklist-experiment")
+    monkeypatch.setenv("SECRET_THING", "x")
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "hub.log").write_text("")
+    with __import__("pytest").raises(SystemExit):  # the fake process "exits" at once
+        cli.hub_start(tmp_path)
+    env = seen["env"]
+    assert env["WSL_DISTRO_NAME"] == "Ubuntu-Test" and env["XMUSE_SHELL_POLICY"] == "blocklist-experiment"
+    assert "SECRET_THING" not in env
+
+
 def test_opencode_asks_for_every_shell_command(tmp_path):
     from xmuse.adapters.opencode import write_config
     write_config(tmp_path, {"id": "oc"}, tmp_path / "state")

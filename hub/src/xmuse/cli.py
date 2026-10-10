@@ -48,7 +48,10 @@ def hub_start(state: Path) -> None:
             return
         (state / "hub.json").unlink()
     log = (state / "logs" / "hub.log").open("a")
-    p = subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state)}),
+    # host facts (host.py) and the experiment-only shell policy reach the hub; agents get clean_env() again from it
+    extra = {k: os.environ[k] for k in ("XMUSE_SHELL_POLICY", "XMUSE_WSL_DISTRO", "XMUSE_WIN_HOME", "WSL_DISTRO_NAME",
+                                        "WSL_INTEROP") if k in os.environ}
+    p = subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state), **extra}),
                          stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
     # model prechecks run first: dsh about 10 s, but a cold start may be retried once after the 180 s first-event
     # watchdog, so allow 600 s

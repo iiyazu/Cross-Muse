@@ -19,7 +19,7 @@ from pathlib import Path
 from . import align, config, db, mail, memoryos, peer, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
-from .adapters.opencode import OpenCodeDriver, Server
+from .adapters.opencode import POLICIES, OpenCodeDriver, Server
 from .engine import Engine
 from .tools import ToolError, validate
 
@@ -46,6 +46,12 @@ class Hub:
         self.stopping = threading.Event()
         self.admin = digest((state / "tokens" / "_admin").read_text().strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
+        policy = os.environ.get("XMUSE_SHELL_POLICY") or "allowlist"
+        if policy not in POLICIES:
+            raise SystemExit(f"XMUSE_SHELL_POLICY must be one of {', '.join(POLICIES)}, not {policy!r}")
+        self.engine.shell_policy = policy
+        if policy != "allowlist":
+            log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
         if self.db().execute("select 1 from agents where vendor='opencode'").fetchone():
             srv = Server(self.ws, state, base=oc_base)
@@ -409,7 +415,8 @@ class Hub:
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
-        (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid()}))
+        (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
+                                                         "shell_policy": self.engine.shell_policy}))
         self.engine.kick()
 
     def shutdown(self) -> None:

@@ -225,7 +225,10 @@ class Run:
         self.root = Path(os.environ.get("E2E_WS_ROOT") or f"/mnt/c/Users/{os.environ['USER']}/xmuse-exp")
         self.ws, self.res = self.root / f"ws-{self.name}", EXP / "results" / self.name
         self.state_root = EXP / f"state-{self.name}"
-        self.env = {**os.environ, "XMUSE_STATE_ROOT": str(self.state_root)}
+        # unattended: no human answers approvals, so the hub uses the pre-T5 blocklist (as in the M2b runs) unless
+        # the scenario says otherwise (SHELL_POLICY=allowlist parks every non-allowlisted command until timeout)
+        self.env = {**os.environ, "XMUSE_STATE_ROOT": str(self.state_root),
+                    "XMUSE_SHELL_POLICY": sc.get("SHELL_POLICY", "blocklist-experiment")}
         self.db = None
         self.mo_proc, self.mo_log, self.mo_url, self.mo_caps = None, None, "", []
 
@@ -467,7 +470,7 @@ class Run:
             (out / "summary.json").write_text(r.stdout)
         meta = {"run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
                 "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
-                "rot": rot, "provenance": provenance(self.agents)}
+                "rot": rot, "provenance": {**provenance(self.agents), "shell_policy": self.env["XMUSE_SHELL_POLICY"]}}
         if self.mo_enabled():
             meta["memoryos"] = {"enabled": True, "url": self.mo_url, "capabilities": self.mo_caps, **mo_stats}
         (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
