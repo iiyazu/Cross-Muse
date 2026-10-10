@@ -11,6 +11,7 @@ from . import db
 from .tools import ToolError
 
 LIMIT = 300
+MIN_STATEMENT = 12  # shortest first-sentence prefix worth keeping when a long statement is cut
 
 
 def _move(conn, eid: int, op: str, status: str) -> None:
@@ -33,7 +34,12 @@ def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, 
         resolves: list | None = None, via: str | None = None) -> int:
     """A proposed entry only records `supersedes` / `resolves`; `review(confirm)` applies them."""
     if len(statement) > LIMIT:  # keep the first sentence; the full text stays in the referenced message
-        first = re.split(r"(?<=[.!?。！？])\s", statement, maxsplit=1)[0]
+        # sentences until there is real content: a leading "1." or "Task." must not be the whole statement
+        first = ""
+        for sent in re.split(r"(?<=[.!?。！？])\s+", statement.strip()):
+            first = (first + " " + sent).strip()
+            if len(first) >= MIN_STATEMENT:
+                break
         statement = first[:LIMIT - 1] + "…" if len(first) > LIMIT else first + " …"
     eid = conn.execute(
         "insert into entries(kind, scope, thread_id, statement, refs, author, status, supersedes, assignee, depends_on,"

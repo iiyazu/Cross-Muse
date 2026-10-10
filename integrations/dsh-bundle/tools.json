@@ -72,7 +72,7 @@
      "enum": [
       "human"
      ],
-     "description": "Coordinator (desktop) sessions only. Use only when the user explicitly stated this in the conversation (e.g. 'decide X', 'tell them Y'); never for your own judgement."
+     "description": "Coordinator (desktop) sessions only. Use only when the user explicitly asked for this message to go out in their name; quote their words. Default is to send as yourself."
     },
     "why": {
      "type": "object",

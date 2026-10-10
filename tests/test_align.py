@@ -259,3 +259,13 @@ def test_superseding_a_question_unblocks_its_dependents(make):
     assert view(h, "claude-2")["ready"] == []
     decl(h, "claude-1", "ids are Decimal strings", supersedes="E1")
     assert entry(h, "E1")["status"] == "superseded" and view(h, "claude-2")["ready"] == ["E2"]
+
+
+def test_long_statement_with_a_tiny_first_sentence_keeps_real_content(make):
+    h = make([("a", "claude"), ("b", "claude")])
+    c = h.conn()
+    for body in ("... " + "follow the plan and report. " * 20, "1. " + "do the thing properly. " * 20,
+                 "Task. " + "x" * 400):
+        eid = align.add(c, "decision", "global", "#g", body, 1, "a")
+        st = c.execute("select statement from entries where id=?", (eid,)).fetchone()[0]
+        assert len(st) >= 20 and st.replace(".", "").replace("…", "").strip() != "", st

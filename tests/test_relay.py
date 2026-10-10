@@ -145,7 +145,9 @@ def test_coordinator_rule_text():
     from xmuse import config
     for f in (config.TEMPLATES / "AGENTS.xmuse.md", config.TEMPLATES.parent / "skill" / "xmuse-collab" / "SKILL.md"):
         t = " ".join(f.read_text().split())
-        assert 'directly asks for something to be done by a peer, relay it with `xmuse_send(on_behalf_of="human")`' in t
+        assert "Send as yourself by default" in t and "explicitly asks for the message to go out in their name" in t
+        assert "offer to resend in their name" in t and "Replies addressed to the user arrive in your inbox" in t
+        assert "directly asks for something to be done by a peer" not in t
         assert "mention only the implementer; the implementer requests the review" in t
         assert "restart it immediately without being asked" in t and "read the inbox once" in t
 

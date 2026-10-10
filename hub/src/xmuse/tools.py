@@ -32,8 +32,8 @@ TOOLS = [
          "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "entry ids (handoff only)"},
          "on_behalf_of": {"type": "string", "enum": ["human"], "description": "Coordinator (desktop) sessions only. "
-                          "Use only when the user explicitly stated this in the conversation (e.g. 'decide X', 'tell "
-                          "them Y'); never for your own judgement."},
+                          "Use only when the user explicitly asked for this message to go out in their name; "
+                          "quote their words. Default is to send as yourself."},
          "why": {"type": "object", "additionalProperties": False,
                  "description": "Why-First handoff; required when kind=handoff",
                  "properties": {k: {"type": "string"} for k in WHY_FIELDS}},

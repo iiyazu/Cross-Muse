@@ -78,3 +78,41 @@ def test_old_database_without_via_columns_still_opens(tmp_path):
     c = db.init(p)  # migration adds the columns back
     assert "via" in {r[1] for r in c.execute("pragma table_info(messages)")}
     assert "via" in {r[1] for r in c.execute("pragma table_info(entries)")}
+
+
+# ---- replies to the user also reach the desktop coordinator --------------------------------------
+
+def test_replies_to_human_also_reach_the_coordinator(make):
+    h = make(TWO)
+    out = h.tool("oc", "xmuse_send", to="human", body="result is ready")
+    assert out["result"]["woken"] == []
+    [d] = h.q("select recipient, wake, state, read_at from deliveries")
+    assert (d["recipient"], d["wake"], d["state"], d["read_at"]) == ("dog", 0, "passive", None)
+    [m] = h.tool("dog", "xmuse_inbox")["result"]
+    assert m["body"] == "result is ready" and m["from"] == "oc"
+    # the coordinator may read a thread it is not a member of because the user is in it
+    assert h.tool("dog", "xmuse_thread", id=m["thread"])["result"]["messages"][0]["body"] == "result is ready"
+    # done messages too
+    h.tool("oc", "xmuse_done", summary="finished", next="nothing")
+    assert [x["kind"] for x in h.tool("dog", "xmuse_inbox")["result"]] == ["done"]
+
+
+def test_coordinator_delivery_not_duplicated_and_never_to_itself(make):
+    h = make(TWO)
+    h.oc.plan = [{"result": "done"}]
+    h.tool("oc", "xmuse_send", to="#g", body="to all", mentions=["dog"])  # dog is a member already
+    assert len(h.q("select * from deliveries where recipient='dog'")) == 1
+    mid = h.tool("dog", "xmuse_send", to="human", body="hello user")["result"]["id"]
+    assert h.q("select * from deliveries where recipient='dog' and message_id=?", mid) == []
+    # a message from the user gets no extra coordinator copy
+    h.send("oc", "do it")
+    assert len(h.q("select * from deliveries where recipient='dog'")) == 1
+    h.wait(lambda: h.turns(), what="peer woken")
+
+
+def test_coordinator_cannot_read_threads_without_the_user(make):
+    h = make(TWO + [("oc2", "opencode")])
+    h.tool("oc", "xmuse_send", to="oc2", body="private")
+    out = h.tool("dog", "xmuse_thread", id="dm:oc+oc2")
+    assert "error" in out, out
+    h.wait_quiet()

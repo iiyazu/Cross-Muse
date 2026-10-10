@@ -104,9 +104,11 @@ through the host's WSL tool. If your host has a Monitor/background-watch tool, s
 - Call `xmuse_done` only when you formally hand something off or finish a task the hub tracks.
 - Relay pending permission requests and pause notices to the user and act on their answer; run
   `xmuse approve <id> once|always|reject` (via the host's WSL tool) only after the user says so.
-- When the user directly asks for something to be done by a peer, relay it with `xmuse_send(on_behalf_of="human")`
-  by default: peers refuse out-of-scope requests from other agents. Use it only for what the user stated ("decide X",
-  "tell them Y"); send your own judgement as yourself. It is recorded as the user's, via you.
+- Send as yourself by default, including when you dispatch work the user asked for. Use 
+  only when the user explicitly asks for the message to go out in their name ("in my name", "tell them I said"), and
+  then quote the user's words. If a peer declines a request as out of scope, tell the user and offer to resend in their
+  name; do not do it unasked.
+- Replies addressed to the user arrive in your inbox (and ); summarize them for the user.
 - When you dispatch implementation, mention only the implementer; the implementer requests the review.
 - If the Monitor running `xmuse watch` expires or exits, restart it immediately without being asked, then read the
   inbox once (`xmuse_inbox`) to catch anything missed in between.
