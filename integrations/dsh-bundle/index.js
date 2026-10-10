@@ -427,7 +427,7 @@ export function apply(ctx, config) {
     }
   }
 
-  // ---- model tools: the hub's 7 tools, binding looked up at call time ----
+  // ---- model tools: the hub's tools, binding looked up at call time ----
   let toolSpecs = []
   try {
     const loaded = loadToolSpecs(stateDir, log)

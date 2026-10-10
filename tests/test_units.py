@@ -185,7 +185,8 @@ def test_sweep_interrupts_turns_past_the_timeout(make):
     h.wait(lambda: h.q("select 1 from turns where state='running'"), what="running")
     time.sleep(1.2)
     h.hub.engine.call(h.hub.engine.sweep)
-    h.wait(lambda: h.q("select state from turns")[0]["state"] == "interrupted", what="interrupted")
+    # SIGINT, then SIGTERM after 5 s if the fake has not exited: under a loaded full run that can pass 10 s
+    h.wait(lambda: h.q("select state from turns")[0]["state"] == "interrupted", timeout=20, what="interrupted")
 
 
 def test_engine_call_propagates_errors(make):

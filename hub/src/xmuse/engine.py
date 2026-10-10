@@ -283,8 +283,9 @@ class Engine:
             except Exception:
                 log.exception("auto-approve failed; asking the human")
         mail.notice(conn, mail.dm_id(agent_id or "unknown", HUMAN),
-                    f"{agent_id} asks permission: {req.get('action')} {req.get('resources')} — "
-                    f"`xmuse approve {req['id']} once|always|reject`")
+                    f"{agent_id} asks permission: {req.get('action')} {req.get('resources')} — the user decides: "
+                    f"`xmuse approve {req['id']} once|always|reject` in their own terminal, or the desktop "
+                    f"coordinator asks the user and relays the answer with xmuse_approve")
 
     # ---- cancel, sweep, recovery ---------------------------------------------------
     def stop(self, agent: str | None = None, thread: str | None = None) -> dict:

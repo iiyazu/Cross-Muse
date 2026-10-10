@@ -21,6 +21,7 @@ FAKE_DSH = Path(__file__).parent / "fakes" / "fake_dsh.py"
 
 class Harness:
     def __init__(self, tmp: Path, agents, cfg: dict):
+        human_check = cfg.pop("_human_check", False)
         self.tmp, self.home = tmp, Path(os.environ["HOME"])
         self.ws = tmp / "ws"
         self.ws.mkdir()
@@ -39,7 +40,9 @@ class Harness:
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
         (self.home / "fake-dsh").mkdir(parents=True, exist_ok=True)
         self.oc = FakeOpenCode(self.state) if any(v == "opencode" for _, v, *_ in agents) else None
-        self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base)
+        # the human-only admin check (peer.py) is exercised in test_trust.py; elsewhere tests drive admin calls
+        self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base,
+                       human_check=human_check)
         self.hub.start()
         if self.oc:
             assert self.hub.engine.drivers["opencode"].headless.ready.wait(5)

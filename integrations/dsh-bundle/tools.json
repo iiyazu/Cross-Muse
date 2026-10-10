@@ -227,5 +227,35 @@
     }
    }
   }
+ },
+ {
+  "name": "xmuse_approve",
+  "description": "Coordinator (desktop) sessions only: relay the user's decision on a held command (the hub's 'asks permission' notice). Only after the user said so in this conversation; quote their words in user_said.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id",
+    "decision",
+    "user_said"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "approval id from the notice, e.g. per_9"
+    },
+    "decision": {
+     "type": "string",
+     "enum": [
+      "once",
+      "always",
+      "reject"
+     ]
+    },
+    "user_said": {
+     "type": "string",
+     "description": "the user's own words, verbatim"
+    }
+   }
+  }
  }
 ]

@@ -168,7 +168,7 @@ def test_validation_messages(name, args, msg):
 
 
 def test_tool_count_and_short_descriptions():
-    assert len(tools.TOOLS) == 7
+    assert len(tools.TOOLS) == 8  # design §4.3: at most 8 (xmuse_approve is the coordinator's)
     assert all(len(t["description"]) <= 200 for t in tools.TOOLS)
 
 

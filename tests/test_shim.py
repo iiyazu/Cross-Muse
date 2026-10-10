@@ -9,6 +9,7 @@ import urllib.request
 import pytest
 
 from xmuse.config import SHIM
+from xmuse.tools import TOOLS
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None or not (SHIM.parent / "node_modules").exists(),
                                 reason="node or shim/node_modules missing")
@@ -55,7 +56,7 @@ def test_tools_are_listed_and_forwarded(make):
         info = m.init()
         assert "claude/channel" not in info["capabilities"].get("experimental", {})
         tools = m.req("tools/list")["result"]["tools"]
-        assert [t["name"] for t in tools][:2] == ["xmuse_whoami", "xmuse_send"] and len(tools) == 7
+        assert [t["name"] for t in tools][:2] == ["xmuse_whoami", "xmuse_send"] and len(tools) == len(TOOLS)
         r = m.req("tools/call", {"name": "xmuse_whoami", "arguments": {}})["result"]
         assert json.loads(r["content"][0]["text"])["id"] == "claude-1" and not r["isError"]
         r = m.req("tools/call", {"name": "xmuse_send", "arguments": {"to": "nobody", "body": "x"}})["result"]
