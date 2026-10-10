@@ -176,3 +176,20 @@ FAILED tests/test_claude_engine.py::test_stop_interrupts_running_turn_and_cancel
 - dsh 插件包会把 `xmuse_approve` 也注册给 dsh 会话（dsh 调用会被 hub 拒绝），多占一点工具描述的 token。也可以在插件包里过滤掉，没做。
 - 白名单在真实 opencode 上的效果没有跑过：现在所有 shell 都会先 ask，再由 hub 回复。这会给每条命令多一次往返，并且依赖 OpenCode v2 规则 `{"action":"shell","resource":"*","effect":"ask"}` 的语义，这一点只按 schema 和现有用法推断，**需要在 r7 上用一次真实运行确认**。
 - 写着"人在终端"的检查依赖 Linux /proc。在 WSL2 上，协调者（Windows 侧）以用户身份做管理操作只能走 `xmuse_approve`，CLI 的 `xmuse approve` 要在 WSL 终端里执行。
+
+## T7 移动清单（先列清单，T6 的 run 跑完后再动手）
+
+原则：用 `git mv`，**不删除任何文件**，git 历史保留；根目录只留现在还在用的代码和数据。
+
+| 现在的位置 | 移到 | 文件数 | 说明 |
+|---|---|---|---|
+| `spikes/`（整个目录：`runs/` 275、`dsh/` 13、`ws-template/` 10、`notes/` 7、各种探针脚本和日志） | `archive/spikes/` | 331 | M0/M1 的探针和录制。代码里只有 `adapters/claude.py` 的两处注释提到它（"ported from spikes/…"），会改成新路径 |
+| `e2e/` 除 `check.py` 外的全部（`results/` 230、`seeds/` 15、`scenarios/` 7、`hidden/` 3、`run.sh`、`batch.sh`、`aggregate.py` 等脚本） | `archive/e2e/` | 264 | M1 的端到端记录和脚本，已被 `experiments/` 取代 |
+| `e2e/check.py` | `experiments/check.py` | 1 | **还在用**：`experiments/run.py` 每个 run 都调用它算 summary.json。移动后同步改 run.py 的路径 |
+
+不动的：
+- `experiments/results/`：实验报告引用的数据；
+- `docs/design/`、`tests/fixtures/`（测试在用）；
+- `.gitignore` 里的 `e2e/state-*/`：只是忽略规则，改成 `archive/e2e/state-*/`。
+
+动手后的验收：全量测试通过；`experiments/test_experiments_run.py` 通过；`grep -rn "spikes/\|e2e/"` 在代码里没有失效引用；`archive/README.md` 说明这些是什么、为什么保留。
