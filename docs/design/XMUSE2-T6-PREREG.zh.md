@@ -65,6 +65,18 @@
 - 不用 Claude 当任何角色（用户 10-11 要求）。审计 C3 建议"能用 Claude 的话至少当一个角色"，这一条这次不执行。
 - 不做 E3（≥3 个 agent 的点名对群聊）和 E4（rot 不点名全员）。
 
+## 结果（按臂追加；分析口径不变）
+
+| 臂 | 状态 | 结果 |
+|---|---|---|
+| E1 S | base 已跑，9 个 run（`results/metrics-t6-e1-S/`） | 完成 9/9（Wilson 95% CI 0.70–1.00），每个 run 平均 833,515 token、2 个回合 |
+| E1 B2 | 待 r7 | — |
+| E2a B2 / C2 | 待 r7 | — |
+| E5 SELF | base 已跑，6 个 run（`results/metrics-t6-e5-self/`） | 检出 6/6（Wilson 95% CI 0.61–1.00），误报 1 条 |
+| E5 CROSS | 待 r7 | — |
+
+主比较（S 对 B2、B2 对 C2、SELF 对 CROSS）都要等对照臂跑完才能算。
+
 ## 偏离记录
 
 1. **10-11 03:22 开跑约 8 分钟后全部中止，2 个 run 作废**：`ledger-S-1`、`review-ledger-bug1-self-1`。

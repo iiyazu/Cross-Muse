@@ -193,3 +193,50 @@ FAILED tests/test_claude_engine.py::test_stop_interrupts_running_turn_and_cancel
 - `.gitignore` 里的 `e2e/state-*/`：只是忽略规则，改成 `archive/e2e/state-*/`。
 
 动手后的验收：全量测试通过；`experiments/test_experiments_run.py` 通过；`grep -rn "spikes/\|e2e/"` 在代码里没有失效引用；`archive/README.md` 说明这些是什么、为什么保留。
+
+## T6 补实验（2026-10-11）
+
+**提交**
+- `917e9e2`：预注册 `docs/design/XMUSE2-T6-PREREG.zh.md`，加上 runner 支持（S 组、SPEC 覆盖文件、provenance）。**在任何 T6 run 之前提交并推送。**
+- `93d213b`：开跑后发现的问题和修复（偏离记录 1），见下文。
+- `c190c39`：base 侧的结果数据。
+
+**准备了什么**
+- `experiments/overlays/spec-v2/`：把 minisql 的"未闭合字符串报开引号位置"和 ledger 的"金额只接受 ASCII 数字"写进 SPEC，这正是 M2b 里两个"猜题"失败项。隐藏测试不变。
+- 场景：`<seed>-S`（E1 单 agent）、`<seed>-B2` / `<seed>-C2`（E1 对照臂、E2a）、`review-<seed>-bug<n>-self`（E5 SELF）。
+- 计划：`plans/t6-e1-S.txt`、`t6-e1-B2.txt`、`t6-e2a.txt`、`t6-e5-self.txt`、`t6-e5-cross.txt`。
+- 每个 run 的 `meta.json` 现在都带 `provenance`：hub 提交号、有没有未提交改动、每个 agent 的模型、OpenCode 版本、审批策略。
+
+**开跑后的偏离（已写进预注册）**
+- 第一次开跑约 8 分钟后，两个 run 卡住了：T5 的白名单把 agent 写探针脚本用的 heredoc 和 `python3 -c` 转给人审批，而实验没人值守。我中止了两条线（只按 PID 结束实验进程，没动用户自己的 OpenCode 服务），两个 run 作废（移到 `results/_prev/`，没提交）。
+- 修复：新增只供实验用的 `XMUSE_SHELL_POLICY=blocklist-experiment`，由 runner 经环境变量交给 hub，不经过配置文件，语义就是 M2b 时期的黑名单，并记进每个 run。默认仍是白名单。
+- 顺带修了一个 **T3 回归**：`xmuse hub start` 用 `clean_env` 启动 hub 时会丢掉 `WSL_DISTRO_NAME`。T3 之前有 `Ubuntu-24.04` 默认值掩盖了这个问题，T3 之后 hub 内部的 `host.distro()` 会报错。现在会透传 WSL 变量。有测试。
+
+**base 侧跑完的结果**（OpenCode `opencode-go/muse-spark-1.3-contributor`、OpenCode v2.0.21、hub `59407f8`、策略 blocklist-experiment）
+
+| 臂 | run | 结果 | 每个 run 的 token | 回合 |
+|---|---|---|---|---|
+| E1 S（单 agent 实现加自审，spec-v2） | 9 | **完成 9/9**（Wilson 95% CI 0.70–1.00）；rot 9/9 followed；未受 rot 影响的隐藏测试全过 | 均值 833,515（范围 646,645–1,048,376） | 每个 run 2 回合（第 1 回合实现加自审，第 2 回合处理 rot） |
+| E5 SELF（OpenCode 复核预埋 bug） | 6 | **检出 6/6**（Wilson 95% CI 0.61–1.00），误报 1 条 | 均值 252,688 | 1 |
+
+**能说什么、不能说什么**
+- **E1 还没有对照**：预注册的比较对象是 B2（OpenCode 实现、dsh 复核，同样用 spec-v2），需要 dsh，只能在 r7 跑，**还没跑**。在那之前，S 的 9/9 只能单独看。
+  - 和 M2b 的 A/B/C 比没有意义：SPEC 版本不同（M2b 的失败几乎全是那两个歧义项），dsh 的模型也不同。
+  - 但可以先记下一个值得 B2 回答的现象：去掉歧义后，一个 agent 两个回合、约 83 万 token 就全部完成；M2b 里多 agent 组每个 run 约 300 万 token、8–10 个回合。
+- **E5 看起来有天花板**：SELF 6/6，M2b 里 dsh 复核也是 6/6（那 6 个 run 只作参照、不计入）。如果 r7 的 CROSS 臂也是 6/6，这个任务就区分不出"换一家复核"的价值，需要更难的预埋 bug（多个 bug、跨模块的 bug、不给 SPEC），这要另做设计。
+
+**留给 r7 的（需要 dsh，base 跑不了）**
+```bash
+experiments/batch.sh experiments/plans/t6-e1-B2.txt      # 9 run，E1 对照臂
+experiments/batch.sh experiments/plans/t6-e2a.txt        # 12 run，minisql B2 对 C2 各 6
+experiments/batch.sh experiments/plans/t6-e5-cross.txt   # 6 run，dsh 复核
+```
+- r7 的 `E2E_WS_ROOT` 用默认值（`/mnt/c/...`，dsh 需要 C 盘路径）。
+- dsh 用什么模型由 r7 定，会自动记进 provenance。runner 默认就是实验策略，不用另外设置。
+- **E2b**（"只有一方知道"的约定）只写了设计，没有准备种子。
+
+**测试结果原文**（T6 改动后的全量）
+```
+313 passed, 1 skipped in 143.69s (0:02:23)
+```
+插件包：`ℹ pass 27`、`ℹ fail 0`
