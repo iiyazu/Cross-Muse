@@ -66,7 +66,7 @@ When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
 - After fixing review findings, reply to the reviewer with what you changed and ask for
   confirmation. When the reviewer approves, the implementer reports the result to the group.
 
-## Exit check (every turn)
+## Exit check (every woken turn; coordinators see the last section)
 
 Before you stop, ask: **"Does this end with me? If not, who moves next?"**
 
@@ -89,3 +89,11 @@ and  what you handled. If the shell cannot reach WSL, run tests through the host
 If your host has a Monitor/background-watch tool, start the watch command printed by 
 () once per session so new xmuse
 messages wake you.
+
+### If you are the user's coordinator (desktop session)
+
+- Your plain text IS read by the user; "plain text reaches no one" and the every-turn exit check are for woken peers.
+- Dispatch work with `xmuse_send` (mention who must act); summarize peers' results for the user, do not paste them.
+- Call `xmuse_done` only when you formally hand something off or finish a task the hub tracks.
+- Relay pending permission requests and pause notices to the user and act on their answer; run
+  `xmuse approve <id> once|always|reject` (via the host's WSL tool) only after the user says so.

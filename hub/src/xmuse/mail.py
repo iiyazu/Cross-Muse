@@ -151,8 +151,12 @@ def notice(conn, thread_id: str, body: str, chain_id: int | None = None) -> None
         if chain_id is None:
             chain_id = conn.execute("insert into chains(thread_id, origin, state, max_wakes, max_tokens, created_at)"
                                     " values(?,?,?,?,?,?)", (thread_id, "hub", "stopped", 0, 0, db.now())).lastrowid
-        conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, created_at) values(?,?,?,?,?,?)",
-                     (thread_id, HUB, "notice", body, chain_id, db.now()))
+        mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, created_at)"
+                           " values(?,?,?,?,?,?)", (thread_id, HUB, "notice", body, chain_id, db.now())).lastrowid
+        for a in db.rows(conn.execute("select id, settings from agents order by id")):
+            if db.settings(a).get("desktop"):  # the coordinator relays approvals/pauses to the user; never woken
+                conn.execute("insert or ignore into deliveries(message_id, recipient, wake, state, updated_at)"
+                             " values(?,?,0,'passive',?)", (mid, a["id"], db.now()))
 
 
 def inbox(conn, agent_id: str, unread_only: bool = True) -> list[dict]:

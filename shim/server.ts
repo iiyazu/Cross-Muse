@@ -1,6 +1,7 @@
 // xmuse MCP stdio shim: forwards the 7 xmuse tools to the local hub; nothing else.
 //
-// env: XMUSE_STATE (hub state dir), XMUSE_AGENT (this agent's id), XMUSE_CHANNEL=1 (Claude only).
+// env: XMUSE_STATE (hub state dir), XMUSE_AGENT (this agent's id), XMUSE_CHANNEL=1 (Claude only),
+// XMUSE_DESKTOP=1 (Claude desktop app coordinator: different instructions text).
 // - Tool schemas come from <state>/tools.json (written by `xmuse init` from the hub's Python schemas).
 // - Hub address is re-read from <state>/hub.json on every call, so a hub restart is transparent.
 // - In an interactive Claude Code session (CLAUDE_CODE_ENTRYPOINT=cli) with XMUSE_CHANNEL=1 it
@@ -19,6 +20,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 const STATE = process.env.XMUSE_STATE ?? ''
 const AGENT = process.env.XMUSE_AGENT ?? ''
+const DESKTOP = process.env.XMUSE_DESKTOP === '1'
 const CHANNEL = process.env.XMUSE_CHANNEL === '1' && process.env.CLAUDE_CODE_ENTRYPOINT === 'cli'
 const SESSION = process.env.CLAUDE_CODE_SESSION_ID ?? null
 const TOKEN = readFileSync(join(STATE, 'tokens', AGENT), 'utf8').trim()
@@ -51,7 +53,12 @@ const mcp = new Server(
     instructions:
       'xmuse relays messages between you and peer agents the user assigned to this workspace. ' +
       (CHANNEL ? 'Relayed messages arrive as <channel source="xmuse">. ' : '') +
-      'Reply with xmuse_send; end each turn with xmuse_done. See skill xmuse-collab.',
+      (DESKTOP
+        ? "You are the user's coordinator in the Claude desktop app: your plain text is read by the user. " +
+          'Start each turn with xmuse_inbox (nothing is pushed; ack what you handled), dispatch work to peers with ' +
+          'xmuse_send, summarize their results for the user, relay permission requests to the user, and call ' +
+          'xmuse_done only on a formal handoff or when a tracked task finishes. See skill xmuse-collab.'
+        : 'Reply with xmuse_send; end each turn with xmuse_done. See skill xmuse-collab.'),
   },
 )
 

@@ -7,6 +7,7 @@ pairing: one workspace, one user, no remote hosts, so no pairing codes, scopes o
 import hashlib
 import hmac
 import json
+import logging
 import os
 import signal
 import threading
@@ -19,6 +20,9 @@ from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
 from .engine import Engine
 from .tools import ToolError, validate
+
+
+log = logging.getLogger("xmuse.hub")
 
 
 def digest(token: str) -> str:
@@ -102,8 +106,23 @@ class Hub:
         if self.engine.drivers[a["vendor"]].on_hook(a, body["event"], body):
             self.engine.kick()
         if body.get("desktop"):  # the hook prints a reminder from these counts (stdout reaches the model)
-            return {"ok": True, **mail.pending(self.db(), agent)}
+            out = {"ok": True, **mail.pending(self.db(), agent)}
+            if body["event"] == "UserPromptSubmit":
+                out["context"] = self._desktop_context(a)
+            return out
         return {"ok": True}
+
+    def _desktop_context(self, agent: dict) -> str:
+        """Alignment snapshot/delta plus unread list for a desktop coordinator's prompt; advances the session
+        watermark (a turn-less wake). Nothing is marked read."""
+        conn = self.db()
+        s = db.row(conn.execute("select id from sessions where agent_id=? and state='current'", (agent["id"],)))
+        inj = wakepack.inject(conn, self.cfg, agent, s and s["id"])
+        if s:
+            with db.tx(conn):
+                conn.execute("insert or replace into seen values(?,?)", (s["id"], inj.seq))
+        log.info("desktop-inject %s mode=%s tokens=%d", agent["id"], inj.mode, inj.tokens)
+        return inj.text
 
     def register(self, agent: str, body: dict):
         a = db.row(self.db().execute("select * from agents where id=?", (agent,)))

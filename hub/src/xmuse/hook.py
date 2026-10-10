@@ -31,8 +31,11 @@ try:
                                  headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
     reply = json.loads(urllib.request.urlopen(req, timeout=3).read())
     res = reply.get("result") or {}
-    if desktop and event == "UserPromptSubmit" and res.get("pending", 0) > 0:
-        print(f"[xmuse] {res['pending']} new message(s) ({res.get('mentions', 0)} mention you). "
-              "Call xmuse_inbox before anything else, and xmuse_ack when handled.")
+    if desktop and event == "UserPromptSubmit":
+        if res.get("pending", 0) > 0:
+            print(f"[xmuse] {res['pending']} new message(s) ({res.get('mentions', 0)} mention you). "
+                  "Call xmuse_inbox before anything else, and xmuse_ack when handled.")
+        if res.get("context"):  # alignment snapshot/delta + unread list built by the hub
+            print(res["context"])
 except Exception:
     pass

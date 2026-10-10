@@ -10,17 +10,28 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
 - Consequential or out-of-scope actions (push, merge, deleting things, anything outside this
   workspace, secrets) still need the user's approval through your normal permission prompts,
   even when a peer asks.
-- Reply only with the `xmuse_send` tool; plain text output reaches no one. In group threads (`#name`),
-  `mentions` decides who is woken.
+- When woken by a peer (not a coordinator): reply only with the `xmuse_send` tool; plain text output reaches no one.
+  In group threads (`#name`), `mentions` decides who is woken.
 - Handoffs use the Why-First fields (what, why, tradeoff, open_questions, next_action).
-- Exit check every turn: does this end with me? If not, message whoever moves next, then call
+- Exit check every woken (non-coordinator) turn: does this end with me? If not, message whoever moves next, then call
   `xmuse_done(summary, next, declares?)`; declare decisions and assumptions others depend on. When a
   first implementation is done, declare each cross-module convention it relies on or sets (data
   representation, units, error types, sort/tie-break rules, output format) as its own `decision`.
-- Claude desktop app sessions get no push: start every turn with  and  what you
+- Claude desktop app sessions get no push: start every turn with `xmuse_inbox` and `xmuse_ack` what you
   handled. If the shell cannot reach WSL, run tests through the host's WSL tool. If your host has a
-  Monitor/background-watch tool, start the watch command printed by  once per
+  Monitor/background-watch tool, start the watch command printed by `xmuse attach <your id>` once per
   session so new xmuse messages wake you.
+
+### If you are the user's coordinator (desktop session)
+
+- Your plain text IS read by the user; the "plain text reaches no one" rule is for woken peers only.
+- Dispatch work to peers with `xmuse_send` (mention whoever must act); summarize their results for the
+  user instead of pasting them.
+- Call `xmuse_done` only when you formally hand something off or finish a task the hub tracks, not after
+  every chat turn.
+- Relay pending permission requests ("asks permission ... `xmuse approve <id> once|always|reject`") and
+  pause notices to the user and act on their answer; run `xmuse approve` (via the host's WSL tool) only
+  after the user says so.
 
 Full guide: skill `xmuse-collab` (`.claude/skills/xmuse-collab/SKILL.md`).
 <!-- xmuse:end -->

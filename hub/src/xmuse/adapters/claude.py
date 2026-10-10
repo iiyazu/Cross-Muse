@@ -144,7 +144,7 @@ def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:
         print(f"one interactive Claude identity per workspace; {aid} (desktop) replaces {old}")
     pre = f"{wsl} env XMUSE_STATE={state}"
     mcp = {"mcpServers": {"xmuse": {"command": "wsl.exe", "args": [
-        "-d", _distro(), "--", "env", f"XMUSE_STATE={state}", f"XMUSE_AGENT={aid}", "node", str(SHIM)]}}}
+        "-d", _distro(), "--", "env", f"XMUSE_STATE={state}", f"XMUSE_AGENT={aid}", "XMUSE_DESKTOP=1", "node", str(SHIM)]}}}
     (ws / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n")
     hook = f"{pre} XMUSE_AGENT={aid} XMUSE_DESKTOP=1 python3 {Path(__file__).parents[1] / 'hook.py'}"
     hooks = {ev: [{"hooks": [{"type": "command", "command": f"{hook} {ev}", "timeout": 10}]}]
@@ -329,12 +329,19 @@ class ClaudeDriver:
         """Claude desktop app: its pid is a Windows pid (never probe /proc), no TUI lease, no push, no headless
         resume. SessionStart makes the session current; SessionEnd only marks it offline."""
         sid = p.get("session_id")
-        if sid and event in ("SessionStart", "SessionEnd"):
+        cur = db.row(self.db().execute("select vendor_session from sessions where agent_id=? and state='current'",
+                                       (agent["id"],)))
+        if sid and event in ("SessionStart", "SessionEnd", "UserPromptSubmit"):
             with db.tx(self.db()):
-                if event == "SessionStart":
-                    self._adopt(agent["id"], sid, "desktop")
+                if event == "SessionStart" or (event == "UserPromptSubmit" and (cur or {}).get("vendor_session") != sid):
+                    self._adopt(agent["id"], sid, "desktop")  # a missed SessionStart is repaired by the first prompt
                     self.db().execute("update sessions set online=1 where agent_id=? and vendor_session=?",
                                       (agent["id"], sid))
+                    if event == "SessionStart" and p.get("source") == "compact":  # next prompt re-tells the alignment
+                        self.db().execute("delete from seen where session_id in (select id from sessions where"
+                                          " agent_id=? and vendor_session=?)", (agent["id"], sid))
+                elif event == "UserPromptSubmit":
+                    pass
                 else:
                     self.db().execute("update sessions set online=0 where agent_id=? and vendor_session=?",
                                       (agent["id"], sid))

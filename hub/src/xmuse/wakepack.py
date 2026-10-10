@@ -46,6 +46,30 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                            view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
 
 
+def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamespace:
+    """What a desktop coordinator reads on each user prompt: the alignment (snapshot when the session has no
+    watermark, else the delta) plus a compact list of its unread messages, no relay preamble. Marks nothing read;
+    the caller advances the watermark to `seq`."""
+    msgs = db.rows(conn.execute(
+        "select m.* from deliveries d join messages m on m.id=d.message_id where d.recipient=? and d.acked_at is null"
+        " and d.read_at is null and d.state != 'canceled' order by m.id", (agent["id"],)))
+    seen = align.watermark(conn, session_id) if session_id is not None else None
+    x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=msgs, seen=seen, mode="none", tokens=0)
+    parts = [alignment(x)]
+    if msgs:
+        lines, used = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0
+        for i, m in enumerate(msgs):
+            line = f"- #{m['id']} {m['sender']} {m['thread_id']} [{m['kind']}]: {_short(m['body'], 160)}"
+            used += tokens(line) + 1
+            if used > cfg["align_delta_tokens"]:
+                lines.append(f"... {len(msgs) - i} more, call xmuse_inbox")
+                break
+            lines.append(line)
+        parts.append("\n".join(lines))
+    return SimpleNamespace(text="\n\n".join(p for p in parts if p), mode=x.mode, tokens=x.tokens,
+                           seq=align.current_seq(conn))
+
+
 def relay(x) -> str:
     return RELAY
 

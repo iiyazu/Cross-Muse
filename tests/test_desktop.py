@@ -39,7 +39,7 @@ def test_desktop_config(ws):
     xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
     mcp = json.loads((ws / ".mcp.json").read_text())
     assert mcp == {"mcpServers": {"xmuse": {"command": "wsl.exe", "args": [
-        "-d", "Ubuntu-Test", "--", "env", f"XMUSE_STATE={state}", "XMUSE_AGENT=dog", "node", str(SHIM)]}}}
+        "-d", "Ubuntu-Test", "--", "env", f"XMUSE_STATE={state}", "XMUSE_AGENT=dog", "XMUSE_DESKTOP=1", "node", str(SHIM)]}}}
     assert "XMUSE_CHANNEL" not in (ws / ".mcp.json").read_text()
     st = json.loads((ws / ".claude" / "settings.json").read_text())
     assert st["enabledMcpjsonServers"] == ["xmuse"] and st["permissions"] == {"allow": ["mcp__xmuse__*"]}
@@ -177,12 +177,12 @@ def test_hook_session_start_and_end(make):
 
 def test_hook_response_carries_pending_counts(make):
     h = make([("dog", "claude", {"desktop": True})])
-    assert h.hook("dog", "UserPromptSubmit", desktop=True, session_id="S1", pid=1)["result"] == {
-        "ok": True, "pending": 0, "mentions": 0}
+    r = h.hook("dog", "UserPromptSubmit", desktop=True, session_id="S1", pid=1)["result"]
+    assert (r["ok"], r["pending"], r["mentions"]) == (True, 0, 0)
     h.send("dog", "a")
     h.send("dog", "b", mentions=["dog"])
-    assert h.hook("dog", "UserPromptSubmit", desktop=True, session_id="S1", pid=1)["result"] == {
-        "ok": True, "pending": 2, "mentions": 1}
+    r = h.hook("dog", "UserPromptSubmit", desktop=True, session_id="S1", pid=1)["result"]
+    assert (r["pending"], r["mentions"]) == (2, 1)
     h.tool("dog", "xmuse_inbox")  # read
     assert h.hook("dog", "UserPromptSubmit", desktop=True, session_id="S1", pid=1)["result"]["pending"] == 0
 
@@ -221,8 +221,10 @@ def test_hook_py_prompts_for_pending_messages(make):
     h.send("dog", "b", mentions=["dog"])
     r = run_hook(h.state, "dog", "UserPromptSubmit", {"session_id": "S1", "prompt": "hi"})
     assert r.returncode == 0
-    assert r.stdout == ("[xmuse] 2 new message(s) (1 mention you). Call xmuse_inbox before anything else, "
-                        "and xmuse_ack when handled.\n")
+    first, rest = r.stdout.split(chr(10), 1)
+    assert first == ("[xmuse] 2 new message(s) (1 mention you). Call xmuse_inbox before anything else, "
+                     "and xmuse_ack when handled.")
+    assert "New for you (unread" in rest and "human" in rest and ": a" in rest
     # other events never print; the report went through as a desktop one
     r = run_hook(h.state, "dog", "Stop", {"session_id": "S1"})
     assert r.returncode == 0 and r.stdout == ""
@@ -270,14 +272,86 @@ def test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing(make):
         h.send("oc", "not for dog")
         h.send("dog", "line one\n  and   more " + "x" * 200, mentions=["dog"])
         line = w.stdout.readline()
-        assert line.startswith("[xmuse] 1 new for dog: ") and " from human [message] " in line
+        assert "new for dog: " in line and " from human [message] " in line  # (hub notices reach the coordinator too)
         assert "line one and more x" in line and "old one" not in line and "not for dog" not in line
-        assert len(line) < 250 and line.endswith('"'+chr(10))
-        assert [d["read_at"] for d in h.q("select read_at, acked_at from deliveries where recipient='dog'")] == [None, None]
-        assert all(d["acked_at"] is None for d in h.q("select acked_at from deliveries"))
+        assert all(d["read_at"] is None and d["acked_at"] is None for d in h.q("select * from deliveries where recipient='dog'"))
         os.remove(h.state / "hub.json")
-        assert w.stdout.readline() == "[xmuse] hub stopped\n"
-        assert w.wait(10) == 0 and w.stdout.read() == ""
+        rest = w.stdout.read().splitlines()
+        assert rest[-1] == "[xmuse] hub stopped" and all("not for dog" not in x for x in rest)
+        assert w.wait(10) == 0
     finally:
         w.kill()
         (h.state / "hub.json").write_text(json.dumps({"port": 0, "pid": os.getpid()}))  # let the hub shut down
+
+
+# ---- coordinator: prompt injection (alignment + unread list) ----------------------------------
+
+def prompt(h, sid="S1"):
+    return h.hook("dog", "UserPromptSubmit", desktop=True, session_id=sid, pid=1)["result"]["context"]
+
+
+def test_prompt_injection_snapshot_then_delta_and_watermark(make):
+    h = make([("dog", "claude", {"desktop": True})])
+    h.hook("dog", "SessionStart", desktop=True, session_id="S1", pid=1)
+    h.send("dog", "use tabs", kind="decision")
+    ctx = prompt(h)
+    assert "[alignment: current shared decisions" in ctx and "use tabs" in ctx
+    assert "New for you (unread" in ctx and "- #" in ctx and " human " in ctx
+    sid = h.q("select id from sessions")[0]["id"]
+    assert h.q("select seq from seen where session_id=?", sid)  # watermark advanced
+    assert [d["read_at"] for d in h.q("select read_at from deliveries")] == [None]  # nothing marked read
+    assert len(h.tool("dog", "xmuse_inbox")["result"]) == 1
+    assert prompt(h) == ""  # nothing new, nothing unread
+    h.send("dog", "and use ruff", kind="decision")
+    ctx = prompt(h)
+    assert "[alignment update since your last wake]" in ctx and "use ruff" in ctx and "use tabs" not in ctx
+    assert prompt(h).count("[alignment") == 0
+    # compaction resets the watermark: next prompt is a snapshot again
+    h.hook("dog", "SessionStart", desktop=True, session_id="S1", pid=1, source="compact")
+    assert h.q("select * from seen") == []
+    assert "[alignment: current shared decisions" in prompt(h)
+
+
+def test_prompt_injection_caps_the_message_list(make):
+    h = make([("dog", "claude", {"desktop": True})], align_delta_tokens=60)
+    for i in range(12):
+        h.send("dog", f"message number {i} " + "y" * 150)
+    ctx = prompt(h)
+    assert "more, call xmuse_inbox" in ctx and ctx.count("- #") < 12
+
+
+def test_hook_py_prints_the_injected_context(make):
+    h = make([("dog", "claude", {"desktop": True})])
+    h.send("dog", "use tabs", kind="decision")
+    r = run_hook(h.state, "dog", "UserPromptSubmit", {"session_id": "S1", "prompt": "hi"})
+    assert r.stdout.startswith("[xmuse] 1 new message(s)") and "[alignment: current" in r.stdout
+
+
+# ---- coordinator: approvals and pause notices reach the desktop agent -------------------------
+
+def test_permission_ask_reaches_the_desktop_inbox(make):
+    h = make([("opencode-1", "opencode"), ("dog", "claude", {"desktop": True})])
+    h.oc.plan = [{"result": "hang"}]
+    h.send("opencode-1", "ship it")
+    h.wait(lambda: h.hub.engine.drivers["opencode"].headless.turns, what="tracked")
+    h.oc.ask_permission("ses_fake1", "per_9")
+    h.wait(lambda: h.q("select 1 from approvals"), what="approval")
+    inbox = h.tool("dog", "xmuse_inbox")["result"]
+    notes = [m for m in inbox if m["kind"] == "notice" and "xmuse approve per_9 once|always|reject" in m["body"]]
+    assert len(notes) == 1 and "asks permission" in notes[0]["body"]
+    d = h.q("select wake, state from deliveries where recipient='dog'")
+    assert d and all(x["wake"] == 0 for x in d) and h.claude_calls() == []
+    h.admin("approve", id="per_9", decision="once")
+    h.admin("stop")
+
+
+def test_notices_without_a_desktop_agent_make_no_deliveries(make):
+    h = make([("opencode-1", "opencode")])
+    h.oc.plan = [{"result": "hang"}]
+    h.send("opencode-1", "ship it")
+    h.wait(lambda: h.hub.engine.drivers["opencode"].headless.turns, what="tracked")
+    h.oc.ask_permission("ses_fake1", "per_9")
+    h.wait(lambda: h.q("select 1 from approvals"), what="approval")
+    assert h.q("select * from deliveries where recipient not in ('opencode-1')") == []
+    h.admin("approve", id="per_9", decision="once")
+    h.admin("stop")
