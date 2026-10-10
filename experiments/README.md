@@ -187,3 +187,57 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
   不要把一次性探针脚本提交进种子仓库。
 - 先改 `SPEC.md` 和 `types.py`，再改实现——`types.py` 是冻结契约。
 - 参考实现不许为了让某个检查通过而削弱；检查挂了先怀疑 bug 变体或隐藏测试。
+
+## 9. MemoryOS 离线回放
+
+`data/results/<run>/` 的录像是在 **MemoryOS 关闭**时跑的。`replay_mo.py` 按 hub 的真实规则
+（`hub/src/xmuse/memoryos.py`、`align.py`、`config.py`）把录像重新构造成当时**会发出去的**
+`/curate`、`/recall`、`/similar` 请求，离线回放给 MemoryOS，用来评估"当时开着 MemoryOS 会怎样"
+——不必重跑昂贵的 agent 实验。只用标准库。
+
+```
+# 1) 离线构造请求：对每个 run、每个话题重放消息，模拟 Curator 的触发
+python repo/experiments/replay_mo.py build data/results --out "$TEMP/mo-replay"
+#    -> <out>/<run>/curate-<n>.json + recall.json + similar.json + index.json
+#       index.json 列出每个请求文件、run、话题、触发原因；同样输入逐字节相同（键排序、无时间戳）
+
+# 2) 发给 MemoryOS（默认 127.0.0.1:8301；已有 *.resp.json 的请求跳过，可中断续跑）
+python repo/experiments/replay_mo.py send "$TEMP/mo-replay" --url http://127.0.0.1:8301
+#    --only curate|recall|similar（可重复）  --max-calls N（默认 40，防止误花钱）
+#    先请求 /health：缺哪项能力就跳过哪类请求。超时 curate 480 s / recall 10 s / similar 30 s；
+#    502/503/超时都写进 resp 文件（status/error/seconds），不中断整个流程。
+
+# 3) 离线打分（a 申报补漏 b rot 冲突 c 噪音 d /recall e 成本）
+python repo/experiments/replay_mo.py score "$TEMP/mo-replay" --results data/results
+
+# 没有真 MemoryOS 时用假服务：/health 全能力、/curate 固定提议（至少一条命中 checklist、
+# 一条和 active 重复、一个 conflict + 一个 supersedes）、/recall 按 id 倒序、/similar 返回一对
+python repo/experiments/fake_mo_server.py --port 8301 --requests "$TEMP/mo-replay"
+#    --requests 指向 build 的输出目录：send 不再带 _replay，假服务靠它按请求体找回 run 的 seed（用于 checklist）
+
+# 测试
+pytest tests/test_replay_mo.py
+```
+
+**和 `memoryos.py` 一致的地方**（代码注释里逐条标了对应函数）：Curator 的触发条件
+（窗口内新增 ≥8 条 `kind in MSGS` 的消息、出现 handoff、话题关闭）、窗口 ≤32 条取最新、
+`context` ≤8 条、`active` 只要 collab 类型（`decision/convention/assumption/question/lesson`）
+且 ≤60 条、`topic_key = "e<n>"`、`max_repairs: 1`、`_act` 的消息映射（含 `why` 拼接）、
+`rank()` 的 `/recall` 请求体（`budget_tokens` 2000、`hints`、`E<n>`/`statement`/`kind`/`seq`）、
+`_similar` 的 120% 话题层门槛与 `hub-similar` 活动、`review_objection`/`gate_failure` 的 type 约定。
+
+**不得不近似的地方**：
+
+- **active 的重建**：录像里没有"当时"的 `status` 列。用 `entries.recorded_at <= 触发时刻` 且
+  `entry_events` 中该条目最新的 op（`add`/`confirm` 算在册，`supersede`/`resolve`/`archive` 算不在册）
+  重建；`recorded_at` 用严格不早于下一条消息的写入语义（真实库里写条目发生在消息之后）。
+- **busy 跳过**：hub 在 `curated` 表里记水位，且线程 `busy` 时不重复入队。回放只在水位推进时
+  发送（和 hub 的"curate 成功后写水位"一致），但没有 worker 线程，看不到 busy 状态；在现有
+  录像上两种口径结果相同。
+- **请求体多一个 `schema` 和 `_replay`**：hub 不发 `schema`；契约点名的 schema 名字必须合法，
+  所以补上。`_replay` 是给离线打分用的元数据（触发时刻、`active_ids`、`seed`），只留在磁盘上的请求文件里；`send` 发出前会去掉它，`score` 仍从磁盘文件读。
+- **`/recall` 的 query/k 是回放自己定的**：query 取最后一条 human 消息正文，`k = max(3, 条目数//2)`，
+  为了在现有小样本上也一定能触发排序截断；hub 真实调用用的是视图某层的 `cap`。
+- **`/similar` 的 threshold 固定 0.88**（契约默认值）；hub 只在话题层超过上限 120% 时才发。
+- **本目录 sample 的录像里 curate 触发很少**（10 个 run 共 8 次：`every8` 4 次、`handoff` 4 次，
+  `minisql-A-1`/`minisql-C-1` 一次都没有），因为 `done` 这类消息不在 `MSGS` 里，不计入 8 条。
