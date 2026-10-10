@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
+from .adapters.opencode import shell_auto_ok
 from .config import HUMAN
 
 log = logging.getLogger(__name__)
@@ -255,10 +256,21 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
+        auto = shell_auto_ok(req.get("action"), req.get("resources")) and "opencode" in self.drivers
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
                                                   json.dumps(req.get("resources")), db.now()))
+        if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
+            try:
+                self.drivers["opencode"].approve(session, req["id"], "once")
+                with db.tx(conn):
+                    conn.execute("update approvals set state='decided', decision='once', decided_at=? where id=?",
+                                 (db.now(), req["id"]))
+                log.info("auto-approved shell for %s: %s", agent_id, req.get("resources"))
+                return
+            except Exception:
+                log.exception("auto-approve failed; asking the human")
         mail.notice(conn, mail.dm_id(agent_id or "unknown", HUMAN),
                     f"{agent_id} asks permission: {req.get('action')} {req.get('resources')} — "
                     f"`xmuse approve {req['id']} once|always|reject`")

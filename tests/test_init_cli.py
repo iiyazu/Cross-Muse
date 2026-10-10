@@ -90,6 +90,7 @@ def test_opencode_config_asks_for_consequential_commands(ws):
     rules = {(r["action"], r["resource"]): r["effect"] for r in cfg["permissions"]}
     assert rules[("xmuse_*", "*")] == "allow"
     assert rules[("shell", "git push*")] == rules[("shell", "rm -r*")] == "ask"
+    assert rules[("shell", "*=* git push*")] == "ask"
     assert ("edit", "*") not in rules  # edits stay OpenCode's default (allowed)
 
 

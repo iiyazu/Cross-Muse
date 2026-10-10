@@ -163,3 +163,29 @@ def test_claude_reviews_what_opencode_wrote(make):
     assert [(t["agent_id"], t["mode"]) for t in h.turns()] == [("opencode-1", "code"), ("claude-1", "chat")]
     assert 'kind="review_request"' in h.claude_calls()[0]["prompt"]
     assert {c["id"]: c["wakes"] for c in h.q("select id, wakes from chains")}[m["chain"]] == 2
+
+
+def test_shell_auto_ok_strips_env_prefix_but_keeps_consequential_asks():
+    from xmuse.adapters.opencode import shell_auto_ok, strip_env
+    assert strip_env("A=1 B=/x/y python -m unittest") == "python -m unittest"
+    assert shell_auto_ok("shell", ["PYTHONPATH=x python -m unittest"])
+    assert shell_auto_ok("shell", ["PYTHONPATH=/a/b python3 /tmp/p.py", "echo ---", "tail -4"])
+    assert not shell_auto_ok("shell", ["rm -rf /"])
+    assert not shell_auto_ok("shell", ["PYTHONPATH=x python -m unittest", "rm -f /tmp/x"])
+    assert not shell_auto_ok("shell", ["FOO=1 git push origin main"])
+    assert not shell_auto_ok("shell", ["git push origin main"])
+    assert not shell_auto_ok("edit", ["a.py"])
+    assert not shell_auto_ok("shell", [])
+
+
+def test_env_prefixed_harmless_shell_is_auto_approved(make):
+    h = make(OC)
+    h.oc.plan = [{"result": "hang"}]
+    h.send("opencode-1", "go")
+    h.wait(lambda: h.hub.engine.drivers["opencode"].headless.turns, what="tracked")
+    h.oc.ask_permission("ses_fake1", "per_a", "PYTHONPATH=x python -m unittest")
+    h.wait(lambda: h.oc.replies, what="auto reply")
+    assert h.oc.replies == [{"session": "ses_fake1", "request": "per_a", "decision": "once"}]
+    assert h.q("select state, decision from approvals")[0] == {"state": "decided", "decision": "once"}
+    assert not any("per_a" in n["body"] for n in h.q("select body from messages where kind='notice'"))
+    h.admin("stop")

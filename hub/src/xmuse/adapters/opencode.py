@@ -5,7 +5,9 @@ lease: the hub posts with delivery "queue" and metadata.xmuse; anything enqueued
 metadata is a human, and admission waits for that execution to end.
 """
 import base64
+import fnmatch
 import json
+import re
 import secrets
 import socket
 import subprocess
@@ -27,13 +29,40 @@ ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git
              "git checkout -- *", "rm -r*", "rm -f*", "sudo *", "curl *", "wget *"]
 
 
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
+
+
+def strip_env(cmd: str) -> str:
+    """Drop leading `NAME=value` assignments: `PYTHONPATH=x python -m unittest` -> `python -m unittest`."""
+    cmd = cmd.strip()
+    while (m := _ENV_ASSIGN.match(cmd)):
+        cmd = cmd[m.end():].lstrip()
+    return cmd
+
+
+def shell_auto_ok(action: str | None, resources) -> bool:
+    """True when every shell command in a permission request is outside ASK_SHELL once env prefixes are removed.
+
+    OpenCode matches its rules against the raw command text, so an env prefix hides the command from
+    the patterns (`PYTHONPATH=x git push` matches no `git push*` rule, and a prefixed harmless command
+    can end up asked). The hub therefore decides for shell requests itself; anything matching ASK_SHELL
+    still goes to the human.
+    """
+    if action != "shell" or not isinstance(resources, list) or not resources:
+        return False
+    return all(isinstance(r, str) and not any(fnmatch.fnmatchcase(strip_env(r), p) for p in ASK_SHELL)
+               for r in resources)
+
+
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     cfg = {
         "$schema": "https://opencode.ai/config.json",
         "mcp": {"servers": {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
                                       "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}},
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
-                        *({"action": "shell", "resource": r, "effect": "ask"} for r in ASK_SHELL)],
+                        *({"action": "shell", "resource": r, "effect": "ask"} for r in ASK_SHELL),
+                        # the same commands behind an env prefix (`FOO=1 git push`) must still ask
+                        *({"action": "shell", "resource": "*=* " + r, "effect": "ask"} for r in ASK_SHELL)],
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
     return [ws / "opencode.json"]
