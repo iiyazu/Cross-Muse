@@ -1,0 +1,7 @@
+run,seed,group,agent,wake_no,view_entries
+review-ledger-bug1-self-1,ledger,S,opencode-1,1,0
+review-ledger-bug2-self-1,ledger,S,opencode-1,1,0
+review-minisql-bug1-self-1,minisql,S,opencode-1,1,0
+review-minisql-bug2-self-1,minisql,S,opencode-1,1,0
+review-pipeline-bug1-self-1,pipeline,S,opencode-1,1,0
+review-pipeline-bug2-self-1,pipeline,S,opencode-1,1,0

@@ -1,0 +1,16 @@
+## Runs
+
+| run | group | mode | done | hidden (raw) | hidden unaffected | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| review-ledger-bug1-self-1/ledger | S | review | - | - | - | 1 | 262,908 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/9 | hit (fp 0) |
+| review-ledger-bug2-self-1/ledger | S | review | - | - | - | 1 | 233,215 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/9 | hit (fp 0) |
+| review-minisql-bug1-self-1/minisql | S | review | - | - | - | 1 | 238,911 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/10 | hit (fp 0) |
+| review-minisql-bug2-self-1/minisql | S | review | - | - | - | 1 | 292,099 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/10 | hit (fp 1) |
+| review-pipeline-bug1-self-1/pipeline | S | review | - | - | - | 1 | 209,359 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/11 | hit (fp 0) |
+| review-pipeline-bug2-self-1/pipeline | S | review | - | - | - | 1 | 279,638 | 0 | 0.0% | 0.0% | 0.0% | none:1 | no_rot | 0/11 | hit (fp 0) |
+
+## Groups
+
+| group | runs | completion | turns | tokens (mean) | interv. | inject total | inject max | rot | declared | detection | false pos. |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| review-S | 6 | - | 1 | 252,688 | 0 | 0.0% | 0.0% | no_rot:6 | 0.0% | 100.0% | 8.3% |
