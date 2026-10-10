@@ -157,6 +157,19 @@ test('self-check logs services, hub state and tools, never throws', async () => 
   t.dispose(); bad.dispose()
 })
 
+test('no config.state: no built-in machine path, the self-check says what to set', async () => {
+  const saved = process.env.XMUSE_STATE_WIN
+  delete process.env.XMUSE_STATE_WIN
+  const t = setup({ extra: { state: '' } })
+  await tick()
+  const line = t.logs.find(([, m]) => m.includes('self-check'))[1]
+  assert.match(line, /config\.state is not set/)
+  assert.match(line, /xmuse doctor/)
+  assert.match(line, /"tools":"7 from bundled tools.json"/)
+  t.dispose()
+  if (saved !== undefined) process.env.XMUSE_STATE_WIN = saved
+})
+
 test('ping delivers followup with source.kind xmuse and flushes', async () => {
   const t = setup()
   t.mkAgent('s1')

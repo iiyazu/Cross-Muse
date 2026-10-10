@@ -37,13 +37,13 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
   `tools.json` 副本（由 Python 测试对照 `tools.py` 保证一致）。调用时才查绑定；未绑定会提示让用户先 `/xmuse bind`。
   工具描述开头写明"只用于用户 `/xmuse bind` 过的会话"，减少未绑定会话乱调用。
 - 持久化：绑定和游标都在 bundle 目录的 `bindings.json`（C 盘可写，`sync.sh` 不会覆盖）。0.0.x 的旧格式会自动读入。
-- 配置只有 `state`（hub 状态目录，`cordis.patch.yml` 里）。插件读 `hub.json`（端口）、`tokens/<agent>`、`tools.json`；token 不进配置也不进日志。
+- 配置只有 `state`（hub 状态目录，`cordis.patch.yml` 里；没有内置默认值，`xmuse doctor` 会打印应填的 `\\wsl.localhost\...` 路径）。插件读 `hub.json`（端口）、`tokens/<agent>`、`tools.json`；token 不进配置也不进日志。
 
 ## 安装 / 升级（用户自己操作）
 
-1. 源码在 WSL：`~/dev/xmuse2-dshb/integrations/dsh-bundle/`。运行 `bash sync.sh` 同步到
-   `C:\Users\user\dsh-work\xmuse-bundle`（不含 test、node_modules；`bindings.json` 保留）。
-2. 首次安装：dsh 桌面端 **插件 → 添加插件**，路径填 `C:\Users\user\dsh-work\xmuse-bundle`（本地路径安装是链接方式）。
+1. 源码在本仓库 `integrations/dsh-bundle/`。运行 `bash sync.sh [目标目录]` 同步，默认目标是 Windows 用户目录下的
+   `dsh-work\xmuse-bundle`（由 `%USERPROFILE%` 推导，或设 `XMUSE_WIN_HOME`；不含 test、node_modules；`bindings.json` 保留）。
+2. 首次安装：dsh 桌面端 **插件 → 添加插件**，路径填 `%USERPROFILE%\dsh-work\xmuse-bundle`（`sync.sh` 最后会打印实际路径）（本地路径安装是链接方式）。
 3. **升级**：再跑一次 `sync.sh`，然后**重启 dsh**（链接方式不需要重装，但要重启才会加载新代码）。重启后绑定和游标自动恢复，
    循环自动重新开始轮询。
 
@@ -52,8 +52,7 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
 hub 需要是带前台模式（`cc/desktop`）加中继端点（`dsh/bundle`）的版本，然后在 WSL 里：
 
 ```
-cd ~/dev/xmuse2-dshb/hub   # 或 hub 所在的 venv
-xmuse --ws /mnt/c/Users/user/xmuse-desk agent add dsh-1 --vendor dsh --desktop
+xmuse --ws /mnt/c/Users/<你>/xmuse-desk agent add dsh-1 --vendor dsh --desktop
 ```
 
 然后**重启 hub**（新端点和 `delivered` 字段需要新代码；`agent add` 会重写 AGENTS.md 里 dsh-1 的前台段落，token 不变）。
@@ -61,7 +60,7 @@ xmuse --ws /mnt/c/Users/user/xmuse-desk agent add dsh-1 --vendor dsh --desktop
 
 ## 端到端清单
 
-前置：hub 已按上面重启；dsh 已重启并加载 0.1.0；`C:\Users\user\xmuse-desk` 里开一个 dsh **新会话**（Standard 模式）。
+前置：hub 已按上面重启；dsh 已重启并加载 0.1.0；工作区（如 `C:\Users\<你>\xmuse-desk`）里开一个 dsh **新会话**（Standard 模式）。
 
 1. 在该会话输入 `/xmuse bind dsh-1`，然后 `/xmuse status`：应看到 `tools: 7 from hub state tools.json`，
    绑定表有 `<session> -> dsh-1`，`relay: polling`。（命令结果卡片要在会话有过第一条消息之后才会显示，这是 dsh UI 行为。）

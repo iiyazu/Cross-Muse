@@ -30,7 +30,8 @@ def to_win(p) -> str:
     m = re.match(r"/mnt/([a-zA-Z])/", s)
     if m:
         return m.group(1).upper() + chr(58) + chr(92) + s[m.end():].replace("/", chr(92))
-    distro = os.environ.get("WSL_DISTRO_NAME", "Ubuntu-24.04")
+    from ..host import distro as wsl_distro
+    distro = wsl_distro()
     return chr(92)*2 + "wsl.localhost" + chr(92) + distro + s.replace("/", chr(92))
 
 

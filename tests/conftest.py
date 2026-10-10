@@ -135,6 +135,14 @@ class Harness:
                       " from turns t left join usage u on u.turn_id=t.id order by t.id")
 
 
+@pytest.fixture(autouse=True)
+def wsl_host(tmp_path, monkeypatch):
+    """Host facts xmuse derives from WSL (host.py), fixed so the suite runs the same on WSL and plain Linux CI."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
+    monkeypatch.delenv("XMUSE_WSL_DISTRO", raising=False)
+    monkeypatch.setenv("XMUSE_WIN_HOME", str(tmp_path / "winhome"))
+
+
 @pytest.fixture
 def make(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))

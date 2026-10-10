@@ -22,7 +22,8 @@ export const VERSION = '0.1.0'
 // Cordis refuses ctx.<service> access for services not declared here. Same set dsh-schedule declares.
 export const inject = ['commands', 'agents', 'sessions', 'tools', 'sessionController']
 
-const DEFAULT_STATE = String.raw`\\wsl.localhost\Ubuntu-24.04\home\user\.local\state\xmuse\xmuse-desk-c9ddc1e5`
+// No built-in default: the state dir is per machine and per workspace. `xmuse doctor` prints the value for config.state.
+const NO_STATE = 'config.state is not set: put the hub state dir there as a \\\\wsl.localhost\\<distro>\\... path (`xmuse doctor` prints it)'
 const HERE = (() => {
   try { return path.dirname(fileURLToPath(import.meta.url)) } catch { return '.' }
 })()
@@ -102,6 +103,7 @@ const loadToolSpecs = (stateDir, log) => {
     return specs
   }
   try {
+    if (!stateDir) throw new Error(NO_STATE)
     return { specs: read(path.join(stateDir, 'tools.json')), source: 'hub state tools.json' }
   } catch (e) {
     log('warn', `hub tools.json unusable (${errText(e)}); using the bundled copy`)
@@ -111,7 +113,7 @@ const loadToolSpecs = (stateDir, log) => {
 
 export function apply(ctx, config) {
   const cfg = (config && typeof config === 'object') ? config : {}
-  const stateDir = typeof cfg.state === 'string' && cfg.state ? cfg.state : DEFAULT_STATE
+  const stateDir = typeof cfg.state === 'string' && cfg.state ? cfg.state : (process.env.XMUSE_STATE_WIN || '')
   const bindingsFile = typeof cfg.bindingsFile === 'string' && cfg.bindingsFile
     ? cfg.bindingsFile : path.join(HERE, 'bindings.json')
   const pollWaitS = Number.isFinite(cfg.pollWaitS) ? cfg.pollWaitS : POLL_WAIT_S
@@ -163,12 +165,14 @@ export function apply(ctx, config) {
 
   // ---- hub access ----
   const readHub = async () => {
+    if (!stateDir) throw new Error(NO_STATE)
     const hub = JSON.parse(await readFile(path.join(stateDir, 'hub.json'), 'utf8'))
     if (!hub || !Number.isInteger(hub.port)) throw new Error('hub.json has no integer port')
     return hub
   }
   const readToken = async (agentId) => {
     if (!/^[A-Za-z0-9._-]+$/.test(agentId)) throw new Error(`bad agent id "${agentId}"`)
+    if (!stateDir) throw new Error(NO_STATE)
     return (await readFile(path.join(stateDir, 'tokens', agentId), 'utf8')).trim()
   }
   const checkHubState = async () => {
