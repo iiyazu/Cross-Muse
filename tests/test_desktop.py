@@ -43,17 +43,23 @@ def test_desktop_config(ws):
     assert "XMUSE_CHANNEL" not in (ws / ".mcp.json").read_text()
     st = json.loads((ws / ".claude" / "settings.json").read_text())
     assert st["enabledMcpjsonServers"] == ["xmuse"] and st["permissions"] == {"allow": ["mcp__xmuse__*"]}
-    pre = f"wsl.exe -d Ubuntu-Test -- env XMUSE_STATE={state} "
+    pre = "wsl.exe -d Ubuntu-Test -- python3 .claude/xmuse-hook.py"
     for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"):
         h = st["hooks"][ev][0]["hooks"][0]
-        assert h["command"] == f"{pre}XMUSE_AGENT=dog XMUSE_DESKTOP=1 python3 {HOOK} {ev}" and h["timeout"] == 10
+        assert h["command"] == f"{pre} {ev}" and h["timeout"] == 10
     compact = st["hooks"]["SessionStart"][1]
     assert compact["matcher"] == "compact"
-    assert compact["hooks"][0]["command"] == f"{pre}{sys.executable} -m xmuse hook compact"
+    assert compact["hooks"][0]["command"] == f"{pre} compact"
     for ev in st["hooks"].values():
         for g in ev:
             for h in g["hooks"]:
                 assert not any(t in h["command"] for t in BASH_ISH), h["command"]
+                # Git Bash rewrites arguments that start with "/" (also NAME=/path): none may exist
+                assert not any(t.startswith("/") or "=/" in t for t in h["command"].split()), h["command"]
+    copy = (ws / ".claude" / "xmuse-hook.py").read_text()
+    assert f"BAKED = {{'state': {str(state)!r}, 'agent': 'dog', 'desktop': True, 'python': {sys.executable!r}}}" in copy
+    assert copy.endswith(HOOK.read_text())
+    assert ".claude/" in (ws / ".git" / "info" / "exclude").read_text().splitlines()
 
 
 def test_desktop_distro_defaults(ws, monkeypatch):
@@ -355,3 +361,35 @@ def test_notices_without_a_desktop_agent_make_no_deliveries(make):
     assert h.q("select * from deliveries where recipient not in ('opencode-1')") == []
     h.admin("approve", id="per_9", decision="once")
     h.admin("stop")
+
+
+# ---- the per-workspace hook copy (Git Bash on Windows mangles absolute-path arguments) -------------
+
+def run_copy(h, event, stdin):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("XMUSE_")}
+    return subprocess.run([sys.executable, ".claude/xmuse-hook.py", event], input=json.dumps(stdin), env=env,
+                          cwd=h.ws, capture_output=True, text=True, timeout=30)
+
+
+def test_hook_copy_prints_the_injection_from_the_workspace_dir(make):
+    h = make([("dog", "claude", {"desktop": True})])
+    assert (h.ws / ".claude" / "xmuse-hook.py").exists()
+    h.send("dog", "use tabs", kind="decision")
+    r = run_copy(h, "UserPromptSubmit", {"session_id": "S1", "prompt": "hi"})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.startswith("[xmuse] 1 new message(s)") and "[alignment: current shared decisions" in r.stdout
+    r = run_copy(h, "SessionStart", {"session_id": "S2", "source": "startup"})
+    assert r.returncode == 0 and r.stdout == ""
+    assert h.q("select origin, online from sessions where vendor_session='S2'") == [{"origin": "desktop", "online": 1}]
+
+
+def test_hook_copy_compact_runs_hook_compact(make):
+    h = make([("dog", "claude", {"desktop": True})])
+    h.send("dog", "use tabs", kind="decision")
+    h.hook("dog", "SessionStart", desktop=True, session_id="S1", pid=1)
+    r = run_copy(h, "compact", {"session_id": "S1", "source": "compact"})
+    assert r.returncode == 0, r.stderr
+    assert "[alignment: current shared decisions" in r.stdout and "use tabs" in r.stdout
+    # unreachable hub / unknown session: still silent and exit 0
+    assert run_copy(h, "compact", {"session_id": "nope"}).returncode == 0
+    assert run_copy(h, "compact", {}).returncode == 0

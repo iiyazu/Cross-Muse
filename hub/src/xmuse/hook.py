@@ -8,15 +8,31 @@ and turn end (Stop). Never blocks Claude: any failure is ignored.
 Desktop app mode (XMUSE_DESKTOP=1): the report carries "desktop": true (the pid is a Windows pid, the hub does not
 probe it) and the hub's reply carries the agent's unread counts; on UserPromptSubmit a reminder line goes to stdout,
 which Claude puts into the model's context.
+
+The desktop app runs hooks through Git Bash, which rewrites arguments starting with "/". So `agent add --desktop`
+writes a copy of this file to .claude/xmuse-hook.py with a generated `BAKED = {...}` header (state, agent, desktop,
+python) and the command carries no absolute path: `wsl.exe -d <distro> -- python3 .claude/xmuse-hook.py <Event>`.
+Baked values win over the environment; the event `compact` runs `<python> -m xmuse hook compact`.
 """
 import json
 import os
+import subprocess
 import sys
 import urllib.request
 
+BAKED = globals().get("BAKED") or {}  # defined by the generated header of the per-workspace copy
+
 try:
-    state, agent, event = os.environ["XMUSE_STATE"], os.environ["XMUSE_AGENT"], sys.argv[1]
-    desktop = os.environ.get("XMUSE_DESKTOP") == "1"
+    state = BAKED.get("state") or os.environ["XMUSE_STATE"]
+    agent = BAKED.get("agent") or os.environ["XMUSE_AGENT"]
+    event = sys.argv[1]
+    desktop = bool(BAKED.get("desktop")) or os.environ.get("XMUSE_DESKTOP") == "1"
+    if event == "compact" and BAKED.get("python"):  # SessionStart(compact): re-inject the alignment snapshot
+        r = subprocess.run([BAKED["python"], "-m", "xmuse", "hook", "compact"], stdin=sys.stdin, capture_output=True,
+                           env={**os.environ, "XMUSE_STATE": state}, timeout=20)
+        sys.stdout.buffer.write(r.stdout)
+        sys.stdout.flush()
+        sys.exit(0)
     p = json.load(sys.stdin)
     hub = json.load(open(os.path.join(state, "hub.json")))
     token = open(os.path.join(state, "tokens", agent)).read().strip()
