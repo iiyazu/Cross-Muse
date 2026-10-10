@@ -131,3 +131,48 @@ FAILED tests/test_claude_engine.py::test_stop_interrupts_running_turn_and_cancel
 - 我数出的 T1 回放 curate 调用是 22 次（3 次 502），审计写的是 25 次。报告里以 22 为准，并注明了差异。
 - README 的快速开始命令，我在 /tmp 的全新克隆上跑通了 bootstrap、init、agent add 和 doctor；`hub start` 以后的步骤（会真的唤醒 agent、花 token）没有跑。
 - README 目录表里写了 `spikes/`、`e2e/` "计划移到 archive/"，这要等 T7 做完才成立。
+
+## T5 信任边界（2026-10-11）
+
+**提交**：`7ba4ec6`（提交信息里写的"49 个绕过"有误，实际是 50 个）
+
+**做了什么**
+1. **自动批准改成白名单**（`adapters/opencode.py`）
+   - 生成的 `opencode.json` 让每条 shell 命令都走 ask，hub 用 `command_auto_ok` 判断。
+   - 只自动放行这些单条命令：测试（`python -m pytest/unittest`、`pytest`）、工作区或 /tmp 里的 `.py` 脚本、只读工具（ls/cat/grep/find 但不带 -exec 和 -delete、sed 但不带 -i 等）、本地 git（status/diff/log/show/add/commit 等，不允许 `-C`/`-c`）、安全的 `rm -f`、`mkdir -p` 相对路径；`x | head` 这类后面只接只读过滤器的管道。
+   - 其余一律交给人：`; && || &`、反引号、`$(`、`${`、`<(`、除 `2>&1` 外的重定向、带路径的程序名、`bash -c`、`python -c`、`env/exec/nohup/timeout/xargs` 包装，以及白名单外的一切。
+   - 原 fnmatch 黑名单已删除。
+2. **有授权效力的管理操作要求有人在场**（新模块 `peer.py`，`server.require_human`）
+   - 涉及 `approve`、`align`（确认或驳回提议）、`resume` 三个接口。
+   - hub 通过 /proc/net/tcp 加 /proc/*/fd 找到连接对端的进程，要求它有控制终端，并且祖先进程里没有已知的 agent 进程（运行中回合的 pid、Claude TUI 租约 pid、OpenCode 服务 pid）。
+   - Windows 侧来的连接找不到对端进程，一律拒绝。
+   - 这个开关是 `Hub(..., human_check=True)` 的构造参数，不放在 config.json 里，因为 agent 能改配置文件。
+   - send、stop、log 这类操作仍然只看令牌：它们不授予权力，发出的消息会标 `via=cli`。
+3. **审批经协调者转给用户确认**
+   - 新增第 8 个工具 `xmuse_approve(id, decision, user_said)`，只有桌面协调者能用，必须附上用户原话。
+   - 每次决定都会在线程里发通知，写明谁决定的（"用户经 dog（原话）"或"用户（终端）"）；已经决定过的审批不能再改。
+   - "asks permission" 的通知里写明了这两条途径。
+4. **设计稿**：§4.2 加了更正，"agent 读不到令牌"不成立；§4.7 新增"信任模型"一段，写明现在的做法和剩下的缺口。README（中、英）同步更新。
+5. **测试**
+   - `tests/test_opencode_engine.py`：50 个绕过写法都不会被自动放行，19 个常用命令仍会放行；验证 opencode 配置对所有 shell 命令都走 ask。
+   - `tests/test_trust.py`（6 个用例）：在独立子进程里发起管理调用。
+     - 没有控制终端：拒绝；
+     - 有伪终端但在"agent"进程树里（把测试进程登记为 TUI 租约）：拒绝；
+     - 有伪终端且不在 agent 进程树里：放行；
+     - 操作类调用仍然放行；
+     - 协调者转达审批成功，并且有记录；
+     - 非协调者调用 `xmuse_approve` 被拒绝。
+   - 原来断言 7 个工具、黑名单规则、`python3 -c` 自动放行的测试都已按新行为修改。
+
+**测试结果原文**
+```
+310 passed, 1 skipped in 143.88s (0:02:23)
+```
+插件包：`ℹ pass 27`、`ℹ fail 0`
+
+**没做 / 拿不准（需要用户决定）**
+- **"管理令牌移到 agent 读不到的地方"没有字面做到**：agent 和 hub 是同一个 OS 用户，放在哪里都读得到。现在的做法是让令牌单独不够用（见第 2 条）。有意绕过的 agent 可以用 `setsid` 脱离进程树，再用 `script` 分配一个伪终端，从而通过检查。真正的边界是给 agent 用单独的 OS 用户或沙箱，并且不给推送凭据（审计 B2-1 第 2、3 点）。这会改变安装方式，需要用户拍板。
+- Claude 无界面白名单里的 `Bash(python3:*)` 没动：这是用户 10-09 的决定，它可以执行任意代码。
+- dsh 插件包会把 `xmuse_approve` 也注册给 dsh 会话（dsh 调用会被 hub 拒绝），多占一点工具描述的 token。也可以在插件包里过滤掉，没做。
+- 白名单在真实 opencode 上的效果没有跑过：现在所有 shell 都会先 ask，再由 hub 回复。这会给每条命令多一次往返，并且依赖 OpenCode v2 规则 `{"action":"shell","resource":"*","effect":"ask"}` 的语义，这一点只按 schema 和现有用法推断，**需要在 r7 上用一次真实运行确认**。
+- 写着"人在终端"的检查依赖 Linux /proc。在 WSL2 上，协调者（Windows 侧）以用户身份做管理操作只能走 `xmuse_approve`，CLI 的 `xmuse approve` 要在 WSL 终端里执行。
