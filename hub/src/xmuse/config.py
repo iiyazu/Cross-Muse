@@ -35,7 +35,7 @@ DEFAULTS = {
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
-          "dsh": "deepseek-official/deepseek-v4-flash"}
+          "dsh": "opencode-go/muse-spark-1.3-contributor"}
 FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek"}
 
 REPO = Path(__file__).resolve().parents[3]

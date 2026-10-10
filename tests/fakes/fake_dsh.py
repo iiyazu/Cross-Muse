@@ -54,7 +54,7 @@ if sid is not None and sid not in sessions:
 if step.get("owned"):
     time.sleep(0.2)
     fail(f'session "{sid}" is already owned by an active write handle')
-model = overlay[0]["config"]["model"]
+model = next(r for r in overlay if r.get("id") == "agent-default-model")["config"]["model"]
 fixture = "dsh-bogus.jsonl" if "bogus" in model else step.get("fixture", "dsh-chat.jsonl")
 sid = sid or f"session-{uuid.uuid4()}"
 sessions[sid] = os.getcwd()

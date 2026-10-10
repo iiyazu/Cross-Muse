@@ -34,8 +34,9 @@ def test_turn_runs_headless_with_overlay_and_resumes_in_the_same_session(make):
     assert "You are dsh-1" in c1["prompt"] and c1["env"] == {
         "DSH_TELEMETRY_DISABLED": "1", "ELECTRON_RUN_AS_NODE": "1", "WSLENV": "DSH_TELEMETRY_DISABLED:ELECTRON_RUN_AS_NODE"}
     rows = c1["overlay"]
-    assert rows[0]["config"] == {"provider": "deepseek-official", "model": "deepseek-v4-flash"}
-    [mcp] = rows[1]["insert"]
+    assert rows[0]["id"] == "llm-pi-ai" and rows[0]["config"] == {"providers": {"opencode-go": {"apiKeyEnv": "OPENCODE_GO_API_KEY"}}}
+    assert rows[1]["config"] == {"provider": "opencode-go", "model": "muse-spark-1.3-contributor"}
+    [mcp] = rows[2]["insert"]
     assert mcp["config"]["serverName"] == "xmuse" and mcp["config"]["env"]["XMUSE_AGENT"] == "dsh-1"
     assert {"id": "tool-web", "disabled": True} in rows and not any(r.get("id") == "tool-pwsh" for r in rows)
     h.send("dsh-1", "again")
@@ -270,3 +271,12 @@ def test_expired_human_flag_releases_admission(make):
     h.hub.engine.call(lambda: None)
     h.wait_quiet()
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
+
+
+def test_overlay_registers_opencode_go_through_pi_ai_but_not_deepseek(tmp_path):
+    oc = json.loads(overlay({"id": "d", "model": "opencode-go/m"}, tmp_path, mcp=False))
+    assert oc[0] == {"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai",
+                     "config": {"providers": {"opencode-go": {"apiKeyEnv": "OPENCODE_GO_API_KEY"}}}}
+    assert oc[1]["id"] == "agent-default-model"
+    ds = json.loads(overlay({"id": "d", "model": "deepseek-official/m"}, tmp_path, mcp=False))
+    assert ds[0]["id"] == "agent-default-model" and not any(r.get("id") == "llm-pi-ai" for r in ds)

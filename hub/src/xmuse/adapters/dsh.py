@@ -5,6 +5,8 @@
   plugin manager, background jobs). Files and PowerShell stay: they run inside dsh's workspace-write
   sandbox, and anything that would need approval fails closed in headless mode. $DSH_HOME/profiles is
   never touched.
+- Providers the headless profile does not register (PI_AI_PROVIDERS, e.g. opencode-go) get an extra
+  llm-pi-ai row first in the overlay; dsh reads the API key itself from its own (Windows) environment.
 - Every path the Windows child sees is Windows-shaped. The workspace must be under C:\\ (dsh cannot
   write through \\\\wsl.localhost), and a session resumes only in the cwd it was created in.
 - Clean env plus DSH_TELEMETRY_DISABLED=1 and ELECTRON_RUN_AS_NODE=1, listed in WSLENV: WSL drops
@@ -49,6 +51,8 @@ CODE_TOOLS = {"edit", "write", "pwsh", "bash"}
 # ELECTRON_RUN_AS_NODE is what dsh.cmd sets: without it the exe starts as the desktop app and, with the app
 # already open, hands off to it and exits 0 with no output.
 ENV = {"DSH_TELEMETRY_DISABLED": "1", "ELECTRON_RUN_AS_NODE": "1", "WSLENV": "DSH_TELEMETRY_DISABLED:ELECTRON_RUN_AS_NODE"}
+# provider -> env var holding its API key, registered through dsh-llm-pi-ai (add new providers here)
+PI_AI_PROVIDERS = {"opencode-go": "OPENCODE_GO_API_KEY"}
 OWNED, UNKNOWN = "is already owned by an active write handle", "does not exist"
 
 
@@ -64,6 +68,9 @@ def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
     provider, model = agent["model"].split("/", 1)
     rows: list = [{"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model",
                    "config": {"provider": provider, "model": model}}]
+    if provider in PI_AI_PROVIDERS:
+        rows.insert(0, {"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai", "config": {
+            "providers": {provider: {"apiKeyEnv": PI_AI_PROVIDERS[provider]}}}})
     if mcp:
         rows.append({"insert": [{"id": "mcp-xmuse", "name": "@deepseek-ai/dsh-mcp-client", "config": {
             "serverName": "xmuse", "transport": "stdio", "command": "node", "args": [to_win(SHIM)],
