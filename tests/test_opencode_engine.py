@@ -178,6 +178,45 @@ def test_shell_auto_ok_strips_env_prefix_but_keeps_consequential_asks():
     assert not shell_auto_ok("shell", [])
 
 
+# audit B2-2: every one of these got past the old fnmatch blocklist; the allowlist sends them to the human
+BYPASSES = [
+    "cd sub && git push", "true; git push", "git status || git push", "git status & git push",
+    "bash -c 'git push'", "sh -c 'git push origin main'", "env git push", "command git push", "exec git push",
+    "git -C . push", "git -c core.pager=sh push", "/usr/bin/git push", "./git push", "\\git push",
+    "python3 -c 'import subprocess; subprocess.run([\"git\", \"push\"])'", "python -c 'print(1)'",
+    "python3 -m pip install x", "python3 /home/u/elsewhere.py", "python3 ../up.py",
+    "gh pr merge 1", "npm publish", "scp a b:", "ssh host ls", "curl https://x", "wget x", "sudo ls",
+    "echo $(git push)", "echo `git push`", "echo hi > ~/.bashrc", "cat < /etc/passwd", "ls >> x",
+    "git status\ngit push", "find . -exec git push \\;", "find . -delete", "sed -i s/a/b/ f.py",
+    "xargs git push", "git status | sh", "git log | xargs rm", "cat x | /bin/sh", "git reset --hard",
+    "git merge main", "git rebase main", "git clean -fdx", "git branch -D x", "git checkout -- .",
+    "rm -rf /tmp/x", "rm -f /etc/passwd", "FOO=1 bash -c 'git push'", "nohup git push", "timeout 5 git push",
+]
+ALLOWED = [
+    "python -m pytest -q", "PYTHONPATH=src python3 -m unittest -v", "pytest tests/test_a.py -x",
+    "python3 /tmp/probe.py", "python3 scripts/check.py", "python3 -m pytest -q 2>&1 | tail -20",
+    "git status --short", "git diff HEAD~1", "git log --oneline -5", "git add a.py", "git commit -m 'x y'",
+    "ls -la", "cat SPEC.md", "grep -n foo src/a.py | head -5", "find . -name '*.py'", "sed -n 1,20p a.py",
+    "rm -f /tmp/opencode_probe.py", "mkdir -p build/out", "wc -l a.py b.py",
+]
+
+
+def test_shell_allowlist_blocks_every_known_bypass():
+    from xmuse.adapters.opencode import command_auto_ok
+    leaked = [c for c in BYPASSES if command_auto_ok(c)]
+    assert leaked == []
+    blocked = [c for c in ALLOWED if not command_auto_ok(c)]
+    assert blocked == []
+
+
+def test_opencode_asks_for_every_shell_command(tmp_path):
+    from xmuse.adapters.opencode import write_config
+    write_config(tmp_path, {"id": "oc"}, tmp_path / "state")
+    perms = json.loads((tmp_path / "opencode.json").read_text())["permissions"]
+    assert {"action": "shell", "resource": "*", "effect": "ask"} in perms
+    assert not any(p["action"] == "shell" and p["effect"] == "allow" for p in perms)
+
+
 def test_safe_rm_f_is_auto_approved_and_everything_riskier_still_asks():
     from xmuse.adapters.opencode import shell_auto_ok
     ok = lambda *cmds: shell_auto_ok("shell", list(cmds))  # noqa: E731
@@ -188,7 +227,8 @@ def test_safe_rm_f_is_auto_approved_and_everything_riskier_still_asks():
                 "rm -f /tmp/../etc/passwd", "rm -f ~/x", "rm -f x /etc/passwd", "rm -f /tmp/x; rm -rf /",
                 "rm -f /tmp/x && git push", "rm -f $(echo /etc/passwd)"):
         assert not ok(bad), bad
-    assert ok("python3 -c 'print(1)'", "git status --short", "rm -f /tmp/opencode_minisql_probe.py")
+    assert ok("python3 /tmp/p.py", "git status --short", "rm -f /tmp/opencode_minisql_probe.py")
+    assert not ok("python3 -c 'print(1)'")  # inline code hides what runs: the human decides (T5)
     assert not ok("git status --short", "rm -f /tmp/x", "git push origin main")
 
 

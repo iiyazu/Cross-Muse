@@ -16,7 +16,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, wakepack
+from . import align, config, db, mail, memoryos, peer, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import OpenCodeDriver, Server
@@ -32,8 +32,10 @@ def digest(token: str) -> str:
 
 
 class Hub:
-    def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None):
-        self.state, self.cfg = state, config.load(state)
+    def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None,
+                 human_check: bool = True):
+        # human_check is a constructor argument, never config: an agent can edit config.json, not the hub's argv
+        self.state, self.cfg, self.human_check = state, config.load(state), human_check
         claude_bin = claude_bin or self.cfg.get("claude_bin", "claude")
         self.ws = Path(self.cfg["workspace"])
         self.db = db.Pool(state / "hub.db")
@@ -110,6 +112,14 @@ class Hub:
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
             return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"))
+        if name == "xmuse_approve":  # the user's decision, relayed by the coordinator; recorded with its words
+            a = db.row(conn.execute("select * from agents where id=?", (agent,)))
+            if not db.settings(a).get("desktop"):
+                raise ToolError("invalid_arguments", "xmuse_approve is only for the desktop coordinator session; "
+                                                     "ask the user, who decides through the coordinator")
+            out = self.admin_approve({"id": args["id"], "decision": args["decision"]},
+                                     via=agent, user_said=args["user_said"])
+            return out
         return mail.whoami(conn, agent, str(self.ws))
 
     def hook(self, agent: str, body: dict):
@@ -188,15 +198,20 @@ class Hub:
             conn.execute("insert or replace into seen values(?,?)", (s["id"], seq))
         return {"snapshot": text}
 
-    def admin_approve(self, body: dict):
+    def admin_approve(self, body: dict, via: str | None = None, user_said: str | None = None):
         conn = self.db()
         a = db.row(conn.execute("select * from approvals where id=?", (body["id"],)))
         if a is None:
             raise ToolError("unknown_approval", f"no approval {body['id']}")
+        if a["state"] == "decided":
+            raise ToolError("invalid_arguments", f"approval {a['id']} was already decided ({a['decision']})")
         self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"])
         with db.tx(conn):
             conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
                          (body["decision"], db.now(), a["id"]))
+        who = f"the user via {via}" + (f' ("{user_said}")' if user_said else "") if via else "the user (terminal)"
+        mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
+                    f"approval {a['id']} ({a['action']} {a['resources']}): {body['decision']}, decided by {who}")
         return {"ok": True}
 
     def admin_attach(self, body: dict):
@@ -320,7 +335,27 @@ class Hub:
     RELAY = {"/v1/relay/bind": "relay_bind", "/v1/relay/unbind": "relay_unbind", "/v1/relay/poll": "relay_poll",
              "/v1/relay/delivered": "relay_delivered"}
 
-    def route(self, method: str, path: str, caller: str, body: dict, session: str | None = None):
+    HUMAN_ONLY = {"approve", "align", "resume"}  # admin actions that grant power: a person, not just the token
+
+    def agent_pids(self) -> set[int]:
+        conn = self.db()
+        pids = {r[0] for r in conn.execute("select pid from turns where state='running' and pid is not null")}
+        pids |= {r[0] for r in conn.execute("select pid from leases where pid is not null")}
+        srv = getattr(self.engine.drivers.get("opencode"), "server", None)
+        if srv is not None and srv.proc is not None:
+            pids.add(srv.proc.pid)
+        return {int(p) for p in pids if str(p).isdigit()}
+
+    def require_human(self, name: str, client_port: int | None) -> None:
+        if not self.human_check or name not in self.HUMAN_ONLY:
+            return
+        why = peer.human_check(client_port or 0, self.httpd.server_address[1], self.agent_pids())
+        if why:
+            raise ToolError("human_only", f"{name} needs a person: {why}. Run `xmuse {name} ...` in your own "
+                                          "terminal, or tell the desktop coordinator your decision so it relays it")
+
+    def route(self, method: str, path: str, caller: str, body: dict, session: str | None = None,
+              client_port: int | None = None):
         if path in self.RELAY and caller != config.HUMAN:
             return getattr(self, self.RELAY[path])(caller, body, session)
         if path.startswith("/v1/tools/") and caller != config.HUMAN:
@@ -332,6 +367,7 @@ class Hub:
         if path.startswith("/v1/admin/") and caller == config.HUMAN:
             fn = getattr(self, "admin_" + path.rsplit("/", 1)[1], None)
             if fn:
+                self.require_human(path.rsplit("/", 1)[1], client_port)
                 return fn(body)
         raise ToolError("not_found", f"{method} {path}")
 
@@ -347,7 +383,8 @@ class Hub:
                 n = int(self.headers.get("content-length") or 0)
                 try:
                     body = json.loads(self.rfile.read(n) or b"{}")
-                    out = hub.route("POST", self.path, caller, body, self.headers.get("x-xmuse-session") or None)
+                    out = hub.route("POST", self.path, caller, body, self.headers.get("x-xmuse-session") or None,
+                                    self.client_address[1])
                     if not self.path.startswith("/v1/relay/"):
                         with hub.relay_cv:
                             hub.relay_cv.notify_all()

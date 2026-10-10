@@ -101,8 +101,7 @@ def test_opencode_config_asks_for_consequential_commands(ws):
     assert srv["environment"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "opencode-1"}
     rules = {(r["action"], r["resource"]): r["effect"] for r in cfg["permissions"]}
     assert rules[("xmuse_*", "*")] == "allow"
-    assert rules[("shell", "git push*")] == rules[("shell", "rm -r*")] == "ask"
-    assert rules[("shell", "*=* git push*")] == "ask"
+    assert rules[("shell", "*")] == "ask"  # every command; the hub's allowlist answers the safe ones (T5)
     assert ("edit", "*") not in rules  # edits stay OpenCode's default (allowed)
 
 

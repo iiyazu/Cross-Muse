@@ -78,10 +78,10 @@ To set up the Claude desktop app as coordinator, dsh foreground mode or the dsh 
   - A dsh session must `/xmuse bind` to an agent before it can act as that agent.
 - **Desktop coordinator**: the Claude desktop app serves as the user's interface. The hub never wakes it in the background, replies addressed to the user are copied to it, and when it relays a decision for the user, the provenance says so.
 - **dsh bundle**: registers native `xmuse_*` tools and a `/xmuse` command in dsh desktop, long-polls the hub, and delivers messages into the bound session. The user can watch what dsh is doing and step in at any time.
-- **Trust model (stated plainly)**: today this is a **single-user model that guards against mistakes, not against a malicious agent**.
-  - Agents run as the same OS user as the hub, so an agent with a shell can read the tokens.
-  - "Consequential commands need approval" is a blocklist heuristic, and it can be bypassed (for example `cd x && git push`).
-  - Planned fixes are in [audit B2-1/B2-2](docs/design/XMUSE2-AUDIT-2026-10-11.zh.md) and are in progress.
+- **Trust model (stated plainly)**: this is a **single-user model that guards against mistakes, not against an agent that sets out to get around it**.
+  - Every OpenCode shell command goes to the hub first. The hub approves on its own only single commands on an allowlist (tests, read-only inspection, local git, and so on); chained commands, `bash -c`, `python -c` and everything else go to the human.
+  - Three admin actions need more than the admin token: approving a held command, confirming a proposal, and resuming a paused agent. The call must come from the user's own terminal (a process with a controlling terminal, outside every agent's process tree), or from the desktop coordinator relaying the user's own words.
+  - Remaining gap: agents run as the same OS user as the hub, so they can still read the token files, and a determined agent can fool the process check. A real boundary needs a separate OS user or a sandbox for agents; see [design §4.7](docs/design/XMUSE2-ARCH-2026-10.zh.md).
 
 ## Results and limits
 

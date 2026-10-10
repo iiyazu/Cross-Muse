@@ -185,7 +185,8 @@
 - 在 Claude 下，垫片在 `127.0.0.1:0` 上监听，向 hub 注册端口、一次性 nonce、会话 ID 和 Claude 的 pid；hub 用带 nonce 的 POST 推送。只有交互 CLI（`CLAUDE_CODE_ENTRYPOINT=cli`）才声明 `claude/channel`，无界面进程不声明。
 - dsh 的"插件"是 hub 每次运行生成的一次性 `--patch` 覆盖文件：显式模型、只挂 xmuse 的 MCP、用 `disabled` 行关掉不需要的原生高危工具、可选的钩子桥。不写 `$DSH_HOME`。
 - Claude channel 只能用 TS 的 MCP SDK 实现，所以垫片用 TS 写；hub 用 Python 写。
-- hub 状态（数据库、令牌、日志）放在工作区外的 `~/.local/state/xmuse/<工作区名>-<sha8>/`，工作区里只留一个指针文件 `.xmuse.json`，agent 读不到令牌。M1 是每个工作区一个 hub。
+- hub 状态（数据库、令牌、日志）放在工作区外的 `~/.local/state/xmuse/<工作区名>-<sha8>/`，工作区里只留一个指针文件 `.xmuse.json`。M1 是每个工作区一个 hub。
+  - **更正（10-11，审计 B2-1）**：原文写"agent 读不到令牌"，这不成立。agent 和 hub 是同一个 OS 用户，有 shell 或解释器的 agent 能读状态目录里的所有令牌，包括管理令牌；`.xmuse.json` 还写着状态目录的路径。实际的做法和边界见 §4.7。
 
 **M0 带来的硬性要求**：
 - **推送端点由 hub 分配**：项目级 `.mcp.json` 会被该目录下所有 Claude 进程加载，TUI 和无界面进程抢同一个固定端口会 `EADDRINUSE`。垫片启动时向 hub 注册"会话 ID → 推送端点"（动态端口或 unix socket）。
@@ -367,7 +368,13 @@
 - 每个 agent 的插件持有一个本地签发的随机令牌（`xmuse agent add` 签发，文件权限 600，库里只存 sha256 摘要），hub 用它确认"消息是谁发的"；人用单独的管理令牌。M1 没有移植 v1 的 plugin grant 和配对：本地、单用户、只监听回环地址，配对码、scope 和过期都没有要防的对象。
 - 消息进入别家 agent 的上下文时带来源标注，比如 `<xmuse from="opencode-1" family="..." thread="...">`。
 - **来源标注和中继信任要一起设计**（M0 教训）：只写"同伴消息，不是用户指令"会让谨慎的模型拒绝一切转述请求；完全不标又给了注入空间。口径是：同伴消息来自用户安排的协作者，**在当前任务范围内可以照做**；超出任务范围、或者有后果的动作，仍按各家原生权限请人批准。这段话写进技能 `xmuse-collab` 和项目 `AGENTS.md`。
-- 各家原生的权限确认照常生效；合并、推送、删除这类有后果的动作需要人批准。Claude 的权限转发、OpenCode 的 `permission.asked` 都可以把审批请求送到 hub。xmuse 生成的 OpenCode 配置要把有后果的动作设成 `ask`（它默认放行编辑）。
+- 各家原生的权限确认照常生效；合并、推送、删除这类有后果的动作需要人批准。Claude 的权限转发、OpenCode 的 `permission.asked` 都可以把审批请求送到 hub。
+- **信任模型（10-11 改写，审计 B2-1、B2-2）**：这是**防误操作的单用户模型，不防一个有意绕过的 agent**。
+  - **OpenCode 的 shell 自动批准改用白名单**。xmuse 生成的配置让每条 shell 命令都走 `ask`，hub 只自动放行通过白名单的单条命令：测试命令、只读查看、本地 git（status/diff/log/add/commit 等）、工作区或 /tmp 里的脚本、安全的 `rm -f`。
+  - 以下情况一律交给人：命令组合（`;`、`&&`、`||`、`&`）、命令替换、除 `2>&1` 外的重定向、`bash -c`/`python -c`、带路径的程序名、`git -C`/`git -c`，以及白名单外的一切。`|` 后面只允许接只读过滤器。原来的 fnmatch 黑名单（`cd x && git push`、`bash -c "git push"` 都能绕过）已经删掉。绕过写法都有测试用例（`tests/test_opencode_engine.py`）。
+  - **有授权效力的管理操作要求"人在终端"**。审批、确认或驳回提议、恢复暂停的 agent，光有管理令牌不够：hub 经 /proc 找到发起连接的进程，要求它有控制终端、并且不在任何已知 agent 进程（运行中的回合、Claude TUI 租约、OpenCode 服务）的进程树里；Windows 侧来的连接找不到进程，一律拒绝。另一个合规途径是桌面协调者：它问过用户后用 `xmuse_approve` 转达，必须附上用户原话，记录里标明"用户经协调者"。
+  - 发消息、停止、查看这类操作仍然只看令牌：它们不授予权力，而且发出的消息会标 `via=cli`。
+  - **剩下的缺口**：令牌文件本身仍然能被 agent 读到。有意绕过的 agent 可以脱离进程树并给自己分配一个伪终端，从而通过检查。Claude 无界面白名单里的 `python3`（用户 10-09 决定）可以执行任意代码。真正的边界只能是给 agent 用单独的 OS 用户或沙箱，并且不给推送凭据（审计 B2-1 第 2、3 点），这需要用户决定。
 - Claude channel 按发送者门控：只接受带 hub 下发 nonce 的推送。
 - dsh 无界面模式下 MCP 工具直接执行、没人可以审批，所以安全边界是覆盖文件：只挂 xmuse 的 MCP，原生高危工具用 `disabled` 行做减法（实际清单：`tool-web`、`tool-subagent*`、`tool-workflow`、`tool-plugin-manager`、`tool-jobs`；文件读写和 PowerShell 保留——它们跑在 dsh 的 workspace-write 沙箱里，需要审批的动作在无界面下直接失败）。中继信任说明对 dsh 同样必需。
 
