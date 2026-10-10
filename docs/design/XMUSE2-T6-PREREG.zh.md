@@ -67,4 +67,8 @@
 
 ## 偏离记录
 
-（开跑后追加）
+1. **10-11 03:22 开跑约 8 分钟后全部中止，2 个 run 作废**：`ledger-S-1`、`review-ledger-bug1-self-1`。
+   - **原因**：T5 把 OpenCode 的 shell 自动批准改成了白名单。agent 写探针脚本时用的 heredoc（`cat > /tmp/... <<'PY'`）和 `python3 -c`，都按设计转给人审批；无人值守时会一直挂到超时。两个 run 都卡在待审批状态，这和要测的东西无关。
+   - **处理**：新增只供实验使用的审批策略 `XMUSE_SHELL_POLICY=blocklist-experiment`，由 runner 在启动 hub 时通过环境变量传入，并记进每个 run 的 `meta.json` → `provenance.shell_policy`。它的语义就是 M2b 时期的黑名单，所以新 run 和 M2b 的 run 在审批上可比。
+   - 主指标、样本量、比较对象都**没有改**。作废的两个 run 不计入；重跑时，batch.sh 会把旧目录移到 `results/_prev/`。
+   - 修复提交见报告 T6 一节。
