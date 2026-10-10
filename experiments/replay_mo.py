@@ -596,9 +596,7 @@ def score_run(run: dict, reqs: list, exp: Path, seed: str) -> dict:
                                    "unmetered_attempts": u.get("unmetered_attempts") or 0,
                                    "lower_bound": bool(u.get("unmetered_attempts"))})
             cost["unmetered_attempts"] += u.get("unmetered_attempts") or 0
-            for k, v in u.items():
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    cost["usage_total"][k] = cost["usage_total"].get(k, 0) + v
+            cost["usage_total"] = sum_usage([cost["usage_total"], u])
         elif r["type"] == "recall":
             cost["recall_seconds"].append(resp.get("seconds"))
         elif r["type"] == "similar":
@@ -661,7 +659,18 @@ def totals(per_run: list) -> dict:
                                             if s is not None), 3),
                         "similar": round(sum(s for r in per_run for s in r["cost"]["similar_seconds"]
                                              if s is not None), 3)},
-            "usage_total": {k: v for r in per_run for k, v in r["cost"]["usage_total"].items()}}
+            "usage_total": sum_usage(r["cost"]["usage_total"] for r in per_run),
+            "unmetered_attempts": sum(r["cost"]["unmetered_attempts"] for r in per_run)}
+
+
+def sum_usage(usages) -> dict:
+    """Add up numeric usage counters (attempts, prompt/completion/total_tokens, unmetered_attempts, ...)."""
+    total: dict = {}
+    for u in usages:
+        for k, v in (u or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                total[k] = total.get(k, 0) + v
+    return total
 
 
 def markdown(rep: dict) -> str:
