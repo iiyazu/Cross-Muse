@@ -164,7 +164,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # tests that need 
 (cd integrations/dsh-bundle && npm test)
 ```
 
-Last measured: hub 336 passed, 1 skipped, in about 2 min 48 s; bundle 28 passed.
+Last measured: hub 337 passed, 1 skipped, in about 2 min 28 s; bundle 28 passed.
 
 ## License
 
