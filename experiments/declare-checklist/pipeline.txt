@@ -1,0 +1,12 @@
+# label | regex (case-insensitive); see ledger.txt for the rule
+plan-error-line-1-based | 1-based|line number|blank.*line|comment.*line
+empty-plan-is-valid | empty
+unknown-dep-is-graph-error | unknown|GraphError|forward ref
+self-dependency | self.?dep|self.?loop|PlanError.*self
+cycle-rotation | rotat|lexicograph|smallest
+order-equals-levels-flattened | flatten|order.*levels|levels.*order
+ties-by-name | tie|name.*(order|ascend|sort)|alphabet
+log-detail-no-newline | newline|detail
+log-numbering | 1-based|zero.?pad|numbering|sequence
+rot-written-order | written|definition order|order of (appearance|definition)|appear
+rot-log-sections | section|---

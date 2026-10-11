@@ -1,4 +1,4 @@
-"""The 7 model-facing tools (design §4.3): schemas and entry validation.
+"""The 8 model-facing tools (design §4.3; xmuse_approve is for the desktop coordinator only): schemas and validation.
 
 Schemas live here only; `xmuse init` writes them to <state>/tools.json for the shim.
 Validation is ported from v1 room_mcp_server._validate_tool_call/_schema_violation, plus
@@ -31,6 +31,9 @@ TOOLS = [
          "supersedes": _s("entry id (E7) this decision/assumption/question replaces"),
          "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "entry ids (handoff only)"},
+         "on_behalf_of": {"type": "string", "enum": ["human"], "description": "Coordinator (desktop) sessions only. "
+                          "Use only when the user explicitly asked for this message to go out in their name; "
+                          "quote their words. Default is to send as yourself."},
          "why": {"type": "object", "additionalProperties": False,
                  "description": "Why-First handoff; required when kind=handoff",
                  "properties": {k: {"type": "string"} for k in WHY_FIELDS}},
@@ -53,10 +56,17 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["summary", "next"], "properties": {
          "summary": _s("what you did"),
          "next": _s("peer id or 'human' who must act next, or 'none' if the work is finished"),
-         "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on",
+         "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on; one decision per cross-module convention (representation, units, errors, ordering, output format)",
                       "items": {"type": "object", "additionalProperties": False, "required": ["kind", "statement"],
                                 "properties": {"kind": {"type": "string", "enum": DECLARE}, "statement": _s("one sentence"),
                                                "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}}}}},
+    {"name": "xmuse_approve", "description": "Coordinator (desktop) sessions only: relay the user's decision on a "
+                                             "held command (the hub's 'asks permission' notice). Only after the user "
+                                             "said so in this conversation; quote their words in user_said.",
+     "inputSchema": {"type": "object", "required": ["id", "decision", "user_said"], "properties": {
+         "id": _s("approval id from the notice, e.g. per_9"),
+         "decision": {"type": "string", "enum": ["once", "always", "reject"]},
+         "user_said": _s("the user's own words, verbatim")}}},
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
 _TYPES = {"string": str, "integer": int, "boolean": bool, "array": list, "object": dict}

@@ -1,0 +1,13 @@
+# T6 E2a (r7: needs dsh); numbered 11-16 so they never collide with E1 minisql-B2 1-3
+minisql-B2 11
+minisql-C2 11
+minisql-B2 12
+minisql-C2 12
+minisql-B2 13
+minisql-C2 13
+minisql-B2 14
+minisql-C2 14
+minisql-B2 15
+minisql-C2 15
+minisql-B2 16
+minisql-C2 16

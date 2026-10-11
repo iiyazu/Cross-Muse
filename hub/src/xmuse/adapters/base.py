@@ -13,6 +13,26 @@ Mapping to the dsh contract A–H (XMUSE2-M0-DSH-PROMPT):
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+import os
+import re
+
+
+def to_win(p) -> str:
+    """WSL path -> Windows path for a Windows child process.
+
+    A /mnt/<drive>/ path maps to its DRIVE-colon form; a native WSL path (/home/...)
+    maps to the wsl.localhost UNC form. Only the first form is writable: the dsh sandbox
+    cannot write through the second (probe 2026-10-10: ENOTSUP on atomic renames,
+    GetNamedSecurityInfoW Win32 1 when provisioning the workspace), so dsh workspaces must
+    live under /mnt/<drive>/.
+    """
+    s = str(p)
+    m = re.match(r"/mnt/([a-zA-Z])/", s)
+    if m:
+        return m.group(1).upper() + chr(58) + chr(92) + s[m.end():].replace("/", chr(92))
+    from ..host import distro as wsl_distro
+    distro = wsl_distro()
+    return chr(92)*2 + "wsl.localhost" + chr(92) + distro + s.replace("/", chr(92))
 
 
 @dataclass

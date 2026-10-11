@@ -1,0 +1,10 @@
+# T6 E1 arm S (base, opencode only)
+ledger-S 1
+minisql-S 1
+pipeline-S 1
+ledger-S 2
+minisql-S 2
+pipeline-S 2
+ledger-S 3
+minisql-S 3
+pipeline-S 3

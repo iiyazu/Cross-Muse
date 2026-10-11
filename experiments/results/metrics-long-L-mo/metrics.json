@@ -1,0 +1,789 @@
+{
+ "runs": [
+  {
+   "run": "long-L-1",
+   "seed": "ledger",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "pass",
+   "hidden_unaffected": null,
+   "quiet": true,
+   "seconds": 72,
+   "turns": 2,
+   "failed_turns": 1,
+   "tokens": 222700,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 1,
+     "tokens": 222700
+    },
+    "dsh-1": {
+     "turns": 1,
+     "tokens": 0
+    }
+   },
+   "human_messages": 1,
+   "human_interventions": 0,
+   "notices": 1,
+   "injection": {
+    "align_tokens": 0,
+    "share_total": 0.0,
+    "share_median": 0.0,
+    "share_max": 0.0,
+    "share_median_injected": null,
+    "modes": {
+     "none": 2
+    }
+   },
+   "rot": {
+    "verdict": "not_injected"
+   },
+   "declaration": {
+    "declared": 5,
+    "total": 9,
+    "rate": 0.5555555555555556,
+    "missing": [
+     "currency-three-letters",
+     "currencies-never-mixed",
+     "rot-decimal-string",
+     "rot-uncategorized"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0
+    ],
+    "dsh-1": [
+     0
+    ]
+   }
+  },
+  {
+   "run": "long-L-1",
+   "seed": "minisql",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 46,
+    "total": 46,
+    "excluded": 1,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 366,
+   "turns": 7,
+   "failed_turns": 0,
+   "tokens": 1605498,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 3,
+     "tokens": 773402
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 832096
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 1043,
+    "share_total": 0.0006611266409315357,
+    "share_median": 0.0007904957210122927,
+    "share_max": 0.00263822238395233,
+    "share_median_injected": 0.0008219066805738233,
+    "modes": {
+     "delta": 5,
+     "snapshot": 1,
+     "none": 1
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E7"
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 6
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     5,
+     10,
+     10
+    ],
+    "dsh-1": [
+     5,
+     10,
+     10,
+     10
+    ]
+   }
+  },
+  {
+   "run": "long-L-1",
+   "seed": "pipeline",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "pass",
+   "hidden_unaffected": {
+    "passed": 44,
+    "total": 44,
+    "excluded": 0,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 241,
+   "turns": 7,
+   "failed_turns": 0,
+   "tokens": 2875792,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 3,
+     "tokens": 1376275
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 1499517
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 735,
+    "share_total": 0.00025762779828479473,
+    "share_median": 0.0003560900338692028,
+    "share_max": 0.0007662932306542624,
+    "share_median_injected": 0.00040670189369943323,
+    "modes": {
+     "delta": 6,
+     "none": 1
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E15"
+   },
+   "declaration": {
+    "declared": 9,
+    "total": 11,
+    "rate": 0.8181818181818182,
+    "missing": [
+     "self-dependency",
+     "rot-log-sections"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     9,
+     13,
+     14
+    ],
+    "dsh-1": [
+     13,
+     13,
+     14,
+     14
+    ]
+   }
+  },
+  {
+   "run": "long-L-3",
+   "seed": "ledger",
+   "group": "L",
+   "mode": "run",
+   "completed": false,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 24,
+    "total": 25,
+    "excluded": 14,
+    "failed": [
+     "TestParseAmountHidden.test_rejects_non_ascii_digits"
+    ]
+   },
+   "quiet": true,
+   "seconds": 248,
+   "turns": 10,
+   "failed_turns": 0,
+   "tokens": 3149427,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 6,
+     "tokens": 1310119
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 1839308
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 888,
+    "share_total": 0.00028538079053049974,
+    "share_median": 0.00013367238585938366,
+    "share_max": 0.0034083541724553115,
+    "share_median_injected": 0.0004419223290250343,
+    "modes": {
+     "none": 4,
+     "delta": 6
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 5,
+    "total": 5,
+    "kind": "decision",
+    "superseded_entry": "E1"
+   },
+   "declaration": {
+    "declared": 6,
+    "total": 9,
+    "rate": 0.6666666666666666,
+    "missing": [
+     "currency-three-letters",
+     "currencies-never-mixed",
+     "rot-uncategorized"
+    ],
+    "agent_entries": 8
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     0,
+     4,
+     4,
+     5,
+     8,
+     8
+    ],
+    "dsh-1": [
+     0,
+     4,
+     8,
+     8
+    ]
+   }
+  },
+  {
+   "run": "long-L-3",
+   "seed": "minisql",
+   "group": "L",
+   "mode": "run",
+   "completed": false,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 45,
+    "total": 46,
+    "excluded": 1,
+    "failed": [
+     "TestParserHidden.test_unterminated_string_reports_the_opening_quote"
+    ]
+   },
+   "quiet": true,
+   "seconds": 377,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 4616427,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1891219
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 2725208
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 835,
+    "share_total": 0.00018236943986154775,
+    "share_median": 0.00019897896638609953,
+    "share_max": 0.0008148233693908714,
+    "share_median_injected": 0.00021388707425694966,
+    "modes": {
+     "delta": 7,
+     "none": 1
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": null
+   },
+   "declaration": {
+    "declared": 6,
+    "total": 10,
+    "rate": 0.6,
+    "missing": [
+     "values-int-str-none",
+     "ne-normalized",
+     "column-names-case-insensitive",
+     "last-column-not-padded"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     7,
+     11,
+     12,
+     12,
+     12
+    ],
+    "dsh-1": [
+     7,
+     12,
+     12
+    ]
+   }
+  },
+  {
+   "run": "long-L-3",
+   "seed": "pipeline",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "pass",
+   "hidden_unaffected": {
+    "passed": 44,
+    "total": 44,
+    "excluded": 0,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 260,
+   "turns": 8,
+   "failed_turns": 0,
+   "tokens": 6135841,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 2406692
+    },
+    "dsh-1": {
+     "turns": 3,
+     "tokens": 3729149
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 963,
+    "share_total": 0.0001576774682008919,
+    "share_median": 0.0002440439683163147,
+    "share_max": 0.0007960776944496643,
+    "share_median_injected": 0.0002440439683163147,
+    "modes": {
+     "delta": 8
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E18"
+   },
+   "declaration": {
+    "declared": 7,
+    "total": 11,
+    "rate": 0.6363636363636364,
+    "missing": [
+     "empty-plan-is-valid",
+     "unknown-dep-is-graph-error",
+     "self-dependency",
+     "rot-log-sections"
+    ],
+    "agent_entries": 6
+   },
+   "review": null,
+   "memoryos": null,
+   "view_curve": {
+    "opencode-1": [
+     11,
+     15,
+     15,
+     16,
+     17
+    ],
+    "dsh-1": [
+     11,
+     15,
+     17
+    ]
+   }
+  },
+  {
+   "run": "long-L-mo-1",
+   "seed": "ledger",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 25,
+    "total": 25,
+    "excluded": 14,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 302,
+   "turns": 9,
+   "failed_turns": 0,
+   "tokens": 2676777,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 1524850
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 1151927
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 578,
+    "share_total": 0.0002186723486166893,
+    "share_median": 8.503589177250139e-05,
+    "share_max": 0.0023693905979456603,
+    "share_median_injected": 0.0006758864510762192,
+    "modes": {
+     "none": 4,
+     "delta": 5
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 5,
+    "total": 5,
+    "kind": "decision",
+    "superseded_entry": "E1"
+   },
+   "declaration": {
+    "declared": 6,
+    "total": 9,
+    "rate": 0.6666666666666666,
+    "missing": [
+     "currency-three-letters",
+     "line-numbers-1-based",
+     "rot-uncategorized"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": {
+    "enabled": true,
+    "capabilities": [
+     "curate",
+     "curate.collab",
+     "recall",
+     "similar"
+    ],
+    "recall_calls": 0,
+    "recall_ms_median": null,
+    "recall_failures": 0,
+    "curate_calls": 1,
+    "curate_ms_median": 17634,
+    "curate_failures": 0,
+    "failures": 0,
+    "usage_total": {
+     "completion_tokens": 4660,
+     "prompt_tokens": 2297,
+     "total_tokens": 6957
+    },
+    "usage_calls": 1,
+    "usage_attempts": 1,
+    "unmetered_attempts": 0,
+    "usage_lower_bound": false,
+    "proposals": 0,
+    "conflicts": 0
+   },
+   "view_curve": {
+    "opencode-1": [
+     0,
+     4,
+     4,
+     5,
+     5
+    ],
+    "dsh-1": [
+     0,
+     4,
+     4,
+     5
+    ]
+   }
+  },
+  {
+   "run": "long-L-mo-1",
+   "seed": "minisql",
+   "group": "L",
+   "mode": "run",
+   "completed": false,
+   "public": "pass",
+   "hidden": "fail",
+   "hidden_unaffected": {
+    "passed": 45,
+    "total": 46,
+    "excluded": 1,
+    "failed": [
+     "TestParserHidden.test_unterminated_string_reports_the_opening_quote"
+    ]
+   },
+   "quiet": true,
+   "seconds": 465,
+   "turns": 9,
+   "failed_turns": 0,
+   "tokens": 4644644,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 2354999
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 2289645
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 997,
+    "share_total": 0.00021664724374509856,
+    "share_median": 0.00025893270939306547,
+    "share_max": 0.0014006075739061978,
+    "share_median_injected": 0.00040615896795672074,
+    "modes": {
+     "delta": 7,
+     "none": 2
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E9"
+   },
+   "declaration": {
+    "declared": 10,
+    "total": 10,
+    "rate": 1.0,
+    "missing": [],
+    "agent_entries": 6
+   },
+   "review": null,
+   "memoryos": {
+    "enabled": true,
+    "capabilities": [
+     "curate",
+     "curate.collab",
+     "recall",
+     "similar"
+    ],
+    "recall_calls": 0,
+    "recall_ms_median": null,
+    "recall_failures": 0,
+    "curate_calls": 3,
+    "curate_ms_median": 17634,
+    "curate_failures": 0,
+    "failures": 0,
+    "usage_total": {
+     "completion_tokens": 16638,
+     "prompt_tokens": 7056,
+     "total_tokens": 23694
+    },
+    "usage_calls": 3,
+    "usage_attempts": 3,
+    "unmetered_attempts": 0,
+    "usage_lower_bound": false,
+    "proposals": 0,
+    "conflicts": 0
+   },
+   "view_curve": {
+    "opencode-1": [
+     4,
+     9,
+     9,
+     9,
+     9
+    ],
+    "dsh-1": [
+     4,
+     9,
+     9,
+     9
+    ]
+   }
+  },
+  {
+   "run": "long-L-mo-1",
+   "seed": "pipeline",
+   "group": "L",
+   "mode": "run",
+   "completed": true,
+   "public": "pass",
+   "hidden": "pass",
+   "hidden_unaffected": {
+    "passed": 44,
+    "total": 44,
+    "excluded": 0,
+    "failed": []
+   },
+   "quiet": true,
+   "seconds": 304,
+   "turns": 9,
+   "failed_turns": 0,
+   "tokens": 6809349,
+   "by_agent": {
+    "opencode-1": {
+     "turns": 5,
+     "tokens": 4086534
+    },
+    "dsh-1": {
+     "turns": 4,
+     "tokens": 2722815
+    }
+   },
+   "human_messages": 2,
+   "human_interventions": 0,
+   "notices": 0,
+   "injection": {
+    "align_tokens": 852,
+    "share_total": 0.0001257125555857541,
+    "share_median": 7.462502394464351e-05,
+    "share_max": 0.0009887025670829376,
+    "share_median_injected": 0.00017993522331960493,
+    "modes": {
+     "delta": 7,
+     "none": 2
+    }
+   },
+   "rot": {
+    "verdict": "followed",
+    "passed": 4,
+    "total": 4,
+    "kind": "decision",
+    "superseded_entry": "E16"
+   },
+   "declaration": {
+    "declared": 9,
+    "total": 11,
+    "rate": 0.8181818181818182,
+    "missing": [
+     "empty-plan-is-valid",
+     "rot-log-sections"
+    ],
+    "agent_entries": 5
+   },
+   "review": null,
+   "memoryos": {
+    "enabled": true,
+    "capabilities": [
+     "curate",
+     "curate.collab",
+     "recall",
+     "similar"
+    ],
+    "recall_calls": 0,
+    "recall_ms_median": null,
+    "recall_failures": 0,
+    "curate_calls": 5,
+    "curate_ms_median": 17634,
+    "curate_failures": 0,
+    "failures": 0,
+    "usage_total": {
+     "completion_tokens": 22748,
+     "prompt_tokens": 11881,
+     "total_tokens": 34629
+    },
+    "usage_calls": 5,
+    "usage_attempts": 5,
+    "unmetered_attempts": 0,
+    "usage_lower_bound": false,
+    "proposals": 0,
+    "conflicts": 0
+   },
+   "view_curve": {
+    "opencode-1": [
+     8,
+     12,
+     12,
+     13,
+     13
+    ],
+    "dsh-1": [
+     8,
+     12,
+     12,
+     13
+    ]
+   }
+  }
+ ],
+ "groups": {
+  "L": {
+   "runs": 9,
+   "completion_rate": 0.6666666666666666,
+   "turns_mean": 7.666666666666667,
+   "tokens_mean": 3637383.888888889,
+   "tokens_median": 3149427,
+   "interventions_mean": 0,
+   "injection_share_total": 0.00023391269841742352,
+   "injection_share_max": 0.0034083541724553115,
+   "rot": {
+    "not_injected": 1,
+    "followed": 8
+   },
+   "declaration_rate_mean": 0.7512906846240179,
+   "review_detection_rate": null,
+   "review_false_positive_rate": null
+  }
+ }
+}

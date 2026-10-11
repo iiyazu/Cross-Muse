@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "xmuse 中继",
+    "description": "dsh 会话与 xmuse hub 之间的中继：/xmuse bind、7 个 xmuse_* 工具，以及把消息投递进已绑定的会话。"
+  }
+}

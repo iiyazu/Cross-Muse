@@ -1,0 +1,8 @@
+# xmuse 2 smoke-test bundle: one Host plugin row. `state` is the xmuse hub state
+# directory (contains hub.json and tokens/<agent>); only paths here, never tokens.
+# Replace the placeholder with the "dsh bundle config.state" line that `xmuse doctor` prints.
+- insert:
+    - id: xmuse
+      name: 'xmuse-dsh-bundle'
+      config:
+        state: '\\wsl.localhost\<distro>\<home>\.local\state\xmuse\<workspace>-<hash>'

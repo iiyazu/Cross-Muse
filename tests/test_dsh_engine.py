@@ -34,8 +34,9 @@ def test_turn_runs_headless_with_overlay_and_resumes_in_the_same_session(make):
     assert "You are dsh-1" in c1["prompt"] and c1["env"] == {
         "DSH_TELEMETRY_DISABLED": "1", "ELECTRON_RUN_AS_NODE": "1", "WSLENV": "DSH_TELEMETRY_DISABLED:ELECTRON_RUN_AS_NODE"}
     rows = c1["overlay"]
-    assert rows[0]["config"] == {"provider": "deepseek-official", "model": "deepseek-v4-flash"}
-    [mcp] = rows[1]["insert"]
+    assert rows[0]["id"] == "llm-pi-ai" and rows[0]["config"] == {"providers": {"opencode-go": {"apiKeyEnv": "OPENCODE_GO_API_KEY"}}}
+    assert rows[1]["config"] == {"provider": "opencode-go", "model": "muse-spark-1.3-contributor"}
+    [mcp] = rows[2]["insert"]
     assert mcp["config"]["serverName"] == "xmuse" and mcp["config"]["env"]["XMUSE_AGENT"] == "dsh-1"
     assert {"id": "tool-web", "disabled": True} in rows and not any(r.get("id") == "tool-pwsh" for r in rows)
     h.send("dsh-1", "again")
@@ -154,14 +155,25 @@ def test_parse_and_human_turn_units(tmp_path):
     assert not human_turn(tmp_path / "missing.zstd")
 
 
-def test_dsh_agent_needs_a_workspace_on_c(tmp_path, monkeypatch):
+def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     (tmp_path / "ws").mkdir()
     state = xinit.init(tmp_path / "ws")
-    with pytest.raises(SystemExit, match="dsh needs the workspace on C:"):
+    with pytest.raises(SystemExit, match="dsh needs the workspace on a Windows drive") as e:
         xinit.add_agent(state, "dsh-1", "dsh")
+    assert "move the workspace under /mnt/c/" in str(e.value)
     assert json.loads(overlay({"id": "d", "model": "p/m"}, tmp_path, mcp=False))[1] == {"id": "tool-web",
                                                                                        "disabled": True}
+    assert xinit._dsh_ws_ok("/mnt/c/Users/w") and xinit._dsh_ws_ok("/mnt/d/work")
+    assert not xinit._dsh_ws_ok("/home/user/dev/ws")
+
+
+def test_to_win_maps_mnt_drives_and_wsl_paths(monkeypatch):
+    from xmuse.adapters.base import to_win
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-24.04")
+    assert to_win("/mnt/c/Users/a/b") == r"C:\Users\a\b"
+    assert to_win("/mnt/d/work") == r"D:\work"
+    assert to_win("/home/user/dev/ws") == r"\\wsl.localhost\Ubuntu-24.04\home\user\dev\ws"
 
 
 def test_hub_prompt_hook_is_ignored(make):
@@ -270,3 +282,75 @@ def test_expired_human_flag_releases_admission(make):
     h.hub.engine.call(lambda: None)
     h.wait_quiet()
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
+
+
+def test_overlay_registers_opencode_go_through_pi_ai_but_not_deepseek(tmp_path):
+    oc = json.loads(overlay({"id": "d", "model": "opencode-go/m"}, tmp_path, mcp=False))
+    assert oc[0] == {"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai",
+                     "config": {"providers": {"opencode-go": {"apiKeyEnv": "OPENCODE_GO_API_KEY"}}}}
+    assert oc[1]["id"] == "agent-default-model"
+    ds = json.loads(overlay({"id": "d", "model": "deepseek-official/m"}, tmp_path, mcp=False))
+    assert ds[0]["id"] == "agent-default-model" and not any(r.get("id") == "llm-pi-ai" for r in ds)
+
+
+def test_launch_failure_is_retried_once_inside_the_same_turn(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_start": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()  # one turn record, one prompt delivery
+    assert t["state"] == "succeeded" and len(h.dsh_calls()) == 2
+    assert h.dsh_calls()[0]["prompt"] == h.dsh_calls()[1]["prompt"] and "--session-id" not in h.dsh_calls()[1]["argv"]
+
+
+def test_launch_failing_twice_fails_the_turn_after_one_retry(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_start": True}, {"fail_start": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "failed" and "exit 1" in t["error"] and len(h.dsh_calls()) == 2
+
+
+def test_failure_after_the_agent_acted_is_not_retried(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    h.plan_dsh({"fail_mid": True}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "failed" and len(h.dsh_calls()) == 1
+
+
+def test_stuck_launch_is_killed_by_the_first_event_watchdog_and_retried(make):
+    h = make(DSH, dsh_retry_wait=0.1, dsh_first_event_timeout_s=1)
+    h.plan_dsh({"hang": 30}, {"as": "dsh-1", "calls": [SEND]})
+    h.send("dsh-1", "ping")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "succeeded" and len(h.dsh_calls()) == 2
+
+
+def test_precheck_that_starts_but_never_finishes_is_killed_by_the_time_limit_and_retried_once(make):
+    h = make(DSH, dsh_retry_wait=0.1, dsh_precheck_timeout_s=1)
+    drv = h.hub.engine.drivers["dsh"]
+    good = {"id": "dsh-1", "model": "deepseek-official/deepseek-v4-flash"}
+    h.plan_dsh({"stall": 30}, {})
+    assert drv.precheck(good, h.ws) is None and len(h.dsh_calls()) == 2
+    h.plan_dsh({"stall": 30}, {"stall": 30})
+    n = len(h.dsh_calls())
+    err = drv.precheck(good, h.ws)
+    assert "did not finish within 1s" in err and len(h.dsh_calls()) == n + 2
+
+
+def test_precheck_retries_a_flaky_start_once_but_not_an_unknown_model(make):
+    h = make(DSH, dsh_retry_wait=0.1)
+    drv = h.hub.engine.drivers["dsh"]
+    good = {"id": "dsh-1", "model": "deepseek-official/deepseek-v4-flash"}
+    h.plan_dsh({"fail_start": True}, {})
+    assert drv.precheck(good, h.ws) is None and len(h.dsh_calls()) == 2
+    h.plan_dsh({"fail_start": True}, {"fail_start": True}, {})
+    assert "exit 1" in drv.precheck(good, h.ws)
+    bad = {"id": "dsh-1", "model": "deepseek-official/bogus-model"}
+    h.plan_dsh({}, {})
+    n = len(h.dsh_calls())
+    assert "INVALID_REQUEST" in drv.precheck(bad, h.ws) and len(h.dsh_calls()) == n + 1

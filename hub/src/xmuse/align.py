@@ -11,6 +11,7 @@ from . import db
 from .tools import ToolError
 
 LIMIT = 300
+MIN_STATEMENT = 12  # shortest first-sentence prefix worth keeping when a long statement is cut
 
 
 def _move(conn, eid: int, op: str, status: str) -> None:
@@ -30,17 +31,22 @@ def _ref(conn, ref, status: str | None = "active", kinds=()) -> int:
 
 def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, author: str, supersedes: int | None = None,
         assignee: str | None = None, depends_on: list | None = None, status: str = "active",
-        resolves: list | None = None) -> int:
+        resolves: list | None = None, via: str | None = None) -> int:
     """A proposed entry only records `supersedes` / `resolves`; `review(confirm)` applies them."""
     if len(statement) > LIMIT:  # keep the first sentence; the full text stays in the referenced message
-        first = re.split(r"(?<=[.!?。！？])\s", statement, maxsplit=1)[0]
+        # sentences until there is real content: a leading "1." or "Task." must not be the whole statement
+        first = ""
+        for sent in re.split(r"(?<=[.!?。！？])\s+", statement.strip()):
+            first = (first + " " + sent).strip()
+            if len(first) >= MIN_STATEMENT:
+                break
         statement = first[:LIMIT - 1] + "…" if len(first) > LIMIT else first + " …"
     eid = conn.execute(
         "insert into entries(kind, scope, thread_id, statement, refs, author, status, supersedes, assignee, depends_on,"
-        " resolves, valid_at, recorded_at, seq) values(?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+        " resolves, valid_at, recorded_at, seq, via) values(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)",
         (kind, scope, tid, statement, json.dumps(msg if isinstance(msg, list) else [msg]), author, status, supersedes,
          assignee, json.dumps(depends_on) if depends_on else None, json.dumps(resolves) if resolves else None,
-         db.now(), db.now())).lastrowid
+         db.now(), db.now(), via)).lastrowid
     _move(conn, eid, "add", status)
     if supersedes and status == "active":
         _move(conn, supersedes, "supersede", "superseded")
@@ -48,17 +54,18 @@ def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, 
 
 
 def declare(conn, author: str, tid: str, msg: int, kind: str, statement: str, scope: str | None = None,
-            supersedes: str | None = None) -> int:
+            supersedes: str | None = None, via: str | None = None) -> int:
     scope = scope or "thread"
     if scope not in ("global", "thread") and not scope.startswith("role:"):
         raise ToolError("invalid_arguments", f"scope must be global, thread or role:<role>; got {scope!r}")
     old = _ref(conn, supersedes) if supersedes else None
-    return add(conn, kind, f"thread:{tid}" if scope == "thread" else scope, tid, statement, msg, author, old)
+    return add(conn, kind, f"thread:{tid}" if scope == "thread" else scope, tid, statement, msg, author, old, via=via)
 
 
-def assign(conn, author: str, tid: str, msg: int, statement: str, assignees: list, depends_on: list) -> list[int]:
+def assign(conn, author: str, tid: str, msg: int, statement: str, assignees: list, depends_on: list,
+           via: str | None = None) -> list[int]:
     deps = [_ref(conn, d, None) for d in depends_on]
-    return [add(conn, "assignment", f"thread:{tid}", tid, statement, msg, author, assignee=a, depends_on=deps)
+    return [add(conn, "assignment", f"thread:{tid}", tid, statement, msg, author, assignee=a, depends_on=deps, via=via)
             for a in assignees]
 
 
@@ -92,6 +99,8 @@ def close_thread(conn, tid: str) -> dict:
 def _pub(e: dict) -> dict:
     out = {"id": f"E{e['id']}", "kind": e["kind"], "statement": e["statement"], "author": e["author"],
            "refs": json.loads(e["refs"])}
+    if e.get("via"):
+        out["via"] = e["via"]
     if e["assignee"]:
         out |= {"assignee": e["assignee"], "depends_on": [f"E{i}" for i in json.loads(e["depends_on"] or "[]")]}
     return out

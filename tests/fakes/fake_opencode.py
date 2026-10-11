@@ -25,12 +25,17 @@ class FakeOpenCode:
         self.subs: list[queue.Queue] = []
         self.sessions, self.prompts, self.replies, self.interrupts = {}, [], [], []
         self.stop_flags: dict[str, threading.Event] = {}
+        self.messages: dict[str, list] = {}
         fake = self
 
         class H(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
             def do_GET(self):
+                m = re.fullmatch(r"/api/session/([^/?]+)/message(\?.*)?", self.path)
+                if m:  # the v2 shape, one page; messages are whatever a test put in fake.messages[sid]
+                    return self._json(200, {"data": fake.messages.get(m.group(1), []),
+                                            "cursor": {"previous": None, "next": None}})
                 if self.path != "/api/event":
                     return self._json(404, {})
                 q = queue.Queue()

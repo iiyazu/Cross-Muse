@@ -1,0 +1,4 @@
+TestContractsHidden.test_end_to_end
+TestReportHidden.test_render_report_exact_bytes
+TestReportHidden.test_render_report_unmatched_only
+TestRulesHidden.test_unmatched_kept_in_input_order_and_is_a_tuple

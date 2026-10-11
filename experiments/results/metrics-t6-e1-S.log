@@ -1,0 +1,20 @@
+## Runs
+
+| run | group | mode | done | hidden (raw) | hidden unaffected | turns | tokens | interv. | inject total | inject median | inject max | modes | rot | declared | review |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ledger-S-1/ledger | S | run | True | fail | 25/25 | 2 | 889,688 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 5/9 | - |
+| minisql-S-1/minisql | S | run | True | fail | 46/46 | 2 | 881,976 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 2/10 | - |
+| pipeline-S-1/pipeline | S | run | True | pass | 44/44 | 2 | 672,681 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 0/11 | - |
+| ledger-S-2/ledger | S | run | True | fail | 25/25 | 2 | 646,645 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 6/9 | - |
+| minisql-S-2/minisql | S | run | True | fail | 46/46 | 2 | 761,122 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 4/10 | - |
+| pipeline-S-2/pipeline | S | run | True | pass | 44/44 | 2 | 904,681 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 8/11 | - |
+| ledger-S-3/ledger | S | run | True | fail | 25/25 | 2 | 953,779 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 6/9 | - |
+| minisql-S-3/minisql | S | run | True | fail | 46/46 | 2 | 742,685 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 4/10 | - |
+| pipeline-S-3/pipeline | S | run | True | pass | 44/44 | 2 | 1,048,376 | 0 | 0.0% | 0.0% | 0.0% | none:2 | followed | 0/11 | - |
+
+## Groups
+
+| group | runs | completion | turns | tokens (mean) | interv. | inject total | inject max | rot | declared | detection | false pos. |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| S | 9 | 100.0% | 2 | 833,515 | 0 | 0.0% | 0.0% | followed:9 | 40.2% | - | - |
+

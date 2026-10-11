@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
+from .adapters.opencode import shell_auto_ok
 from .config import HUMAN
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class Engine:
         self.state, self.cfg, self.db, self.drivers, self.ws = state, cfg, dbf, drivers, workspace
         self.q: queue.Queue = queue.Queue()
         self.adapters = {}  # turn id -> adapter that runs it
+        self.shell_policy = "allowlist"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
         self._recover()
 
     # ---- events from other threads -------------------------------------------------
@@ -64,6 +66,8 @@ class Engine:
         while not stop.is_set():
             try:
                 ev = self.q.get(timeout=1)
+                if ev[0] == "stop":  # sentinel from Hub.shutdown: do not sit out the get timeout
+                    break
                 getattr(self, "_on_" + ev[0])(*ev[1:])
             except queue.Empty:
                 pass
@@ -90,6 +94,15 @@ class Engine:
                 self._admit(conn, agent)
 
     def _admit(self, conn, agent: dict) -> None:
+        if db.polled(agent):
+            return  # desktop / foreground sessions live on the Windows side: never woken in the background, only polled
+        with db.tx(conn):  # no wake for mail already handled (audit B2-3): acked, or read (xmuse_inbox mid-turn) and
+            # answered in its thread afterwards. Read but unanswered mail still wakes: a missed wake breaks the chain.
+            conn.execute(
+                "update deliveries set state='done', updated_at=? where recipient=? and wake=1 and state='queued'"
+                " and (acked_at is not null or (read_at is not null and exists (select 1 from messages m0 join"
+                " messages r on r.thread_id=m0.thread_id where m0.id=deliveries.message_id and r.sender=?"
+                " and r.created_at>=deliveries.read_at)))", (db.now(), agent["id"], agent["id"]))
         pending = db.rows(conn.execute(
             "select d.id did, m.*, c.state cstate, c.wakes cwakes, c.max_wakes, c.tokens ctokens, c.max_tokens"
             " from deliveries d join messages m on m.id=d.message_id join chains c on c.id=m.chain_id"
@@ -130,7 +143,8 @@ class Engine:
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))
-            conn.execute("update turns set align_tokens=?, align_mode=? where id=?", (pack.tokens, pack.mode, tid))
+            conn.execute("update turns set align_tokens=?, align_mode=?, view_entries=? where id=?",
+                         (pack.tokens, pack.mode, pack.view_entries, tid))
             if not fresh:
                 conn.execute("insert or replace into seen values(?,?)", (session["id"], pack.seq))
         spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], pack.text, self.ws,
@@ -254,13 +268,25 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
+        auto = shell_auto_ok(req.get("action"), req.get("resources"), self.shell_policy) and "opencode" in self.drivers
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
                                                   json.dumps(req.get("resources")), db.now()))
+        if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
+            try:
+                self.drivers["opencode"].approve(session, req["id"], "once")
+                with db.tx(conn):
+                    conn.execute("update approvals set state='decided', decision='once', decided_at=? where id=?",
+                                 (db.now(), req["id"]))
+                log.info("auto-approved shell for %s: %s", agent_id, req.get("resources"))
+                return
+            except Exception:
+                log.exception("auto-approve failed; asking the human")
         mail.notice(conn, mail.dm_id(agent_id or "unknown", HUMAN),
-                    f"{agent_id} asks permission: {req.get('action')} {req.get('resources')} — "
-                    f"`xmuse approve {req['id']} once|always|reject`")
+                    f"{agent_id} asks permission: {req.get('action')} {req.get('resources')} — the user decides: "
+                    f"`xmuse approve {req['id']} once|always|reject` in their own terminal, or the desktop "
+                    f"coordinator asks the user and relays the answer with xmuse_approve")
 
     # ---- cancel, sweep, recovery ---------------------------------------------------
     def stop(self, agent: str | None = None, thread: str | None = None) -> dict:

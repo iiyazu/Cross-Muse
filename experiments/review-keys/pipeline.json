@@ -1,0 +1,6 @@
+{
+  "_doc": "Machine-readable match rules for planted/pipeline/BUGS.md; see review-keys/ledger.json for the rule.",
+  "bug-1": {"file": "parse\\.py", "function": "parse_plan", "symptom": "duplicate|redefin|overwr|twice|repeated|PlanError"},
+  "bug-2": {"file": "schedule\\.py", "function": "schedule|_topological_order|order", "symptom": "levels|flatten|heap|topolog|inconsistent|differ"},
+  "clean": [{"file": "log\\.py", "function": "render_log"}]
+}

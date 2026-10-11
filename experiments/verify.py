@@ -10,7 +10,10 @@ For every task it checks:
   5. every planted bug variant fails at least one hidden test;
   6. the post-rot test in ``rot/`` does NOT pass on the reference implementation
      (it encodes the *rotated* convention, so it can only pass after an agent has
-     followed the mid-task convention change).
+     followed the mid-task convention change);
+  7. for each rot, the rotated reference (``reference-rot/<task>-rot<n>``) passes the post-rot cases, the hidden
+     cases it legitimately breaks are exactly the ones in ``rot-affects/<task>-rot<n>.txt``, and every other hidden
+     case still passes on it (``rot_affects.py`` regenerates the lists).
 
 A task whose ``seeds/<name>`` repository has not been written yet (``pipeline``
 while it is still being designed) is skipped with a notice instead of aborting
@@ -35,6 +38,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+import rot_affects
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -255,6 +260,47 @@ def build_cases(task):
     return cases
 
 
+def rotated_checks(task):
+    """Checks on reference-rot/<task>-rot<n>/ (the reference rewritten to the new convention), for n = 1, 2:
+
+    * the post-rot cases of that rot all pass on it (the detector is satisfiable);
+    * rot-affects/<task>-rot<n>.txt equals what the hidden tests actually fail on it (regenerating changes nothing);
+    * with the listed cases removed, the hidden tests pass on it (the list is complete).
+    """
+    name, out = task["name"], []
+    for n in rot_affects.ROTS:
+        label = "%s-rot%d" % (name, n)
+        post, text = rot_affects.post_rot_on_rotated(name, n)
+        mine = {k: v for k, v in post.items() if ".test_rot%d_" % n in "." + k}
+        check = Check("%s: rotated reference passes its post-rot cases" % label)
+        check.ok = bool(mine) and all(v == "ok" for v in mine.values())
+        check.detail = " (%d/%d)" % (sum(v == "ok" for v in mine.values()), len(mine))
+        if not check.ok:
+            check.detail += "\n" + tail(text)
+        out.append(check)
+
+        hidden, text = rot_affects.hidden_on_rotated(name, n)
+        failing = sorted(k for k, v in hidden.items() if v == "fail")
+        path = rot_affects.list_path(name, n)
+        listed = rot_affects.read_list(name, n) if os.path.exists(path) else None
+        check = Check("%s: affected-hidden list matches the rotated reference" % label)
+        check.ok = listed == failing
+        check.detail = " (%d listed)" % (len(listed) if listed is not None else -1)
+        if not check.ok:
+            check.detail += "\n      | missing from list: %s\n      | stale in list: %s" % (
+                sorted(set(failing) - set(listed or [])), sorted(set(listed or []) - set(failing)))
+        out.append(check)
+
+        rest = {k: v for k, v in hidden.items() if k not in (listed or [])}
+        check = Check("%s: hidden tests minus the affected ones all pass on it" % label)
+        check.ok = bool(rest) and all(v != "fail" for v in rest.values())
+        check.detail = " (%d of %d)" % (len(rest), len(hidden))
+        if not check.ok:
+            check.detail += "\n" + tail(text)
+        out.append(check)
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", action="store_true", help="show child output")
@@ -311,6 +357,9 @@ def main():
                 print(check, flush=True)
                 if args.verbose and not check.ok:
                     print(result["output"], flush=True)
+            for check in rotated_checks(task):
+                checks.append(check)
+                print(check, flush=True)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

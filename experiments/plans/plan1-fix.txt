@@ -1,0 +1,5 @@
+# plan1-fix: after the framework fixes (503e35e opencode shell approvals, 87d0dd0 dsh launch retry + watchdog)
+# lanes: fix-a = long-L 2, fix-b = long-L 3, fix-c = review-ledger-bug1 1, mo = long-L-mo 1 (separate plan)
+long-L 2
+long-L 3
+review-ledger-bug1 1

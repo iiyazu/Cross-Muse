@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "xmuse relay",
+    "description": "Relay between dsh sessions and the xmuse hub: /xmuse bind, the 7 xmuse_* tools, and message delivery into the bound session."
+  }
+}

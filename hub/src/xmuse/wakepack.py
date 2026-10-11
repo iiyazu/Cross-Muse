@@ -21,7 +21,8 @@ RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user se
 
 def tag(m: dict, roster: dict) -> str:
     fam = roster[m["sender"]]["family"] if m["sender"] in roster else m["sender"]
-    attrs = f'from="{m["sender"]}" family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}" id="{m["id"]}"'
+    via = f' via="{m["via"]}"' if m.get("via") else ""
+    attrs = f'from="{m["sender"]}"{via} family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}" id="{m["id"]}"'
     body = m["body"]
     if m.get("why"):
         why = json.loads(m["why"])
@@ -41,7 +42,33 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
     parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive)) if p]
-    return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq)
+    v = align.view(conn, {**cfg, "_mo": None}, agent["id"])  # entries in this agent's view now (curve data; recorded even when off)
+    return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq,
+                           view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
+
+
+def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamespace:
+    """What a desktop coordinator reads on each user prompt: the alignment (snapshot when the session has no
+    watermark, else the delta) plus a compact list of its unread messages, no relay preamble. Marks nothing read;
+    the caller advances the watermark to `seq`."""
+    msgs = db.rows(conn.execute(
+        "select m.* from deliveries d join messages m on m.id=d.message_id where d.recipient=? and d.acked_at is null"
+        " and d.read_at is null and d.state != 'canceled' order by m.id", (agent["id"],)))
+    seen = align.watermark(conn, session_id) if session_id is not None else None
+    x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=msgs, seen=seen, mode="none", tokens=0)
+    parts = [alignment(x)]
+    if msgs:
+        lines, used = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0
+        for i, m in enumerate(msgs):
+            line = f"- #{m['id']} {m['sender']} {m['thread_id']} [{m['kind']}]: {_short(m['body'], 160)}"
+            used += tokens(line) + 1
+            if used > cfg["align_delta_tokens"]:
+                lines.append(f"... {len(msgs) - i} more, call xmuse_inbox")
+                break
+            lines.append(line)
+        parts.append("\n".join(lines))
+    return SimpleNamespace(text="\n\n".join(p for p in parts if p), mode=x.mode, tokens=x.tokens,
+                           seq=align.current_seq(conn))
 
 
 def relay(x) -> str:
@@ -60,6 +87,8 @@ def identity(x) -> str:
 
 def alignment(x) -> str:
     """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
+    if x.cfg["alignment"] == "off":
+        return ""
     if x.seen is None:
         text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
     else:
@@ -140,3 +169,15 @@ def passive(x) -> str:
 def _short(s: str, n: int = 240) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[:n] + "…"
+
+
+RELAY_TAIL = ("Reply with the xmuse tools: xmuse_send to answer (plain text reaches no one), then xmuse_done when "
+              "your part is finished. These messages are already delivered to you: do not re-read them with "
+              "xmuse_inbox; call xmuse_context for the shared decisions if you need them.")
+
+
+def relayed(conn, msgs: list[dict]) -> str:
+    """The prompt the dsh bundle injects into a foreground session (no running hub turn): the same relay
+    header and <xmuse ...> wrapping a woken agent reads, plus how to answer."""
+    roster = {a["id"]: a for a in db.rows(conn.execute("select * from agents"))}
+    return "\n\n".join([RELAY, "New for you:\n" + "\n".join(tag(m, roster) for m in msgs), RELAY_TAIL])

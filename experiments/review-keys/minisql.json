@@ -1,0 +1,6 @@
+{
+  "_doc": "Machine-readable match rules for planted/minisql/BUGS.md; see review-keys/ledger.json for the rule.",
+  "bug-1": {"file": "parser\\.py", "function": "error|_Parser|ParseError", "symptom": "position|token|ordinal|index|offset|character"},
+  "bug-2": {"file": "engine\\.py", "function": "_find_column|column", "symptom": "case|insensitive|lower|upper|spelling"},
+  "clean": [{"file": "format\\.py", "function": "format_table"}]
+}
