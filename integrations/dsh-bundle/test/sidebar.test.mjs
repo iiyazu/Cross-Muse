@@ -149,6 +149,15 @@ test('sidebar prefix and full flow against mock-hub: rooms -> view -> act -> tim
   assert.equal(ok.status, 200)
   assert.equal(j(await m.call('GET', '/xmuse/view?since=0')).approvals.length, 0)
 
+  // §7 新审批种类：kind=alignment（对齐提案）和 kind=resume（被暂停成员）同样经 approve 处理，代理原样透回
+  const apA = (await hubCtl('POST', '/_mock/approval', { member: rj.member_id, kind: 'alignment', summary: 'E12 提案' })).b
+  const apR = (await hubCtl('POST', '/_mock/approval', { member: rj.member_id, kind: 'resume', summary: '恢复 dsh-1' })).b
+  const vA = j(await m.call('GET', '/xmuse/view?since=0'))
+  assert.deepEqual(vA.approvals.map((a) => a.kind).sort(), ['alignment', 'resume'])
+  assert.equal((await m.call('POST', '/xmuse/act', { act: 'approve', id: apA.id, decision: 'once' })).status, 200)
+  assert.equal((await m.call('POST', '/xmuse/act', { act: 'approve', id: apR.id, decision: 'always' })).status, 200)
+  assert.equal(j(await m.call('GET', '/xmuse/view?since=0')).approvals.length, 0)
+
   // 前端单文件下发
   const js = await m.call('GET', '/xmuse/sidebar.js')
   assert.equal(js.status, 200)
