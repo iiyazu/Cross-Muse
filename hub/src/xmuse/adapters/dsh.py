@@ -119,6 +119,21 @@ PI_AI_PROVIDERS = {"opencode-go": "OPENCODE_GO_API_KEY"}
 OWNED, UNKNOWN = "is already owned by an active write handle", "does not exist"
 
 
+def extra_mcp(agent: dict) -> list[dict]:
+    """Validated `extra_mcp` entries of an agent's settings: [{name, command, args?, env?}]."""
+    s = agent.get("settings") or {}
+    raw = (json.loads(s) if isinstance(s, str) else s).get("extra_mcp", [])
+    out = []
+    for x in raw:
+        name = x.get("name", "")
+        if not (name.replace("-", "").replace("_", "").isalnum() and name != "xmuse" and isinstance(x.get("command"), str)
+                and all(isinstance(a, str) for a in x.get("args", []))
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in x.get("env", {}).items())):
+            raise ValueError(f"bad extra_mcp entry: {x!r}")
+        out.append(x)
+    return out
+
+
 def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
     """The per-run --patch file. JSON is valid YAML, so no YAML writer is needed."""
     provider, model = agent["model"].split("/", 1)
@@ -131,6 +146,12 @@ def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
         rows.append({"insert": [{"id": "mcp-xmuse", "name": "@deepseek-ai/dsh-mcp-client", "config": {
             "serverName": "xmuse", "transport": "stdio", "command": "node", "args": [to_win(SHIM)],
             "env": {"XMUSE_STATE": to_win(state), "XMUSE_AGENT": agent["id"]}, "failOnStartupError": True}}]})
+        # per-agent extra stdio MCP servers (`xmuse agent add --extra-mcp`), e.g. a test runner the sandboxed shell
+        # cannot reach; MCP servers dsh starts run outside its worker sandbox, so only mount narrow, fixed-purpose ones
+        for x in extra_mcp(agent):
+            rows.append({"insert": [{"id": f"mcp-{x['name']}", "name": "@deepseek-ai/dsh-mcp-client", "config": {
+                "serverName": x["name"], "transport": "stdio", "command": x["command"], "args": x.get("args", []),
+                "env": x.get("env", {}), "failOnStartupError": True}}]})
     rows += [{"id": r, "disabled": True} for r in DISABLE]
     return json.dumps(rows, indent=1)
 
