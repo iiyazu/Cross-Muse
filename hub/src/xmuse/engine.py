@@ -298,7 +298,7 @@ class Engine:
             where, args = where + " and m.thread_id=?", args + [thread]
         with db.tx(conn):
             n = conn.execute(f"update deliveries set state='canceled', updated_at=? where id in (select d.id from"
-                             f" deliveries d join messages m on m.id=d.message_id where d.state in ('queued','held')"
+                             f" deliveries d join messages m on m.id=d.message_id where d.state in ('queued','held','blocked')"
                              f" and {where})", (db.now(), *args)).rowcount
             if not agent:
                 conn.execute("update chains set state='stopped', note='stopped by human' where state != 'stopped'"

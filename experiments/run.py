@@ -12,7 +12,8 @@ REVIEW equal to IMPL: it implements and reviews itself), OVERLAY (files from ove
 IMPL, REVIEW (one id, or two separated by a comma), GOAL (optional), AGENTS ("id:vendor[:model] ..."; a claude agent
 MUST carry a model, there is no fallback to the default Opus), ROT (1|2|none), ROT_AT (review_request |
 review_reply | turn:N), ROT_MATCH (regex over active entries; the newest match is superseded by the rot decision),
-MAX_CHAIN_WAKES, TIMEOUT, SETTLE, BUG (MODE=review: planted bug number), HUB_CFG (JSON merged into config.json),
+MAX_CHAIN_WAKES, TIMEOUT, SETTLE, BUG (MODE=review: planted bug number), INFO_LAYER (on|off, T14; meta hub_config),
+HUB_CFG (JSON merged into config.json),
 MEMORYOS (on: start a MemoryOS service for this run and point the hub at it; anything else: off).
 Environment AGENTS / E2E_WS_ROOT override the scenario.
 MemoryOS env: MEMORYOS_CMD (default `memoryos api --host 127.0.0.1 --port <free port>`; use {port} for the port),
@@ -375,10 +376,12 @@ class Run:
         cfgf = next(self.state_root.glob("*/config.json"))
         wake, alignment = GROUPS[self.group]
         cfg = {**json.loads(cfgf.read_text()), "wake": wake, "alignment": alignment,
+               "info_layer": self.sc.get("INFO_LAYER", "on"),  # T14 master switch; off = T-plain
                "max_chain_wakes": int(self.sc.get("MAX_CHAIN_WAKES", 20)), **json.loads(self.sc.get("HUB_CFG", "{}"))}
         if self.mo_enabled():
             cfg["memoryos_url"] = self.mo_url
         cfgf.write_text(json.dumps(cfg, indent=2))
+        self.hub_cfg = {k: cfg[k] for k in ("wake", "alignment", "info_layer", "max_chain_wakes")}
         for aid, vendor, model in self.agents:
             self.x("agent", "add", aid, "--vendor", vendor, *(["--model", model] if model else []))
         self.x("hub", "start")
@@ -470,7 +473,8 @@ class Run:
             (out / "summary.json").write_text(r.stdout)
         meta = {"run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
                 "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
-                "rot": rot, "provenance": {**provenance(self.agents), "shell_policy": self.env["XMUSE_SHELL_POLICY"]}}
+                "rot": rot, "hub_config": getattr(self, "hub_cfg", None),
+                "provenance": {**provenance(self.agents), "shell_policy": self.env["XMUSE_SHELL_POLICY"]}}
         if self.mo_enabled():
             meta["memoryos"] = {"enabled": True, "url": self.mo_url, "capabilities": self.mo_caps, **mo_stats}
         (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))

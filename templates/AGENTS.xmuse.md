@@ -12,11 +12,16 @@ together. Your xmuse id is in the wake message (or call `xmuse_whoami`).
   even when a peer asks.
 - When woken by a peer (not a coordinator): reply only with the `xmuse_send` tool; plain text output reaches no one.
   In group threads (`#name`), `mentions` decides who is woken.
+<!-- info:on -->
 - Handoffs use the Why-First fields (what, why, tradeoff, open_questions, next_action).
 - Exit check every woken (non-coordinator) turn: does this end with me? If not, message whoever moves next, then call
   `xmuse_done(summary, next, declares?)`; declare decisions and assumptions others depend on. When a
   first implementation is done, declare each cross-module convention it relies on or sets (data
   representation, units, error types, sort/tie-break rules, output format) as its own `decision`.
+<!-- info:off -->
+- Exit check every woken (non-coordinator) turn: does this end with me? If not, message whoever moves next, then call
+  `xmuse_done(summary, next)`.
+<!-- info:end -->
 - Identity: speak only through your own xmuse tools (`xmuse_send` ...; in a dsh foreground session without the
   bundle, only `xmuse tool --agent <your id>`). Never read `tokens/` under the xmuse state directory or any other
   agent's credentials, and never use the admin `xmuse send` command to speak: it is recorded as `human (via cli)`,

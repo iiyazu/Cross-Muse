@@ -6,9 +6,10 @@ when they are woken is the engine's job.
 """
 import hashlib
 import json
+import re
 
 from . import align, db
-from .config import HUB, HUMAN
+from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
 
 # A retried tool call resends identical content: same-turn retries, and replays when a killed
@@ -91,12 +92,22 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
          supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag)."""
     mentions = list(dict.fromkeys(mentions or []))
+    if not info_on(cfg) and (kind != "message" or scope or supersedes or resolves or depends_on or why):
+        # T-plain (T14): agents are not offered these (tools_for); refuse them from every other path too
+        raise ToolError("invalid_arguments", "the information layer is off in this workspace: plain messages only "
+                                             "(kind=message, no scope/supersedes/resolves/depends_on/why)")
     if kind == "handoff":
         missing = [k for k in WHY_FIELDS if not (why or {}).get(k)]
         if missing:
             raise ToolError("invalid_arguments", f"kind=handoff needs why.{', why.'.join(missing)}")
-    if (scope or supersedes) and kind not in DECLARE:
-        raise ToolError("invalid_arguments", "scope and supersedes need kind=decision|assumption|question")
+    if supersedes and kind not in DECLARE:
+        raise ToolError("invalid_arguments", "supersedes needs kind=decision|assumption|question")
+    if scope and kind not in DECLARE and kind != "handoff":
+        raise ToolError("invalid_arguments", "scope needs kind=decision|assumption|question (or handoff: module:<name>)")
+    modules = align.modules_of(scope) if kind == "handoff" else []
+    if kind == "handoff" and scope and not modules:
+        raise ToolError("invalid_arguments", f"a handoff's scope names the modules the assignee owns: "
+                                             f"module:<name>[,<name>...]; got {scope!r}")
     if depends_on and kind != "handoff":
         raise ToolError("invalid_arguments", "depends_on needs kind=handoff")
     with db.tx(conn):
@@ -136,6 +147,7 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             wake = set(mem) & set(roster)
         else:
             wake = (set(mentions) | ({thread["owner"]} if thread["owner"] else set())) & set(roster)
+        wake |= _routed(conn, sender, kind, supersedes, resolves) & set(mem) & set(roster)
         wake.discard(sender)
         wake.discard(via)  # the relaying coordinator is not a recipient of its own message
         for r in mem:
@@ -149,15 +161,41 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes, via)]
         elif kind == "handoff":  # one assignment per named peer (a DM names its peer)
             eids = align.assign(conn, sender, thread["id"], mid, body,
-                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [], via)
+                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [], via,
+                                modules)
         else:
             eids = []
         align.resolve(conn, resolves or [])
+        blocked = []
+        if kind == "handoff" and depends_on:  # no work is handed out before what it needs is there (T14)
+            for e in db.rows(conn.execute(f"select * from entries where id in ({','.join('?' * len(eids))})", eids)):
+                if align._blocked(conn, e) and conn.execute(
+                        "update deliveries set state='blocked', updated_at=? where message_id=? and recipient=?"
+                        " and state in ('queued','held')", (db.now(), mid, e["assignee"])).rowcount:
+                    blocked.append(e["assignee"])
+        released = align.release(conn) if info_on(cfg) else []
         fg = set(_foreground_agents(conn))
+        wake = wake - set(blocked)
         return {**db.row(conn.execute("select * from messages where id=?", (mid,))),
                 # the hub never wakes a coordinator or a foreground agent; the latter gets the message pushed
                 "woken": sorted(wake - set(_desktop_agents(conn)) - fg), "pushed": sorted(wake & fg),
-                "entries": [f"E{i}" for i in eids]}
+                "entries": [f"E{i}" for i in eids],
+                **({"blocked": blocked} if blocked else {}), **({"released": released} if released else {})}
+
+
+def _routed(conn, sender: str, kind: str, supersedes: str | None, resolves: list | None) -> set[str]:
+    """Who the information layer wakes beyond mentions (T14): a question goes to whoever planned the asker's work
+    (authors of its live assignments); an entry that replaces or resolves a question wakes the question's author."""
+    out = set()
+    if kind == "question":
+        out |= {r[0] for r in conn.execute("select distinct author from entries where kind='assignment' and assignee=?"
+                                           " and status='active'", (sender,))}
+    for ref in [supersedes, *(resolves or [])]:
+        m = ref and re.fullmatch(r"E?(\d+)", str(ref))
+        r = m and conn.execute("select author from entries where id=? and kind='question'", (m[1],)).fetchone()
+        if r:
+            out.add(r[0])
+    return out
 
 
 def _chain(conn, cfg, sender, thread_id, turn) -> tuple[dict, int]:
@@ -270,6 +308,8 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
         _to_coordinators(conn, mid, tid, agent_id)
         eids = [align.declare(conn, agent_id, tid, mid, d["kind"], d["statement"], d.get("scope"), d.get("supersedes"))
                 for d in declares or []]
+        if eids:
+            align.release(conn)
     return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {})}
 
 

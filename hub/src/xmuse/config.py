@@ -12,6 +12,9 @@ VIA_CLI = "cli"  # `via` of messages sent with the admin token (`xmuse send`): h
 DEFAULTS = {
     "wake": "mention",               # experiment switch: mention | all (group threads wake every agent member; group A)
     "alignment": "on",               # experiment switch: on | off (off: no pack section, no curate, xmuse_context = recent messages)
+    # T14 master switch (team group T-plain): off = only kind=message. No decision/assumption/question/handoff entries,
+    # no injection, no scope or question routing, no dependency wake; tools and prompts no longer offer them.
+    "info_layer": "on",
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain
     "chat_warn_tokens": 50_000,      # chat wakes over this log a warning (M1c task 2)
@@ -79,3 +82,12 @@ def find_state(start: Path | None = None) -> Path:
 def load(state: Path) -> dict:
     cfg = json.loads((state / "config.json").read_text())
     return {**DEFAULTS, **cfg}
+
+
+def info_on(cfg: dict) -> bool:
+    return cfg.get("info_layer", "on") != "off"
+
+
+def alignment_on(cfg: dict) -> bool:
+    """Alignment shown to agents (packs, xmuse_context view, curate): needs the info layer too."""
+    return info_on(cfg) and cfg.get("alignment", "on") != "off"
