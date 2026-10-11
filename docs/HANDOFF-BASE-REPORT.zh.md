@@ -1469,3 +1469,24 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
 - **待试跑确认**：dsh 能不能在自己的沙箱里运行 `python -m unittest`。r7 的 Windows 上有 Python 3.13（`where python`），提示里两种写法都给了。
 
 **接下来**：第一批（S1、S2、DEP）跑完后，在 r7 上拉取 `exp/probes`，试跑 R1、R4（每组 1 次），检查事件触发、转发、判定和归因。
+
+## T17 第 5 步（10-12 04:30）：按 §13.1 改 S3 措辞，预注册修订，排好后续队列
+
+- **改动** `1cf662b`（`exp/probes`）：只改 S3a、S3b 两处刺激文字，按 r7 给的原句：
+  1. rule v1 后面加 "A key one member hands to the other with a handoff is maintained by the receiver from then on."；
+  2. k 的事实改成 "The coefficient k is 7. It is a team parameter: share it with a teammate who needs it."。
+
+  S1、S2、DEP 的文字没动，有测试守着（`test_s3_wording_lets_a_handoff_move_a_key_and_k_be_shared`）。全量测试：`403 passed, 4 skipped, 1 warning in 336.09s (0:05:36)`。
+- **预注册修订**：
+  - batch1 里已经跑过的 S3a、S3b（seed 11 的 6 个 run）作废；
+  - batch1 从 seed 11 起只跑 S1、S2、DEP，代码仍是 `e93aa28`，04:05 重启，已完成的 run 自动跳过；
+  - 改过措辞的 S3a、S3b 另跑 `batch1-s3`：seed 11–20、三组、名单按 seed 交替，代码 `1cf662b`（hub 部分和 `e93aa28` 相同）。
+- **冒烟门槛**：先用 seed 11 的 X 组 S3a、S3b 各跑一次（这两个 run 也算进 batch1-s3），两个的 `e_correct_share` 都大于 0 才放开整批；有一个是 0 就不跑 batch1-s3，直接进 R 试跑，留给 r7 看。
+- **队列**（r7 上的 `chain1` 单元，输出在 `~/bench/phb/logs/bg/chain1.out`）：
+  1. 等 batch1 写出 done；
+  2. 拉取 `exp/probes`；
+  3. 跑冒烟；
+  4. 冒烟通过就跑 `batch1-s3`；
+  5. 跑 R 试跑：`rbatch.sh rpilot "1" "R1 R4"`，每个场景每组 1 次。
+- **已停掉的系列**：被停掉的那一个 run（seed 11 的第一个 DEP run，刚启动）由 `batch.sh` 在重启时移进 `batch1/failed/`。`failed/` 里另外 12 个 `batch1-<id>-<时间>` 是 run.py 把 ws 移走后留在 C: 上的空父目录，一起挪过去了，没有数据。
+- **待用户定**（r7 已记）：S3b 里 e2 把用户私信给它的事实，当成需要用户批准才能透露的私密信息。私信里的事实默认能不能分享给队友，是产品问题。
