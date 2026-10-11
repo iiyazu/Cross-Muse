@@ -15,7 +15,8 @@ def test_relayed_decision_is_the_users_with_via(make):
     assert (m["sender"], m["via"]) == ("human", "dog")
     [e] = h.q("select * from entries")
     assert (e["author"], e["via"], e["kind"]) == ("human", "dog", "decision")
-    assert h.q("select recipient, wake from deliveries") == [{"recipient": "oc", "wake": 1}]  # as a human message
+    # as a human message (only this message's deliveries: oc's fast fake turn may already have left a notice for dog)
+    assert h.q("select recipient, wake from deliveries where message_id=?", m["id"]) == [{"recipient": "oc", "wake": 1}]
     h.wait(lambda: h.turns(), what="peer woken")
     assert h.q("select via from messages where sender='dog'") == []
     # authorship is shown everywhere

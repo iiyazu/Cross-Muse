@@ -27,6 +27,8 @@ def to_win(p) -> str:
     live under /mnt/<drive>/.
     """
     s = str(p)
+    if os.name == "nt":  # Windows-native hub: already a Windows path
+        return s
     m = re.match(r"/mnt/([a-zA-Z])/", s)
     if m:
         return m.group(1).upper() + chr(58) + chr(92) + s[m.end():].replace("/", chr(92))

@@ -203,7 +203,7 @@ class Orchestrator:
 
     def plan(self) -> dict | None:
         try:
-            p = json.loads((self.ws / PLAN_FILE).read_text())
+            p = json.loads((self.ws / PLAN_FILE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
         owners = p.get("owners") if isinstance(p, dict) else None
@@ -222,7 +222,7 @@ class Orchestrator:
         d = self.state / "runs" / f"preset-{run['id']}"
         d.mkdir(parents=True, exist_ok=True)
         patch = git(self.ws, "diff", "--binary", run["base"], commit, "--", ".", *NOT_WORK).stdout
-        (d / f"{name}.patch").write_text(patch)
+        (d / f"{name}.patch").write_text(patch, encoding="utf-8")
         files = [f for f in git(self.ws, "diff", "--name-only", run["base"], commit, "--", ".", *NOT_WORK)
                  .stdout.splitlines() if f]
         snap = {"name": name, "at": db.now(), "phase": run["phase"], "commit": commit, "files": files,

@@ -38,7 +38,7 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
     """Returns text plus the alignment mode ('snapshot' | 'delta' | 'none'), its token estimate and the
     alignment version the pack reflects (the caller stores it as the session's watermark)."""
     x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=wake_msgs, ws=workspace, fresh=session_id is None,
-                        roster={a["id"]: a for a in db.rows(conn.execute("select * from agents"))},
+                        roster={a["id"]: a for a in db.rows(conn.execute("select * from agents where removed=0"))},
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
     parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive)) if p]
@@ -79,7 +79,8 @@ def identity(x) -> str:
     if not x.fresh:
         return ""
     a = x.agent
-    peers = ", ".join(f"{p['id']} ({p['family']}{', ' + p['role'] if p['role'] else ''})"
+    peers = ", ".join(f"{p['id']} ({p['family']}{', ' + p['role'] if p['role'] else ''}"
+                      f"{': ' + p['description'] if p.get('description') else ''})"  # what each one is responsible for
                       for p in x.roster.values() if p["id"] != a["id"])
     return (f"You are {a['id']} ({a['family']}{', ' + a['role'] if a['role'] else ''}) in workspace {x.ws}. "
             f"Peers: {peers}; '{HUMAN}' is the user. Follow the xmuse-collab skill (see AGENTS.md).")

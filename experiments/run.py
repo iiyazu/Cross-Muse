@@ -80,7 +80,7 @@ def memoryos_env() -> dict:
 
 def parse_env(path: Path) -> dict:
     out = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
             k, v = line.split("=", 1)
@@ -104,7 +104,7 @@ def parse_agents(spec: str) -> list[tuple[str, str, str | None]]:
 def rot_text(seed: str, n: int) -> str:
     """The injected message: the blockquote under '## ROT-<n>' in rot/<seed>.md."""
     lines, on = [], False
-    for ln in (EXP / "rot" / f"{seed}.md").read_text().splitlines():
+    for ln in (EXP / "rot" / f"{seed}.md").read_text(encoding="utf-8").splitlines():
         if ln.startswith("## "):
             on = ln.startswith(f"## ROT-{n}")
         elif on and ln.startswith(">"):
@@ -159,7 +159,7 @@ def add_seed(ws: Path, seed: str, sub: str, review_bug: str | None = None, overl
         shutil.copytree(EXP / "reference" / seed / PKG[seed], dst / PKG[seed])
         shutil.copytree(EXP / "planted" / seed / f"bug-{review_bug}", dst, dirs_exist_ok=True)
         for f in (dst / PKG[seed]).glob("*.py"):  # the planted/reference files narrate the bug; the reviewer must not see that
-            f.write_text(scrub(f.read_text(), f.stem))
+            f.write_text(scrub(f.read_text(encoding="utf-8"), f.stem), encoding="utf-8")
     git(ws, "add", "-A")
     git(ws, "commit", "-qm", f"seed {seed}" + (f" + planted bug-{review_bug}" if review_bug else ""))
 
@@ -206,7 +206,7 @@ def provenance(agents) -> dict:
 
 def default_model(vendor: str) -> str | None:
     """The hub's default for a vendor (xmuse.config.MODELS), read from the hub source next to this runner."""
-    m = re.search(r'"%s":\s*"([^"]+)"' % vendor, (REPO / "hub" / "src" / "xmuse" / "config.py").read_text())
+    m = re.search(r'"%s":\s*"([^"]+)"' % vendor, (REPO / "hub" / "src" / "xmuse" / "config.py").read_text(encoding="utf-8"))
     return m and m.group(1)
 
 
@@ -346,16 +346,16 @@ class Run:
         if not self.mo_enabled():
             return {}
         calls = self.mo_parse_hub_log(out / "hub.log")
-        (out / "memoryos-calls.json").write_text(json.dumps(calls, indent=1, ensure_ascii=False))
+        (out / "memoryos-calls.json").write_text(json.dumps(calls, indent=1, ensure_ascii=False), encoding="utf-8")
         proposals, conflicts = 0, 0
         try:
-            ej = json.loads((out / "entries.json").read_text())
+            ej = json.loads((out / "entries.json").read_text(encoding="utf-8"))
             proposals = sum(1 for e in ej.get("entries", [])
                             if e.get("author") == "curate" and e.get("status") == "proposed")
         except Exception:
             pass
         try:
-            lj = json.loads((out / "log.json").read_text())
+            lj = json.loads((out / "log.json").read_text(encoding="utf-8"))
             conflicts = sum(1 for m in lj.get("messages", [])
                             if m.get("kind") == "notice" and isinstance(m.get("body"), str) and "curate:" in m["body"])
         except Exception:
@@ -375,12 +375,12 @@ class Run:
         self.x("init", ".")
         cfgf = next(self.state_root.glob("*/config.json"))
         wake, alignment = GROUPS[self.group]
-        cfg = {**json.loads(cfgf.read_text()), "wake": wake, "alignment": alignment,
+        cfg = {**json.loads(cfgf.read_text(encoding="utf-8")), "wake": wake, "alignment": alignment,
                "info_layer": self.sc.get("INFO_LAYER", "on"),  # T14 master switch; off = T-plain
                "max_chain_wakes": int(self.sc.get("MAX_CHAIN_WAKES", 20)), **json.loads(self.sc.get("HUB_CFG", "{}"))}
         if self.mo_enabled():
             cfg["memoryos_url"] = self.mo_url
-        cfgf.write_text(json.dumps(cfg, indent=2))
+        cfgf.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
         self.hub_cfg = {k: cfg[k] for k in ("wake", "alignment", "info_layer", "max_chain_wakes")}
         for aid, vendor, model in self.agents:
             self.x("agent", "add", aid, "--vendor", vendor, *(["--model", model] if model else []))
@@ -396,7 +396,7 @@ class Run:
         first_msg = (self.q("select coalesce(max(id),0) from messages")[0][0]) + 1
         base = git(self.ws, "rev-parse", "HEAD").strip()
         task = task_text(sc, seed, sub, thread)
-        (out / "task.txt").write_text(task)
+        (out / "task.txt").write_text(task, encoding="utf-8")
         start = time.time()
         self.x("send", thread, task, "--mention", sc["IMPL"] if sc.get("MODE") != "review" else sc["REVIEW"].split(",")[0])
         rot = {"injected": False}
@@ -444,40 +444,40 @@ class Run:
     def collect(self, seed, sub, out, base, first_turn, first_msg, elapsed, rc, rot) -> None:
         w = self.ws / sub if sub else self.ws
         full = json.loads(self.x("log", "--json"))
-        (out / "log-full.json").write_text(json.dumps(full, indent=1, ensure_ascii=False))
+        (out / "log-full.json").write_text(json.dumps(full, indent=1, ensure_ascii=False), encoding="utf-8")
         stage_log = {**full, "messages": [m for m in full["messages"] if m["id"] >= first_msg],
                      "turns": [t for t in full["turns"] if t["id"] >= first_turn]}
-        (out / "log.json").write_text(json.dumps(stage_log, indent=1, ensure_ascii=False))
-        (out / "log.txt").write_text(self.x("log"))
-        (out / "usage.txt").write_text(self.x("usage"))
-        (out / "status.json").write_text(self.x("hub", "status"))
+        (out / "log.json").write_text(json.dumps(stage_log, indent=1, ensure_ascii=False), encoding="utf-8")
+        (out / "log.txt").write_text(self.x("log"), encoding="utf-8")
+        (out / "usage.txt").write_text(self.x("usage"), encoding="utf-8")
+        (out / "status.json").write_text(self.x("hub", "status"), encoding="utf-8")
         self.dump_tables(out, first_turn)
-        (out / "align.txt").write_text(self.x("align", "list", "--all"))
+        (out / "align.txt").write_text(self.x("align", "list", "--all"), encoding="utf-8")
         log = next(self.state_root.glob("*/logs/hub.log"), None)
         if log:
             shutil.copy(log, out / "hub.log")
         mo_stats = self.mo_collect(out)
         git(self.ws, "add", "-A")
-        (out / "git-diff-stat.txt").write_text(git(self.ws, "diff", "--cached", "--stat", base, "--", sub or "."))
-        (out / "git-status.txt").write_text(git(self.ws, "status", "--short"))
+        (out / "git-diff-stat.txt").write_text(git(self.ws, "diff", "--cached", "--stat", base, "--", sub or "."), encoding="utf-8")
+        (out / "git-status.txt").write_text(git(self.ws, "status", "--short"), encoding="utf-8")
         if self.sc.get("MODE") == "review":
             revs = self.sc["REVIEW"].split(",")
             (out / "review.md").write_text("\n\n".join(
                 f"## #{m['id']} {m['sender']} -> {m['thread_id']} [{m['kind']}]\n{m['body']}" for m in stage_log["messages"]
-                if m["sender"] in revs and m["kind"] != "notice"))
+                if m["sender"] in revs and m["kind"] != "notice"), encoding="utf-8")
         else:
             self.run_tests(seed, w, out)
             r =subprocess.run([sys.executable, str(EXP / "check.py"), str(out), self.sc["IMPL"], self.sc["REVIEW"],
-                                (out / "public.status").read_text(), (out / "hidden.status").read_text(), str(elapsed),
+                                (out / "public.status").read_text(encoding="utf-8"), (out / "hidden.status").read_text(encoding="utf-8"), str(elapsed),
                                 str(rc)], capture_output=True, text=True)
-            (out / "summary.json").write_text(r.stdout)
+            (out / "summary.json").write_text(r.stdout, encoding="utf-8")
         meta = {"run": self.name, "seed": seed, "scenario": self.sc, "group": self.group, "agents": self.agents,
                 "first_turn_id": first_turn, "first_message_id": first_msg, "seconds": elapsed, "quiet": rc == 0,
                 "rot": rot, "hub_config": getattr(self, "hub_cfg", None),
                 "provenance": {**provenance(self.agents), "shell_policy": self.env["XMUSE_SHELL_POLICY"]}}
         if self.mo_enabled():
             meta["memoryos"] = {"enabled": True, "url": self.mo_url, "capabilities": self.mo_caps, **mo_stats}
-        (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False))
+        (out / "meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
 
     def dump_tables(self, out: Path, first_turn: int) -> None:
         db = sqlite3.connect(f"file:{next(self.state_root.glob('*/hub.db'))}?mode=ro", uri=True)
@@ -485,10 +485,10 @@ class Run:
         dump = lambda sql, *a: [dict(r) for r in db.execute(sql, a)]  # noqa: E731
         (out / "turns.json").write_text(json.dumps(dump(
             "select t.*, u.mode, u.input, u.cache_read, u.cache_write, u.output, u.context, u.calls from turns t"
-            " left join usage u on u.turn_id=t.id where t.id>=? order by t.id", first_turn), indent=1))
+            " left join usage u on u.turn_id=t.id where t.id>=? order by t.id", first_turn), indent=1), encoding="utf-8")
         (out / "entries.json").write_text(json.dumps({
             "entries": dump("select * from entries order by id"),
-            "events": dump("select * from entry_events order by seq")}, indent=1, ensure_ascii=False))
+            "events": dump("select * from entry_events order by seq")}, indent=1, ensure_ascii=False), encoding="utf-8")
         db.close()
 
     def run_tests(self, seed: str, w: Path, out: Path) -> None:
@@ -497,21 +497,21 @@ class Run:
                                text=True, timeout=300, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             return ("pass" if r.returncode == 0 else "fail"), r.stdout + r.stderr
         st, txt = run(["discover", "-s", "tests"])
-        (out / "tests-public.txt").write_text(txt)
-        (out / "public.status").write_text(st)
+        (out / "tests-public.txt").write_text(txt, encoding="utf-8")
+        (out / "public.status").write_text(st, encoding="utf-8")
         hid = w / "tests" / f"test_hidden_{seed}.py"
         shutil.copy(EXP / "hidden" / hid.name, hid)
         st, txt = run(["discover", "-s", "tests", "-p", "test_hidden_*.py", "-v"])
         hid.unlink()
-        (out / "tests-hidden.txt").write_text(txt)
-        (out / "hidden-tests.json").write_text(json.dumps(parse_counts(txt), indent=1))  # per case: metrics.py drops the rot-affected ones
-        (out / "hidden.status").write_text(st)
+        (out / "tests-hidden.txt").write_text(txt, encoding="utf-8")
+        (out / "hidden-tests.json").write_text(json.dumps(parse_counts(txt), indent=1), encoding="utf-8")  # per case: metrics.py drops the rot-affected ones
+        (out / "hidden.status").write_text(st, encoding="utf-8")
         rt = w / f"post_rot_test_{seed}.py"
         shutil.copy(EXP / "rot" / rt.name, rt)
         _, txt = run(["discover", "-s", ".", "-p", "post_rot_test_*.py", "-v"])
         rt.unlink()
-        (out / "tests-rot.txt").write_text(txt)
-        (out / "rot-tests.json").write_text(json.dumps(parse_counts(txt), indent=1))
+        (out / "tests-rot.txt").write_text(txt, encoding="utf-8")
+        (out / "rot-tests.json").write_text(json.dumps(parse_counts(txt), indent=1), encoding="utf-8")
 
     def go(self) -> None:
         t0 = time.time()
@@ -536,7 +536,7 @@ class Run:
                                                        "seconds": int(time.time() - t0),
                                                        "memoryos": {"enabled": self.mo_enabled(),
                                                                     "url": self.mo_url,
-                                                                    "capabilities": self.mo_caps} if self.mo_enabled() else {"enabled": False}}, indent=1, default=str))
+                                                                    "capabilities": self.mo_caps} if self.mo_enabled() else {"enabled": False}}, indent=1, default=str), encoding="utf-8")
         print(json.dumps({k: v for k, v in stages[-1].items() if k != "rot"} | {"rot_injected": stages[-1]["rot"]["injected"],
                                                                                  "results": str(self.res)}))
 

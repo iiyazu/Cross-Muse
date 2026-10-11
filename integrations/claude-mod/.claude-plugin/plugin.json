@@ -1,0 +1,27 @@
+{
+  "name": "xmuse",
+  "version": "0.1.0",
+  "description": "xmuse 2 sidebar for Claude Code: room members, timeline, approvals and @-wake-up for a local multi-agent room",
+  "author": { "name": "xmuse" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "hubUrl": {
+      "type": "string",
+      "title": "hub URL",
+      "description": "xmuse hub address, e.g. http://127.0.0.1:43117. Leave empty to read hub.json from the state directory below, then fall back to http://127.0.0.1:43117. /xmuse hub <url> overrides it for this machine.",
+      "default": ""
+    },
+    "stateDir": {
+      "type": "string",
+      "title": "room state directory",
+      "description": "Directory that holds the room's hub.json ({\"port\": ...}). Optional; <project>/.xmuse/hub.json is also tried.",
+      "default": ""
+    },
+    "pollWaitSeconds": {
+      "type": "number",
+      "title": "long-poll wait (seconds)",
+      "description": "How long one /v1/view long poll may hang (1-30).",
+      "default": 15
+    }
+  }
+}

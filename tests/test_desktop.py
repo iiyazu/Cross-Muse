@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import set_home, windows_hub, wsl_hub
 from test_init_cli import XMUSE, run
 from xmuse import db, init as xinit
 from xmuse.adapters.claude import write_config, win_path
@@ -21,7 +22,7 @@ BASH_ISH = ("||", "&&", "$", ";", "`", ">", "<")
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, tmp_path / "home")
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
     monkeypatch.delenv("XMUSE_STATE", raising=False)
@@ -34,14 +35,45 @@ def ws(tmp_path, monkeypatch):
 
 # ---- generated config -------------------------------------------------------------------------
 
+@windows_hub
+def test_desktop_config_on_a_windows_hub(ws):
+    """Windows-native hub: the desktop app runs node and the hub's own python directly, no wsl.exe hop."""
+    state = xinit.init(ws)
+    xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
+    mcp = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+    assert mcp == {"mcpServers": {"xmuse": {"command": "node", "args": [str(SHIM)], "env": {
+        "XMUSE_STATE": str(state), "XMUSE_AGENT": "dog", "XMUSE_DESKTOP": "1"}}}}
+    st = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    pre = f'"{sys.executable}" .claude/xmuse-hook.py'
+    for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"):
+        assert st["hooks"][ev][0]["hooks"][0]["command"] == f"{pre} {ev}"
+    assert st["hooks"]["SessionStart"][1]["hooks"][0]["command"] == f"{pre} compact"
+    for ev in st["hooks"].values():
+        for g in ev:
+            for h in g["hooks"]:
+                assert not any(t in h["command"] for t in BASH_ISH) and "wsl.exe" not in h["command"]
+    agent = {"id": "dog", "settings": json.dumps({"desktop": True})}
+    write_config(ws, agent, state)  # recognised as a desktop identity: no "replaces" note on a rewrite
+    assert json.loads((ws / ".mcp.json").read_text(encoding="utf-8")) == mcp
+
+
+@windows_hub
+def test_attach_for_desktop_agent_on_a_windows_hub(make):
+    h = make([("dog", "claude", {"desktop": True})])
+    first, second = h.admin("attach", agent="dog")["result"]["command"].split("\n")
+    assert first.startswith(f"Open {h.ws} in the Claude desktop app")
+    assert second == f'Monitor command (run once per session): "{sys.executable}" -m xmuse --ws "{h.ws}" watch --agent dog'
+
+
+@wsl_hub
 def test_desktop_config(ws):
     state = xinit.init(ws)
     xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
-    mcp = json.loads((ws / ".mcp.json").read_text())
+    mcp = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
     assert mcp == {"mcpServers": {"xmuse": {"command": "wsl.exe", "args": [
         "-d", "Ubuntu-Test", "--", "env", f"XMUSE_STATE={state}", "XMUSE_AGENT=dog", "XMUSE_DESKTOP=1", "node", str(SHIM)]}}}
-    assert "XMUSE_CHANNEL" not in (ws / ".mcp.json").read_text()
-    st = json.loads((ws / ".claude" / "settings.json").read_text())
+    assert "XMUSE_CHANNEL" not in (ws / ".mcp.json").read_text(encoding="utf-8")
+    st = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert st["enabledMcpjsonServers"] == ["xmuse"] and st["permissions"] == {"allow": ["mcp__xmuse__*"]}
     pre = "wsl.exe -d Ubuntu-Test -- python3 .claude/xmuse-hook.py"
     for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"):
@@ -56,12 +88,13 @@ def test_desktop_config(ws):
                 assert not any(t in h["command"] for t in BASH_ISH), h["command"]
                 # Git Bash rewrites arguments that start with "/" (also NAME=/path): none may exist
                 assert not any(t.startswith("/") or "=/" in t for t in h["command"].split()), h["command"]
-    copy = (ws / ".claude" / "xmuse-hook.py").read_text()
+    copy = (ws / ".claude" / "xmuse-hook.py").read_text(encoding="utf-8")
     assert f"BAKED = {{'state': {str(state)!r}, 'agent': 'dog', 'desktop': True, 'python': {sys.executable!r}}}" in copy
-    assert copy.endswith(HOOK.read_text())
-    assert ".claude/" in (ws / ".git" / "info" / "exclude").read_text().splitlines()
+    assert copy.endswith(HOOK.read_text(encoding="utf-8"))
+    assert ".claude/" in (ws / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
 
 
+@wsl_hub
 def test_desktop_distro_is_derived_never_assumed(ws, monkeypatch):
     monkeypatch.delenv("WSL_DISTRO_NAME")
     state = xinit.init(ws)
@@ -69,22 +102,23 @@ def test_desktop_distro_is_derived_never_assumed(ws, monkeypatch):
         xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
     monkeypatch.setenv("XMUSE_WSL_DISTRO", "Debian")
     xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
-    assert json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]["args"][:2] == ["-d", "Debian"]
+    assert json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["xmuse"]["args"][:2] == ["-d", "Debian"]
 
 
+@wsl_hub
 def test_non_desktop_config_is_unchanged(ws):
     state = xinit.init(ws)
     xinit.add_agent(state, "cat", "claude")
     env = {"XMUSE_STATE": str(state), "XMUSE_AGENT": "cat", "XMUSE_CHANNEL": "1"}
     mcp = {"mcpServers": {"xmuse": {"command": "node", "args": [str(SHIM)], "env": env}}}
-    assert (ws / ".mcp.json").read_text() == json.dumps(mcp, indent=2) + "\n"
+    assert (ws / ".mcp.json").read_text(encoding="utf-8") == json.dumps(mcp, indent=2) + "\n"
     hook = f"XMUSE_STATE={state} XMUSE_AGENT=cat python3 {HOOK}"
     hooks = {ev: [{"hooks": [{"type": "command", "command": f"{hook} {ev}", "timeout": 10}]}]
              for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop")}
     hooks["SessionStart"].append({"matcher": "compact", "hooks": [{
         "type": "command", "timeout": 10, "command": f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"}]})
     settings = {"enabledMcpjsonServers": ["xmuse"], "permissions": {"allow": ["mcp__xmuse__*"]}, "hooks": hooks}
-    assert (ws / ".claude" / "settings.json").read_text() == json.dumps(settings, indent=2) + "\n"
+    assert (ws / ".claude" / "settings.json").read_text(encoding="utf-8") == json.dumps(settings, indent=2) + "\n"
 
 
 def test_desktop_replacing_a_cli_identity_prints_a_note(ws, capsys):
@@ -102,7 +136,8 @@ def test_cli_desktop_flag(ws):
     run(ws, "init", str(ws))
     r = run(ws, "agent", "add", "dog", "--vendor", "claude", "--desktop")
     assert "dog" in r.stdout
-    assert json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]["command"] == "wsl.exe"
+    srv = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["xmuse"]
+    assert srv["command"] == ("node" if os.name == "nt" else "wsl.exe")
     listed = json.loads(run(ws, "agent", "list").stdout)
     assert listed[0]["id"] == "dog" and listed[0]["desktop"] is True
     bad = run(ws, "agent", "add", "oc", "--vendor", "opencode", "--desktop", check=False)
@@ -117,12 +152,14 @@ def test_xmuse_agent_add_non_claude_desktop_rejected(ws):
 
 # ---- path conversion / attach -----------------------------------------------------------------
 
+@wsl_hub
 def test_win_path(monkeypatch):
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
     assert win_path(Path("/home/user/dev/xmuse2-dog")) == r"\\wsl.localhost\Ubuntu-Test\home\user\dev\xmuse2-dog"
     assert win_path(Path("/mnt/c/Users/me/proj")) == r"C:\Users\me\proj"
 
 
+@wsl_hub
 def test_attach_for_desktop_agent(make, monkeypatch):
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
     h = make([("dog", "claude", {"desktop": True})])
@@ -219,7 +256,7 @@ def run_hook(state, agent, event, stdin, desktop=True):
     env = {k: v for k, v in os.environ.items() if not k.startswith("XMUSE_")}
     env.update(XMUSE_STATE=str(state), XMUSE_AGENT=agent, **({"XMUSE_DESKTOP": "1"} if desktop else {}))
     return subprocess.run([sys.executable, str(HOOK), event], input=json.dumps(stdin), env=env,
-                          capture_output=True, text=True, timeout=20)
+                          capture_output=True, text=True, encoding="utf-8", timeout=20)
 
 
 def test_hook_py_prompts_for_pending_messages(make):
@@ -254,8 +291,8 @@ def test_hook_py_non_desktop_stays_silent(make):
 def test_hook_py_unreachable_hub_is_silent(tmp_path):
     state = tmp_path / "st"
     (state / "tokens").mkdir(parents=True)
-    (state / "tokens" / "dog").write_text("xmt_dog")
-    (state / "hub.json").write_text(json.dumps({"port": 9, "pid": 1}))
+    (state / "tokens" / "dog").write_text("xmt_dog", encoding="utf-8")
+    (state / "hub.json").write_text(json.dumps({"port": 9, "pid": 1}), encoding="utf-8")
     r = run_hook(state, "dog", "UserPromptSubmit", {"session_id": "S1", "prompt": "hi"})
     assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
     r = run_hook(tmp_path / "nowhere", "dog", "UserPromptSubmit", {})
@@ -269,7 +306,7 @@ def start_watch(h, agent, *extra):
     env.pop("XMUSE_STATE", None)
     return subprocess.Popen([sys.executable, "-m", "xmuse", "--ws", str(h.ws), "watch", "--agent", agent,
                              "--interval", "0.2", *extra], cwd="/", env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8")
 
 
 def test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing(make):
@@ -292,7 +329,7 @@ def test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing(make):
         assert w.wait(10) == 0
     finally:
         w.kill()
-        (h.state / "hub.json").write_text(json.dumps({"port": 0, "pid": os.getpid()}))  # let the hub shut down
+        (h.state / "hub.json").write_text(json.dumps({"port": 0, "pid": os.getpid()}), encoding="utf-8")  # let the hub shut down
 
 
 # ---- coordinator: prompt injection (alignment + unread list) ----------------------------------
@@ -373,7 +410,7 @@ def test_notices_without_a_desktop_agent_make_no_deliveries(make):
 def run_copy(h, event, stdin):
     env = {k: v for k, v in os.environ.items() if not k.startswith("XMUSE_")}
     return subprocess.run([sys.executable, ".claude/xmuse-hook.py", event], input=json.dumps(stdin), env=env,
-                          cwd=h.ws, capture_output=True, text=True, timeout=30)
+                          cwd=h.ws, capture_output=True, text=True, encoding="utf-8", timeout=30)
 
 
 def test_hook_copy_prints_the_injection_from_the_workspace_dir(make):

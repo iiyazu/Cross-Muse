@@ -3,12 +3,14 @@
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from conftest import set_home, wsl_hub
 from test_init_cli import run
 from xmuse import doctor, init as xinit
 from xmuse.adapters import claude
@@ -17,7 +19,7 @@ from xmuse.config import SHIM
 
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, tmp_path / "home")
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
     monkeypatch.delenv("XMUSE_STATE", raising=False)
@@ -145,6 +147,7 @@ def test_no_cwd_changes_nothing(ws):
 
 # ---- desktop ----------------------------------------------------------------------------------------------
 
+@wsl_hub  # the Windows-native form (node, the hub's python) is test_desktop.test_desktop_config_on_a_windows_hub
 def test_desktop_member_writes_into_its_cwd(ws):
     state = xinit.init(ws)
     (ws / "dev1").mkdir()
@@ -167,9 +170,10 @@ def test_attach_commands_name_the_member_dir(make, tmp_path):
               ("dev-2", "claude", {"desktop": True, "cwd": str(tmp_path / "ws" / "dev2")})])
     assert h.admin("attach", agent="lead")["result"]["command"].startswith("claude --model ")
     cmd = h.admin("attach", agent="dev-1")["result"]["command"]
-    assert cmd.startswith(f"cd {tmp_path / 'ws' / 'dev1'} && claude --model ") and " --effort high " in cmd
+    assert cmd.startswith(f"cd {shlex.quote(str(tmp_path / 'ws' / 'dev1'))} && claude --model ")
+    assert " --effort high " in cmd
     desk = h.admin("attach", agent="dev-2")["result"]["command"]
-    assert "ws\\dev2 in the Claude desktop app" in desk and f"--ws {h.ws} watch --agent dev-2" in desk
+    assert "ws\\dev2 in the Claude desktop app" in desk and str(h.ws) in desk and "watch --agent dev-2" in desk
 
 
 # ---- headless turns: cwd and --effort ------------------------------------------------------------------------

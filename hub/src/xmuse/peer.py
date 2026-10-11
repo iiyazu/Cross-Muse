@@ -19,7 +19,7 @@ def _inode(client_port: int, server_port: int) -> str | None:
     """The socket inode of the client end: its local port is client_port, its remote port server_port."""
     for table in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
-            lines = Path(table).read_text().splitlines()[1:]
+            lines = Path(table).read_text(encoding="utf-8").splitlines()[1:]
         except OSError:
             continue
         for line in lines:
@@ -49,7 +49,7 @@ def pid_of(client_port: int, server_port: int) -> int | None:
 
 def _stat(pid: int) -> list[str] | None:
     try:
-        raw = Path(f"/proc/{pid}/stat").read_text()
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     except OSError:
         return None
     return raw[raw.rindex(")") + 2:].split()  # fields after "pid (comm) "; [0]=state [1]=ppid [4]=tty_nr
@@ -74,6 +74,8 @@ def has_ctty(pid: int) -> bool:
 
 def human_check(client_port: int, server_port: int, agent_pids: set[int]) -> str | None:
     """None when the caller looks like a human at a terminal; otherwise the reason it does not."""
+    if os.name == "nt":  # no /proc: fail closed; on Windows a person decides from a sidebar (operator token, D2)
+        return "a Windows-native hub cannot identify the calling process (approve from an xmuse sidebar instead)"
     pid = pid_of(client_port, server_port)
     if pid is None:
         return "the calling process cannot be identified (only a local terminal may do this)"
