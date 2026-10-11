@@ -162,7 +162,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # tests that need 
 (cd integrations/dsh-bundle && npm test)
 ```
 
-Last measured: hub 335 passed, 1 skipped, in about 2 min 35 s; bundle 28 passed. One test in `tests/test_desktop.py` (`test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing`) fails now and then: it first sends a message to another agent, and the hub notice to the coordinator when that agent's turn ends sometimes arrives ahead of the line the test reads. It is a race in the test itself, and a rerun on its own usually passes.
+Last measured: hub 335 passed, 1 skipped, in about 2 min 33 s; bundle 28 passed.
 
 ## License
 

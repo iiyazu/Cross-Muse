@@ -162,7 +162,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # 依赖 Windows /
 (cd integrations/dsh-bundle && npm test)
 ```
 
-最近一次实测：hub 335 个通过、1 个跳过，耗时约 2 分 35 秒；插件包 28 个通过。`tests/test_desktop.py` 里有一条用例（`test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing`）偶尔失败：它先发一条给别的 agent 的消息，那个 agent 的回合结束时 hub 发给协调者的提示，有时抢在测试要读的那一行之前。这是测试本身的竞态，单独重跑通常能过。
+最近一次实测：hub 335 个通过、1 个跳过，耗时约 2 分 33 秒；插件包 28 个通过。
 
 ## 许可证
 
