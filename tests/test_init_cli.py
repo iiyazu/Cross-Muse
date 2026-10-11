@@ -27,6 +27,18 @@ def ws(tmp_path, monkeypatch):
     return w
 
 
+def test_init_in_a_linked_worktree_writes_the_common_exclude(ws, tmp_path):
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git + ["-C", str(ws), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    wt = tmp_path / "wt"
+    subprocess.run(git + ["-C", str(ws), "worktree", "add", "-q", str(wt)], check=True)
+    assert (wt / ".git").is_file()
+    xinit.init(wt)
+    assert ".xmuse.json" in (ws / ".git" / "info" / "exclude").read_text().splitlines()
+    st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain", "--ignored"], capture_output=True, text=True)
+    assert "!! .xmuse.json" in st.stdout  # git really ignores it in the worktree
+
+
 def mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
 
@@ -89,7 +101,7 @@ def test_opencode_config_asks_for_consequential_commands(ws):
     assert srv["environment"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "opencode-1"}
     rules = {(r["action"], r["resource"]): r["effect"] for r in cfg["permissions"]}
     assert rules[("xmuse_*", "*")] == "allow"
-    assert rules[("shell", "git push*")] == rules[("shell", "rm -r*")] == "ask"
+    assert rules[("shell", "*")] == "ask"  # every command; the hub's allowlist answers the safe ones (T5)
     assert ("edit", "*") not in rules  # edits stay OpenCode's default (allowed)
 
 
@@ -99,6 +111,26 @@ def run(ws, *args, check=True):
     if check and r.returncode:
         raise AssertionError(r.stdout + r.stderr)
     return r
+
+
+def test_hub_start_gives_up_after_the_deadline_and_stops_the_hub(tmp_path, monkeypatch):
+    from xmuse import cli
+    state = tmp_path / "state"
+    (state / "logs").mkdir(parents=True)
+    procs = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(argv, **kw):  # a "hub" that never writes hub.json
+        p = real_popen(["sleep", "60"], **kw)
+        procs.append(p)
+        return p
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cli, "HUB_START_TIMEOUT_S", 1)
+    with pytest.raises(SystemExit) as e:
+        cli.hub_start(state)
+    assert "did not start" in str(e.value) and "stopped it" in str(e.value)
+    assert procs[0].wait(timeout=10) == -15  # SIGTERM from killpg
 
 
 def test_cli_end_to_end_with_a_fake_agent(ws):
@@ -118,7 +150,7 @@ def test_cli_end_to_end_with_a_fake_agent(ws):
         assert sent["woken"] == ["claude-1"]
         assert run(ws, "wait", "--timeout", "30", "--settle", "1").stdout.strip() == "quiet"
         log = run(ws, "log").stdout
-        assert "#1" in log and "human → dm:claude-1+human" in log and "pong" in log
+        assert "#1" in log and "human (via cli) → dm:claude-1+human" in log and "pong" in log
         assert "turn 1 claude-1 claude_resume fresh" in log and "succeeded chat tokens=" in log
         usage = run(ws, "usage", "--json").stdout
         [u] = json.loads(usage)

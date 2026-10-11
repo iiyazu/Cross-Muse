@@ -1,6 +1,7 @@
 """Pure pieces: vendor stream parsing, transcript usage and forks, wake-pack rendering, sweep."""
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from xmuse import db, mail, wakepack
@@ -65,6 +66,65 @@ def test_transcript_usage_counts_only_new_calls_once(tmp_path):
         f.write(json.dumps({"type": "user", "timestamp": new}) + "\n")
     got = transcript_usage(p, since=time.time())
     assert (got.calls, got.cache_read, got.output, got.context, got.mode) == (2, 200, 10, 111, "chat")
+
+
+def test_family_follows_the_model_not_the_shell(make):
+    from xmuse.config import family
+    from xmuse.server import Hub
+    assert family("dsh", "opencode-go/muse-spark-1.3-contributor") == "opencode"  # was "deepseek" (audit C)
+    assert family("dsh", "deepseek-official/deepseek-v4-flash") == "deepseek"
+    assert family("opencode", "deepseek-official/deepseek-v4-flash") == "deepseek"
+    assert family("claude", "claude-haiku-5-5") == "anthropic"
+    assert family("opencode", "someone/unknown-model") == "opencode"  # nothing to go on: the shell's
+    h = make([("claude-1", "claude"), ("dsh-1", "dsh")])
+    peers = {p["id"]: p.get("family") for p in h.tool("claude-1", "xmuse_whoami")["result"]["peers"]}
+    assert peers["dsh-1"] == "opencode"
+    with db.tx(h.conn()) as c:  # a database written before T8
+        c.execute("update agents set family='deepseek' where id='dsh-1'")
+    Hub(h.state)  # opening it repairs the stored family
+    assert h.q("select family from agents where id='dsh-1'")[0]["family"] == "opencode"
+
+
+def test_host_facts_are_derived_or_a_clear_error(tmp_path, monkeypatch):
+    import pytest
+    from xmuse import host
+    monkeypatch.setenv("XMUSE_WSL_DISTRO", "Debian")
+    assert host.distro() == "Debian"  # the override wins over WSL_DISTRO_NAME
+    monkeypatch.delenv("XMUSE_WSL_DISTRO")
+    monkeypatch.delenv("WSL_DISTRO_NAME")
+    with pytest.raises(SystemExit, match="XMUSE_WSL_DISTRO"):
+        host.distro()
+    assert host.win_home() == tmp_path / "winhome"  # XMUSE_WIN_HOME (conftest)
+    monkeypatch.delenv("XMUSE_WIN_HOME")
+    monkeypatch.setenv("PATH", str(tmp_path))  # no cmd.exe / wslpath: not WSL, or interop off
+    host._userprofile.cache_clear()
+    try:
+        with pytest.raises(SystemExit, match="XMUSE_WIN_HOME"):
+            host.win_home()
+    finally:
+        host._userprofile.cache_clear()
+
+
+def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
+    """The Stop hook can beat the TUI's transcript write; the turn's usage must not be recorded as 0."""
+    import threading
+    from xmuse.adapters.claude import ClaudeChannel
+
+    class Sink:
+        def __init__(self): self.ended, self.done = [], threading.Event()
+        def turn_ended(self, e): self.ended.append(e); self.done.set()
+
+    sink, p = Sink(), tmp_path / "t.jsonl"
+    p.write_text("")
+    ch = ClaudeChannel(sink, None)
+    ch.turns["s1"] = {"turn_id": 7, "since": time.time(), "cwd": tmp_path}
+    assert ch.stopped("s1", str(p)) and not sink.ended  # nothing flushed yet: not ended with zeros
+    ts = datetime.now(timezone.utc).isoformat()
+    u = {"input_tokens": 2, "cache_read_input_tokens": 300, "cache_creation_input_tokens": 0, "output_tokens": 9}
+    p.write_text(json.dumps({"type": "assistant", "timestamp": ts, "message": {
+        "id": "m1", "model": "x", "usage": u, "content": [{"type": "text", "text": "ok"}]}}) + "\n")
+    assert sink.done.wait(5)
+    assert (sink.ended[0].turn_id, sink.ended[0].usage.context, sink.ended[0].usage.calls) == (7, 302, 1)
 
 
 def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):
@@ -142,7 +202,8 @@ def test_sweep_interrupts_turns_past_the_timeout(make):
     h.wait(lambda: h.q("select 1 from turns where state='running'"), what="running")
     time.sleep(1.2)
     h.hub.engine.call(h.hub.engine.sweep)
-    h.wait(lambda: h.q("select state from turns")[0]["state"] == "interrupted", what="interrupted")
+    # SIGINT, then SIGTERM after 5 s if the fake has not exited: under a loaded full run that can pass 10 s
+    h.wait(lambda: h.q("select state from turns")[0]["state"] == "interrupted", timeout=20, what="interrupted")
 
 
 def test_engine_call_propagates_errors(make):

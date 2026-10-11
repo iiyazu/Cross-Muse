@@ -63,9 +63,32 @@ def members(conn, thread_id: str) -> list[str]:
                                        (thread_id,))]
 
 
+def _desktop_agents(conn) -> list[str]:
+    return [a["id"] for a in db.rows(conn.execute("select id, settings from agents order by id"))
+            if db.settings(a).get("desktop")]
+
+
+def _foreground_agents(conn) -> list[str]:
+    """dsh foreground agents: never woken by the hub; the bundle's relay pushes their mail into the bound session."""
+    return [a["id"] for a in db.rows(conn.execute("select id, settings from agents order by id"))
+            if db.settings(a).get("foreground")]
+
+
+def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
+    """The desktop coordinator is the user's interface: whatever reaches  also lands, unread and never
+    woken, in each coordinator's inbox (unless it sent it or already has a delivery of it)."""
+    if sender == HUMAN or HUMAN not in members(conn, thread_id):
+        return
+    for a in _desktop_agents(conn):
+        if a != sender and not conn.execute("select 1 from deliveries where message_id=? and recipient=?",
+                                            (mid, a)).fetchone():
+            conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
+                         " values(?,?,0,'passive',?)", (mid, a, db.now()))
+
+
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
-         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None) -> dict:
+         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag)."""
     mentions = list(dict.fromkeys(mentions or []))
     if kind == "handoff":
@@ -103,30 +126,37 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         chain, depth = _chain(conn, cfg, sender, thread["id"], turn)
         cur = conn.execute(
             "insert into messages(thread_id, sender, kind, body, why, mentions, chain_id, depth, turn_id,"
-            " idem_key, created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+            " idem_key, created_at, via) values(?,?,?,?,?,?,?,?,?,?,?,?)",
             (thread["id"], sender, kind, body, json.dumps(why) if why else None, json.dumps(mentions),
-             chain["id"], depth, turn and turn["id"], idem, db.now()))
+             chain["id"], depth, turn and turn["id"], idem, db.now(), via))
         mid = cur.lastrowid
         if thread["kind"] == "dm":
             wake = {to} & set(roster)
+        elif cfg["wake"] == "all":
+            wake = set(mem) & set(roster)
         else:
             wake = (set(mentions) | ({thread["owner"]} if thread["owner"] else set())) & set(roster)
         wake.discard(sender)
+        wake.discard(via)  # the relaying coordinator is not a recipient of its own message
         for r in mem:
-            if r in (sender, HUMAN) or r not in roster:
+            if r in (sender, HUMAN, via) or r not in roster:
                 continue
             state = "passive" if r not in wake else ("queued" if chain["state"] == "open" else "held")
             conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
                          " values(?,?,?,?,?)", (mid, r, int(r in wake), state, db.now()))
+        _to_coordinators(conn, mid, thread["id"], sender)
         if kind in DECLARE:
-            eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes)]
+            eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes, via)]
         elif kind == "handoff":  # one assignment per named peer (a DM names its peer)
             eids = align.assign(conn, sender, thread["id"], mid, body,
-                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [])
+                                mentions or (sorted(wake) if thread["kind"] == "dm" else []), depends_on or [], via)
         else:
             eids = []
         align.resolve(conn, resolves or [])
-        return {**db.row(conn.execute("select * from messages where id=?", (mid,))), "woken": sorted(wake),
+        fg = set(_foreground_agents(conn))
+        return {**db.row(conn.execute("select * from messages where id=?", (mid,))),
+                # the hub never wakes a coordinator or a foreground agent; the latter gets the message pushed
+                "woken": sorted(wake - set(_desktop_agents(conn)) - fg), "pushed": sorted(wake & fg),
                 "entries": [f"E{i}" for i in eids]}
 
 
@@ -149,8 +179,12 @@ def notice(conn, thread_id: str, body: str, chain_id: int | None = None) -> None
         if chain_id is None:
             chain_id = conn.execute("insert into chains(thread_id, origin, state, max_wakes, max_tokens, created_at)"
                                     " values(?,?,?,?,?,?)", (thread_id, "hub", "stopped", 0, 0, db.now())).lastrowid
-        conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, created_at) values(?,?,?,?,?,?)",
-                     (thread_id, HUB, "notice", body, chain_id, db.now()))
+        mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, created_at)"
+                           " values(?,?,?,?,?,?)", (thread_id, HUB, "notice", body, chain_id, db.now())).lastrowid
+        for a in db.rows(conn.execute("select id, settings from agents order by id")):
+            if db.settings(a).get("desktop"):  # the coordinator relays approvals/pauses to the user; never woken
+                conn.execute("insert or ignore into deliveries(message_id, recipient, wake, state, updated_at)"
+                             " values(?,?,0,'passive',?)", (mid, a["id"], db.now()))
 
 
 def inbox(conn, agent_id: str, unread_only: bool = True) -> list[dict]:
@@ -164,6 +198,14 @@ def inbox(conn, agent_id: str, unread_only: bool = True) -> list[dict]:
     return [_public(r) for r in rs]
 
 
+def pending(conn, agent_id: str) -> dict:
+    """Unread deliveries (what  would return) and how many of them mention the agent. Read-only."""
+    rs = conn.execute("select m.mentions from deliveries d join messages m on m.id=d.message_id"
+                      " where d.recipient=? and d.acked_at is null and d.read_at is null and d.state != 'canceled'",
+                      (agent_id,)).fetchall()
+    return {"pending": len(rs), "mentions": sum(agent_id in json.loads(r[0]) for r in rs)}
+
+
 def ack(conn, agent_id: str, ids: list[int], outcome: str | None) -> int:
     with db.tx(conn):
         n = 0
@@ -175,7 +217,8 @@ def ack(conn, agent_id: str, ids: list[int], outcome: str | None) -> int:
 
 
 def thread(conn, member: str, thread_id: str, query: str | None = None, limit: int = 20) -> dict:
-    if member != HUMAN and member not in members(conn, thread_id):
+    desk = member in _desktop_agents(conn) and HUMAN in members(conn, thread_id)  # the user's interface reads the user's threads
+    if member != HUMAN and not desk and member not in members(conn, thread_id):
         mine = [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (member,))]
         raise ToolError("unknown_thread", f"id must be one of your threads: {', '.join(mine) or '(none)'}")
     sql, args = "select * from messages where thread_id=?", [thread_id]
@@ -224,6 +267,7 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
                            " created_at) values(?,?,?,?,?,?,?,?,?)",
                            (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth, turn and turn["id"], key,
                             db.now())).lastrowid
+        _to_coordinators(conn, mid, tid, agent_id)
         eids = [align.declare(conn, agent_id, tid, mid, d["kind"], d["statement"], d.get("scope"), d.get("supersedes"))
                 for d in declares or []]
     return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {})}
@@ -235,6 +279,8 @@ def _public(r: dict) -> dict:
         out["why"] = json.loads(r["why"])
     if r.get("mentions") and r["mentions"] != "[]":
         out["mentions"] = json.loads(r["mentions"])
+    if r.get("via"):
+        out["via"] = r["via"]
     if "wake" in r:
         out["mentioned"] = bool(r["wake"])
     return out

@@ -9,6 +9,7 @@ import logging
 import queue
 import re
 import threading
+import time
 import urllib.request
 
 from . import align, db, mail
@@ -31,14 +32,17 @@ class Client:
     def call(self, cap: str | None, path: str, body: dict | None, timeout: float | None = None) -> dict | None:
         if cap and cap not in self.caps:
             return None
+        t0 = time.monotonic()
         try:
             req = urllib.request.Request(self.url + path, data=body and json.dumps(body).encode(),
                                          headers={"content-type": "application/json"})
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
                 out = json.load(r)
+            log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": True}))
             return out if isinstance(out, dict) else None
         except Exception as e:  # noqa: BLE001 - every failure has the same meaning
             log.warning("memoryos %s failed: %r", path, e)
+            log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": False}))
             return None
 
     def rank(self, es: list[dict], scope: str, role: str, query: str, cap: int, budget: int) -> list[str] | None:
@@ -88,7 +92,7 @@ class Curator:
 
     def kick(self, tid: str, closed: bool = False) -> None:
         """Queue a curation if the thread has 8 new messages, a new handoff, or was just closed."""
-        if "curate.collab" not in self.mo.caps:
+        if "curate.collab" not in self.mo.caps or self.cfg["alignment"] == "off":
             return
         with self.lock:
             conn = self.pool()
@@ -137,9 +141,11 @@ class Curator:
             "active": [{"id": f"E{e['id']}", "kind": e["kind"], "topic_key": f"e{e['id']}", "statement": e["statement"],
                         "version": e["seq"]} for e in active],
             "context": [_act(m) for m in ctx][-(CONTEXT - bool(note)):] + [note] * bool(note),
-            "window": [_act(m) for m in win]}, self.cfg["curate_timeout_s"])
+            "window": [_act(m) for m in win], "max_repairs": 1}, self.cfg["curate_timeout_s"])  # worst case 2 x 180 s
         if r is None:
             return
+        u = (r.get("diagnostics") or {}).get("usage") or {}  # a lower bound when unmetered_attempts > 0
+        log.info("curate %s usage %s", tid, json.dumps(u, sort_keys=True))
         conn, wid, aid = self.pool(), {m["id"] for m in win}, {e["id"] for e in active}
         questions = {e["id"] for e in active if e["kind"] == "question"}
         made, notes = {}, []
@@ -161,6 +167,9 @@ class Curator:
                     notes.append(f"curate: E{a} and E{b} may contradict each other: {c.get('reason', '')}")
             conn.execute("insert into curated values(?,?) on conflict(thread_id) do update set msg_id=excluded.msg_id",
                          (tid, win[-1]["id"]))
+        log.info("curate %s result %s", tid, json.dumps({  # what came back vs what the hub kept (ops metrics)
+            "memories": len(r.get("memories") or []), "added": len(made), "conflicts": len(r.get("conflicts") or []),
+            "notices": len(notes)}, sort_keys=True))
         for body in notes:
             mail.notice(conn, tid, body)
         if made and len(active) > self.cfg["align_thread_cap"] * 0.8:  # warm MemoryOS's embedding cache; result unused

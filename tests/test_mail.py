@@ -11,6 +11,13 @@ def three(make):
     return h
 
 
+def pause(h, agent):
+    """Keep the engine from admitting (and so marking read) the agent's mail while a test reads its inbox."""
+    from xmuse import db
+    with db.tx(h.conn()) as c:
+        c.execute("update agents set paused=1 where id=?", (agent,))
+
+
 def test_send_writes_message_and_one_delivery_per_member(make):
     h = three(make)
     out = h.send("#g", "hello", mentions=["claude-2"])
@@ -61,6 +68,7 @@ def test_handoff_keeps_why_first_fields(make):
     h = three(make)
     why = {"what": "added sub()", "why": "spec", "tradeoff": "no bigints", "open_questions": "none",
            "next_action": "review calc.py"}
+    pause(h, "claude-2")
     h.tool("claude-1", "xmuse_send", to="claude-2", body="handing over", kind="handoff", why=why)
     inbox = h.tool("claude-2", "xmuse_inbox")["result"]
     assert inbox[0]["why"] == why and inbox[0]["kind"] == "handoff"
@@ -68,6 +76,7 @@ def test_handoff_keeps_why_first_fields(make):
 
 def test_inbox_orders_mentions_first_and_marks_read(make):
     h = three(make)
+    pause(h, "claude-2")
     h.send("#g", "fyi for all")
     h.send("#g", "claude-2 act", mentions=["claude-2"])
     first = h.tool("claude-2", "xmuse_inbox")["result"]
@@ -159,7 +168,7 @@ def test_validation_messages(name, args, msg):
 
 
 def test_tool_count_and_short_descriptions():
-    assert len(tools.TOOLS) == 7
+    assert len(tools.TOOLS) == 8  # design §4.3: at most 8 (xmuse_approve is the coordinator's)
     assert all(len(t["description"]) <= 200 for t in tools.TOOLS)
 
 
@@ -195,3 +204,20 @@ def test_send_dedupes_across_resumed_turns(make, monkeypatch):
     assert "duplicate" not in m3 and m3["id"] != m1["id"]
     m4 = mail.send(conn, cfg, "claude-1", "human", "K1")
     assert m4["duplicate"] is True and m4["id"] == m3["id"]
+
+
+def test_wake_all_wakes_every_agent_member_but_the_sender(make):
+    h = make([("claude-1", "claude"), ("claude-2", "claude"), ("claude-3", "claude")], wake="all")
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    assert h.send("#g", "hello")["woken"] == ["claude-1", "claude-2", "claude-3"]
+    r = h.tool("claude-1", "xmuse_send", to="#g", body="hi all")["result"]
+    assert r["woken"] == ["claude-2", "claude-3"]
+
+
+def test_context_without_alignment_returns_recent_messages(make):
+    h = make([("claude-1", "claude"), ("claude-2", "claude")], alignment="off")
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    h.tool("claude-1", "xmuse_send", to="#g", body="use snake_case", kind="decision")
+    v = h.tool("claude-2", "xmuse_context")["result"]
+    assert [m["body"] for t in v["threads"] for m in t["messages"]] == ["use snake_case"] and "layers" not in v
+    assert h.tool("claude-2", "xmuse_context", topic="#g")["result"]["threads"][0]["thread"] == "#g"

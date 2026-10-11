@@ -1,0 +1,7 @@
+# T6 E5 arm SELF (base, opencode only)
+review-ledger-bug1-self 1
+review-ledger-bug2-self 1
+review-minisql-bug1-self 1
+review-minisql-bug2-self 1
+review-pipeline-bug1-self 1
+review-pipeline-bug2-self 1

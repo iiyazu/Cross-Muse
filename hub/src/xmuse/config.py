@@ -6,9 +6,12 @@ from pathlib import Path
 
 HUMAN = "human"
 HUB = "hub"
+VIA_CLI = "cli"  # `via` of messages sent with the admin token (`xmuse send`): human, but from a terminal command
 
 # Runaway guards (design §4.4 item 4). Safety stops, not budgets.
 DEFAULTS = {
+    "wake": "mention",               # experiment switch: mention | all (group threads wake every agent member; group A)
+    "alignment": "on",               # experiment switch: on | off (off: no pack section, no curate, xmuse_context = recent messages)
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain
     "chat_warn_tokens": 50_000,      # chat wakes over this log a warning (M1c task 2)
@@ -28,13 +31,21 @@ DEFAULTS = {
     "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
     "compact_drop_ratio": 0.5,       # a turn's context below this share of the last one's means the vendor compacted
     "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
-    "curate_timeout_s": 420,         # /curate collab (background) takes 92-370 s with a reasoning model
+    "curate_timeout_s": 480,         # /curate collab (background): 2 attempts x 200 s worst case (max_repairs 1)
     "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
-          "dsh": "deepseek-official/deepseek-v4-flash"}
-FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek"}
+          "dsh": "opencode-go/muse-spark-1.3-contributor"}
+FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek"}  # fallback when the model says nothing
+# The family a peer sees is the model's, not the shell's (audit C; T8): dsh running muse-spark is not "deepseek".
+MODEL_FAMILIES = [("claude", "anthropic"), ("deepseek", "deepseek"), ("muse-spark", "opencode"), ("gpt-", "openai"),
+                  ("gemini", "google"), ("qwen", "qwen"), ("glm", "zhipu"), ("kimi", "moonshot")]
+
+
+def family(vendor: str, model: str | None) -> str:
+    m = (model or "").lower()
+    return next((f for key, f in MODEL_FAMILIES if key in m), FAMILIES[vendor])
 
 REPO = Path(__file__).resolve().parents[3]
 SHIM = REPO / "shim" / "server.ts"

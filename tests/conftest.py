@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from fakes.fake_opencode import FakeOpenCode  # noqa: E402
 from xmuse import db, init as xinit  # noqa: E402
-from xmuse.config import FAMILIES, MODELS  # noqa: E402
+from xmuse.config import MODELS, family  # noqa: E402
 from xmuse.server import Hub, digest  # noqa: E402
 
 FAKE_CLAUDE = Path(__file__).parent / "fakes" / "fake_claude.py"
@@ -21,6 +21,7 @@ FAKE_DSH = Path(__file__).parent / "fakes" / "fake_dsh.py"
 
 class Harness:
     def __init__(self, tmp: Path, agents, cfg: dict):
+        human_check = cfg.pop("_human_check", False)
         self.tmp, self.home = tmp, Path(os.environ["HOME"])
         self.ws = tmp / "ws"
         self.ws.mkdir()
@@ -39,7 +40,9 @@ class Harness:
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
         (self.home / "fake-dsh").mkdir(parents=True, exist_ok=True)
         self.oc = FakeOpenCode(self.state) if any(v == "opencode" for _, v, *_ in agents) else None
-        self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base)
+        # the human-only admin check (peer.py) is exercised in test_trust.py; elsewhere tests drive admin calls
+        self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base,
+                       human_check=human_check)
         self.hub.start()
         if self.oc:
             assert self.hub.engine.drivers["opencode"].headless.ready.wait(5)
@@ -51,7 +54,7 @@ class Harness:
         model = (settings or {}).pop("model", None) or MODELS[vendor]
         with db.tx(self.conn()) as c:
             c.execute("insert into agents(id, vendor, model, family, settings, token_digest, created_at)"
-                      " values(?,?,?,?,?,?,?)", (aid, vendor, model, FAMILIES[vendor], json.dumps(settings or {}),
+                      " values(?,?,?,?,?,?,?)", (aid, vendor, model, family(vendor, model), json.dumps(settings or {}),
                                                  digest(tok), time.time()))
 
     def close(self):
@@ -66,10 +69,11 @@ class Harness:
     def q(self, sql, *args):
         return db.rows(self.conn().execute(sql, args))
 
-    def post(self, path, body, token):
+    def post(self, path, body, token, session=None):
         port = json.loads((self.state / "hub.json").read_text())["port"]
         req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body).encode(),
-                                     headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
+                                     headers={"authorization": f"Bearer {token}", "content-type": "application/json",
+                                              **({"x-xmuse-session": session} if session else {})})
         try:
             return json.loads(urllib.request.urlopen(req, timeout=10).read())
         except urllib.error.HTTPError as e:
@@ -86,8 +90,8 @@ class Harness:
         assert "result" in out, out
         return out["result"]
 
-    def tool(self, agent, name, **args):
-        return self.post(f"/v1/tools/{name}", {"args": args}, self.token(agent))
+    def tool(self, agent, name, _session=None, **args):
+        return self.post(f"/v1/tools/{name}", {"args": args}, self.token(agent), _session)
 
     def hook(self, agent, event, **payload):
         return self.post("/v1/hooks/claude", {"event": event, **payload}, self.token(agent))
@@ -132,6 +136,14 @@ class Harness:
     def turns(self):
         return self.q("select t.*, u.mode, u.input, u.cache_read, u.cache_write, u.output, u.context, u.calls"
                       " from turns t left join usage u on u.turn_id=t.id order by t.id")
+
+
+@pytest.fixture(autouse=True)
+def wsl_host(tmp_path, monkeypatch):
+    """Host facts xmuse derives from WSL (host.py), fixed so the suite runs the same on WSL and plain Linux CI."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
+    monkeypatch.delenv("XMUSE_WSL_DISTRO", raising=False)
+    monkeypatch.setenv("XMUSE_WIN_HOME", str(tmp_path / "winhome"))
 
 
 @pytest.fixture

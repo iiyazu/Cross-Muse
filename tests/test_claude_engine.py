@@ -203,6 +203,7 @@ def test_stop_interrupts_running_turn_and_cancels_queue(make):
     assert out["canceled_deliveries"] == 1 and out["interrupted_turns"] == [1]
     h.wait(lambda: h.q("select state from turns where id=1")[0]["state"] == "interrupted", what="interrupted")
     assert {d["state"] for d in h.q("select state from deliveries where recipient='claude-1'")} == {"canceled"}
+    h.admin("stop", agent="claude-2")  # do not sit out the other fake's 30 s turn
     h.wait_quiet(40)
     assert h.q("select state from turns where id=2")[0]["state"] == "interrupted" or \
         h.q("select state from turns where id=2")[0]["state"] == "succeeded"
@@ -338,3 +339,37 @@ def test_turn_that_reaches_no_one_is_flagged(make):
     h.send("claude-1", "two")
     h.wait_quiet()
     assert len(h.q("select * from messages where kind='notice'")) == 1
+
+
+def _paused(h):
+    from xmuse import db
+    with db.tx(h.conn()) as c:
+        c.execute("update agents set paused=1 where id='claude-1'")
+
+
+def test_mail_already_handled_mid_turn_wakes_nobody(make):
+    """Audit B2-3: acked mail, and read mail answered in its thread, cause no 'nothing new' wake."""
+    h = make()
+    h.plan_claude({})
+    _paused(h)  # stands in for "claude-1 is in another turn": nothing is admitted meanwhile
+    a = h.send("claude-1", "one")
+    b = h.send("claude-1", "two")
+    ids = {m["id"] for m in h.tool("claude-1", "xmuse_inbox")["result"]}
+    assert ids == {a["id"], b["id"]}
+    h.tool("claude-1", "xmuse_ack", ids=[a["id"]])
+    h.tool("claude-1", "xmuse_send", to="human", body="got both")
+    h.admin("resume", agent="claude-1")
+    h.wait_quiet()
+    assert h.turns() == []
+    assert {d["state"] for d in h.q("select state from deliveries where recipient='claude-1'")} == {"done"}
+
+
+def test_read_but_unanswered_mail_still_wakes(make):
+    h = make()
+    h.plan_claude({})
+    _paused(h)
+    h.send("claude-1", "one")
+    assert len(h.tool("claude-1", "xmuse_inbox")["result"]) == 1  # read, then the turn ended without replying
+    h.admin("resume", agent="claude-1")
+    h.wait_quiet()
+    assert len(h.turns()) == 1

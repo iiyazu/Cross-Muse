@@ -1,0 +1,40 @@
+# Hub tests and the dsh bundle's node tests on Linux. Tests that need Windows, dsh or the Claude desktop app skip
+# themselves; host facts (WSL distro, Windows home) are pinned by tests/conftest.py.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hub:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: shim/package-lock.json
+      - name: hub venv
+        run: uv sync --project hub --python 3.12
+      - name: shim deps
+        run: npm ci --prefix shim --no-audit --no-fund
+      - name: doctor (informational)
+        run: hub/.venv/bin/python -m xmuse doctor || true
+      - name: hub tests
+        run: hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider
+
+  dsh-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: bundle tests
+        working-directory: integrations/dsh-bundle
+        run: npm test

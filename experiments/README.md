@@ -4,9 +4,9 @@
 （每个都带公开测试、隐藏测试、预埋 bug 和「中途被推翻的约定」），以及一个不依赖
 任何第三方库的验证器 `verify.py`。
 
-> **runner 还没写**：把 A/B/C 三组跑起来、注入 rot 消息、收集 `log.json` 的调度器，
-> 要等 hub 的 M2a（H1–H3：对齐库、水位与差量注入、`/recall`）落地之后再写。
-> 现在这里只有种子和验收；`verify.py` 不启动任何 agent。
+> **runner**：`run.py <场景> <编号>`（场景在 `scenarios/*.env`，用法见 `run.py` 文件头），
+> 结果写到 `results/<场景>-<编号>/`，指标用 `metrics.py` 算。`verify.py` 不启动任何 agent。
+> 默认阵容只用 opencode 和 dsh；claude agent 必须在 `AGENTS` 里显式写模型（`claude-1:claude:claude-haiku-5-5`），否则 runner 直接报错。
 
 ---
 
@@ -47,8 +47,12 @@ experiments/
 │   ├── BUGS.md                      #   每个 bug 的类型、位置、抓它的隐藏测试方法名
 │   ├── bug-1/<pkg>/<file>.py        #   整文件替换，路径与 reference 一致
 │   └── bug-2/<pkg>/<file>.py        #   两个 bug 永远在不同文件
-└── rot/<task>.md                    # 中途被推翻的约定：新约定正文、时机、检查方法
-    post_rot_test_<task>.py          #   检测器：在参考实现上必须失败，改对了才通过
+├── rot/<task>.md                    # 中途被推翻的约定：新约定正文、时机、检查方法
+│   post_rot_test_<task>.py          #   检测器：在参考实现上必须失败，改对了才通过
+├── reference-rot/<task>-rot<n>/<pkg>/   # 按新约定改过的参考实现（n = 1, 2，各自独立基于 reference）：
+│                                    #   只放与 reference 不同的文件，用法是叠在 reference/<task>/<pkg> 上
+├── rot-affects/<task>-rot<n>.txt    # 该 rot 按设计会弄挂的隐藏用例（Class.method，一行一个），由 rot_affects.py 生成
+└── rot_affects.py                   # 生成/核对上面的清单：`python3 rot_affects.py [--check]`
 ```
 
 两点说明：
@@ -74,7 +78,7 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 - 没上架的任务会被跳过并打印 `[SKIP] ...`（`TASKS` 全集在 `verify.py` 顶部；
   `pipeline` 曾经就是靠这一条跳过的）。
 
-每个任务跑 **7 项检查**：
+每个任务跑 **7 项检查**，外加每个 rot 的 **3 项轮换检查**（见表后）：
 
 | 检查 | 期望 | 为什么 |
 |---|---|---|
@@ -85,6 +89,9 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 | bug-1 被隐藏测试抓到 | **失败** | 预埋 bug 是活的（≥1 条隐藏用例挂） |
 | bug-2 被隐藏测试抓到 | **失败** | 同上，且和 bug-1 不在同一个文件 |
 | rot 检测器在原约定上失败 | **失败** | rot 用例编码的是新约定，不是空转 |
+
+轮换检查（`<task>-rot<n>`，n = 1, 2）：轮换参考实现过对应的 post-rot 用例；`rot-affects/<task>-rot<n>.txt`
+与它在隐藏测试上实际失败的用例一致；去掉清单里的用例后，隐藏测试在它上面全过。
 
 ### 加一个新任务
 
@@ -120,7 +127,7 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
 
 | 指标 | 定义 | 数据来源 |
 |---|---|---|
-| **完成率** | 公开测试 + 隐藏测试都通过的任务数 / 该组任务数（每个任务至少 5 次） | 复跑 `tests/test_public.py` 与 `hidden/test_hidden_<task>.py` |
+| **完成率** | 公开测试 + 隐藏测试都通过的任务数 / 该组任务数（每个任务至少 5 次）。**注入过 rot 的 run**：公开测试通过 + 隐藏测试中**不在** `rot-affects/<task>-rot<n>.txt` 里的用例全过 + rot 遵守为 `followed`（旧约定的隐藏用例按设计会挂，不计入）；`metrics.json` 同时给出原始 `hidden` 与 `hidden_unaffected`（过/总） | 复跑 `tests/test_public.py` 与 `hidden/test_hidden_<task>.py`（`-v`，逐用例结果存 `hidden-tests.json`） |
 | **轮次** | 一次 run 的 `turns` 行数；按 agent、按 `mode`（chat/code）拆开看 | `turns` |
 | **token** | `Σ(input + cache_read + cache_write + output)`，按 agent / 按组汇总 | `turns` |
 | **人介入次数** | 人类消息数 − 1（首条任务消息不算介入）；公告类 notice 单独列出 | `messages`（`check.py` 的 `human_interventions` / `notices`） |
@@ -180,3 +187,57 @@ python experiments/verify.py -v              # 失败时把子进程输出打出
   不要把一次性探针脚本提交进种子仓库。
 - 先改 `SPEC.md` 和 `types.py`，再改实现——`types.py` 是冻结契约。
 - 参考实现不许为了让某个检查通过而削弱；检查挂了先怀疑 bug 变体或隐藏测试。
+
+## 9. MemoryOS 离线回放
+
+`data/results/<run>/` 的录像是在 **MemoryOS 关闭**时跑的。`replay_mo.py` 按 hub 的真实规则
+（`hub/src/xmuse/memoryos.py`、`align.py`、`config.py`）把录像重新构造成当时**会发出去的**
+`/curate`、`/recall`、`/similar` 请求，离线回放给 MemoryOS，用来评估"当时开着 MemoryOS 会怎样"
+——不必重跑昂贵的 agent 实验。只用标准库。
+
+```
+# 1) 离线构造请求：对每个 run、每个话题重放消息，模拟 Curator 的触发
+python repo/experiments/replay_mo.py build data/results --out "$TEMP/mo-replay"
+#    -> <out>/<run>/curate-<n>.json + recall.json + similar.json + index.json
+#       index.json 列出每个请求文件、run、话题、触发原因；同样输入逐字节相同（键排序、无时间戳）
+
+# 2) 发给 MemoryOS（默认 127.0.0.1:8301；已有 *.resp.json 的请求跳过，可中断续跑）
+python repo/experiments/replay_mo.py send "$TEMP/mo-replay" --url http://127.0.0.1:8301
+#    --only curate|recall|similar（可重复）  --max-calls N（默认 40，防止误花钱）
+#    先请求 /health：缺哪项能力就跳过哪类请求。超时 curate 480 s / recall 10 s / similar 30 s；
+#    502/503/超时都写进 resp 文件（status/error/seconds），不中断整个流程。
+
+# 3) 离线打分（a 申报补漏 b rot 冲突 c 噪音 d /recall e 成本）
+python repo/experiments/replay_mo.py score "$TEMP/mo-replay" --results data/results
+
+# 没有真 MemoryOS 时用假服务：/health 全能力、/curate 固定提议（至少一条命中 checklist、
+# 一条和 active 重复、一个 conflict + 一个 supersedes）、/recall 按 id 倒序、/similar 返回一对
+python repo/experiments/fake_mo_server.py --port 8301 --requests "$TEMP/mo-replay"
+#    --requests 指向 build 的输出目录：send 不再带 _replay，假服务靠它按请求体找回 run 的 seed（用于 checklist）
+
+# 测试
+pytest tests/test_replay_mo.py
+```
+
+**和 `memoryos.py` 一致的地方**（代码注释里逐条标了对应函数）：Curator 的触发条件
+（窗口内新增 ≥8 条 `kind in MSGS` 的消息、出现 handoff、话题关闭）、窗口 ≤32 条取最新、
+`context` ≤8 条、`active` 只要 collab 类型（`decision/convention/assumption/question/lesson`）
+且 ≤60 条、`topic_key = "e<n>"`、`max_repairs: 1`、`_act` 的消息映射（含 `why` 拼接）、
+`rank()` 的 `/recall` 请求体（`budget_tokens` 2000、`hints`、`E<n>`/`statement`/`kind`/`seq`）、
+`_similar` 的 120% 话题层门槛与 `hub-similar` 活动、`review_objection`/`gate_failure` 的 type 约定。
+
+**不得不近似的地方**：
+
+- **active 的重建**：录像里没有"当时"的 `status` 列。用 `entries.recorded_at <= 触发时刻` 且
+  `entry_events` 中该条目最新的 op（`add`/`confirm` 算在册，`supersede`/`resolve`/`archive` 算不在册）
+  重建；`recorded_at` 用严格不早于下一条消息的写入语义（真实库里写条目发生在消息之后）。
+- **busy 跳过**：hub 在 `curated` 表里记水位，且线程 `busy` 时不重复入队。回放只在水位推进时
+  发送（和 hub 的"curate 成功后写水位"一致），但没有 worker 线程，看不到 busy 状态；在现有
+  录像上两种口径结果相同。
+- **请求体多一个 `schema` 和 `_replay`**：hub 不发 `schema`；契约点名的 schema 名字必须合法，
+  所以补上。`_replay` 是给离线打分用的元数据（触发时刻、`active_ids`、`seed`），只留在磁盘上的请求文件里；`send` 发出前会去掉它，`score` 仍从磁盘文件读。
+- **`/recall` 的 query/k 是回放自己定的**：query 取最后一条 human 消息正文，`k = max(3, 条目数//2)`，
+  为了在现有小样本上也一定能触发排序截断；hub 真实调用用的是视图某层的 `cap`。
+- **`/similar` 的 threshold 固定 0.88**（契约默认值）；hub 只在话题层超过上限 120% 时才发。
+- **本目录 sample 的录像里 curate 触发很少**（10 个 run 共 8 次：`every8` 4 次、`handoff` 4 次，
+  `minisql-A-1`/`minisql-C-1` 一次都没有），因为 `done` 这类消息不在 `MSGS` 里，不计入 8 条。

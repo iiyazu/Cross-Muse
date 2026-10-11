@@ -1,0 +1,261 @@
+[
+ {
+  "name": "xmuse_whoami",
+  "description": "Who you are in xmuse: id, role, peers, your threads.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": []
+  }
+ },
+ {
+  "name": "xmuse_send",
+  "description": "Send a message. to = peer id (DM), 'human', or a group thread like '#task'. In a group, list the peers who must act in `mentions`; only they (and the thread owner) are woken.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "to",
+    "body"
+   ],
+   "properties": {
+    "to": {
+     "type": "string",
+     "description": "peer id, 'human', or '#thread'"
+    },
+    "body": {
+     "type": "string",
+     "description": "message text"
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "message",
+      "handoff",
+      "review_request",
+      "decision",
+      "assumption",
+      "question"
+     ],
+     "description": "default message; decision/assumption/question also record a shared entry"
+    },
+    "mentions": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "peers to wake (groups)"
+    },
+    "scope": {
+     "type": "string",
+     "description": "entry scope: global | role:<role> | thread (default)"
+    },
+    "supersedes": {
+     "type": "string",
+     "description": "entry id (E7) this decision/assumption/question replaces"
+    },
+    "resolves": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "question/assignment ids resolved"
+    },
+    "depends_on": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "entry ids (handoff only)"
+    },
+    "on_behalf_of": {
+     "type": "string",
+     "enum": [
+      "human"
+     ],
+     "description": "Coordinator (desktop) sessions only. Use only when the user explicitly asked for this message to go out in their name; quote their words. Default is to send as yourself."
+    },
+    "why": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "Why-First handoff; required when kind=handoff",
+     "properties": {
+      "what": {
+       "type": "string"
+      },
+      "why": {
+       "type": "string"
+      },
+      "tradeoff": {
+       "type": "string"
+      },
+      "open_questions": {
+       "type": "string"
+      },
+      "next_action": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_inbox",
+  "description": "Your messages, mentions first.",
+  "inputSchema": {
+   "type": "object",
+   "required": [],
+   "properties": {
+    "unread_only": {
+     "type": "boolean",
+     "description": "default true"
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_ack",
+  "description": "Mark messages handled, optionally with an outcome (e.g. review verdict).",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "ids"
+   ],
+   "properties": {
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     }
+    },
+    "outcome": {
+     "type": "string",
+     "description": "short result"
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_thread",
+  "description": "Read a thread's recent messages, or search it with `query`.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "thread id, e.g. '#task' or 'dm:a+b'"
+    },
+    "query": {
+     "type": "string",
+     "description": "text to search for"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "default 20"
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_context",
+  "description": "Your alignment view: active decisions, assumptions, open questions, work assigned to you.",
+  "inputSchema": {
+   "type": "object",
+   "required": [],
+   "properties": {
+    "topic": {
+     "type": "string",
+     "description": "only this thread (e.g. '#task')"
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_done",
+  "description": "End your turn with the exit check: summary and who moves next.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "summary",
+    "next"
+   ],
+   "properties": {
+    "summary": {
+     "type": "string",
+     "description": "what you did"
+    },
+    "next": {
+     "type": "string",
+     "description": "peer id or 'human' who must act next, or 'none' if the work is finished"
+    },
+    "declares": {
+     "type": "array",
+     "description": "decisions/assumptions/questions others will depend on; one decision per cross-module convention (representation, units, errors, ordering, output format)",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "statement"
+      ],
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "decision",
+         "assumption",
+         "question"
+        ]
+       },
+       "statement": {
+        "type": "string",
+        "description": "one sentence"
+       },
+       "scope": {
+        "type": "string",
+        "description": "global | role:<role> | thread (default)"
+       },
+       "supersedes": {
+        "type": "string",
+        "description": "entry id (E7) replaced"
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_approve",
+  "description": "Coordinator (desktop) sessions only: relay the user's decision on a held command (the hub's 'asks permission' notice). Only after the user said so in this conversation; quote their words in user_said.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id",
+    "decision",
+    "user_said"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "approval id from the notice, e.g. per_9"
+    },
+    "decision": {
+     "type": "string",
+     "enum": [
+      "once",
+      "always",
+      "reject"
+     ]
+    },
+    "user_said": {
+     "type": "string",
+     "description": "the user's own words, verbatim"
+    }
+   }
+  }
+ }
+]

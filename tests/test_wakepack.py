@@ -211,6 +211,8 @@ def test_equal_state_renders_byte_identical(make):
     h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
     declare(h, "b rule", scope="global")
     declare(h, "a rule")
+    with db.tx(h.conn()) as c:  # no concurrent admission: it would mark the passive mail read between renders
+        c.execute("update agents set paused=1 where id='claude-1'")
     agent = agent_row(h)
     m = h.send("claude-1", "go")
     msgs = db.rows(h.conn().execute("select * from messages where id=?", (m["id"],)))
@@ -273,3 +275,31 @@ def test_retried_done_in_the_same_turn_declares_once(make):
     c = mail.done(conn, "claude-1", "parsed", "none", decl + [{"kind": "assumption", "statement": "utf-8"}])
     assert c["entries"] == ["E2", "E3"] and "duplicate" not in c
     assert b["thread"] == "#g"
+
+
+def test_alignment_off_keeps_declarations_but_injects_nothing(make):
+    h = two(make, alignment="off")
+    h.plan_claude({})
+    declare(h, "ids are int", scope="global")
+    p = wake(h)
+    assert "[alignment" not in p and "ids are int" not in p
+    t = h.turns()[0]
+    assert (t["align_mode"], t["align_tokens"], t["view_entries"]) == ("none", 0, 1)
+    assert h.q("select statement from entries")[0]["statement"] == "ids are int"
+
+
+def test_view_entries_is_recorded_per_wake(make):
+    h = two(make)
+    h.plan_claude({}, {})
+    declare(h, "ids are int", scope="global")
+    wake(h)
+    declare(h, "tokens are tuples")
+    wake(h)
+    assert [t["view_entries"] for t in h.turns()] == [1, 2]
+
+
+def test_human_decision_can_supersede_via_the_admin_send(make):
+    h = two(make)
+    declare(h, "ids are int", scope="global")
+    h.send("#g", "ids are strings now", kind="decision", supersedes="E1")
+    assert [(e["id"], e["status"]) for e in h.q("select id, status from entries order by id")] == [(1, "superseded"), (2, "active")]

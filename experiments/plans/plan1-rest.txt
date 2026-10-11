@@ -1,0 +1,25 @@
+# plan1-rest: the 22 plan1 runs left after DeepSeek ran out of balance on 10-10 16:48.
+# dsh now runs opencode-go/muse-spark-1.3-contributor (46d5a14); the 12 finished plan1 runs (deepseek-v4-flash) are kept.
+# Blank areas first (long session, reviews), then the A/B/C repeats.
+long-L 1
+review-ledger-bug1 1
+review-ledger-bug2 1
+review-minisql-bug1 1
+review-minisql-bug2 1
+review-pipeline-bug1 1
+review-pipeline-bug2 1
+ledger-A 2
+minisql-B 2
+pipeline-C 2
+ledger-B 2
+minisql-C 2
+pipeline-A 2
+ledger-A 3
+minisql-B 3
+pipeline-C 3
+ledger-B 3
+minisql-C 3
+pipeline-A 3
+ledger-C 3
+minisql-A 3
+pipeline-B 3

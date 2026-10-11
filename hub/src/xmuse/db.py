@@ -41,7 +41,7 @@ create table if not exists messages(
 create table if not exists deliveries(
   id integer primary key, message_id integer not null, recipient text not null,
   wake integer not null,
-  state text not null,   -- queued | admitted | done | failed | canceled | held | passive
+  state text not null,   -- queued | admitted | done | failed | canceled | held | passive | delivered (relay)
   turn_id integer, read_at real, acked_at real, outcome text, updated_at real not null,
   unique(message_id, recipient));
 create index if not exists deliveries_open on deliveries(recipient, state);
@@ -94,9 +94,16 @@ def connect(path) -> sqlite3.Connection:
     return conn
 
 
-COLUMNS = [("turns", "align_tokens", "integer"), ("turns", "align_mode", "text"),  # added after M1: per-turn metrics
+COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view at wake (experiment curve)
+           ("turns", "align_tokens", "integer"),("turns", "align_mode", "text"),  # added after M1: per-turn metrics
            ("sessions", "notified", "integer not null default 0"),               # size notice sent
-           ("entries", "resolves", "text")]  # proposed entries: JSON ids of questions they answer, applied on confirm
+           ("sessions", "online", "integer not null default 0"),                 # desktop session between SessionStart/End
+           ("messages", "via", "text"), ("entries", "via", "text"),  # coordinator that relayed a human decision
+           ("entries", "resolves", "text"),  # proposed entries: JSON ids of questions they answer, applied on confirm
+           # dsh relay: a polled agent's delivery reported into its desktop session
+           ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text"),
+           # the dsh session a foreground agent is bound to (/v1/relay/bind); its tool calls must come from it
+           ("agents", "bound_session", "text")]
 
 
 def init(path) -> sqlite3.Connection:
@@ -136,6 +143,12 @@ def rows(rs) -> list[dict]:
 
 def settings(agent: dict) -> dict:
     return json.loads(agent["settings"] or "{}")
+
+
+def polled(agent: dict) -> bool:
+    """Lives in a desktop session the hub never runs (Claude coordinator or dsh foreground): only polled."""
+    s = settings(agent)
+    return bool(s.get("desktop") or s.get("foreground"))
 
 
 class Pool:

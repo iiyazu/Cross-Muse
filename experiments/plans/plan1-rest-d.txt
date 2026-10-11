@@ -1,0 +1,3 @@
+# plan1-rest lane d: re-runs after dsh exit 1 at start-up (minisql-B-2 precheck, review-ledger-bug1-1 turn 1)
+review-ledger-bug1 1
+minisql-B 2

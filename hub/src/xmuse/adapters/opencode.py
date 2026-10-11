@@ -5,8 +5,11 @@ lease: the hub posts with delivery "queue" and metadata.xmuse; anything enqueued
 metadata is a human, and admission waits for that execution to end.
 """
 import base64
+import fnmatch
 import json
+import re
 import secrets
+import shlex
 import socket
 import subprocess
 import threading
@@ -22,9 +25,142 @@ from .base import Presence, TurnEnd, TurnSpec, Usage
 END = {"session.execution.succeeded": "succeeded", "session.execution.failed": "failed",
        "session.execution.interrupted": "interrupted"}
 CODE_TOOLS = {"edit", "write", "patch", "apply_patch", "multiedit", "shell", "bash"}
-# Consequential shell commands go to the human (design §4.7); everything else keeps OpenCode's defaults.
+
+# Shell auto-approval is an allowlist (audit B2-2): OpenCode asks for every shell command (write_config), and the
+# hub approves a command on its own only when it is one simple command (no chaining, substitution, redirection
+# other than 2>&1, subshells or interpreters given inline code) whose argv passes ALLOW below. Everything else
+# goes to the human. This keeps unattended runs moving on tests and read-only inspection; it is not a sandbox.
+READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "diff", "sort", "uniq", "tree",
+             "which", "true", "file", "stat", "du", "basename", "dirname", "realpath", "nl", "cut", "tr", "cmp"}
+# options that turn a read-only tool into a writer or a launcher (T8): long options by prefix, short ones by letter
+# (also inside clusters like -uo)
+DENY_LONG = {"sort": ("--output", "--compress-program"), "tree": ("--output",), "rg": ("--pre",),
+             "git": ("--output", "--open-files-in-pager", "--ext-diff", "--textconv", "--exec")}
+DENY_SHORT = {"sort": "o", "tree": "o", "git": "O"}
+GIT_LOCAL = {"status", "diff", "log", "show", "add", "commit", "rev-parse", "ls-files", "blame", "grep",
+             "shortlog", "describe"}  # no restore/checkout/reset: they discard work
+_SED_PRINT = re.compile(r"^\d+(,\d+)?p$")
+PIPE_FILTERS = {"head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "nl"}  # may follow `|`
+# Unattended experiments only (XMUSE_SHELL_POLICY=blocklist-experiment, set in the hub's environment by the runner,
+# never by config): the pre-T5 rule, approve unless the env-stripped command starts like one of these. Bypassable
+# (audit B2-2); kept so experiment runs need no human and stay comparable with the M2b runs.
 ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git clean*", "git branch -D*",
              "git checkout -- *", "rm -r*", "rm -f*", "sudo *", "curl *", "wget *"]
+POLICIES = ("allowlist", "blocklist-experiment")
+_META = re.compile(r";|&&|\|\||&|`|\$\(|\$\{|<\(|>\(|<|\n|\\\n")
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
+
+
+def strip_env(cmd: str) -> str:
+    """Drop leading `NAME=value` assignments: `PYTHONPATH=x python -m unittest` -> `python -m unittest`."""
+    cmd = cmd.strip()
+    while (m := _ENV_ASSIGN.match(cmd)):
+        cmd = cmd[m.end():].lstrip()
+    return cmd
+
+
+def _safe_path(p: str) -> bool:
+    """A path an agent may delete without asking: under /tmp/, or relative inside its workspace; no globs."""
+    if not p or p.startswith("-") or any(c in p for c in "*?[") or ".." in p.split("/"):
+        return False
+    return p.startswith("/tmp/") or not p.startswith(("/", "~"))
+
+
+def safe_rm_f(cmd: str) -> bool:
+    """`rm -f PATH...` with only -f and only safe paths (agents clean up their own probe files, e.g. /tmp/x.py).
+
+    Without this the plain `rm -f*` ask rule parks unattended runs on a human until the turn times out.
+    Recursive flags, absolute paths outside /tmp, `..`, `~` and wildcards all stay with the human."""
+    if any(c in cmd for c in ";&|<>$`()\n\\"):  # chaining, redirection or substitution: not a plain rm
+        return False
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return False
+    if argv[:2] != ["rm", "-f"] or len(argv) < 3:
+        return False
+    return all(_safe_path(a) for a in argv[2:])
+
+
+def _python_ok(argv: list[str]) -> bool:
+    """Tests, or a script file in the workspace or /tmp. Inline code (-c) and other modules go to the human."""
+    rest = argv[1:]
+    while rest and rest[0] in ("-u", "-B", "-I"):  # harmless interpreter flags
+        rest = rest[1:]
+    if not rest:
+        return False
+    if rest[0] == "-m":
+        return len(rest) > 1 and rest[1] in ("pytest", "unittest", "py_compile", "compileall")
+    return rest[0].endswith(".py") and _safe_path(rest[0])
+
+
+def _denied_option(cmd: str, args: list[str]) -> bool:
+    long, short = DENY_LONG.get(cmd, ()), DENY_SHORT.get(cmd, "")
+    for a in args:
+        if a == "--":
+            break
+        if a.startswith("--") and any(a.startswith(d) for d in long):
+            return True
+        if a.startswith("-") and not a.startswith("--") and any(c in a[1:] for c in short):
+            return True
+    return False
+
+
+def _argv_ok(argv: list[str], first: bool) -> bool:
+    if not argv or "/" in argv[0]:  # `/usr/bin/git push` and `./x` name no allowlisted program
+        return False
+    cmd, args = argv[0], argv[1:]
+    if _denied_option(cmd, args):
+        return False
+    if not first:
+        return cmd in PIPE_FILTERS and not any(a.startswith("/") and not a.startswith("/tmp/") for a in args)
+    if cmd in READ_ONLY:
+        return True
+    if cmd == "sed":  # only `sed -n 'N[,M]p' FILE...`: other scripts can write (w/W) or execute (e)
+        return len(args) >= 2 and args[0] == "-n" and bool(_SED_PRINT.match(args[1])) and \
+            all(_safe_path(a) for a in args[2:])
+    if cmd == "find":
+        return not any(a in ("-exec", "-execdir", "-delete", "-ok", "-okdir") or a.startswith(("-fprint", "-fls"))
+                       for a in args)
+    if cmd == "git":
+        return bool(args) and args[0] in GIT_LOCAL  # no `git -C`, `git -c`, push, merge, reset, ...
+    if cmd in ("python", "python3"):
+        return _python_ok(argv)
+    if cmd == "pytest":
+        return True
+    if cmd == "mkdir":
+        return all(a == "-p" or _safe_path(a) for a in args) and any(a != "-p" for a in args)
+    if cmd == "rm":
+        return safe_rm_f(shlex.join(argv))
+    return False
+
+
+def command_auto_ok(cmd: str) -> bool:
+    """One shell command line, decided by the allowlist. `x | head` is allowed when x is allowlisted and every
+    later stage is a read-only filter; `2>&1` is the only redirection allowed."""
+    cmd = strip_env(cmd).replace("2>&1", " ")
+    if not cmd.strip() or _META.search(cmd) or ">" in cmd:
+        return False
+    stages = cmd.split("|")
+    try:
+        argvs = [shlex.split(s) for s in stages]
+    except ValueError:
+        return False
+    return all(_argv_ok(argv, i == 0) for i, argv in enumerate(argvs))
+
+
+def blocklist_ok(cmd: str) -> bool:
+    c = strip_env(cmd)
+    return safe_rm_f(c) or not any(fnmatch.fnmatchcase(c, p) for p in ASK_SHELL)
+
+
+def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> bool:
+    """True when every shell command in a permission request passes the policy's check (env prefixes removed
+    first: `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs)."""
+    if action != "shell" or not isinstance(resources, list) or not resources:
+        return False
+    ok = blocklist_ok if policy == "blocklist-experiment" else command_auto_ok
+    return all(isinstance(r, str) and ok(r) for r in resources)
 
 
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
@@ -32,8 +168,9 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
         "$schema": "https://opencode.ai/config.json",
         "mcp": {"servers": {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
                                       "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}},
+        # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
-                        *({"action": "shell", "resource": r, "effect": "ask"} for r in ASK_SHELL)],
+                        {"action": "shell", "resource": "*", "effect": "ask"}],
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
     return [ws / "opencode.json"]

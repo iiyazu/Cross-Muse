@@ -122,13 +122,16 @@ def test_unreachable_memoryos_means_not_used(make):
     assert h.hub.mo.caps == set() and layer(h) == ["E3", "E4"]
 
 
-def test_curate_triggers_on_eight_messages_handoff_and_close(make, mo):
+def test_curate_triggers_on_eight_messages_handoff_and_close(make, mo, caplog):
     fake = mo()
     h = hub(make, fake.url)
     talk(h, 7)
     assert fake.paths() == []
-    talk(h, 1, 7)  # the 8th message
+    with caplog.at_level("INFO"):
+        talk(h, 1, 7)  # the 8th message
+        h.hub.curator.join()
     assert fake.paths() == ["/curate"]
+    assert 'curate #g result {"added": 0, "conflicts": 0, "memories": 0, "notices": 0}' in caplog.text
     req = fake.calls[0][1]
     assert (req["profile"], req["scope_id"], req["active"], req["context"]) == ("collab", "#g", [], [])
     assert [(w["id"], w["kind"], w["type"], w["speaker"]) for w in req["window"]] == [

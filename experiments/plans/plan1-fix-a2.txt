@@ -1,0 +1,2 @@
+# lane fix-a2: long-L 2 again (first attempt: hub start gave up after 150 s while dsh prechecks were still running)
+long-L 2
