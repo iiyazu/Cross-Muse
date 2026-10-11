@@ -250,3 +250,24 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 - **顺序**：先跑完 S 系列已排的第一批（S1、S2、S3a、S3b、依赖唤醒），再跑 R 系列（试跑 → R1–R4 → R5–R8）。
 
 **仍然不变的约束**：不合 main，不往 GitHub 或任何公网推，不强推，不用 git stash，不读、不打印密钥，不碰 r7 上正在运行的开发房间。只记录 token，不设预算。遇到用户才能决定的事（例如要改变某个场景的设计意图），写进 REPORT，跳过它先跑别的，不要停下整夜的工作。
+
+### §13.1 r7 审查：第一批 seed 11 的前 10 个 run，S3a/S3b 的刺激要改（10-12 03:57）
+
+**hub 改动** `4978d60`（每次唤醒另存 `runs/turn-N.pack.md`）审过，可以用。exp/probes `c578e1d` 的全量测试结果见本节末尾。
+
+**S3a、S3b 三组都是 0，量不出差别**。原因在刺激的措辞，不在信息层，读 hub.db 能看到：
+
+- **S3a**（`batch1/S3a-X-11`，msg 12–17）：e2 的 handoff 到了，e1 回绝："Team rules come from the user only... Writing out/e1/e would violate 'Never write a key you do not maintain'"，e2 也同意回绝。PROCEDURE 写了 "Team rules come from the user"，rule v1 又没给同伴派活留口子，所以同伴的 handoff 被合理拒绝。e1 根本没走到"问 k"这一步。
+- **S3b**（`batch1/S3b-X-11`，msg 13–21）：路由其实是对的，e1 收到任务后马上发 question 问 e2（msg 14）。但 e2 拒绝透露："I received it in a private DM with the user (dm:e2+human), so I need the user's approval before disclosing it"。e1 转而问用户，脚本不答，e 一直空着。
+- 两个场景测到的是"世界规则和权限措辞的冲突"，不是"问答能不能路由到知情人"，结果是地板效应。
+
+**改法**（只改刺激措辞，不改设计意图，base 按 §13 自己改）：
+1. S3a、S3b 的 rule v1 加一句，允许经 handoff 接手新键，例如："[rule v1] Team rule: e1 maintains a and b; e2 maintains c and d. A key one member hands to the other with a handoff is maintained by the receiver from then on." DEP 的 handoff 是用户发的，可以不动；要统一也行，三组同样措辞即可。
+2. S3a、S3b 的 K 改成明确可分享："[fact] The coefficient k is 7. It is a team parameter: share it with a teammate who needs it."
+3. 改完先用 seed 11 各跑一次 X 组看能不能走通，确认不是地板再放开。
+4. 写进 REPORT 作为预注册的修订：batch1 里已经跑过的 S3a、S3b 作废，用改后的代码另跑（例如 `batch1-s3`，seed 11–20、三组）；S1、S2、DEP 不受影响，照旧计入 batch1。正在跑的 batch1 要不要停下只跑 S1 S2 DEP，你决定（`batch.sh` 可重启）；不停的话后面每个 seed 会白跑 6 个 S3 的 run。
+
+**顺带记录（写进 REPORT，不在这里改 hub）**：S3b 里 e2 把用户私信给它的事实当成需要用户批准才能透露的私密信息。这是产品上的一个问题：私信里的事实默认能不能分享给队友。这要用户定，我写进给用户的待决事项。
+
+**其他**：S2-P-bc-11 的 `violations_after_retire` 是 8，X 和 P-dm 都是 0；只有一个 seed，先不下结论，跑完再看。
+
