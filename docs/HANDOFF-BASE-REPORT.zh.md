@@ -599,3 +599,33 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 2. 加了 `junit-vintage-engine`（test 范围）。原因：Boot 2.7 的 starter-test 带的是 JUnit 5，原有测试全部是 JUnit 4（`@RunWith(SpringRunner)`），不加的话 surefire 会报告 `Tests run: 0`。
 3. 加了 `application-bench.yml`。
 4. 猎场正式构造时，以上三项都会进入猎场的 pom 和资源目录。
+
+## T15 第 3 步（上）：在 compose 里起应用、跑原有测试（2026-10-11）
+
+**提交**：本节（环境和脚本都在 base 本机 `~/bench/`，没有进任何仓库）
+
+### 原有测试的运行情况
+- 运行方式：按测试类逐个运行，每个类限时 240 秒，使用 bench profile。
+- 中间件只起 MySQL、Redis、RabbitMQ，其余全部关掉。
+- 一共 20 个测试类。
+
+| 结果 | 类 | 原因 |
+|---|---|---|
+| 通过（8 个） | ApiTest、DrawCampaignAccountDayDaoTest、DrawCampaignDaoTest、DrawCampaignPartakeServiceTest、DrawSchemeControllerTest、LogicTreeTest、PrizeDaoTest、RuleTreeNodeDaoTest | 只打日志，基本没有断言 |
+| 挂住，240 秒超时（6 个） | BehaviorCashbackServiceTest、DrawCampaignAccountQuotaServiceTest、DrawCampaignControllerTest、DrawSchemeTest、PointsAdjustServiceTest、SchemeRepositoryTest | 测试末尾有 `new CountDownLatch(1).await()`，或者阻塞地等队列，用来"等异步消费"，永远不会返回 |
+| 依赖已关掉的组件（2 个） | ElasticSearchUserDrawOrderDaoTest（ES）、ZookeeperTest（ZooKeeper，11 条全部注入失败） | 按设计关掉了这些组件 |
+| 测试本身过时（4 个） | DrawCampaignOrderDaoTest（插入时没有 offer，违反非空约束）、LogicChainTest（反射一个已经删掉的字段 userScore，另有空指针）、PrizeServiceTest（引用的抽奖单不存在）、SchemeAssemblerDispatchTest（权重 key `4000:...` 在当前数据里没有） | 代码或数据改过以后测试没有跟着改 |
+
+结论和调研时的判断一致：原有测试不能当作可见测试套件。
+
+### 种子数据的一个问题（已在猎场里处理）
+- 活动 100401 的结束时间是 2026-10-06，已经过期。签到、支付返利的 offer 9901–9903 都属于这个活动。
+- 过期后，返利消息每次消费都会抛出"非活动日期范围"，RabbitMQ 无限重投。
+- 猎场额外加了一份种子 `prize_hub_bench.sql`（文件名排在其他 `prize_hub*.sql` 后面，所以最后执行），内容是：
+  - 把 100401 的结束时间延到 2036 年；
+  - 新增一套确定性的基准数据：活动/策略 100601，3 个奖品，概率 0.5/0.3/0.2，走 O(1) 算法；次数配置 22301（总 30、日 3、月 10）；offer 9061、9062。
+- 新增这套数据的原因：原数据里 100006 等策略走 O(log n) 算法，概率合计 0.9703，另外随机数取到 0 时会落空。这是原版的行为，约 3% 的抽奖拿不到奖品，可见测试如果用它就会时好时坏。
+
+### 测试环境的修正
+- RabbitMQ 健康检查原来用的是 `rabbitmq-diagnostics`。它以 root 身份执行，在 broker 启动前就生成了 `.erlang.cookie`，导致第二个实例因为 `eacces` 起不来。已改为 TCP 端口检查。
+- MySQL 的健康检查在初始化阶段的临时服务器上就会通过。runner 改为等待日志里出现 `init process done` 之后才继续。
