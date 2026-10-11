@@ -1121,3 +1121,75 @@ fixed_ids ['H02','H03','H04','H07','H08','H09','H10','H11','H13','H14','H16','H1
 - 两组使用相同的护栏：`turn_timeout` 7200、`max_chain_wakes` 60、`max_chain_tokens` 和 `agent_hourly_tokens` 调高。
 - oc-ms13 用 `XMUSE_SHELL_POLICY=blocklist-experiment`。在默认白名单下，`bash run-tests.sh` 会停下来等人审批。
 - 等 r7 调整完难度、出了新猎场之后，先写预注册再开跑。
+
+## T15 第 8 步：合并 r7 的新 bug、验证、改为只编译条件、重新生成猎场（2026-10-11，base）
+
+### 做了什么
+1. **合并**：r7 dsh 写的 `newbugs.py` / `newhidden.py`（28 个 bug：H47–H74）合进 prizehub-bench。`NEW_BUGS` 追加到 `bugdefs.py`；judge 测试 `T` 和 `IMPORTS` 合进 `genhidden.py`（新增 11 个 import）；`bugs.json` 重新导出。只修了测试，bug 定义一条没改。不成立的两条整条剔除：写进 `bugdefs.DROPPED`，定义保留在文件里留档，不注入，也不生成测试。
+2. **剔除**（2 条）：
+   - **H67**：注入后回归测试 R04（规则树根节点）失败。原样猎场会让 R 类挂掉，所以剔除。
+   - **H70**：单独注入就会让可见测试 `CashbackPointsTest.calendar_sign_creates_cashback_orders` 失败，所以剔除。
+3. **修改的判定测试**（共 15 个类；只动测试和测试辅助代码，原因和改法如下）：
+   - **H50**：原测试查的是 task 表的落库行，根本走不到出 bug 的映射代码（`queryNoSendMessageTaskList` 的转换）。改为把 DAO 换成桩，喂一行待发数据，检查 topic。
+   - **H52**：原测试的 update 不在分库路由里，干净代码上就报 `user_prize_record_null`。改为在路由里执行。种子行改用原始 SQL 插入，避免经过 H57 的 insert。
+   - **H57**：原测试走 `saveUserPrizeRecord`，它会发 MQ，消费方把记录改成 completed，所以干净代码上也失败。改为只经 mapper 插入。
+   - **H63**：发送在事务提交之后，无论对错都会把状态覆盖掉。改为把发布者换成桩，在第一次发布时读 task 行（这时全部已提交、都还没发）。
+   - **H71**：消费队列有 3 秒延迟，原测试立刻 poll，取不到。改为最多等 8 秒。
+   - **H54**：轮询 SQL 有 `limit 10`。查询前先把本分库里其它测试留下的待发行置为 completed，保证两条探针行一定在结果里。
+   - **H49**：原探针（缓存剩余 0）分不出对错：库存节点的缓存扣减会用同一个错误码拒单，两种写法表现一样。改为"配置总量 0、剩余 5"（DB 和缓存都是 5，H65、H47 不影响），干净代码应当能下单。
+   - **H47、H51、H65**：用的是共享的 offer 9061，事后靠"删缓存再从 DB 预热"来还原。可是在旧测试之后，DB 行已经不是初始值了，这样还原会把 9061 变成售罄，连累 `CashbackPointsTest` 和 H14、H16、H17、H66、H71 在干净树上失败。改为原样还原 DB 行和缓存值。定位方法：surefire 实际执行顺序加二分。
+   - **旧 H36、H41 的 `seedPrizeRecord`**：改为原始 SQL 插入路由到的分表，不走 mapper，否则新 bug H57 会遮蔽它们。
+   - **遮蔽修正**（第一轮逐个验证时 64/70，有 6 个被新 bug 遮蔽；都是同一条路径上的前后两个 bug）。判定都下沉到各自 bug 的那一层：
+     - H06 被 H69 遮蔽：改为读预热实际写入的那个键；
+     - H36 被 H52 遮蔽：把记录更新换成桩，让它命中 0 行，直接判回滚本身；
+     - H28 被 H66 遮蔽：直接用 DAO 判状态守卫，同一单完成两次应依次返回 1、0；
+     - H40 被 H66 遮蔽：把发货服务换成桩，捕获 listener 传出的 `outBusinessNo`；
+     - H59 被 H05 遮蔽：元素直接放进 job 轮询的那条分奖品队列；
+     - H69 被 H07 遮蔽：判预热是否写了扣减要读的那个键。
+4. **改为只推理、只编译（用户新定）**：
+   - `mkarena.py` 不再生成 `docs/dev-ops/bench/`（运行脚本、compose、sql、my.cnf 都删了），README 按用户的原话改了两处；
+   - `tools/bench_tests.py` 和 `tools/mcp/bench-tests.mjs` 只提供 `compile()`：无参数，在 `var/bt-<project>` 副本上执行 `mvn -q -o test-compile`（容器 `--network none`，离线 m2-agent，每次先清 target），返回 OK 或 FAILED 和前 200 行，每次调用记一行到 `logs/bt-calls.jsonl`；
+   - `run_tests` 已删除；
+   - 新增 `tools/team_run.py`：单次团队 run，做全新工作区和 hub 状态、按 30 分钟时限跑预设、收集指标、搜答案泄漏和测试运行尝试、对各快照判分。
+5. **hub**：`extra_mcp` 扩展到 headless opencode（cadf223）：服务器写进实例配置，并加一条 `<name>_*` 的 allow 规则。base 全量测试 336 passed，1 skipped。
+6. **预注册修订**：开跑前推送，a104ce7（5a：墙钟 30 分钟；5b：只推理、可编译、记录 compile 次数）。
+7. **删除** r7 上的 `C:\Users\user\dsh-work\phb-addbugs\`（3.7 MB，含 clean、out、injected）。三个数据文件已先复制到 base 的 `~/bench/addbugs`。
+
+### 提交
+- prizehub-bench（r7 私有）：013bed9（工具，WIP），c0f779d（猎场 v2 定稿）
+- xmuse2 rc/portfolio：cadf223（hub opencode extra_mcp），a104ce7（预注册 5a、5b），以及本节
+
+### 结果原文
+```
+70 bugs, 42 files; ok
+clean:   {"classes": 79, "failed": []}
+allbugs: {"visible_failed": [], "judge_not_failing": []}       # R01–R06 都在 visible 里，全部通过
+non-masking: 64/70 (第一轮) + 6/6 (修正后重验 H06,H28,H36,H40,H59,H69) = 70/70
+reference: {'compiled': True, 'fixed': 70, 'total': 70, 'unjudgeable': 0, 'regressions': 0, 'visible_tests': 16, 'cross_layer_fixed': 43, 'cross_layer_total': 43}
+arena:     {'compiled': True, 'fixed': 0, 'total': 70, 'unjudgeable': 0, 'regressions': 0, 'visible_tests': 16, 'cross_layer_fixed': 0, 'cross_layer_total': 43}
+arena HEAD^{tree} = 00a56823b2b14aba1617867b7b7dc6c11de37b4f   (base 和 r7 各自生成，结果一致)
+```
+- 跨层 bug 43/70，占 61%；涉及 42 个文件。
+- **compile 工具验证**（r7）：
+  - `tools/list` 只有 `compile`；
+  - 带参数调用返回 `rejected: compile takes no arguments`；
+  - 干净工作区返回 `compile: OK`（17 秒）；
+  - 故意改坏的工作区返回 `compile: FAILED (exit 1)`，并附上 javac 报错的文件、行号和原文（4 秒）。
+- **opencode 挂 MCP 验证**（r7，真实 oc-ms13，hub `shell_policy: allowlist`）：
+  - 工具列表里有 `bench-tests.run_tests`；
+  - 调用后返回 `SchemeDrawTest: tests=6 failures=0`，没有停下等审批；
+  - 这次验证用的是改成只编译之前的版本，工具名后来改成了 `compile`，挂载方式相同。
+
+### 没做的和拿不准的
+- **诱饵（decoys）**：r7 的输出里没有，所以这版猎场没有诱饵，`bugs.json` 也没有 `decoys` 字段。
+- **`C:\Users\user\dsh-work\bm-rename` 还在 r7 的 C 盘上**。它是改名后的原项目，相当于参考解。指令只要求删 phb-addbugs，这个我没动，等用户决定。每个 run 的 transcript 都会搜 `bm-rename`。
+- **dsh 成员能从 Windows 读到 `\\wsl$\Ubuntu-24.04\home\user\bench\phb\BENCH_DIR`**（答案就在那里）。没有做隔离，只靠事后搜 transcript 发现。
+- **只编译条件的残余途径**：
+  - oc-ms13 的白名单里没有 docker、java、mvn、gradle，但会自动批准 `python3 <工作区或 /tmp 里的 .py>`，这样的脚本可以调用 docker；
+  - r7 的 Windows 侧装了 java 8、`mvn.cmd`、`docker.exe`（Docker Desktop 当时没在运行）；
+  - 猎场测试都需要 MySQL、Redis、RabbitMQ，猎场里已经没有能把它们拉起来的 bench 脚本（原项目自带的 `docs/dev-ops/docker-compose-*.yml` 还在）；
+  - 处理方式：事后在 transcript 里搜 mvn、gradle、java、docker 的调用，记为违规（预注册 5b）。
+- **H72 的判定**按 r7 的写法"任一列清零即算"，没有改。
+- **NOTES 里 r7 自己列的不确定项**：
+  - H58 的双日行、H73 的 Mockito 字段替换：干净树上通过，逐个验证也通过；
+  - H59、H71 依赖 3 秒延迟队列：H59 已改成直接入队，不再依赖延迟；H71 改成最多等 8 秒。
