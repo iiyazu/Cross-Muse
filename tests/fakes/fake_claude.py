@@ -30,11 +30,11 @@ home = Path(os.environ["HOME"]) / "fake-claude"
 argv = sys.argv[1:]
 prompt = argv[argv.index("-p") + 1]
 sid = argv[argv.index("--resume") + 1] if "--resume" in argv else argv[argv.index("--session-id") + 1]
-n = int((home / "n").read_text()) if (home / "n").exists() else 0
-(home / "n").write_text(str(n + 1))
-plan = json.loads((home / "plan.json").read_text())
+n = int((home / "n").read_text(encoding="utf-8")) if (home / "n").exists() else 0
+(home / "n").write_text(str(n + 1), encoding="utf-8")
+plan = json.loads((home / "plan.json").read_text(encoding="utf-8"))
 step = plan[n] if n < len(plan) else {}
-with (home / "calls.jsonl").open("a") as f:
+with (home / "calls.jsonl").open("a", encoding="utf-8") as f:
     f.write(json.dumps({"n": n, "argv": argv, "prompt": prompt, "cwd": os.getcwd(), "pid": os.getpid()}) + "\n")
 
 signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
@@ -44,22 +44,22 @@ transcript.parent.mkdir(parents=True, exist_ok=True)
 
 
 def tool(name, args):
-    state = Path(json.loads((cwd / ".xmuse.json").read_text())["state"])
-    port = json.loads((state / "hub.json").read_text())["port"]
-    token = (state / "tokens" / step["as"]).read_text().strip()
+    state = Path(json.loads((cwd / ".xmuse.json").read_text(encoding="utf-8"))["state"])
+    port = json.loads((state / "hub.json").read_text(encoding="utf-8"))["port"]
+    token = (state / "tokens" / step["as"]).read_text(encoding="utf-8").strip()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/tools/{name}", method="POST",
                                  data=json.dumps({"args": args}).encode(),
                                  headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
-lines = [json.loads(x) for x in (HERE.parent / "fixtures" / step.get("fixture", "claude-chat.jsonl")).open()]
+lines = [json.loads(x) for x in (HERE.parent / "fixtures" / step.get("fixture", "claude-chat.jsonl")).open(encoding="utf-8")]
 result = None
 parent = None
 if transcript.exists():
-    rows = [json.loads(x) for x in transcript.open()]
+    rows = [json.loads(x) for x in transcript.open(encoding="utf-8")]
     parent = rows[-1]["uuid"] if rows else None
-with transcript.open("a") as t:
+with transcript.open("a", encoding="utf-8") as t:
     u = str(uuid.uuid4())
     t.write(json.dumps({"type": "user", "uuid": u, "parentUuid": parent, "message": {"content": prompt}}) + "\n")
     if step.get("fork") and parent:
@@ -81,7 +81,7 @@ for i, o in enumerate(lines):
     print(json.dumps(o), flush=True)
 for name, args in step.get("calls", []):
     out = tool(name, args)
-    with (home / "tool-results.jsonl").open("a") as f:
+    with (home / "tool-results.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps({"n": n, "tool": name, "out": out}) + "\n")
 time.sleep(step.get("sleep", 0))
 mode = step.get("result", "success")

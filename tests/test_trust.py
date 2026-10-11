@@ -4,15 +4,28 @@ Each admin call here runs in a separate process, the way an agent's shell (or th
   - no controlling terminal (how the hub starts agents)               -> refused
   - a controlling terminal, but inside a known agent process         -> refused (a TUI agent's shell tool)
   - a controlling terminal and outside every agent                    -> allowed (the user's terminal)
+A Windows-native hub cannot identify the caller and refuses all three (test_windows_hub_refuses_every_caller).
 """
-import fcntl
 import json
 import os
 import subprocess
 import sys
-import termios
 
-from xmuse import db
+import pytest
+
+from conftest import posix_only, windows_hub
+from xmuse import db, peer
+
+if os.name != "nt":
+    import fcntl
+    import termios
+
+
+@windows_hub
+def test_windows_hub_refuses_every_caller():
+    """No /proc on Windows: the human-only admin actions fail closed; a person decides from a sidebar (D2)."""
+    why = peer.human_check(50000, 50001, set())
+    assert why and "sidebar" in why
 
 CALL = r"""
 import json, sys, urllib.request, urllib.error
@@ -29,7 +42,7 @@ open(sys.argv[5], "w").write(out)
 
 def call_from_process(h, tmp_path, path, body, tty: bool) -> dict:
     """Make one admin request from a child process; with tty=True the child gets a pty as controlling terminal."""
-    port = json.loads((h.state / "hub.json").read_text())["port"]
+    port = json.loads((h.state / "hub.json").read_text(encoding="utf-8"))["port"]
     out = tmp_path / f"out-{os.urandom(4).hex()}.json"
     argv = [sys.executable, "-c", CALL, str(port), h.token("human"), path, json.dumps(body), str(out)]
     if tty:
@@ -44,7 +57,7 @@ def call_from_process(h, tmp_path, path, body, tty: bool) -> dict:
         os.close(master)
     else:
         subprocess.run(argv, start_new_session=True, stdin=subprocess.DEVNULL, timeout=20, check=True)
-    return json.loads(out.read_text())
+    return json.loads(out.read_text(encoding="utf-8"))
 
 
 def held_approval(h):
@@ -59,6 +72,7 @@ def held_approval(h):
 OC = [("opencode-1", "opencode")]
 
 
+@posix_only
 def test_admin_approve_without_a_terminal_is_refused(make, tmp_path):
     h = make(OC, _human_check=True)
     held_approval(h)
@@ -72,6 +86,7 @@ def test_admin_approve_without_a_terminal_is_refused(make, tmp_path):
     h.admin("stop")
 
 
+@posix_only
 def test_admin_approve_from_inside_an_agent_process_is_refused(make, tmp_path):
     h = make(OC, _human_check=True)
     held_approval(h)
@@ -84,6 +99,7 @@ def test_admin_approve_from_inside_an_agent_process_is_refused(make, tmp_path):
     h.admin("stop")
 
 
+@posix_only
 def test_admin_approve_from_the_users_terminal_works(make, tmp_path):
     h = make(OC, _human_check=True)
     held_approval(h)

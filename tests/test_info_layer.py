@@ -123,12 +123,12 @@ def test_question_wakes_the_planner_and_the_answer_wakes_the_asker(make):
 
 def test_information_layer_off_offers_and_does_nothing_of_it(make):
     h = team(make, info_layer="off")
-    tools = {t["name"]: t for t in json.loads((h.state / "tools.json").read_text())}
+    tools = {t["name"]: t for t in json.loads((h.state / "tools.json").read_text(encoding="utf-8"))}
     assert "xmuse_context" not in tools
     send = tools["xmuse_send"]["inputSchema"]["properties"]
     assert send["kind"]["enum"] == ["message"] and not {"scope", "supersedes", "resolves", "depends_on", "why"} & set(send)
     assert "declares" not in tools["xmuse_done"]["inputSchema"]["properties"]
-    for text in [(h.ws / "AGENTS.md").read_text(), (h.ws / ".claude/skills/xmuse-collab/SKILL.md").read_text()]:
+    for text in [(h.ws / "AGENTS.md").read_text(encoding="utf-8"), (h.ws / ".claude/skills/xmuse-collab/SKILL.md").read_text(encoding="utf-8")]:
         for gone in ("decision", "assumption", "Why-First", "xmuse_context", "depends_on", "review_request",
                      "declares", "info:"):
             assert gone not in text, gone
@@ -159,6 +159,6 @@ def test_information_layer_off_offers_and_does_nothing_of_it(make):
 
 def test_information_layer_on_renders_without_markers(make):
     h = team(make)
-    text = (h.ws / "AGENTS.md").read_text() + (h.ws / ".agents/skills/xmuse-collab/SKILL.md").read_text()
+    text = (h.ws / "AGENTS.md").read_text(encoding="utf-8") + (h.ws / ".agents/skills/xmuse-collab/SKILL.md").read_text(encoding="utf-8")
     assert "info:" not in text and "Why-First" in text and "module:<name>" in text
-    assert "xmuse_context" in {t["name"] for t in json.loads((h.state / "tools.json").read_text())}
+    assert "xmuse_context" in {t["name"] for t in json.loads((h.state / "tools.json").read_text(encoding="utf-8"))}

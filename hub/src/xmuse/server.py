@@ -9,6 +9,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -17,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import align, config, db, mail, memoryos, peer, preset, wakepack
+from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
@@ -54,7 +56,10 @@ class Hub:
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
         self.stopping = threading.Event()
-        self.admin = digest((state / "tokens" / "_admin").read_text().strip())
+        self.done = threading.Event()  # serve() returns when set (signal, or /v1/admin/shutdown)
+        self.admin = digest((state / "tokens" / "_admin").read_text(encoding="utf-8").strip())
+        self.view_lock, self.view_fp = threading.Lock(), None  # sidebar view version (room.fingerprint)
+        self.version = rooms.stored_version(self.db())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         policy = os.environ.get("XMUSE_SHELL_POLICY") or "allowlist"
         if policy not in POLICIES:
@@ -410,12 +415,328 @@ class Hub:
                 return fn(body)
         raise ToolError("not_found", f"{method} {path}")
 
+    # ---- sidebars (D2, contract XMUSE2-VIEW-API v0): own error format and HTTP statuses ----------------------
+    SIDEBAR = {("GET", "/v1/view"), ("GET", "/v1/timeline"), ("POST", "/v1/act"), ("POST", "/v1/rooms"),
+               ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave")}
+
+    def view_version(self) -> int:
+        conn = self.db()
+        with self.view_lock:
+            fp = rooms.fingerprint(conn)
+            if fp != self.view_fp:
+                self.view_fp, self.version = fp, self.version + 1
+                rooms.save_version(conn, self.version)
+            return self.version
+
+    def wait_change(self, v: int, wait: float) -> int:
+        """Long poll: requests notify relay_cv; engine-side changes (turns, statuses) are seen within 0.5 s."""
+        deadline = time.monotonic() + wait
+        while not self.stopping.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            with self.relay_cv:
+                self.relay_cv.wait(min(0.5, left))
+            nv = self.view_version()
+            if nv != v:
+                return nv
+        return v
+
+    def sidebar(self, method: str, path: str, query: dict, body: dict, auth: str | None,
+                session: str | None) -> tuple[int, dict | None]:
+        if not isinstance(body, dict):
+            raise rooms.ApiError(400, "bad_request", "the body must be a JSON object")
+        if path == "/v1/rooms":
+            return 200, self.create_room(body)
+        if path == "/v1/join":
+            return 200, self.join(body)
+        conn = self.db()
+        p = rooms.principal(conn, self.admin, auth)
+        if p is None:
+            raise rooms.ApiError(401, "unauthorized", "bad or missing token")
+        if p.kind == "member" and path != "/v1/rebind":
+            self.check_bound(p.member, session)
+        if path == "/v1/view":
+            since, wait = int(query.get("since") or 0), min(max(float(query.get("wait", 25)), 0.0), 30.0)
+            v = self.view_version()
+            if since == v and wait:
+                v = self.wait_change(v, wait)
+            if since == v:
+                return 204, None
+            return 200, rooms.view(conn, self.cfg, self.ws, p, v)
+        if path == "/v1/timeline":
+            before = query.get("before")
+            return 200, rooms.timeline(conn, p.reader, int(before) if before else None, int(query.get("limit") or 50))
+        if path == "/v1/act":
+            return 200, self.act(p, body)
+        if p.kind != "member":
+            raise rooms.ApiError(403, "member_only", f"{path} takes the member token")
+        if path == "/v1/rebind":
+            sid = body.get("session_id")
+            if not isinstance(sid, str) or not sid:
+                raise rooms.ApiError(400, "bad_request", "rebind needs session_id (string)")
+            with db.tx(conn):
+                conn.execute("update agents set bound_session=? where id=?", (sid, p.member))
+            return 200, {"ok": True, "member_id": p.member}
+        with db.tx(conn):  # /v1/leave: unbound; undelivered mail stays
+            conn.execute("update agents set bound_session=null where id=?", (p.member,))
+        rooms.notice(conn, f"{p.member} left its sidebar session (still a member; mail is kept)")
+        return 200, {"ok": True}
+
+    def check_bound(self, member: str, session: str | None) -> None:
+        bound = self.db().execute("select bound_session from agents where id=?", (member,)).fetchone()[0]
+        if bound and session != bound:
+            raise rooms.ApiError(409, "not_bound_session", f"{member} is bound to another session; send its id in "
+                                                           "x-xmuse-session, or /v1/rebind from the new session")
+
+    def _via(self, p: rooms.Principal) -> str:
+        if p.kind == "admin":
+            return config.VIA_CLI
+        vendor = self.db().execute("select vendor from agents where id=?", (p.member,)).fetchone()[0]
+        return f"{vendor} sidebar"
+
+    def _member(self, mid) -> dict:
+        a = db.row(self.db().execute("select * from agents where id=? and removed=0", (mid,)))
+        if a is None:
+            raise rooms.ApiError(404, "unknown_member", f"no member {mid!r}")
+        return a
+
+    def act(self, p: rooms.Principal, body: dict) -> dict:
+        name = body.get("act")
+        if name not in rooms.ACTS:
+            raise rooms.ApiError(400, "unknown_act", f"act must be one of: {', '.join(sorted(rooms.ACTS))}")
+        if p.kind == "member" and name not in rooms.MEMBER_ACTS:
+            raise rooms.ApiError(403, "operator_only", f"{name} needs the operator token (the user, from a sidebar)")
+        try:
+            return getattr(self, "act_" + name)(p, body)
+        except ToolError as e:
+            raise rooms.ApiError(404 if e.code.startswith("unknown_") else 400, e.code, e.message)
+
+    def act_say(self, p: rooms.Principal, b: dict) -> dict:
+        to, text, mentions = b.get("to"), b.get("text"), b.get("mentions") or []
+        if not isinstance(to, str) or not isinstance(text, str) or not text.strip() or not isinstance(mentions, list):
+            raise rooms.ApiError(400, "bad_request", "say needs to (string), text (string), mentions (list)")
+        sender, via = (p.member, None) if p.kind == "member" else (config.HUMAN, self._via(p))
+        if to.startswith("dm:"):  # a DM thread id: say it to the other side
+            ends = to[3:].split("+")
+            if sender not in ends or len(ends) != 2:
+                raise rooms.ApiError(400, "bad_target", f"{to} is not a conversation of {sender}")
+            to = ends[0] if ends[1] == sender else ends[1]
+        if p.kind == "member" and len(text) > self.cfg["body_limit"]:
+            raise ToolError("body_too_long", f"text is {len(text)} chars, the limit is {self.cfg['body_limit']}")
+        out = mail.send(self.db(), self.cfg, sender, to, text, "message", mentions, via=via)
+        self.curator.kick(out["thread_id"])
+        self.engine.kick()
+        return {"id": out["id"], "thread": out["thread_id"]}
+
+    def act_ack(self, p: rooms.Principal, b: dict) -> dict:
+        ids = b.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+            raise rooms.ApiError(400, "bad_request", "ack needs ids (list of message ids)")
+        return {"ok": True, "acked": mail.ack(self.db(), p.reader, ids, None)}
+
+    def act_approve(self, p: rooms.Principal, b: dict) -> dict:
+        aid, decision = str(b.get("id") or ""), b.get("decision")
+        if decision not in ("once", "always", "reject"):
+            raise rooms.ApiError(400, "bad_request", "decision must be once, always or reject")
+        if re.fullmatch(r"E\d+", aid):  # an alignment proposal (approvals[].kind alignment)
+            self.admin_align({"op": "reject" if decision == "reject" else "confirm", "id": aid})
+        elif aid.startswith("resume:"):  # a paused member (approvals[].kind resume)
+            if decision != "reject":
+                self.admin_resume({"agent": self._member(aid[7:])["id"]})
+        else:
+            if "opencode" not in self.engine.drivers:
+                raise rooms.ApiError(404, "unknown_approval", f"no approval {aid}")
+            self.admin_approve({"id": aid, "decision": decision}, via=self._via(p))
+        return {"ok": True}
+
+    def act_invite(self, p: rooms.Principal, b: dict) -> dict:
+        vendor, name = b.get("vendor"), b.get("name") or None
+        if vendor not in rooms.VENDORS:
+            raise rooms.ApiError(400, "bad_request", f"vendor must be one of: {', '.join(rooms.VENDORS)}")
+        if name is not None and not rooms.valid_id(name):
+            raise rooms.ApiError(400, "bad_request", "name: letters, digits and '-', not 'human' or 'hub'")
+        conn = self.db()
+        rooms.room_row(conn, self.ws)
+        code, t = rooms.new_code(conn), db.now()
+        exp = t + float(self.cfg.get("invite_ttl", 600))
+        with db.tx(conn):
+            conn.execute("insert into invites(code, vendor, role, description, name, created_by, created_at, expires_at)"
+                         " values(?,?,?,?,?,?,?,?)", (code, vendor, str(b.get("role") or ""),
+                                                      str(b.get("description") or ""), name, p.reader, t, exp))
+        return {"code": code, "expires_at": exp, "command": f"/xmuse join {code}"}
+
+    def act_remove(self, p: rooms.Principal, b: dict) -> dict:
+        a, conn = self._member(b.get("member")), self.db()
+        if rooms.room_row(conn, self.ws)["host"] == a["id"]:
+            raise rooms.ApiError(409, "is_host", f"{a['id']} hosts the room: transfer_host first")
+        with db.tx(conn):  # history stays; the token stops working and the member gets no more mail
+            conn.execute("update agents set removed=1, paused=1, bound_session=null, token_digest=? where id=?",
+                         ("removed:" + a["token_digest"], a["id"]))
+            conn.execute("delete from operators where member_id=?", (a["id"],))
+        self.engine.call(self.engine.stop, a["id"], None)
+        rooms.notice(conn, f"{a['id']} was removed from the room")
+        return {"ok": True}
+
+    def act_pause(self, p: rooms.Principal, b: dict) -> dict:
+        a = self._member(b.get("member"))
+        with db.tx(self.db()) as c:
+            c.execute("update agents set paused=1 where id=?", (a["id"],))
+        return {"ok": True}
+
+    def act_resume(self, p: rooms.Principal, b: dict) -> dict:
+        return self.admin_resume({"agent": self._member(b.get("member"))["id"]})
+
+    def act_transfer_host(self, p: rooms.Principal, b: dict) -> dict:
+        a, conn = self._member(b.get("member")), self.db()
+        rooms.room_row(conn, self.ws)
+        with db.tx(conn):
+            conn.execute("update room set host=?", (a["id"],))
+        rooms.notice(conn, f"{a['id']} now hosts the room")
+        return {"ok": True}
+
+    def act_align(self, p: rooms.Principal, b: dict) -> dict:
+        if b.get("decision") not in ("confirm", "reject"):
+            raise rooms.ApiError(400, "bad_request", "decision must be confirm or reject")
+        self.admin_align({"op": b["decision"], "id": str(b.get("id") or "")})
+        return {"ok": True}
+
+    # rooms and invitations: no token (the caller has none yet)
+    def create_room(self, b: dict) -> dict:
+        conn = self.db()
+        if conn.execute("select 1 from room").fetchone():
+            raise rooms.ApiError(409, "room_exists", "this hub already has a room: join it with an invitation code")
+        vendor, sid, d = b.get("vendor"), b.get("session_id"), b.get("dir")
+        if vendor not in rooms.VENDORS or not isinstance(sid, str) or not sid or not isinstance(d, str):
+            raise rooms.ApiError(400, "bad_request", "rooms needs dir, vendor (claude|opencode|dsh) and session_id")
+        if not rooms.same_dir(d, self.ws):
+            raise rooms.ApiError(400, "wrong_dir", f"this hub serves {self.ws}, not {d}")
+        mid = b.get("member_id") or vendor
+        if not rooms.valid_id(mid):
+            raise rooms.ApiError(400, "bad_request", "member_id: letters, digits and '-', not 'human' or 'hub'")
+        self.add_member(mid, vendor, "coordinator", b.get("description"), sid)
+        with db.tx(conn):
+            conn.execute("insert into room(id, name, dir, host, created_at) values(?,?,?,?,?)",
+                         (rooms.room_id(self.ws), str(b.get("name") or self.ws.name), str(self.ws), mid, db.now()))
+        rooms.notice(conn, f"{mid} opened the room ({vendor} sidebar)")
+        r = rooms.room_row(conn, self.ws)
+        return {"room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}, "member_id": mid,
+                "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid)}
+
+    def join(self, b: dict) -> dict:
+        conn, code, vendor, sid = self.db(), str(b.get("code") or "").strip().upper(), b.get("vendor"), b.get("session_id")
+        if not isinstance(sid, str) or not sid:
+            raise rooms.ApiError(400, "bad_request", "join needs code, vendor and session_id")
+        inv = db.row(conn.execute("select * from invites where code=?", (code,)))
+        if inv is None:
+            raise rooms.ApiError(404, "unknown_code", "no such invitation code")
+        if inv["used_at"]:
+            raise rooms.ApiError(409, "code_used", "this invitation code was already used")
+        if inv["expires_at"] < db.now():
+            raise rooms.ApiError(410, "code_expired", "this invitation code has expired: ask for a new one")
+        if vendor != inv["vendor"]:
+            raise rooms.ApiError(403, "vendor_mismatch", f"this code is for a {inv['vendor']} member, not {vendor}")
+        mid = inv["name"] or rooms.free_id(conn, vendor)
+        with db.tx(conn):  # claim the code first: two sidebars racing on one code get one member
+            if not conn.execute("update invites set used_at=?, used_by=? where code=? and used_at is null",
+                                (db.now(), mid, code)).rowcount:
+                raise rooms.ApiError(409, "code_used", "this invitation code was already used")
+        try:
+            self.add_member(mid, vendor, inv["role"], inv["description"], sid)
+        except rooms.ApiError:
+            with db.tx(conn):  # nothing was joined: the code stays usable
+                conn.execute("update invites set used_at=null, used_by=null where code=?", (code,))
+            raise
+        desc = f": {inv['description']}" if inv["description"] else ""
+        rooms.notice(conn, f"{mid} joined the room ({vendor}{', ' + inv['role'] if inv['role'] else ''}){desc}")
+        r = rooms.room_row(conn, self.ws)
+        return {"member_id": mid, "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid),
+                "room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}}
+
+    def add_member(self, mid: str, vendor: str, role: str, description, session: str) -> None:
+        """A sidebar's member. An existing member of the same vendor no session holds is taken over (e.g. one
+        `xmuse agent add` registered); otherwise a new one: Claude and dsh live in the user's own session (the hub
+        never runs them), OpenCode runs on a hub-owned server its TUI attaches to."""
+        conn = self.db()
+        old = db.row(conn.execute("select * from agents where id=?", (mid,)))
+        if old and (old["vendor"] != vendor or old["removed"] or old["bound_session"]):
+            raise rooms.ApiError(409, "member_exists", f"{mid} is already a member; pick another name")
+        if old is None:
+            from .init import add_agent
+            settings = {"desktop": True} if vendor == "claude" else {"foreground": True} if vendor == "dsh" else {}
+            try:
+                add_agent(self.state, mid, vendor, role=role or "", settings=settings, description=description or "")
+            except SystemExit as e:
+                if vendor != "claude" or "already has a claude agent" not in str(e):
+                    raise rooms.ApiError(400, "cannot_add", str(e))
+                self._add_plain(mid, vendor, role, settings, description)  # the mod's tools; .mcp.json is another's
+            self.ensure_driver(vendor)
+        with db.tx(conn):
+            conn.execute("update agents set bound_session=?, description=coalesce(?, description) where id=?",
+                         (session, description or None, mid))
+
+    def _add_plain(self, mid, vendor, role, settings, description) -> None:
+        from .init import _token
+        tok = _token(self.state / "tokens" / mid)
+        m = config.MODELS[vendor]
+        with db.tx(self.db()) as c:
+            c.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at,"
+                      " description) values(?,?,?,?,?,?,?,?,?)", (mid, vendor, m, config.family(vendor, m), role or "",
+                                                                   json.dumps(settings), digest(tok), db.now(),
+                                                                   description or ""))
+
+    def ensure_driver(self, vendor: str) -> None:
+        """A vendor first seen through a sidebar: its driver starts now (on the engine thread)."""
+        if vendor in self.engine.drivers:
+            return
+        def add():
+            if vendor == "opencode":
+                self.engine.drivers[vendor] = OpenCodeDriver(self.engine, {})
+            elif vendor == "dsh":
+                self.engine.drivers[vendor] = DshDriver(self.engine, self.state, self.cfg)
+        self.engine.call(add)
+
+    def _token_of(self, mid: str) -> str:
+        return (self.state / "tokens" / mid).read_text(encoding="utf-8").strip()
+
     # ---- process -----------------------------------------------------------------------
     def start(self) -> None:
         hub = self
 
         class H(BaseHTTPRequestHandler):
+            def _sidebar(self, method: str, path: str, query: dict, body):
+                try:
+                    status, out = hub.sidebar(method, path, query, body, self.headers.get("authorization"),
+                                              self.headers.get("x-xmuse-session") or None)
+                except rooms.ApiError as e:
+                    status, out = e.status, {"error": e.code, "message": e.message}
+                except ToolError as e:
+                    status, out = 400, {"error": e.code, "message": e.message}
+                except (KeyError, TypeError, ValueError) as e:
+                    status, out = 400, {"error": "bad_request", "message": repr(e)}
+                if status == 204:
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                self._send(status, out)
+
+            def do_GET(self):
+                u = urllib.parse.urlsplit(self.path)
+                if ("GET", u.path) not in hub.SIDEBAR:
+                    return self._send(404, {"error": "not_found", "message": f"GET {u.path}"})
+                self._sidebar("GET", u.path, dict(urllib.parse.parse_qsl(u.query)), {})
+
             def do_POST(self):
+                u = urllib.parse.urlsplit(self.path)
+                if ("POST", u.path) in hub.SIDEBAR:
+                    try:
+                        body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
+                    except ValueError:
+                        return self._send(400, {"error": "bad_json", "message": "the body is not JSON"})
+                    self._sidebar("POST", u.path, {}, body)
+                    with hub.relay_cv:
+                        hub.relay_cv.notify_all()
+                    return
                 caller = hub.who(self.headers.get("authorization"))
                 if caller is None:
                     return self._send(401, {"error": {"code": "unauthorized", "message": "bad or missing token"}})
@@ -451,7 +772,7 @@ class Hub:
         threading.Thread(target=preset.loop, args=(self.preset, self.stopping, self.cfg.get("preset_tick", 2.0)),
                          daemon=True).start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
-                                                         "shell_policy": self.engine.shell_policy}))
+                                                         "shell_policy": self.engine.shell_policy}), encoding="utf-8")
         self.engine.kick()
 
     def shutdown(self) -> None:
@@ -471,8 +792,16 @@ class Hub:
                 d.close()
             raise SystemExit("precheck failed:\n" + "\n".join(errors))
         self.start()
-        done = threading.Event()
+        done = self.done
         signal.signal(signal.SIGTERM, lambda *_: done.set())
         signal.signal(signal.SIGINT, lambda *_: done.set())
-        done.wait()
+        if hasattr(signal, "SIGBREAK"):  # Windows: Ctrl+Break, and what a console close turns into
+            signal.signal(signal.SIGBREAK, lambda *_: done.set())
+        while not done.wait(1.0):  # a timed wait: on Windows a blocked wait never returns to run signal handlers
+            pass
         self.shutdown()
+
+    def admin_shutdown(self, body: dict):
+        """`xmuse hub stop` on Windows, which has no SIGTERM: the reply goes out, then serve() shuts down."""
+        self.done.set()
+        return {"ok": True}
