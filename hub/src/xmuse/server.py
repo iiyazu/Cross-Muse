@@ -56,11 +56,15 @@ class Hub:
         if policy != "allowlist":
             log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
-        if self.db().execute("select 1 from agents where vendor='opencode'").fetchone():
-            srv = Server(self.ws, state, base=oc_base)
+        ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]
+        if ocs:  # one server per OpenCode agent (T12); oc_base: an already running server (tests), str or {agent: url}
+            binary = self.cfg.get("opencode_bin", "opencode")
+            servers = {a: Server(self.ws, state, a, binary=binary,
+                                 base=oc_base.get(a) if isinstance(oc_base, dict) else oc_base) for a in ocs}
             if oc_base is None:
-                srv.start()
-            self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, srv)
+                for srv in servers.values():
+                    srv.start()
+            self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, servers, start=oc_base is None)
         if self.db().execute("select 1 from agents where vendor='dsh'").fetchone():
             self.engine.drivers["dsh"] = DshDriver(self.engine, state, self.cfg)
 
@@ -216,7 +220,7 @@ class Hub:
             raise ToolError("unknown_approval", f"no approval {body['id']}")
         if a["state"] == "decided":
             raise ToolError("invalid_arguments", f"approval {a['id']} was already decided ({a['decision']})")
-        self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"])
+        self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"], a["agent_id"])
         with db.tx(conn):
             conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
                          (body["decision"], db.now(), a["id"]))
@@ -236,9 +240,10 @@ class Hub:
         drv = self.engine.drivers.get("opencode")
         if drv is None:
             raise ToolError("invalid_arguments", "no opencode server in this hub")
+        srv = drv.server_for(body["session"], body.get("agent"))
         sid, out, cursor = urllib.parse.quote(body["session"], safe=""), [], None
         for _ in range(100):  # pages of 200
-            page = drv.server.api("GET", f"/api/session/{sid}/message?limit=200"
+            page = srv.api("GET", f"/api/session/{sid}/message?limit=200"
                                   + (f"&cursor={urllib.parse.quote(cursor, safe='')}" if cursor else ""))
             out += page.get("data") or []
             cursor = (page.get("cursor") or {}).get("next")

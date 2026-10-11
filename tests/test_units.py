@@ -136,7 +136,7 @@ def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):
         def approval(self, *a): pass
 
     p = OpenCodePrompt.__new__(OpenCodePrompt)
-    p.sink, p.turns, p.human = Sink(), {}, {}
+    p.sink, p.turns, p.human, p.known = Sink(), {}, {}, set()
     import threading
     p.lock = threading.Lock()
     spec = TurnSpec(5, {"id": "opencode-1"}, "ses_1", "x", tmp_path, tmp_path / "t.jsonl")

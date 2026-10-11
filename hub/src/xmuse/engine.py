@@ -275,7 +275,7 @@ class Engine:
                                                   json.dumps(req.get("resources")), db.now()))
         if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
             try:
-                self.drivers["opencode"].approve(session, req["id"], "once")
+                self.drivers["opencode"].approve(session, req["id"], "once", agent_id)
                 with db.tx(conn):
                     conn.execute("update approvals set state='decided', decision='once', decided_at=? where id=?",
                                  (db.now(), req["id"]))

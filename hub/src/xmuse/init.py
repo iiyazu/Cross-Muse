@@ -124,7 +124,7 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     if old and old["vendor"] != vendor:
         raise SystemExit(f"agent {agent_id} exists with vendor {old['vendor']}")
     other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
-    if other:  # project configs carry one identity per vendor (M1 limit)
+    if other and vendor == "claude":  # .mcp.json carries one identity; opencode and dsh keep theirs per instance (T12)
         raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
     if vendor == "dsh" and not _dsh_ws_ok(ws):  # dsh cannot write through the wsl.localhost UNC form
         raise SystemExit(

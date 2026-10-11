@@ -149,6 +149,8 @@ def workspace(state: Path) -> list[Check]:
     agents = db.rows(conn.execute("select * from agents order by id"))
     if not agents:
         out.append(Check("warn", "agents", "none yet", f"xmuse --ws {ws} agent add <id> --vendor claude|opencode|dsh"))
+    else:
+        out.append(_instances(agents))
     for a in agents:
         out += _agent_files(ws, state, a)
     if any(db.settings(a).get("foreground") for a in agents):
@@ -182,12 +184,51 @@ def _agent_files(ws: Path, state: Path, a: dict) -> list[Check]:
             problems.append(".claude/settings.json missing (hooks)")
         return [Check("FAIL" if problems else "ok", f"agent {a['id']}",
                       "; ".join(problems) if problems else "claude: .mcp.json and hooks current", fix if problems else "")]
+    # adapters import lazily: doctor must still run when a dependency they need (zstandard) is missing
     if a["vendor"] == "opencode":
-        oc = ws / "opencode.json"
-        ok = oc.exists() and str(state) in oc.read_text()
-        return [Check("ok" if ok else "FAIL", f"agent {a['id']}", "opencode: opencode.json current" if ok
-                      else "opencode.json missing or points at another state dir", "" if ok else fix)]
+        from .adapters.opencode import instance_dir
+        inst = instance_dir(state, a["id"]) / "opencode.json"
+        try:
+            env = json.loads(inst.read_text())["mcp"]["servers"]["xmuse"]["environment"]
+        except (OSError, ValueError, KeyError, TypeError):
+            env = None
+        problems = [p for p, bad in ((f"{inst} missing or has no xmuse server", env is None),
+                                     (f"instance config names {env and env.get('XMUSE_AGENT')}",
+                                      env is not None and env.get("XMUSE_AGENT") != a["id"]),
+                                     ("instance config points at another state dir",
+                                      env is not None and env.get("XMUSE_STATE") != str(state)),
+                                     ("workspace opencode.json missing", not (ws / "opencode.json").exists()),
+                                     ("workspace opencode.json carries an agent identity (shared by every instance)",
+                                      "XMUSE_AGENT" in _read(ws / "opencode.json"))) if bad]
+        return [Check("FAIL" if problems else "ok", f"agent {a['id']}", "; ".join(problems) if problems else
+                      f"opencode: own server config {inst}", fix if problems else "")]
+    if a["vendor"] == "dsh" and not db.polled(a):
+        try:
+            from .adapters.dsh import hooks_owner
+        except ImportError as e:
+            return [Check("FAIL", f"agent {a['id']}", f"dsh adapter unusable: {e}", "pip install -e hub")]
+        owner = hooks_owner(ws)
+        note = "desktop presence hooks" if owner == a["id"] else \
+            f"headless only (desktop presence hooks belong to {owner})" if owner else "no desktop presence hooks"
+        return [Check("ok", f"agent {a['id']}", f"dsh: {note}")]
     return [Check("ok", f"agent {a['id']}", f"{a['vendor']}{' (foreground)' if db.polled(a) else ''}")]
+
+
+def _read(p: Path) -> str:
+    try:
+        return p.read_text()
+    except OSError:
+        return ""
+
+
+def _instances(agents: list[dict]) -> Check:
+    by: dict[str, list[str]] = {}
+    for a in agents:
+        by.setdefault(a["vendor"], []).append(a["id"])
+    return Check("FAIL" if len(by.get("claude", [])) > 1 else "ok", "instances",
+                 ", ".join(f"{v} x{len(ids)} ({', '.join(ids)})" for v, ids in sorted(by.items())),
+                 "one claude agent per workspace (.mcp.json carries one identity)" if len(by.get("claude", [])) > 1
+                 else "")
 
 
 def run(state: Path | None) -> list[Check]:
