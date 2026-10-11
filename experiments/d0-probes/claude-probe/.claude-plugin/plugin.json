@@ -1,0 +1,7 @@
+{
+  "name": "xmuse-probe",
+  "version": "0.0.1",
+  "description": "D0 feasibility probe for the xmuse sidebar (no product code)",
+  "author": { "name": "xmuse d0" },
+  "types": "./types/index.d.ts"
+}
