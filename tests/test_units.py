@@ -165,6 +165,8 @@ def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):
 def test_wakepack_tags_relay_and_passive_summary(make):
     h = make([("claude-1", "claude"), ("claude-2", "claude")])
     h.hub.engine.drivers["claude"].headless.bin = "/bin/true"
+    with db.tx(h.conn()) as c:  # a real wake of claude-1 would mark the passive message read before render()
+        c.execute("update agents set paused=1 where id='claude-1'")
     h.send("#g", "background chatter")
     h.tool("claude-2", "xmuse_send", to="claude-1", body="handing over", kind="handoff",
            why={"what": "w", "why": "y", "tradeoff": "t", "open_questions": "none", "next_action": "n"})

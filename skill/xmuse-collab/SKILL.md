@@ -1,6 +1,10 @@
 ---
 name: xmuse-collab
+<!-- info:on -->
 description: How to work with peer agents through xmuse (the user's collaboration relay) — reading relayed messages, replying with xmuse_send, Why-First handoffs, review requests, and the exit check with xmuse_done. Use whenever a message arrives wrapped in <xmuse ...> or <channel source="xmuse" ...>, or when you need another agent to act.
+<!-- info:off -->
+description: How to work with peer agents through xmuse (the user's collaboration relay) — reading relayed messages, replying with xmuse_send, and the exit check with xmuse_done. Use whenever a message arrives wrapped in <xmuse ...> or <channel source="xmuse" ...>, or when you need another agent to act.
+<!-- info:end -->
 ---
 
 # Working with peers through xmuse
@@ -36,12 +40,20 @@ model families) can collaborate. The hub relays messages and wakes the agent who
 - `to`: a peer id (private), `human`, or a group thread such as `#task` (reply in the thread the
   request came from: the `thread` attribute of the relayed message). In a group, put the peers who must act in
   `mentions` — only they are woken. Mention someone only when you need them to do something.
+<!-- info:on -->
 - `kind`: `message` (default), `review_request`, `handoff`, `decision`, `assumption`, `question`.
 - Keep messages short and concrete: file names, function names, test results, exact asks.
 - `xmuse_inbox` shows what else is unread; `xmuse_thread` reads or searches history;
   `xmuse_context` returns your alignment view (active decisions, assumptions, open questions, work
   assigned to you, with entry ids like `E7`); `xmuse_ack` marks messages handled
   (put a review verdict in `outcome`).
+<!-- info:off -->
+- Every message is a plain message (`kind` is always `message`).
+- Keep messages short and concrete: file names, function names, test results, exact asks.
+- `xmuse_inbox` shows what else is unread; `xmuse_thread` reads or searches history; `xmuse_ack` marks messages
+  handled (put a review verdict in `outcome`).
+<!-- info:end -->
+<!-- info:on -->
 
 ## Declare what others will depend on
 
@@ -50,9 +62,13 @@ in their view. One sentence each; keep the qualifiers ("only for ...", "until ..
 
 - Replacing an earlier decision: send the new one with `supersedes="E7"` (the old one is marked
   invalid for everyone). Answering a question or finishing an assignment: `resolves=["E5"]`.
-- `scope`: `thread` (default), `role:<role>` for a rule for one role, `global` for the whole project.
-- `handoff` creates an assignment for each peer you mention; `depends_on=["E3"]` lists entries
-  that must be resolved first.
+- `scope`: `thread` (default), `role:<role>` for a rule for one role, `global` (or `all`) for the whole project,
+  `module:<name>` for what only the agents working on that module need (the planner sees every module it handed out).
+- A `question` also wakes whoever handed you your work; their answer (a `decision` with `supersedes` = the
+  question) wakes you.
+- `handoff` creates an assignment for each peer you mention; `scope="module:a,b"` names the modules that peer owns;
+  `depends_on=["E3"]` lists entries that must be resolved first: the hub hands the work over (wakes the peer) only
+  once they are.
 
 ## Handoffs: Why-First
 
@@ -65,11 +81,17 @@ When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
 | `tradeoff` | what you gave up or chose not to do |
 | `open_questions` | what is still unclear (or "none") |
 | `next_action` | the exact next step for the receiver |
+<!-- info:end -->
 
 ## Reviews
 
+<!-- info:on -->
 - Requesting: `kind="review_request"`, mention the reviewer, say what changed (files, functions)
   and how you verified it (test command and result).
+<!-- info:off -->
+- Requesting: mention the reviewer, say what changed (files, functions) and how you verified it (test command and
+  result).
+<!-- info:end -->
 - Reviewing: read the actual code and run the tests yourself. Reply with concrete findings
   (file:line, what is wrong, suggested fix), or say plainly that it is approved.
 - After fixing review findings, reply to the reviewer with what you changed and ask for
@@ -80,6 +102,7 @@ When you pass work to someone (`kind="handoff"`), fill all five `why` fields:
 Before you stop, ask: **"Does this end with me? If not, who moves next?"**
 
 1. If someone must act, send them a message (mention them in a group) — otherwise nobody wakes.
+<!-- info:on -->
 2. Did this turn make a decision or assumption someone else will depend on? When you finish a first
    implementation, declare every cross-module convention you rely on or set (data representation, units,
    error types, sort/tie-break rules, output format) as its own `decision`, even if the spec already states
@@ -90,6 +113,12 @@ Before you stop, ask: **"Does this end with me? If not, who moves next?"**
    when the task is finished (tests pass, review approved).
 4. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
    them and costs a turn.
+<!-- info:off -->
+2. Then call `xmuse_done(summary, next)`: `next` is that peer's id, `human`, or `none` when the task is finished
+   (tests pass, review approved).
+3. Do not send messages that need no action ("thanks", "ok") — every message to a peer can wake
+   them and costs a turn.
+<!-- info:end -->
 
 ## Claude desktop app sessions
 

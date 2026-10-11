@@ -5,9 +5,12 @@ Validation is ported from v1 room_mcp_server._validate_tool_call/_schema_violati
 type checks: errors name the field and the allowed values, because some hosts call MCP
 tools through a wrapper and never see the schema (#470).
 """
+import copy
+
 DECLARE = ["decision", "assumption", "question"]  # kinds that create an active alignment entry
 KINDS = ["message", "handoff", "review_request", *DECLARE]
-SCOPE = "global | role:<role> | thread (default)"
+SCOPE = ("global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); "
+         "kind=handoff: module:<name>[,<name>...] = the modules the assignee owns")
 WHY_FIELDS = ["what", "why", "tradeoff", "open_questions", "next_action"]
 
 
@@ -69,6 +72,29 @@ TOOLS = [
          "user_said": _s("the user's own words, verbatim")}}},
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
+INFO_FIELDS = ("scope", "supersedes", "resolves", "depends_on", "why")
+
+
+def tools_for(cfg: dict) -> list[dict]:
+    """The tools agents get. Info layer off (T14, group T-plain): plain messages only, so nothing is offered that
+    would be refused or ignored: no entry kinds or their fields, no declares, no xmuse_context."""
+    if cfg.get("info_layer", "on") != "off":
+        return TOOLS
+    out = []
+    for t in copy.deepcopy(TOOLS):
+        props = t["inputSchema"]["properties"]
+        if t["name"] == "xmuse_context":
+            continue
+        if t["name"] == "xmuse_send":
+            props["kind"] = {"type": "string", "enum": ["message"], "description": "always message"}
+            for k in INFO_FIELDS:
+                props.pop(k, None)
+        if t["name"] == "xmuse_done":
+            props.pop("declares", None)
+        out.append(t)
+    return out
+
+
 _TYPES = {"string": str, "integer": int, "boolean": bool, "array": list, "object": dict}
 
 
@@ -78,10 +104,11 @@ class ToolError(Exception):
         self.code, self.message = code, message
 
 
-def validate(name: str, args) -> dict:
-    tool = BY_NAME.get(name)
+def validate(name: str, args, tools: list[dict] | None = None) -> dict:
+    by = BY_NAME if tools is None else {t["name"]: t for t in tools}
+    tool = by.get(name)
     if tool is None:
-        raise ToolError("unknown_tool", f"unknown tool {name}; allowed: {', '.join(BY_NAME)}")
+        raise ToolError("unknown_tool", f"unknown tool {name}; allowed: {', '.join(by)}")
     if not isinstance(args, dict):
         raise ToolError("invalid_arguments", "arguments must be an object")
     schema = tool["inputSchema"]

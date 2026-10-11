@@ -42,6 +42,7 @@ create table if not exists deliveries(
   id integer primary key, message_id integer not null, recipient text not null,
   wake integer not null,
   state text not null,   -- queued | admitted | done | failed | canceled | held | passive | delivered (relay)
+                         -- | blocked (handoff whose assignment waits on depends_on; align.release queues it)
   turn_id integer, read_at real, acked_at real, outcome text, updated_at real not null,
   unique(message_id, recipient));
 create index if not exists deliveries_open on deliveries(recipient, state);
@@ -64,7 +65,7 @@ create table if not exists usage(
 create table if not exists entries(          -- alignment library (design §4.5.1); never deleted
   id integer primary key,                    -- shown as E<id>
   kind text not null,                        -- decision|convention|assumption|question|lesson|assignment
-  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id>
+  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id> | module:<name>
   thread_id text, statement text not null, refs text not null default '[]',  -- refs: source message ids
   author text not null,
   status text not null,                      -- proposed|active|superseded|resolved|archived|rejected
@@ -103,7 +104,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # dsh relay: a polled agent's delivery reported into its desktop session
            ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text"),
            # the dsh session a foreground agent is bound to (/v1/relay/bind); its tool calls must come from it
-           ("agents", "bound_session", "text")]
+           ("agents", "bound_session", "text"),
+           # assignments: JSON list of modules the assignee owns (handoff scope module:a,b); module entries reach them
+           ("entries", "modules", "text")]
 
 
 def init(path) -> sqlite3.Connection:

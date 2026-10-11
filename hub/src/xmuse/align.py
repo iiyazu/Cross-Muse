@@ -53,20 +53,76 @@ def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, 
     return eid
 
 
+_MODULE = re.compile(r"[A-Za-z0-9_.\-/]+")
+_OWN_MODULE = "(e.author=? and e.scope like 'module:%')"  # module entries also reach their author
+
+
+def modules_of(scope: str | None) -> list[str]:
+    """`module:a` or `module:a,b` (also `module:a,module:b`) -> ['a', 'b']; anything else -> []."""
+    if not scope or not scope.startswith("module:"):
+        return []
+    names = [n.strip().removeprefix("module:") for n in scope[7:].split(",")]
+    bad = [n for n in names if not _MODULE.fullmatch(n)]
+    if bad or not names:
+        raise ToolError("invalid_arguments", f"module names: letters, digits and _.-/; got {scope!r}")
+    return list(dict.fromkeys(names))
+
+
 def declare(conn, author: str, tid: str, msg: int, kind: str, statement: str, scope: str | None = None,
             supersedes: str | None = None, via: str | None = None) -> int:
-    scope = scope or "thread"
-    if scope not in ("global", "thread") and not scope.startswith("role:"):
-        raise ToolError("invalid_arguments", f"scope must be global, thread or role:<role>; got {scope!r}")
     old = _ref(conn, supersedes) if supersedes else None
+    if scope is None and old:  # an answer or correction reaches whoever saw what it replaces (T14)
+        scope = conn.execute("select scope from entries where id=?", (old,)).fetchone()[0]
+        return add(conn, kind, scope, tid, statement, msg, author, old, via=via)
+    scope = {"all": "global"}.get(scope or "thread", scope or "thread")
+    if scope.startswith("module:"):
+        mods = modules_of(scope)
+        if len(mods) != 1:
+            raise ToolError("invalid_arguments", f"a {kind} has one module scope; got {scope!r}")
+        scope = f"module:{mods[0]}"
+    elif scope not in ("global", "thread") and not scope.startswith("role:"):
+        raise ToolError("invalid_arguments",
+                        f"scope must be global, all, thread, role:<role> or module:<name>; got {scope!r}")
     return add(conn, kind, f"thread:{tid}" if scope == "thread" else scope, tid, statement, msg, author, old, via=via)
 
 
 def assign(conn, author: str, tid: str, msg: int, statement: str, assignees: list, depends_on: list,
-           via: str | None = None) -> list[int]:
+           via: str | None = None, modules: list | None = None) -> list[int]:
+    """One assignment per assignee. `modules` (handoff scope module:a,b) are what the assignee owns: from now on it
+    sees entries scoped to them, and so does the author (the planner)."""
     deps = [_ref(conn, d, None) for d in depends_on]
-    return [add(conn, "assignment", f"thread:{tid}", tid, statement, msg, author, assignee=a, depends_on=deps, via=via)
+    eids = [add(conn, "assignment", f"thread:{tid}", tid, statement, msg, author, assignee=a, depends_on=deps, via=via)
             for a in assignees]
+    if modules:
+        conn.executemany("update entries set modules=? where id=?", [(json.dumps(modules), e) for e in eids])
+    return eids
+
+
+def subscribed(conn, agent_id: str) -> list[str]:
+    """Modules an agent works on or planned: from its live assignments, as assignee or as author."""
+    out = set()
+    for (mods,) in conn.execute("select modules from entries where kind='assignment' and modules is not null and "
+                                "status not in ('rejected','archived') and (assignee=? or author=?)",
+                                (agent_id, agent_id)):
+        out |= set(json.loads(mods))
+    return sorted(out)
+
+
+def release(conn) -> list[str]:
+    """Handoff deliveries parked as 'blocked' whose assignment no longer waits on anything become wakeable (T14).
+    Returns the recipients released. Runs inside the caller's transaction after every entry change."""
+    out = []
+    for d in db.rows(conn.execute("select d.id, d.recipient, d.message_id, c.state chain from deliveries d"
+                                  " join messages m on m.id=d.message_id join chains c on c.id=m.chain_id"
+                                  " where d.state='blocked'")):
+        es = db.rows(conn.execute("select * from entries where kind='assignment' and assignee=? and refs=?",
+                                  (d["recipient"], json.dumps([d["message_id"]]))))
+        if any(_blocked(conn, e) for e in es):
+            continue
+        conn.execute("update deliveries set state=?, updated_at=? where id=?",
+                     ("queued" if d["chain"] == "open" else "held", db.now(), d["id"]))
+        out.append(d["recipient"])
+    return out
 
 
 def resolve(conn, refs: list) -> None:
@@ -83,7 +139,8 @@ def review(conn, op: str, ref: str) -> dict:
             for old, how, to in [(sup, "supersede", "superseded"), *((r, "resolve", "resolved") for r in json.loads(res or "[]"))]:
                 if old and conn.execute("select 1 from entries where id=? and status='active'", (old,)).fetchone():
                     _move(conn, old, how, to)
-    return {"ok": True}
+        released = release(conn)
+    return {"ok": True, **({"released": released} if released else {})}
 
 
 def close_thread(conn, tid: str) -> dict:
@@ -93,7 +150,8 @@ def close_thread(conn, tid: str) -> dict:
                                           (f"thread:{tid}",))]
         for eid in ids:
             _move(conn, eid, "archive", "archived")
-    return {"archived": len(ids)}
+        released = release(conn)
+    return {"archived": len(ids), **({"released": released} if released else {})}
 
 
 def _pub(e: dict) -> dict:
@@ -123,7 +181,8 @@ def _scopes(conn, agent_id: str, topic: str | None = None) -> list[str]:
     tids = [r[0] for r in conn.execute("select thread_id from thread_members where member=? order by 1", (agent_id,))]
     if topic and topic not in tids:
         raise ToolError("unknown_thread", f"topic must be one of your threads: {', '.join(tids) or '(none)'}")
-    return ["global"] + ([] if topic else [f"role:{role}"] * bool(role) + [f"agent:{agent_id}"]) + \
+    return ["global"] + ([] if topic else [f"role:{role}"] * bool(role) + [f"agent:{agent_id}"]
+                         + [f"module:{m}" for m in subscribed(conn, agent_id)]) + \
            [f"thread:{t}" for t in ([topic] if topic else tids)]
 
 
@@ -148,7 +207,8 @@ def delta(conn, agent_id: str, since: int) -> dict:
     scopes = _scopes(conn, agent_id)
     rs = db.rows(conn.execute(
         f"select e.*, v.op from entry_events v join entries e on e.id=v.entry_id where v.seq>? and "
-        f"(e.scope in ({','.join('?' * len(scopes))}) or e.assignee=?) order by v.seq", (since, *scopes, agent_id)))
+        f"(e.scope in ({','.join('?' * len(scopes))}) or e.assignee=? or {_OWN_MODULE}) order by v.seq",
+        (since, *scopes, agent_id, agent_id)))
     ops, ents = {}, {}
     for r in rs:
         ops.setdefault(r["id"], []).append(r["op"])
@@ -159,10 +219,11 @@ def delta(conn, agent_id: str, since: int) -> dict:
         if "add" in ops[eid] or "confirm" in ops[eid]:
             if e["status"] == "active":
                 out["added"].append(e)
-        elif last == "supersede":
-            by = conn.execute("select max(id) from entries where supersedes=? and status not in ('proposed','rejected')",
-                              (eid,)).fetchone()[0]
-            out["superseded"].append((e, f"E{by}"))
+        elif last == "supersede":  # the replacement's text too: it may be scoped where this agent does not look
+            by = conn.execute("select id, statement from entries where supersedes=? and status not in"
+                              " ('proposed','rejected') order by id desc limit 1", (eid,)).fetchone()
+            label = "E?" if by is None else f"E{by[0]}" if by[0] in ents else f'E{by[0]}: "{by[1]}"'
+            out["superseded"].append((e, label))
         elif last == "resolve":
             out["resolved"].append(e)
         elif last == "archive":
@@ -177,13 +238,15 @@ def view(conn, cfg: dict, agent_id: str, topic: str | None = None, query: str = 
     Layers are capped; `truncated` names the layers that overflowed. Which entries survive is MemoryOS's
     /recall ranking for `query` when available, else the newest by seq."""
     scopes = _scopes(conn, agent_id, topic)
+    me = None if topic else agent_id
     rs = db.rows(conn.execute(
-        f"select * from entries where status='active' and (scope in ({','.join('?' * len(scopes))}) or assignee=?)"
-        " order by seq desc", (*scopes, None if topic else agent_id)))
-    caps = {"global": cfg["align_global_cap"], "role": cfg["align_role_cap"], "thread": cfg["align_thread_cap"]}
+        f"select * from entries e where status='active' and (scope in ({','.join('?' * len(scopes))}) or assignee=?"
+        f" or {_OWN_MODULE}) order by seq desc", (*scopes, me, me)))
+    caps = {"global": cfg["align_global_cap"], "role": cfg["align_role_cap"], "thread": cfg["align_thread_cap"],
+            "module": cfg["align_thread_cap"]}
     by, assigned = {s: [] for s in scopes}, []
     for e in rs:
-        (assigned if e["assignee"] == agent_id else by[e["scope"]]).append(e)
+        (assigned if e["assignee"] == agent_id else by.setdefault(e["scope"], [])).append(e)
     mo, layers, truncated = cfg.get("_mo"), {}, []
     role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
     for s, es in by.items():

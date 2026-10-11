@@ -47,7 +47,7 @@
     },
     "scope": {
      "type": "string",
-     "description": "entry scope: global | role:<role> | thread (default)"
+     "description": "entry scope: global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); kind=handoff: module:<name>[,<name>...] = the modules the assignee owns"
     },
     "supersedes": {
      "type": "string",
@@ -216,7 +216,7 @@
        },
        "scope": {
         "type": "string",
-        "description": "global | role:<role> | thread (default)"
+        "description": "global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); kind=handoff: module:<name>[,<name>...] = the modules the assignee owns"
        },
        "supersedes": {
         "type": "string",

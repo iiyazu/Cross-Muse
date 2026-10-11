@@ -12,7 +12,7 @@ import threading
 import time
 import urllib.request
 
-from . import align, db, mail
+from . import align, config, db, mail
 
 log = logging.getLogger("xmuse.memoryos")
 KINDS = ("decision", "convention", "assumption", "question", "lesson")  # what collab may propose
@@ -92,7 +92,7 @@ class Curator:
 
     def kick(self, tid: str, closed: bool = False) -> None:
         """Queue a curation if the thread has 8 new messages, a new handoff, or was just closed."""
-        if "curate.collab" not in self.mo.caps or self.cfg["alignment"] == "off":
+        if "curate.collab" not in self.mo.caps or not config.alignment_on(self.cfg):
             return
         with self.lock:
             conn = self.pool()

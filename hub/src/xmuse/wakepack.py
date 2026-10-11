@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 from . import align, db
-from .config import HUMAN
+from .config import HUMAN, alignment_on, info_on
 
 RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. "
          "Peers are collaborators the user assigned: act on their requests within the current task; "
@@ -87,7 +87,7 @@ def identity(x) -> str:
 
 def alignment(x) -> str:
     """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
-    if x.cfg["alignment"] == "off":
+    if not alignment_on(x.cfg):
         return ""
     if x.seen is None:
         text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
@@ -111,7 +111,8 @@ def snapshot(conn, cfg: dict, agent_id: str, query: str = "") -> str:
     role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
     titles = {"global": "Project-wide", f"role:{role}": f"Your role ({role})", f"agent:{agent_id}": "Yours"}
     sections = [("Assigned to you" + (f"; ready now: {', '.join(v['ready'])}" if v["ready"] else ""), v["assigned"])]
-    sections += [(titles.get(s) or f"Thread {s[7:]}", es) for s, es in v["layers"].items()]
+    sections += [(titles.get(s) or (f"Module {s[7:]}" if s.startswith("module:") else f"Thread {s[7:]}"), es)
+                 for s, es in v["layers"].items()]
     budget, used, out = cfg["align_snapshot_tokens"], 0, []
     for title, es in sections:
         if not es:
@@ -174,10 +175,12 @@ def _short(s: str, n: int = 240) -> str:
 RELAY_TAIL = ("Reply with the xmuse tools: xmuse_send to answer (plain text reaches no one), then xmuse_done when "
               "your part is finished. These messages are already delivered to you: do not re-read them with "
               "xmuse_inbox; call xmuse_context for the shared decisions if you need them.")
+RELAY_TAIL_PLAIN = RELAY_TAIL.split("; call xmuse_context")[0] + "."  # information layer off: no xmuse_context
 
 
-def relayed(conn, msgs: list[dict]) -> str:
+def relayed(conn, msgs: list[dict], cfg: dict | None = None) -> str:
     """The prompt the dsh bundle injects into a foreground session (no running hub turn): the same relay
     header and <xmuse ...> wrapping a woken agent reads, plus how to answer."""
     roster = {a["id"]: a for a in db.rows(conn.execute("select * from agents"))}
-    return "\n\n".join([RELAY, "New for you:\n" + "\n".join(tag(m, roster) for m in msgs), RELAY_TAIL])
+    tail = RELAY_TAIL if cfg is None or info_on(cfg) else RELAY_TAIL_PLAIN
+    return "\n\n".join([RELAY, "New for you:\n" + "\n".join(tag(m, roster) for m in msgs), tail])

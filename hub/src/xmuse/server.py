@@ -21,7 +21,7 @@ from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
 from .engine import Engine
-from .tools import ToolError, validate
+from .tools import ToolError, tools_for, validate
 
 
 log = logging.getLogger("xmuse.hub")
@@ -38,6 +38,11 @@ class Hub:
         self.state, self.cfg, self.human_check = state, config.load(state), human_check
         claude_bin = claude_bin or self.cfg.get("claude_bin", "claude")
         self.ws = Path(self.cfg["workspace"])
+        from .init import write_prompts  # init imports this module
+        self.tools = tools_for(self.cfg)  # info layer off: only what T-plain may use, here and in tools.json
+        write_prompts(self.ws, state, self.cfg)
+        if not config.info_on(self.cfg):
+            log.warning("information layer off: plain messages only (no entries, injection, routing or dependency wake)")
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
@@ -91,7 +96,7 @@ class Hub:
     # ---- request handlers: (caller, body) -> result -----------------------------------
     def tool(self, agent: str, name: str, args: dict, session: str | None = None):
         self.check_session(agent, session)
-        args = validate(name, args)
+        args = validate(name, args, self.tools)
         conn = self.db()
         if name == "xmuse_send":
             if len(args["body"]) > self.cfg["body_limit"]:
@@ -111,6 +116,7 @@ class Hub:
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
                     **({"pushed": out["pushed"]} if out.get("pushed") else {}),
                     **({"entries": out["entries"]} if out.get("entries") else {}),
+                    **{k: out[k] for k in ("blocked", "released") if out.get(k)},
                     **({"duplicate": True} if out.get("duplicate") else {})}
         if name == "xmuse_inbox":
             return mail.inbox(conn, agent, args.get("unread_only", True))
@@ -118,7 +124,7 @@ class Hub:
             return {"acked": mail.ack(conn, agent, args["ids"], args.get("outcome"))}
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
-        if name == "xmuse_context" and self.cfg["alignment"] == "off":  # M1 behaviour: recent messages only
+        if name == "xmuse_context" and not config.alignment_on(self.cfg):  # M1 behaviour: recent messages only
             tids = [args["topic"]] if args.get("topic") else [r[0] for r in conn.execute(
                 "select thread_id from thread_members where member=? order by 1", (agent,))]
             return {"threads": [mail.thread(conn, agent, t) for t in tids]}
@@ -190,11 +196,15 @@ class Hub:
         return {"ok": True}
 
     def admin_align(self, body: dict):
-        return align.review(self.db(), body["op"], body["id"])
+        out = align.review(self.db(), body["op"], body["id"])
+        self.engine.kick()  # a confirmed entry may unblock a handoff (align.release)
+        return out
 
     def admin_close(self, body: dict):
         self.curator.kick(body["id"], closed=True)  # reads the thread's entries before they are archived
-        return align.close_thread(self.db(), body["id"])
+        out = align.close_thread(self.db(), body["id"])
+        self.engine.kick()
+        return out
 
     def admin_compact(self, body: dict):
         """Claude's SessionStart(compact) hook: the session is re-told the alignment right now, so its
@@ -321,7 +331,7 @@ class Hub:
                 self.relay_cv.wait(min(0.5, max(0.0, deadline - time.monotonic())))
         if not rs:
             return {"cursor": cursor, "items": [], "text": ""}
-        return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs),
+        return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs, self.cfg),
                 "items": [{"delivery_id": r["did"], "message_id": r["id"], "thread": r["thread_id"], "from": r["sender"],
                            "kind": r["kind"], "mentions": json.loads(r["mentions"]), "wake": bool(r["wake"]),
                            **({"via": r["via"]} if r["via"] else {})}

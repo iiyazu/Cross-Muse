@@ -87,9 +87,16 @@ def test_resolve_questions_and_assignments_only(make):
 def test_send_argument_combinations_are_checked(make):
     h = three(make)
     e = h.tool("claude-1", "xmuse_send", to="#g", body="x", scope="global")["error"]
-    assert "need kind=decision" in e["message"]
+    assert "scope needs kind=decision" in e["message"]
     e = h.tool("claude-1", "xmuse_send", to="#g", body="x", kind="decision", scope="team")["error"]
-    assert "scope must be global, thread or role:<role>" in e["message"]
+    assert "scope must be global, all, thread, role:<role> or module:<name>" in e["message"]
+    e = h.tool("claude-1", "xmuse_send", to="#g", body="x", kind="message", supersedes="E1")["error"]
+    assert "supersedes needs kind=decision" in e["message"]
+    e = h.tool("claude-1", "xmuse_send", to="#g", body="x", kind="decision", scope="module:a,b")["error"]
+    assert "one module scope" in e["message"]
+    e = h.tool("claude-1", "xmuse_send", to="#g", body="x", kind="handoff", why=WHY, scope="global",
+               mentions=["claude-2"])["error"]
+    assert "module:<name>[,<name>...]" in e["message"]
     e = h.tool("claude-1", "xmuse_send", to="#g", body="x", depends_on=["E1"])["error"]
     assert "depends_on needs kind=handoff" in e["message"]
     assert h.q("select count(*) n from entries")[0]["n"] == 0
