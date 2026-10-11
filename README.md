@@ -164,7 +164,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # 依赖 Windows /
 (cd integrations/dsh-bundle && npm test)
 ```
 
-最近一次实测：hub 335 个通过、1 个跳过，耗时约 2 分 33 秒；插件包 28 个通过。
+最近一次实测：hub 337 个通过、1 个跳过，耗时约 2 分 28 秒；插件包 28 个通过。
 
 ## 许可证
 

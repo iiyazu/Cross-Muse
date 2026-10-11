@@ -51,6 +51,9 @@ class Harness:
         self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base,
                        human_check=human_check)
         self.hub.start()
+        # hub.start() ends with a kick that the engine thread handles asynchronously. Wait for it, or on a loaded machine
+        # it can select the agents before a test pauses one and then admit a turn for mail queued afterwards.
+        self.hub.engine.call(lambda: None)
         if "opencode" in self.hub.engine.drivers:
             assert self.hub.engine.drivers["opencode"].headless.ready.wait(5)
 
