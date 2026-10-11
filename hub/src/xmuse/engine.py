@@ -139,7 +139,9 @@ class Engine:
                              [(tid, db.now(), db.now(), p["did"]) for p in pending])
             for c in {p["chain_id"] for p in pending}:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
-        pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(self.ws))
+        # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
+        cwd = Path(db.settings(agent).get("cwd") or self.ws)
+        pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))
@@ -147,7 +149,7 @@ class Engine:
                          (pack.tokens, pack.mode, pack.view_entries, tid))
             if not fresh:
                 conn.execute("insert or replace into seen values(?,?)", (session["id"], pack.seq))
-        spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], pack.text, self.ws,
+        spec = TurnSpec(tid, agent, None if fresh else session["vendor_session"], pack.text, cwd,
                         self.state / "runs" / f"turn-{tid}.jsonl")
         self.adapters[tid] = adapter
         try:
@@ -158,7 +160,7 @@ class Engine:
         with db.tx(conn):
             sid = None if not fresh else conn.execute(
                 "insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
-                (agent["id"], info.get("handle"), info.get("cwd", str(self.ws)), "hub", db.now())).lastrowid
+                (agent["id"], info.get("handle"), info.get("cwd", str(cwd)), "hub", db.now())).lastrowid
             conn.execute("update turns set pid=?, handle=?, session_id=coalesce(session_id, ?) where id=?",
                          (info.get("pid"), info.get("handle"), sid, tid))
             if sid:

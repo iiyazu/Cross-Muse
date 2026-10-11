@@ -16,7 +16,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, wakepack
+from . import align, config, db, mail, memoryos, peer, preset, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
@@ -60,6 +60,7 @@ class Hub:
         self.engine.shell_policy = policy
         if policy != "allowlist":
             log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
+        self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
         ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]
         if ocs:  # one server per OpenCode agent (T12); oc_base: an already running server (tests), str or {agent: url}
@@ -131,7 +132,7 @@ class Hub:
         if name == "xmuse_context":
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
-            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"))
+            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"))
         if name == "xmuse_approve":  # the user's decision, relayed by the coordinator; recorded with its words
             a = db.row(conn.execute("select * from agents where id=?", (agent,)))
             if not db.settings(a).get("desktop"):
@@ -238,6 +239,14 @@ class Hub:
         mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
                     f"approval {a['id']} ({a['action']} {a['resources']}): {body['decision']}, decided by {who}")
         return {"ok": True}
+
+    def admin_run(self, body: dict):
+        """Start an orchestration preset run (`xmuse run --preset plan-split-integrate`)."""
+        return self.preset.start(body["task"], body["planner"], body["executors"], body.get("limits"),
+                                 body.get("preset", preset.PRESET))
+
+    def admin_runs(self, body: dict):
+        return self.preset.status(body.get("id"))
 
     def admin_attach(self, body: dict):
         a = db.row(self.db().execute("select * from agents where id=?", (body["agent"],)))
@@ -367,9 +376,9 @@ class Hub:
         conn = self.db()
         pids = {r[0] for r in conn.execute("select pid from turns where state='running' and pid is not null")}
         pids |= {r[0] for r in conn.execute("select pid from leases where pid is not null")}
-        srv = getattr(self.engine.drivers.get("opencode"), "server", None)
-        if srv is not None and srv.proc is not None:
-            pids.add(srv.proc.pid)
+        for srv in getattr(self.engine.drivers.get("opencode"), "servers", {}).values():  # one per instance (T12)
+            if srv.proc is not None:
+                pids.add(srv.proc.pid)
         return {int(p) for p in pids if str(p).isdigit()}
 
     def require_human(self, name: str, client_port: int | None) -> None:
@@ -435,6 +444,8 @@ class Hub:
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
+        threading.Thread(target=preset.loop, args=(self.preset, self.stopping, self.cfg.get("preset_tick", 2.0)),
+                         daemon=True).start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
                                                          "shell_policy": self.engine.shell_policy}))
         self.engine.kick()

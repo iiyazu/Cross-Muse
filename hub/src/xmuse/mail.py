@@ -276,10 +276,12 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
             "threads": [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]}
 
 
-def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None) -> dict:
-    """Exit check: record it on the running turn and post it to the chain's thread (no wake)."""
+def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None, stage: str | None = None) -> dict:
+    """Exit check: record it on the running turn and post it to the chain's thread (no wake). `stage`: the
+    plan-split-integrate phase this ends (preset.py reads it from messages.stage)."""
     turn = running_turn(conn, agent_id)
-    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, declares]).encode()).hexdigest())
+    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, declares, stage]).encode())
+                                   .hexdigest())
     with db.tx(conn):
         dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
                                           (agent_id, key)))
@@ -302,9 +304,9 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
             "select coalesce(max(m.depth), -1) + 1 from deliveries d join messages m on m.id=d.message_id"
             " where d.turn_id=?", (turn["id"],)).fetchone()[0]
         mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, idem_key,"
-                           " created_at) values(?,?,?,?,?,?,?,?,?)",
+                           " created_at, stage) values(?,?,?,?,?,?,?,?,?,?)",
                            (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth, turn and turn["id"], key,
-                            db.now())).lastrowid
+                            db.now(), stage)).lastrowid
         _to_coordinators(conn, mid, tid, agent_id)
         eids = [align.declare(conn, agent_id, tid, mid, d["kind"], d["statement"], d.get("scope"), d.get("supersedes"))
                 for d in declares or []]
