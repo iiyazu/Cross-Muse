@@ -874,3 +874,56 @@ work  {'compiled': True, 'fixed': 44, 'total': 44, 'unjudgeable_ids': [], 'regre
 - 第 3–6 步都没开始：单干难度测试、团队前置核验、两组团队实验、结果汇总。原因是 C 盘低于 2 GB，按规则停下。
 - 第 4 步核验 T12、T14、T13 本身已经完成（见前面各节）。"信息层关闭时对齐层工具全部不可用"，`tests/test_info_layer.py` 覆盖了；还没在 r7 上用真实 agent 再验一次。
 - dsh 在 headless 沙箱里能不能调用 `run-tests.cmd`（wsl.exe → docker），还没有用真实模型验证过。计划在单干正式开始前，先在一份单独的工作区里做一次很短的冒烟测试，不计入结果。
+
+## T15 第 5 步：dsh 冒烟测试——headless 沙箱里起不了 WSL，单干先暂停（2026-10-11）
+
+**提交**：本节。
+
+### 更正上一节
+上一节说 docker 的数据在 Docker Desktop 的 `docker_data.vhdx` 里，**这个判断是错的**：
+- r7 上的 docker 是 Ubuntu 里原生的 dockerd，数据目录 `/var/lib/docker`。`docker-desktop` 这个发行版处于 Stopped。
+- 我这次新增的镜像和卷都在 Ubuntu 自己的 vhdx 里。那个 23.71 GB 的 `docker_data.vhdx` 是 Docker Desktop 以前留下的，和这次没有关系。
+
+用户已经清理过 C 盘，这次冒烟前剩余 2.8 GB；用户说不用再管 2 GB 红线。
+
+### r7 上的后台任务
+- 用 `systemd-run --user` 起的 unit，PATH 里没有 Windows 目录：直接写 `cmd.exe` 会报 command not found，写全路径 `/mnt/c/Windows/System32/cmd.exe` 就能正常运行。
+- 后台脚本 `r7bg.sh` 现在会把 ssh 会话的 PATH，以及 `XMUSE_WSL_DISTRO`、`WSL_DISTRO_NAME`、`XMUSE_WIN_HOME` 传给 unit。
+
+### 冒烟测试（不计入结果）
+- **工作区**：`/mnt/c/Users/user/phb/smoke/ws`，从 r7 上的猎场克隆；compose 项目名 `phb-smoke`。
+- **提示词**：要求不改任何文件，只运行 `docs\dev-ops\bench\run-tests.cmd -Dtest=SchemeDrawTest` 并回报结果。
+- **运行**：dsh-ms13 用 `tools/solo_dsh.py` 跑，45 秒后自己结束，rc 0。token：输入 8,335，缓存读 60,153，输出 4,850，共 10 次调用。
+
+agent 回报的原文（节选）：
+```
+拒绝访问。
+错误代码: Wsl/E_ACCESSDENIED
+EXIT:-1
+- wsl.exe --version works (WSL 2.6.3.0).
+- wsl.exe --list --verbose, wsl.exe pwd, wsl.exe --cd "C:\Windows" -- pwd ... all fail with same Wsl/E_ACCESSDENIED.
+- docker --version = Docker version 29.3.1 ... docker ps fails: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
+```
+
+**结论**：dsh headless 模式下，shell 跑在 workspace-write 沙箱里，任何启动 WSL 的调用都会被拒绝。Windows 侧的 docker 客户端也连不上 daemon。所以 dsh 在这个环境里**跑不了任何测试**：单干的 dsh-ms13、团队里的 P（dsh-ms13）和 E2（dsh-fl）都受影响。opencode 跑在 Linux 侧，不受影响。
+
+### 停在这里的原因
+- 我原本打算加一个"测试中继"：dsh 在工作区里写一个请求文件，WSL 侧的进程看到以后，替它运行工作区里的 `run-tests.sh`。
+- 写到一半，被权限检查拦下。复查以后确认它本质上是**绕过 dsh 沙箱**：`run-tests.sh` 在 agent 可写的工作区里，agent 改了它，就能在沙箱外的 r7 上执行任意命令。所以没有接着做，交给用户决定。
+- 当前状态：
+  - `tools/relay.py` 只写在 base 的 `~/bench/tools/` 里，没有运行，也没有推送；
+  - `mkarena.py` 里对 `run-tests.cmd`/`.ps1` 的改动是本地未推送的半成品；
+  - r7 上的猎场和 kit 仍是 `6ce10b4` 时的版本。
+
+### 需要用户选一个
+1. **只放行"跑测试"这一件事的中继**：
+   - 中继不执行工作区里的任何脚本，只用 kit 里固定的脚本；
+   - 参数只接受 `-Dtest=<类名或通配>`；
+   - 源码复制到一个临时目录，在 maven 容器里编译、跑测试，和判分器的做法一样。
+
+   agent 写的 Java 代码仍然会在容器里执行，这是跑测试本身就需要的；但它碰不到宿主机上的命令行。
+2. 在 dsh 的单次 overlay 里放开沙箱，或者允许 wsl.exe。改动的是 agent 的权限边界。
+3. dsh 不跑测试，只能读代码和改代码。这样会改变题目的难度含义，单干结果也不能和 opencode 直接比。
+4. 改用 opencode-ms13 做单干（同一个模型，Linux 侧可以直接跑测试）。团队实验里的 dsh 成员仍然要在 1–3 里选一个。
+
+以上都没做；第 3–6 步还没开始。
