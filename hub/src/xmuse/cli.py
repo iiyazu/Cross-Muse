@@ -268,7 +268,7 @@ def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 20
             raise SystemExit(f"no dsh session log for {sid} under {home}/sessions (set dsh_home in config.json"
                              " or pass --path)")
         return tr.render(tr.dsh(logs[-1]), clip)
-    return tr.render(tr.opencode(call(state, "/v1/admin/oc_messages", {"session": sid})["messages"]), clip)
+    return tr.render(tr.opencode(call(state, "/v1/admin/oc_messages", {"session": sid, "agent": agent})["messages"]), clip)
 
 
 def main(argv=None) -> None:

@@ -189,6 +189,24 @@ def human_turn(log: Path) -> bool:
     return busy
 
 
+def hooks_owner(ws: Path) -> str | None:
+    """The dsh agent the workspace .dsh/hooks.json reports for (last argv word of its commands), if any."""
+    try:
+        hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())["hooks"]
+        return next(iter(hooks.values()))[0]["hooks"][0]["command"].split()[-1]
+    except (OSError, ValueError, KeyError, IndexError, StopIteration, AttributeError):
+        return None
+
+
+def _is_headless_dsh(state: Path, agent_id: str) -> bool:
+    conn = db.connect(state / "hub.db")
+    try:
+        a = db.row(conn.execute("select * from agents where id=? and vendor='dsh'", (agent_id,)))
+    finally:
+        conn.close()
+    return a is not None and not db.settings(a).get("foreground")
+
+
 class DshHeadless:
     name = "dsh"
 
@@ -445,6 +463,11 @@ class DshDriver:
             (ws / ".xmuse-tmp").mkdir(exist_ok=True)
             for f in ("hooks.json", "xmuse-dsh-hook.py"):
                 (d / f).unlink(missing_ok=True)
+            return []
+        owner = hooks_owner(ws)
+        if owner and owner != agent["id"] and _is_headless_dsh(state, owner):
+            # One workspace hooks.json, so desktop-app presence follows one dsh agent: the first one added (T12).
+            # Headless runs of the others carry their identity in the per-run overlay and need no hooks.
             return []
         d.mkdir(parents=True, exist_ok=True)
         cmd = f"python3 .dsh/xmuse-dsh-hook.py {{ev}} {to_win(state)} {agent['id']}"

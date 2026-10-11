@@ -100,7 +100,9 @@ def test_opencode_config_asks_for_consequential_commands(ws):
     state = xinit.init(ws)
     xinit.add_agent(state, "opencode-1", "opencode", settings={"note": 9})
     cfg = json.loads((ws / "opencode.json").read_text())
-    srv = cfg["mcp"]["servers"]["xmuse"]
+    assert "mcp" not in cfg and "XMUSE_AGENT" not in json.dumps(cfg)  # shared by every instance (T12)
+    inst = json.loads((state / "oc" / "opencode-1" / "opencode.json").read_text())
+    srv = inst["mcp"]["servers"]["xmuse"]
     assert srv["environment"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "opencode-1"}
     rules = {(r["action"], r["resource"]): r["effect"] for r in cfg["permissions"]}
     assert rules[("xmuse_*", "*")] == "allow"
