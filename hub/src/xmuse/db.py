@@ -94,6 +94,14 @@ create table if not exists approvals(
   id text primary key, agent_id text not null, vendor_session text, action text,
   resources text, state text not null default 'pending', decision text,
   created_at real not null, decided_at real);
+create table if not exists room(             -- the room this workspace is (D2, contract XMUSE2-VIEW-API v0): one row
+  id text primary key, name text not null, dir text not null, host text, created_at real not null);
+create table if not exists operators(        -- sidebar operator tokens: the user acting from a member's sidebar
+  token_digest text primary key, member_id text not null, created_at real not null);
+create table if not exists invites(          -- one-time invitation codes (/v1/act invite -> /v1/join)
+  code text primary key, vendor text not null, role text not null default '', description text not null default '',
+  name text, created_by text, created_at real not null, expires_at real not null, used_at real, used_by text);
+create table if not exists meta(key text primary key, value text not null);  -- view_version
 """
 
 
@@ -117,7 +125,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("agents", "bound_session", "text"),
            # assignments: JSON list of modules the assignee owns (handoff scope module:a,b); module entries reach them
            ("entries", "modules", "text"),
-           ("messages", "stage", "text")]  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
+           ("messages", "stage", "text"),  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
+           # D2: what a member is responsible for (shown to peers and in the sidebars); removed from the room
+           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0")]
 
 
 def init(path) -> sqlite3.Connection:

@@ -40,6 +40,26 @@ def call(state: Path, path: str, body: dict | None = None, token: str = "_admin"
     return out["result"]
 
 
+def act(state: Path, body: dict) -> dict:
+    """POST /v1/act with the admin token (the sidebar API: HTTP statuses, {"error": code, "message"})."""
+    hub = state / "hub.json"
+    if not hub.exists():
+        raise SystemExit("hub is not running (xmuse hub start)")
+    port = json.loads(hub.read_text(encoding="utf-8"))["port"]
+    tok = (state / "tokens" / "_admin").read_text(encoding="utf-8").strip()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/act", method="POST", data=json.dumps(body).encode(),
+                                 headers={"authorization": "Bearer " + tok, "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read())
+        except ValueError:
+            raise SystemExit(f"error: http {e.code}")
+        raise SystemExit(f"error: {err.get('error')}: {err.get('message')}")
+
+
 def hub_start(state: Path) -> None:
     if (state / "hub.json").exists():
         pid = json.loads((state / "hub.json").read_text(encoding="utf-8"))["pid"]
@@ -293,6 +313,7 @@ def main(argv=None) -> None:
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
+    p.add_argument("--description", help="what this member is responsible for (peers and the sidebars see it)")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
     p.add_argument("--cwd", type=Path, help="--vendor claude: the member's own directory (its .mcp.json and .claude/ "
@@ -305,6 +326,11 @@ def main(argv=None) -> None:
                                                   "opencode instance config)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
+    p = sub.add_parser("invite", help="an invitation code for a sidebar to join this room (/xmuse join <code>)")
+    p.add_argument("vendor", choices=["claude", "opencode", "dsh"])
+    p.add_argument("--role", default="")
+    p.add_argument("--description", default="")
+    p.add_argument("--name", help="member id (default: <vendor>, <vendor>-2, ...)")
     p = sub.add_parser("send")
     p.add_argument("to")
     p.add_argument("body")
@@ -410,7 +436,7 @@ def main(argv=None) -> None:
             st["cwd"] = str(a.cwd)
         if a.effort:
             st["effort"] = a.effort
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None)
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None, a.description)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -421,6 +447,9 @@ def main(argv=None) -> None:
     elif a.cmd == "hub":
         {"start": hub_start, "stop": hub_stop,
          "status": lambda s: print(json.dumps(status(s), indent=1))}[a.action](state)
+    elif a.cmd == "invite":  # the sidebar API: no {"result": ...} envelope
+        print(json.dumps(act(state, {"act": "invite", "vendor": a.vendor, "role": a.role,
+                                     "description": a.description, "name": a.name}), indent=1, ensure_ascii=False))
     elif a.cmd == "send":
         print(json.dumps(call(state, "/v1/admin/send", {"to": a.to, "body": a.body, "kind": a.kind,
                                                          "mentions": a.mention, "idem": a.idem,
