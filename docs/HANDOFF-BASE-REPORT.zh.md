@@ -367,3 +367,38 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 **约束遵守**：没碰密钥令牌，没用 Modal；只推 r7 的 `rc/portfolio`，没碰 GitHub；评测容器都是一次性的（harness 起停），没删非本机镜像；24 镜像保留本机供后续评测；没跑 agent，没改 xmuse 代码。
 
 **事故记录**：排查失败题时用 ID 子串单跑了一次，harness 把 `pilot/evalin/goldin-24-20261011.jsonl` 和 `gold-out-24-20261011/eval_results.json` 覆盖成了单题版。已用 `gold-check.sh` 同源逻辑重生成两个输入文件（24 条），并按 harness 当时打印的原文逐值重建 `eval_results.json`（24 条、23 true）；各题子目录除 41dfec 外原样未动，41dfec 恢复为全量跑的失败版，solo 通过版另存 base 本机 `~/bench/pilot/rerun-41dfec-solo/`。上面贴的 JSON 与 harness 输出一致。
+
+## T12 同一家厂商多个实例（2026-10-11）
+
+**提交**：`d0c5668`
+
+**先核实**：opencode v2.0.21 支持用 `OPENCODE_CONFIG` 指定配置文件路径。
+- 二进制里有 `OPENCODE_CONFIG`、`OPENCODE_CONFIG_CONTENT`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG_PROJECT_DISABLE` 四个变量。
+- `opencode debug config` 走后台服务，看不到调用方的环境变量，所以改为直接起 `opencode serve` 探测：带 `OPENCODE_CONFIG` 启动时，`GET /api/config` 列出的来源里同时有实例配置（`XMUSE_AGENT=probe-a`）和工作区的 `opencode.json`（权限规则），两者合并生效。
+- 改完后又用真实 opencode 起两个实例：`oc-a loaded XMUSE_AGENT: ['oc-a']`、`oc-b loaded XMUSE_AGENT: ['oc-b']`，端口不同，结束后没有残留进程。整个过程只读配置，没调用模型。
+
+**做法**
+| 厂商 | 改动 |
+|---|---|
+| opencode | 每个实例一个目录 `<state>/oc/<agent>/`，里面是 `opencode.json`（只有 xmuse MCP 和 `XMUSE_AGENT`）和 `oc.pass`；每个实例单独起一个 `opencode serve`（单独端口、单独密码、`OPENCODE_CONFIG` 指向自己的配置），日志写到 `logs/opencode-<agent>.log`。工作区共享的 `opencode.json` 只留权限规则，不再带身份。驱动按 agent 把回合分派到它自己的服务；审批按 agent 路由，因为会话 id 只在单个服务内唯一（测试里两个服务都从 `ses_fake1` 开始编号）。`xmuse transcript` 和 `xmuse attach` 也按 agent 找服务。hub 运行中新加的 agent，第一次派活时再起它的服务 |
+| dsh 无界面 | 核实：身份本来就由每次运行的 overlay 传入（`XMUSE_AGENT` 写在一次性 patch 文件里），直接放开。工作区的 `.dsh/hooks.json` 只有一份，所以桌面端的在场检测只跟第一个注册的 dsh agent；后加的 dsh agent 不覆盖它，只走无界面模式。前台模式不变，仍是一个会话绑一个 agent |
+| Claude | 不动，仍限一个（`.mcp.json` 只能写一个身份）；第二个 Claude agent 仍然报 `already has a claude agent` |
+
+- `xmuse doctor`：新增 `instances` 一行，列出每家的实例数和 id；每个 opencode 实例分别检查自己的配置（身份、状态目录对不对），工作区 `opencode.json` 里如果还带着身份（T12 之前的布局）就判 FAIL；dsh 实例标明谁持有桌面在场钩子。
+- 测试替身：新增 `tests/fakes/fake_opencode_serve.py`，由 hub 当子进程启动，和真实服务一样只从 `OPENCODE_CONFIG` 加工作区 `opencode.json` 得到身份，并校验 hub 发来的密码。
+
+**测试**：`tests/test_instances.py`（3 条）
+- 两个 opencode 实例各起一个服务：端口和密码都不同；各自的 whoami 结果是自己；消息发送者正确；各自只跑了发给自己的回合；用量按 agent 分开记账。
+- 审批发给提出审批的那个实例（按 agent，也按会话兜底）。
+- 同一工作区注册两个 opencode、两个 dsh、一个 Claude：身份不串；dsh 的 overlay 各自带自己的 id；第二个 Claude 被拒；doctor 识别出 `claude x1, dsh x2, opencode x2`，旧布局判 FAIL。
+
+**测试结果原文**（无终端：`setsid … < /dev/null`）
+```
+317 passed, 1 skipped, 1 warning in 158.74s (0:02:38)
+```
+插件包：`ℹ pass 28`、`ℹ fail 0`
+
+**没做 / 拿不准**
+- 人在工作区里直接运行 `opencode`（不经过 hub 的服务）时，不再带任何 xmuse 身份；接入正在运行的实例要用 `xmuse attach <id>` 给出的命令。
+- 一个工作区只能有一个 dsh agent 接收桌面端的在场钩子。团队实验全部是无界面模式，不受影响。
+- 旧状态目录里的 `oc.pass` 和工作区旧 `opencode.json` 不会自动清理；重新 `agent add` 一次就会改写成新布局，doctor 会提示。
