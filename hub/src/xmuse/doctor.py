@@ -155,7 +155,7 @@ def workspace(state: Path) -> list[Check]:
     if not agents:
         out.append(Check("warn", "agents", "none yet", f"xmuse --ws {ws} agent add <id> --vendor claude|opencode|dsh"))
     else:
-        out.append(_instances(agents))
+        out.append(_instances(ws, agents))
     for a in agents:
         out += _agent_files(ws, state, a)
     if any(db.settings(a).get("foreground") for a in agents):
@@ -173,22 +173,29 @@ def _bundle_state(state: Path) -> str:
 
 def _agent_files(ws: Path, state: Path, a: dict) -> list[Check]:
     fix = f"xmuse --ws {ws} agent add {a['id']} --vendor {a['vendor']}" + (
-        " --desktop" if db.polled(a) else "")
+        " --desktop" if db.polled(a) else "") + (
+        f" --cwd {db.settings(a)['cwd']}" if a["vendor"] == "claude" and db.settings(a).get("cwd") else "") + (
+        f" --effort {db.settings(a)['effort']}" if a["vendor"] == "claude" and db.settings(a).get("effort") else "")
     if a["vendor"] == "claude":
-        mcp = ws / ".mcp.json"
+        d = db.workdir(a, ws)  # the member's own directory (agent add --cwd), else the workspace root
+        mcp = d / ".mcp.json"
+        if not d.is_dir():
+            return [Check("FAIL", f"agent {a['id']}", f"member directory {d} does not exist", fix)]
         try:
             srv = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["xmuse"]
         except (OSError, ValueError, KeyError):
-            return [Check("FAIL", f"agent {a['id']}", ".mcp.json has no xmuse server", fix)]
+            return [Check("FAIL", f"agent {a['id']}", f"{mcp} has no xmuse server", fix)]
         flat = " ".join(_strings(srv))  # not json.dumps: it doubles the backslashes of Windows paths
         problems = [p for p, bad in ((f"not this agent ({a['id']})", f"XMUSE_AGENT={a['id']}" not in flat
                                       and srv.get("env", {}).get("XMUSE_AGENT") != a["id"]),
                                      ("points at another state dir", str(state) not in flat),
                                      ("shim path is not this checkout's", str(config.SHIM) not in flat)) if bad]
-        if not (ws / ".claude" / "settings.json").exists():
+        if not (d / ".claude" / "settings.json").exists():
             problems.append(".claude/settings.json missing (hooks)")
+        where = f" in {d}" if d != ws else ""
         return [Check("FAIL" if problems else "ok", f"agent {a['id']}",
-                      "; ".join(problems) if problems else "claude: .mcp.json and hooks current", fix if problems else "")]
+                      "; ".join(problems) if problems else f"claude: .mcp.json and hooks current{where}",
+                      fix if problems else "")]
     # adapters import lazily: doctor must still run when a dependency they need (zstandard) is missing
     if a["vendor"] == "opencode":
         from .adapters.opencode import instance_dir
@@ -237,14 +244,19 @@ def _strings(o) -> list[str]:
     return []
 
 
-def _instances(agents: list[dict]) -> Check:
+def _instances(ws: Path, agents: list[dict]) -> Check:
     by: dict[str, list[str]] = {}
+    dirs: dict[Path, list[str]] = {}
     for a in agents:
         by.setdefault(a["vendor"], []).append(a["id"])
-    return Check("FAIL" if len(by.get("claude", [])) > 1 else "ok", "instances",
+        if a["vendor"] == "claude":
+            dirs.setdefault(db.workdir(a, ws).resolve(), []).append(a["id"])
+    shared = {d: ids for d, ids in dirs.items() if len(ids) > 1}
+    return Check("FAIL" if shared else "ok", "instances",
                  ", ".join(f"{v} x{len(ids)} ({', '.join(ids)})" for v, ids in sorted(by.items())),
-                 "one claude agent per workspace (.mcp.json carries one identity)" if len(by.get("claude", [])) > 1
-                 else "")
+                 "one claude agent per directory (.mcp.json carries one identity): " + "; ".join(
+                     f"{', '.join(ids)} share {d}" for d, ids in shared.items())
+                 + f"; give each its own: xmuse --ws {ws} agent add <id> --vendor claude --cwd <dir>" if shared else "")
 
 
 def run(state: Path | None) -> list[Check]:

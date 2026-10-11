@@ -127,7 +127,7 @@ def test_desktop_replacing_a_cli_identity_prints_a_note(ws, capsys):
     assert "one interactive Claude identity" not in capsys.readouterr().out
     agent = {"id": "dog", "settings": json.dumps({"desktop": True})}
     write_config(ws, agent, state)
-    assert "one interactive Claude identity per workspace; dog (desktop) replaces cat" in capsys.readouterr().out
+    assert "one interactive Claude identity per directory; dog (desktop) replaces cat" in capsys.readouterr().out
     write_config(ws, agent, state)  # already desktop: no note
     assert capsys.readouterr().out == ""
 

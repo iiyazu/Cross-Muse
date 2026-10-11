@@ -26,7 +26,7 @@ class Harness:
         oc_serve = cfg.pop("_oc_serve", False)  # one fake `opencode serve` subprocess per agent (T12)
         self.tmp, self.home = tmp, Path(os.environ["HOME"])
         self.ws = tmp / "ws"
-        self.ws.mkdir()
+        self.ws.mkdir(exist_ok=True)  # a test may create member directories inside it first
         if oc_serve and os.name == "nt":  # no shebangs: the hub runs a .py binary with its own interpreter
             cfg["opencode_bin"] = str(FAKE_OC_SERVE)
         elif oc_serve:
@@ -42,8 +42,9 @@ class Harness:
                                                             **cfg}), encoding="utf-8")
         for i, (aid, vendor, *rest) in enumerate(agents):
             settings = rest[0] if rest else {}
-            if vendor == "dsh" or vendor == "claude" and i and vendor in [v for _, v, *_ in agents[:i]]:
-                self.add_raw(aid, vendor, settings)  # dsh: ws is not on C:\; a second claude: one .mcp.json
+            same_vendor = i and vendor in [v for _, v, *_ in agents[:i]]
+            if vendor == "dsh" or vendor == "claude" and same_vendor and not settings.get("cwd"):
+                self.add_raw(aid, vendor, settings)  # dsh: ws is not on C:\; a second claude in the same dir: one .mcp.json
             else:
                 xinit.add_agent(self.state, aid, vendor, settings=settings)
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
