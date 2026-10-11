@@ -16,12 +16,12 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, wakepack
+from . import align, config, db, mail, memoryos, peer, preset, wakepack
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
 from .engine import Engine
-from .tools import ToolError, validate
+from .tools import ToolError, tools_for, validate
 
 
 log = logging.getLogger("xmuse.hub")
@@ -38,6 +38,11 @@ class Hub:
         self.state, self.cfg, self.human_check = state, config.load(state), human_check
         claude_bin = claude_bin or self.cfg.get("claude_bin", "claude")
         self.ws = Path(self.cfg["workspace"])
+        from .init import write_prompts  # init imports this module
+        self.tools = tools_for(self.cfg)  # info layer off: only what T-plain may use, here and in tools.json
+        write_prompts(self.ws, state, self.cfg)
+        if not config.info_on(self.cfg):
+            log.warning("information layer off: plain messages only (no entries, injection, routing or dependency wake)")
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
@@ -55,12 +60,17 @@ class Hub:
         self.engine.shell_policy = policy
         if policy != "allowlist":
             log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
+        self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
-        if self.db().execute("select 1 from agents where vendor='opencode'").fetchone():
-            srv = Server(self.ws, state, base=oc_base)
+        ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]
+        if ocs:  # one server per OpenCode agent (T12); oc_base: an already running server (tests), str or {agent: url}
+            binary = self.cfg.get("opencode_bin", "opencode")
+            servers = {a: Server(self.ws, state, a, binary=binary,
+                                 base=oc_base.get(a) if isinstance(oc_base, dict) else oc_base) for a in ocs}
             if oc_base is None:
-                srv.start()
-            self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, srv)
+                for srv in servers.values():
+                    srv.start()
+            self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, servers, start=oc_base is None)
         if self.db().execute("select 1 from agents where vendor='dsh'").fetchone():
             self.engine.drivers["dsh"] = DshDriver(self.engine, state, self.cfg)
 
@@ -87,7 +97,7 @@ class Hub:
     # ---- request handlers: (caller, body) -> result -----------------------------------
     def tool(self, agent: str, name: str, args: dict, session: str | None = None):
         self.check_session(agent, session)
-        args = validate(name, args)
+        args = validate(name, args, self.tools)
         conn = self.db()
         if name == "xmuse_send":
             if len(args["body"]) > self.cfg["body_limit"]:
@@ -107,6 +117,7 @@ class Hub:
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
                     **({"pushed": out["pushed"]} if out.get("pushed") else {}),
                     **({"entries": out["entries"]} if out.get("entries") else {}),
+                    **{k: out[k] for k in ("blocked", "released") if out.get(k)},
                     **({"duplicate": True} if out.get("duplicate") else {})}
         if name == "xmuse_inbox":
             return mail.inbox(conn, agent, args.get("unread_only", True))
@@ -114,14 +125,14 @@ class Hub:
             return {"acked": mail.ack(conn, agent, args["ids"], args.get("outcome"))}
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
-        if name == "xmuse_context" and self.cfg["alignment"] == "off":  # M1 behaviour: recent messages only
+        if name == "xmuse_context" and not config.alignment_on(self.cfg):  # M1 behaviour: recent messages only
             tids = [args["topic"]] if args.get("topic") else [r[0] for r in conn.execute(
                 "select thread_id from thread_members where member=? order by 1", (agent,))]
             return {"threads": [mail.thread(conn, agent, t) for t in tids]}
         if name == "xmuse_context":
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
-            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"))
+            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"))
         if name == "xmuse_approve":  # the user's decision, relayed by the coordinator; recorded with its words
             a = db.row(conn.execute("select * from agents where id=?", (agent,)))
             if not db.settings(a).get("desktop"):
@@ -186,11 +197,15 @@ class Hub:
         return {"ok": True}
 
     def admin_align(self, body: dict):
-        return align.review(self.db(), body["op"], body["id"])
+        out = align.review(self.db(), body["op"], body["id"])
+        self.engine.kick()  # a confirmed entry may unblock a handoff (align.release)
+        return out
 
     def admin_close(self, body: dict):
         self.curator.kick(body["id"], closed=True)  # reads the thread's entries before they are archived
-        return align.close_thread(self.db(), body["id"])
+        out = align.close_thread(self.db(), body["id"])
+        self.engine.kick()
+        return out
 
     def admin_compact(self, body: dict):
         """Claude's SessionStart(compact) hook: the session is re-told the alignment right now, so its
@@ -216,7 +231,7 @@ class Hub:
             raise ToolError("unknown_approval", f"no approval {body['id']}")
         if a["state"] == "decided":
             raise ToolError("invalid_arguments", f"approval {a['id']} was already decided ({a['decision']})")
-        self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"])
+        self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"], a["agent_id"])
         with db.tx(conn):
             conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
                          (body["decision"], db.now(), a["id"]))
@@ -224,6 +239,14 @@ class Hub:
         mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
                     f"approval {a['id']} ({a['action']} {a['resources']}): {body['decision']}, decided by {who}")
         return {"ok": True}
+
+    def admin_run(self, body: dict):
+        """Start an orchestration preset run (`xmuse run --preset plan-split-integrate`)."""
+        return self.preset.start(body["task"], body["planner"], body["executors"], body.get("limits"),
+                                 body.get("preset", preset.PRESET))
+
+    def admin_runs(self, body: dict):
+        return self.preset.status(body.get("id"))
 
     def admin_attach(self, body: dict):
         a = db.row(self.db().execute("select * from agents where id=?", (body["agent"],)))
@@ -236,9 +259,10 @@ class Hub:
         drv = self.engine.drivers.get("opencode")
         if drv is None:
             raise ToolError("invalid_arguments", "no opencode server in this hub")
+        srv = drv.server_for(body["session"], body.get("agent"))
         sid, out, cursor = urllib.parse.quote(body["session"], safe=""), [], None
         for _ in range(100):  # pages of 200
-            page = drv.server.api("GET", f"/api/session/{sid}/message?limit=200"
+            page = srv.api("GET", f"/api/session/{sid}/message?limit=200"
                                   + (f"&cursor={urllib.parse.quote(cursor, safe='')}" if cursor else ""))
             out += page.get("data") or []
             cursor = (page.get("cursor") or {}).get("next")
@@ -316,7 +340,7 @@ class Hub:
                 self.relay_cv.wait(min(0.5, max(0.0, deadline - time.monotonic())))
         if not rs:
             return {"cursor": cursor, "items": [], "text": ""}
-        return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs),
+        return {"cursor": rs[-1]["did"], "text": wakepack.relayed(self.db(), rs, self.cfg),
                 "items": [{"delivery_id": r["did"], "message_id": r["id"], "thread": r["thread_id"], "from": r["sender"],
                            "kind": r["kind"], "mentions": json.loads(r["mentions"]), "wake": bool(r["wake"]),
                            **({"via": r["via"]} if r["via"] else {})}
@@ -352,9 +376,9 @@ class Hub:
         conn = self.db()
         pids = {r[0] for r in conn.execute("select pid from turns where state='running' and pid is not null")}
         pids |= {r[0] for r in conn.execute("select pid from leases where pid is not null")}
-        srv = getattr(self.engine.drivers.get("opencode"), "server", None)
-        if srv is not None and srv.proc is not None:
-            pids.add(srv.proc.pid)
+        for srv in getattr(self.engine.drivers.get("opencode"), "servers", {}).values():  # one per instance (T12)
+            if srv.proc is not None:
+                pids.add(srv.proc.pid)
         return {int(p) for p in pids if str(p).isdigit()}
 
     def require_human(self, name: str, client_port: int | None) -> None:
@@ -420,6 +444,8 @@ class Hub:
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
+        threading.Thread(target=preset.loop, args=(self.preset, self.stopping, self.cfg.get("preset_tick", 2.0)),
+                         daemon=True).start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
                                                          "shell_policy": self.engine.shell_policy}))
         self.engine.kick()

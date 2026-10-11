@@ -6,14 +6,13 @@ Nothing global is touched. Generated files that should not be committed are list
 import json
 import re
 import secrets
-import shutil
 import subprocess
 from pathlib import Path
 
 from . import config, db
 from .adapters import claude, dsh, opencode
 from .server import digest
-from .tools import TOOLS
+from .tools import tools_for
 
 WRITERS = {"claude": claude.write_config, "opencode": opencode.write_config, "dsh": dsh.DshDriver.write_config}
 # Headless Claude coding profile: edits in the workspace plus test/inspection commands. Anything else
@@ -64,6 +63,52 @@ def _exclude(ws: Path, paths: list[str]) -> None:
     ex.write_text("\n".join(have + [p for p in paths if p not in have]) + "\n")
 
 
+_INFO = re.compile(r"^<!-- info:(on|off|end) -->\n", re.M)
+
+
+def render(text: str, info: bool) -> str:
+    """Drop the template blocks for the other information-layer mode (T14): `<!-- info:on -->` ... and
+    `<!-- info:off -->` ... up to the next marker; the marker lines themselves never reach the agent."""
+    out, keep = [], True
+    pos = 0
+    for m in _INFO.finditer(text):
+        if keep:
+            out.append(text[pos:m.start()])
+        keep = m[1] == "end" or (m[1] == "on") == info
+        pos = m.end()
+    if keep:
+        out.append(text[pos:])
+    return "".join(out)
+
+
+def skill_text(cfg: dict) -> str:
+    return render((config.SKILL / "SKILL.md").read_text(), config.info_on(cfg))
+
+
+def agents_section(cfg: dict) -> str:
+    return render((config.TEMPLATES / "AGENTS.xmuse.md").read_text(), config.info_on(cfg))
+
+
+def write_prompts(ws: Path, state: Path, cfg: dict) -> None:
+    """What agents are told and offered, for the workspace's current config: tools.json (read by the shim), the
+    skill copies and the AGENTS.md section. Rewritten by `xmuse init` and on every hub start, so a run that turns the
+    information layer off never offers what the hub would refuse."""
+    (state / "tools.json").write_text(json.dumps(tools_for(cfg), indent=1))
+    skill = skill_text(cfg)
+    for d in SKILL_DIRS:
+        dst = ws / d / "xmuse-collab"
+        dst.mkdir(parents=True, exist_ok=True)
+        (dst / "SKILL.md").write_text(skill)
+    section = agents_section(cfg)
+    agents_md = ws / "AGENTS.md"
+    text = agents_md.read_text() if agents_md.exists() else ""
+    if "<!-- xmuse:begin" in text:
+        text = text[:text.index("<!-- xmuse:begin")] + section + text[text.index("<!-- xmuse:end -->") + 18:].lstrip("\n")
+    else:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + section
+    agents_md.write_text(text)
+
+
 def init(ws: Path) -> Path:
     ws = ws.resolve()
     state = config.state_dir_for(ws)
@@ -79,20 +124,8 @@ def init(ws: Path) -> Path:
                                    "claude_allow": CLAUDE_ALLOW + (PYTHON_ALLOW if python else [])}, indent=2))
     if not (state / "tokens" / "_admin").exists():
         _token(state / "tokens" / "_admin")
-    (state / "tools.json").write_text(json.dumps(TOOLS, indent=1))
     (ws / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n")
-    for d in SKILL_DIRS:
-        dst = ws / d / "xmuse-collab"
-        dst.mkdir(parents=True, exist_ok=True)
-        shutil.copy(config.SKILL / "SKILL.md", dst / "SKILL.md")
-    section = (config.TEMPLATES / "AGENTS.xmuse.md").read_text()
-    agents_md = ws / "AGENTS.md"
-    text = agents_md.read_text() if agents_md.exists() else ""
-    if "<!-- xmuse:begin" in text:
-        text = text[:text.index("<!-- xmuse:begin")] + section + text[text.index("<!-- xmuse:end -->") + 18:].lstrip("\n")
-    else:
-        text = (text.rstrip() + "\n\n" if text.strip() else "") + section
-    agents_md.write_text(text)
+    write_prompts(ws, state, config.load(state))
     claude_md = ws / "CLAUDE.md"  # Claude Code reads CLAUDE.md; import AGENTS.md instead of copying it
     if not claude_md.exists():
         claude_md.write_text("@AGENTS.md\n")
@@ -124,7 +157,7 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     if old and old["vendor"] != vendor:
         raise SystemExit(f"agent {agent_id} exists with vendor {old['vendor']}")
     other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
-    if other:  # project configs carry one identity per vendor (M1 limit)
+    if other and vendor == "claude":  # .mcp.json carries one identity; opencode and dsh keep theirs per instance (T12)
         raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
     if vendor == "dsh" and not _dsh_ws_ok(ws):  # dsh cannot write through the wsl.localhost UNC form
         raise SystemExit(

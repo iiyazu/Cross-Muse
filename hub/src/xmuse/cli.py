@@ -268,7 +268,7 @@ def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 20
             raise SystemExit(f"no dsh session log for {sid} under {home}/sessions (set dsh_home in config.json"
                              " or pass --path)")
         return tr.render(tr.dsh(logs[-1]), clip)
-    return tr.render(tr.opencode(call(state, "/v1/admin/oc_messages", {"session": sid})["messages"]), clip)
+    return tr.render(tr.opencode(call(state, "/v1/admin/oc_messages", {"session": sid, "agent": agent})["messages"]), clip)
 
 
 def main(argv=None) -> None:
@@ -285,6 +285,8 @@ def main(argv=None) -> None:
     p.add_argument("--role", default="")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
+    p.add_argument("--extra-mcp", type=Path, help="dsh headless: JSON file with a list of extra stdio MCP servers "
+                                                  '[{"name", "command", "args", "env"}] mounted in every run overlay')
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
     p = sub.add_parser("send")
@@ -334,6 +336,16 @@ def main(argv=None) -> None:
     p.add_argument("agent")
     p.add_argument("--path", type=Path, help="read this Claude .jsonl or dsh .jsonl.zstd file instead")
     p.add_argument("--clip", type=int, default=2000, help="max characters per entry (0: no limit)")
+    p = sub.add_parser("run", help="start an orchestration preset: --preset plan-split-integrate --planner P "
+                                   "--executors E1,E2 --task-file F")
+    p.add_argument("--preset", default="plan-split-integrate", choices=["plan-split-integrate"])
+    p.add_argument("--planner", required=True)
+    p.add_argument("--executors", required=True, help="comma-separated agent ids")
+    p.add_argument("--task-file", type=Path, required=True)
+    p.add_argument("--limits", default="{}", help='JSON seconds, e.g. {"P0": 600, "P1": 1500, "P2": 600, "P3": 480, '
+                                                 '"rounds": 2, "total": 3600}')
+    p = sub.add_parser("run-status", help="phase, snapshots and events of a preset run (default: the latest)")
+    p.add_argument("id", nargs="?", type=int)
     p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
     p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
@@ -365,7 +377,16 @@ def main(argv=None) -> None:
             print(json.dumps(status(state)["agents"], indent=1))
             return
         from .init import add_agent
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role, {("foreground" if a.vendor == "dsh" else "desktop"): True} if a.desktop else None)
+        st = {("foreground" if a.vendor == "dsh" else "desktop"): True} if a.desktop else {}
+        if a.extra_mcp:
+            if a.vendor != "dsh" or a.desktop:
+                raise SystemExit("--extra-mcp is only for headless --vendor dsh agents")
+            from .adapters.dsh import extra_mcp
+            try:
+                st["extra_mcp"] = extra_mcp({"settings": {"extra_mcp": json.loads(a.extra_mcp.read_text())}})
+            except (OSError, ValueError, AttributeError) as e:
+                raise SystemExit(f"--extra-mcp {a.extra_mcp}: {e}")
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -421,3 +442,9 @@ def main(argv=None) -> None:
         print(transcript(state, a.agent, a.path, a.clip))
     elif a.cmd == "attach":
         print(call(state, "/v1/admin/attach", {"agent": a.agent})["command"])
+    elif a.cmd == "run":
+        print(json.dumps(call(state, "/v1/admin/run", {
+            "preset": a.preset, "planner": a.planner, "executors": [x for x in a.executors.split(",") if x],
+            "task": a.task_file.read_text(), "limits": json.loads(a.limits)}), indent=1))
+    elif a.cmd == "run-status":
+        print(json.dumps(call(state, "/v1/admin/runs", {"id": a.id}), indent=1, ensure_ascii=False))
