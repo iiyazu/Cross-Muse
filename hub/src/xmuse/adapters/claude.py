@@ -9,6 +9,7 @@ channel endpoint or waits. A transcript branch count before/after each resume is
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -130,10 +131,48 @@ def _distro() -> str:
     return distro()
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # claude 2.1.296: --effort <level>
+
+
+def config_dir(ws: Path, agent: dict) -> Path:
+    """The directory a Claude member's .mcp.json and .claude/ are written to: its settings.cwd, else the workspace.
+    A project .mcp.json carries one identity, so one Claude member per directory."""
+    return db.workdir(agent, ws)
+
+
+def clean_config(d: Path, agent_id: str) -> list[Path]:
+    """Remove the configs write_config wrote for agent_id in d (a member that moved to another directory).
+    .mcp.json goes only if it names this agent; the hook files only together with it (and only if they are xmuse's)."""
+    mcp = d / ".mcp.json"
+    try:
+        srv = json.loads(mcp.read_text())["mcpServers"]["xmuse"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    flat = json.dumps(srv)
+    if f"XMUSE_AGENT={agent_id}" not in flat and (srv.get("env") or {}).get("XMUSE_AGENT") != agent_id:
+        return []
+    gone = [mcp]
+    mcp.unlink()
+    for rel in (".claude/settings.json", ".claude/xmuse-hook.py"):
+        f = d / rel
+        try:
+            if "xmuse" in f.read_text():
+                f.unlink()
+                gone.append(f)
+        except OSError:
+            pass
+    try:
+        (d / ".claude").rmdir()  # only when empty
+    except OSError:
+        pass
+    return gone
+
+
 def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     """Claude desktop app (Windows side): shim and hooks run in WSL through wsl.exe. No channel, no bash syntax in
     commands (the host may run them with Git Bash or cmd); hook.py and  swallow their own errors."""
     aid, wsl = agent["id"], f"wsl.exe -d {_distro()} --"
+    ws = config_dir(ws, agent)
     old = None
     try:
         srv = json.loads((ws / ".mcp.json").read_text())["mcpServers"]["xmuse"]
@@ -142,7 +181,7 @@ def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     except (OSError, ValueError, KeyError, TypeError):
         pass
     if old:
-        print(f"one interactive Claude identity per workspace; {aid} (desktop) replaces {old}")
+        print(f"one interactive Claude identity per directory; {aid} (desktop) replaces {old}")
     mcp = {"mcpServers": {"xmuse": {"command": "wsl.exe", "args": [
         "-d", _distro(), "--", "env", f"XMUSE_STATE={state}", f"XMUSE_AGENT={aid}", "XMUSE_DESKTOP=1", "node", str(SHIM)]}}}
     (ws / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n")
@@ -166,6 +205,7 @@ def _write_desktop_config(ws: Path, agent: dict, state: Path) -> list[Path]:
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     if db.settings(agent).get("desktop"):
         return _write_desktop_config(ws, agent, state)
+    ws = config_dir(ws, agent)  # the member's own directory (settings.cwd), else the workspace root
     env = {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"], "XMUSE_CHANNEL": "1"}
     mcp = {"mcpServers": {"xmuse": {"command": "node", "args": [str(SHIM)], "env": env}}}
     (ws / ".mcp.json").write_text(json.dumps(mcp, indent=2) + "\n")
@@ -190,7 +230,8 @@ class ClaudeResume:
         s = db.settings(spec.agent)
         sid = spec.session or str(uuid.uuid4())
         cmd = [self.bin, "-p", spec.prompt, "--output-format", "stream-json", "--verbose",
-               "--model", spec.agent["model"], *(["--resume", sid] if spec.session else ["--session-id", sid]),
+               "--model", spec.agent["model"], *(["--effort", s["effort"]] if s.get("effort") else []),
+               *(["--resume", sid] if spec.session else ["--session-id", sid]),
                "--permission-mode", s.get("permission_mode", "acceptEdits"),
                "--allowedTools", "mcp__xmuse__*", *s.get("allowed_tools", [])]
         before = branch_points(transcript(spec.cwd, sid)) if spec.session else 0
@@ -380,6 +421,10 @@ class ClaudeDriver:
                 (p["claude_pid"], agent["id"], p.get("session_id"), "tui", "cli",
                  f"http://127.0.0.1:{int(p['port'])}/push", p["nonce"], db.now()))
 
+    def _cwd(self, agent_id: str) -> str | None:
+        a = db.row(self.db().execute("select * from agents where id=?", (agent_id,)))
+        return db.settings(a).get("cwd") if a else None  # None: the workspace (transcript falls back to it)
+
     def _adopt(self, agent_id: str, sid: str, origin: str = "tui") -> None:
         """A TUI opened for this agent becomes its current session: the hub continues it after."""
         cur = db.row(self.db().execute("select * from sessions where agent_id=? and state='current'", (agent_id,)))
@@ -392,18 +437,22 @@ class ClaudeDriver:
         if old:
             self.db().execute("update sessions set state='current', retired_at=null where id=?", (old["id"],))
         else:
-            self.db().execute("insert into sessions(agent_id, vendor_session, origin, created_at) values(?,?,?,?)",
-                              (agent_id, sid, origin, db.now()))
+            # cwd: the transcript lives under the project directory the session ran in (a member's own directory)
+            self.db().execute("insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
+                              (agent_id, sid, self._cwd(agent_id), origin, db.now()))
 
     write_config = staticmethod(write_config)
 
     def attach_command(self, agent: dict, session: str | None) -> str:
-        if db.settings(agent).get("desktop"):
-            where = win_path(self.ws) if self.ws else "the workspace"
+        s = db.settings(agent)
+        if s.get("desktop"):
+            where = win_path(db.workdir(agent, self.ws)) if self.ws else "the workspace"
             monitor = (f"MSYS_NO_PATHCONV=1 wsl.exe -d {_distro()} -- {sys.executable} -m xmuse --ws {self.ws} watch --agent {agent['id']}")
             return (f"Open {where} in the Claude desktop app (Code tab), start a new session and call xmuse_whoami "
                     f"to verify.\nMonitor command (run once per session): {monitor}")
-        return (f"claude --model {agent['model']} {'--resume ' + session if session else ''}"
+        cd = f"cd {shlex.quote(s['cwd'])} && " if s.get("cwd") else ""  # the session's transcript is per directory
+        effort = f" --effort {s['effort']}" if s.get("effort") else ""
+        return (f"{cd}claude --model {agent['model']}{effort} {'--resume ' + session if session else ''}"
                 " --dangerously-load-development-channels server:xmuse")
 
     def close(self) -> None:
