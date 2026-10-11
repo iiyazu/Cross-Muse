@@ -79,6 +79,7 @@ Claude 桌面版当协调者、dsh 前台模式和插件包的配置，见 [hub/
   - **问题路由**：question 会唤醒规划者（不用点名），规划者的答复沿用原来的作用域传播，并唤醒提问者。
 - **信息层总开关**：hub 配置项 `info_layer`（写在状态目录的 `config.json`，默认 `on`）。设为 `off` 后只剩普通消息：工具表里 `kind` 只有 `message`，没有 `xmuse_context`，提示词里不再提 decision 等概念，hub 也拒绝其他 kind，不注入、不按作用域和问题路由、不做依赖唤醒，只按点名唤醒。用于对照实验：同一批 agent、同一拓扑，只差这个开关。
 - **同一厂商多个实例**：OpenCode 每个 agent 一个独立的服务（单独端口、密码、配置文件）；dsh 无界面模式的身份按次传入，可以注册多个。Claude 也可以有多个，条件是每个成员各用一个目录：`xmuse agent add dev-1 --vendor claude --cwd <目录>`（目录必须已存在，在工作区之内，或是工作区仓库的 git worktree 根目录）。该成员的 `.mcp.json`、`.claude/` 写进它自己的目录，回合也在那里跑；不带 `--cwd` 的成员仍用工作区根目录。同一目录只能有一个 Claude 成员，因为 `.mcp.json` 只能写一个身份。`--effort low|medium|high|xhigh|max` 按成员设置思考强度（只对 Claude 无界面回合生效，别的厂商忽略并提示）。
+- **房间和侧栏**：hub 按 [侧栏接口约定](docs/design/XMUSE2-VIEW-API.zh.md) 提供 `/v1/view`（长轮询的全量视图）、`/v1/act`、`/v1/rooms`、`/v1/join`、`/v1/rebind`、`/v1/leave`。成员令牌只能发消息和标记已读；侧栏拿到的操作令牌代表用户，可以审批和管理，发出的消息记为"用户（经 <provider> 侧栏）"。`xmuse invite <vendor> --role <角色> --description <职责>` 生成一次性邀请码（10 分钟有效），在对方侧栏里 `/xmuse join <码>` 加入。`xmuse agent add --description` 写成员职责，其他成员和侧栏都看得到。
 - **编排预设 plan-split-integrate**：一个规划者加若干执行者，由 hub 推进的状态机。
   - 阶段：P0 规划（规划者写 `.xmuse-plan.json`：文件归属和验收清单）→ P1 执行者并行 → P2 集成 → P3 定向修复（默认最多 2 轮）→ 收尾。每个阶段有时限，超时就强制推进；总时限默认 3600 秒。
   - 每个执行者在 `<工作区>/.xmuse-wt/<id>` 有自己的 git worktree 和分支；各阶段结束时存快照（`git diff --binary` 补丁）。

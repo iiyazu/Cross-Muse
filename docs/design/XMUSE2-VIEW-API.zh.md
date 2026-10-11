@@ -95,3 +95,21 @@
 ## 6. 版本
 
 本文件是 v0。D2 实现时发现必须改的地方，先在房间里提 question 给主控，由主控改约定后发 decision。
+
+## 7. v0 实现说明（D2，2026-10-12）
+
+约定没写、由 hub 实现定下的细节。侧栏照此处理，假 hub（`tools/mock-hub`）与此不同的地方以真 hub 为准：
+
+- **`me`**：成员令牌 `{"kind": "member", "id": <成员>}`；操作令牌 `{"kind": "operator", "id": <它所属的成员>}`，`for_me` 和 `unread` 按这个成员算；CLI 的管理令牌 `{"kind": "admin", "id": "human"}`，说的话记 `via: "cli"`。
+- **`POST /v1/rooms` 不带 `member_id`** 时成员 id 取 vendor 名（`claude`、`opencode`、`dsh`），假 hub 用的是 `host`。房间建成后再调返回 `409 room_exists`；`dir` 与 hub 的工作区不一致返回 `400 wrong_dir`（Windows 写法和 `/mnt/c/...` 写法视为同一目录）。用 `xmuse init` 建的工作区第一次被读时自动有房间，主控是它的桌面协调者，这时只能凭邀请码加入。
+- **邀请码**：格式 `XXXX-XX`（不含 0/O/1/I/L），大小写不敏感，有效期由配置 `invite_ttl` 定，默认 600 秒。不认识的码 `404 unknown_code`。邀请带 `name` 且该成员已存在、同 vendor、还没绑定会话时，加入即接管它（例如 `xmuse agent add` 预先登记的成员），否则 `409 member_exists`，码不作废。命令行：`xmuse invite <vendor> [--role] [--description] [--name]`。
+- **成员的运行方式**：经侧栏加入的 Claude 成员和 dsh 成员由用户自己的会话承载，hub 不起回合；OpenCode 成员由 hub 起它自己的 `opencode serve`。同一目录已有 Claude 成员时，新加入的 Claude 成员不写 `.mcp.json`，只用 mod 自带的工具。
+- **会话绑定**：成员令牌的请求一旦绑定就必须带 `x-xmuse-session`，`/v1/rebind` 例外（只凭成员令牌）。`/v1/leave` 之后不再要求会话头。
+- **时间线**：hub 的通知 `kind: "system"`、`from: "hub"`；房间事件（开房间、加入、移除、转让主控）在 `#room`。`via` 由桌面协调者转述时为 `"coordinator"`。私聊线程 id 为 `dm:<两个 id 按字典序用 + 连接>`，`say` 的 `to` 可以直接写这个线程 id。
+- **审批队列**：除 `shell` 外，待用户确认的对齐提案（`id` 为 `E12` 这样的条目号，`kind: "alignment"`）和被暂停的成员（`id` 为 `resume:<成员>`，`kind: "resume"`）也在里面，都可以用 `approve` 处理（`once`/`always` 视为同意）；对齐提案也可以用 `align`。
+- **移除**：`remove` 保留历史，令牌立即失效，不再收消息；主控不能被移除（`409 is_host`），先 `transfer_host`。
+- **`version`**：hub 每次请求后、以及长轮询等待期间每 0.5 秒，对视图涉及的表取指纹，变了就加一；持久化，hub 重启后继续增长。`since` 大于当前 version 时返回全量。
+
+待定（v0.1 再议）：
+1. OpenCode TUI 要用 `--server --session` 连到 hub 起的 serve，视图里还没有这两个值（serve 有密码，只能给成员自己的令牌看）。
+2. `members[].status` 对 Claude/dsh 侧栏成员只能反映"在线/离线/有待唤醒"，回合是否在跑 hub 不知道；需要的话由侧栏上报。
