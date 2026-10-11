@@ -1020,3 +1020,104 @@ exit code 0
 - **dsh-fl 的模型 id**：opencode 模型目录 `~/.cache/opencode/models.json` 里，opencode-go 下有 `deepseek-v4.1-flash`，所以用 `opencode-go/deepseek-v4.1-flash`。`opencode models` 在 ssh 会话里没有任何输出。
 - **我的后台脚本 bug**：`r7bg.sh` 原来在拼命令时把 `$?` 提前展开了，unit 的命令行里变成了 `echo 0 > …done`，导致 `.done` 不可信。已改成调用 r7 上的 `logs/bg/wrap.sh`。之前任务的结论都是对照输出原文核对过的，不受影响。
 - **r7 的 C 盘**：用户删掉 `docker_data.vhdx` 之后剩 26.5 GB；单干开跑前是 23.17 GB。
+
+## T15 第 7 步：单干 32/44，超过难度闸，暂停等 r7 调整（2026-10-11）
+
+**提交**：本节。原始结果在 prizehub-bench 的 `results/` 下：
+- `solo-meta.json`
+- `solo-final-grade.json`
+- `solo-final.patch`
+- `solo-dsh.ndjson.gz`（dsh 的完整事件流）
+- `il-off-replies.txt`
+
+### 单干（第 3 步）
+**设置**
+- dsh-ms13（`opencode-go/muse-spark-1.3-contributor`），headless，不挂 xmuse；
+- 挂了 bench-tests（`run_tests`），compose 项目 `phb-solo`；
+- 题面是猎场 `README.md` 原文，中途没有补任何提示；
+- 墙钟上限 7200 秒，每 900 秒快照一次。
+
+**结果原文**（`meta.json` 和 `grade.py`）：
+```
+{"elapsed_s": 435, "ended_by": "self", "rc": 0, "ok": true, "error": "", "usage": {"input": 226529, "cache_read": 21932409, "cache_write": 0, "output": 34713, "context": 225761, "calls": 138, "mode": "code"}}
+start 2026-10-11 19:54:51  end 2026-10-11 20:02:05
+final {'compiled': True, 'fixed': 32, 'total': 44, 'unjudgeable': 0, 'regressions': 0, 'regression_detail': [], 'cross_layer_fixed': 11, 'by_layer': {'app': 1, 'domain': 14, 'infrastructure': 10, 'trigger': 7}, 'seconds': 35}
+fixed_ids ['H02','H03','H04','H07','H08','H09','H10','H11','H13','H14','H16','H18','H19','H20','H05','H21','H27','H30','H31','H32','H24','H29','H34','H35','H38','H40','H41','H42','H43','H44','H45','H46']
+28 files changed, 44 insertions(+), 35 deletions(-)
+```
+
+**概况**
+- agent 自己停下的时刻：开始后 435 秒（7 分 15 秒）。因为不到 15 分钟，只有一份快照 `final`。
+- token：输入 226,529，缓存读 21,932,409，输出 34,713，共 138 次调用。
+- 工具调用分布：
+  - read 154、edit 43、grep 13、pwsh 9、todo_write 4、glob 2、skill 1；
+  - **`run_tests` 0 次**。
+
+**没修好的 12 个**：
+
+| bug | 层 | 类别 | 跨层 |
+|---|---|---|---|
+| H01 | domain | wrong-strategy | — |
+| H06 | domain | stock-consistency | 是 |
+| H15 | domain | wrong-condition | — |
+| H17 | domain | missing-statement | — |
+| H22 | infrastructure | off-by-one | 是 |
+| H23 | infrastructure | ttl | 是 |
+| H25 | infrastructure | sql-missing-column | — |
+| H26 | infrastructure | state-init | — |
+| H28 | infrastructure | sql-idempotency | 是 |
+| H33 | infrastructure | sql-guard | — |
+| H36 | infrastructure | idempotency | 是 |
+| H39 | trigger | error-handling | 是 |
+
+其中 H15、H23、H26 旁边留着描述正确行为的注释，也没修好。
+
+**它为什么没跑测试**
+- bench-tests 确实挂上了：overlay 里有 `mcp-bench-tests` 这一行，带 `BENCH_WS`、`BENCH_PROJECT`、`BENCH_TOOL`、`BENCH_DISTRO` 四个变量；`failOnStartupError` 为 true，服务器起不来整个 run 会直接失败，而这次没有失败。
+- agent 的尝试顺序：
+  1. 先读了 `run-tests.cmd` 和 `run-tests.sh`；
+  2. 在沙箱 pwsh 里执行 `wsl.exe --cd … -- bash ./run-tests.sh -Dtest=DrawFlowTest`，被拒绝；
+  3. 又试 `java -version`、`mvn -version`、`mvn … compile`，失败。
+- 最后它说"受沙箱限制无法启动 Docker/WSL 跑 run-tests.sh"，改为只靠读代码修复，然后自己结束了。工具列表里的 `run_tests` 始终没有用过。
+- 这说明：题面（README）只写了 `run-tests.sh` 和 `run-tests.cmd` 两个入口，agent 不一定会想到工具列表里的 `run_tests`。按规定（题面不变、不补提示）这次单干有效，照实记录。
+
+### 难度闸
+- 规则：修好的超过 30/44 就停下，推 REPORT，等 r7 调整难度。
+- 本次 **32/44 > 30**，所以停下。第 5、6 步（团队实验）没开始。
+- 给 r7 的参考事实（不是结论）：
+  - 这次单干**一次测试都没跑**，只靠读代码就修了 32 个，没有回归，7 分钟就结束了。
+  - 剩下的 12 个集中在 infrastructure 层（7 个），多是 SQL 和幂等、库存、MQ 确认这类需要理解跨层流程的 bug；跨层的 17 个里修了 11 个。
+  - 如果 r7 决定调整：可以加难度（更隐蔽的 bug、更少的直接线索），也可以在题面里写明 `run_tests` 工具。后者改动的是题面，需要 r7 或用户来定。
+
+### 第 4 步：团队前置的真实 agent 核验（已完成）
+- T12、T14、T13 都已经完成（见前面各节）。这次在 r7 上用真实的 dsh-ms13 和 oc-ms13 各验了一次信息层开关。
+- 两个工作区：`il-on`、`il-off`。
+- 每个 agent 收到同一条消息：列出 xmuse 工具、给出 `kind` 的可选值、试发一条 `kind=decision`。
+
+原文：
+```
+[on]  tools: xmuse_whoami, xmuse_send, xmuse_inbox, xmuse_ack, xmuse_thread, xmuse_context, xmuse_done, xmuse_approve
+      send.kind: message, handoff, review_request, decision, assumption, question | info fields: scope, supersedes, resolves, depends_on, why | done.declares: True
+      align list: E1 [decision] active global oc-ms13 / E2 [decision] active global dsh-ms13
+[off] tools: xmuse_whoami, xmuse_send, xmuse_inbox, xmuse_ack, xmuse_thread, xmuse_done, xmuse_approve
+      send.kind: ['message'] | info fields: [] | done.declares: False
+      align list: (empty)
+      oc-ms13: Invalid arguments for tool "xmuse_xmuse_send": - kind: Expected "message"
+      dsh-ms13: kind enum: ["message"] (description: "always message")
+```
+
+结论：信息层关闭时：
+- decision、assumption、question 不能登记，`xmuse_context` 不提供；
+- 用来派活的 handoff 也去掉了，所以不会产生 assignment；
+- convention 本来就是用 decision 登记的。
+
+打开时这些都能用，两个 agent 登记的 decision 都生成了条目。四个回合合计约 18 万 token。
+
+### 团队实验的准备（已就绪，没跑）
+- dsh-fl 的模型：`opencode-go/deepseek-v4.1-flash`。
+- 时限按设计稿等比例放大到 120 分钟：
+  - P0 1200 秒、P1 3000 秒、P2 1200 秒、P3 960 秒 × 2 轮；
+  - 总计 7200 秒。
+- 两组使用相同的护栏：`turn_timeout` 7200、`max_chain_wakes` 60、`max_chain_tokens` 和 `agent_hourly_tokens` 调高。
+- oc-ms13 用 `XMUSE_SHELL_POLICY=blocklist-experiment`。在默认白名单下，`bash run-tests.sh` 会停下来等人审批。
+- 等 r7 调整完难度、出了新猎场之后，先写预注册再开跑。
