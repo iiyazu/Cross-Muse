@@ -1428,3 +1428,44 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
 - **次要记录**：每个 run 的 token、唤醒次数，S1 的转告、被动提及、变更期唤醒和 token。
 - **停止条件**：C: 低于 2 GB（脚本自己停）；seed 11 有场景整组跑不起来（基础设施问题）就停下修，修完从头重跑这一批；如果 S1 方向和试跑相反（X 的 stale+gap 高于 P-dm），停下写进 REPORT 等 r7。
 - **命令**（r7）：`experiments/probes/batch.sh batch1 "11 12 13 14 15 16 17 18 19 20" "S1 S2 S3a S3b DEP"`，输出 `~/probes/runs/batch1/`，每个 run 一行写进 `series.log`。
+
+## T17 第 4 步（10-12 04:00）：第一批 seed 11 的检查；S3a、S3b 触底，后面跳过；R 系列执行器
+
+**第一批 seed 11**（`~/probes/runs/batch1/series.log`，代码 `e93aa28`）：
+
+| 场景 | X | P-dm | P-bc |
+|---|---|---|---|
+| S1 stale+gap（越低越好） | 0 | 10 | 0 |
+| S2 retire 后违规（越低越好） | 0 | 0 | 8 |
+| S3a e 正确比例（越高越好） | 0.0 | 0.0 | 0.0 |
+| S3b e 正确比例 | 0.0 | 待补 | 待补 |
+
+- **S1** 和试跑一致。
+- **S2 P-bc 的 8 不是持久化丢失**：e1 从 tick 1 起就没加 "u"，它在汇报里写"noted format v1 but ignored as non-team-rule"。原因是流程说明里写的是"Team rules come from the user"，而格式规则的标签是 `[format v1] Format rule`，不叫 team rule。这个误读和组别无关。主要指标照预注册算（tick 6–9），分析时另列"retire 前是否遵守"，只把"retire 前遵守、retire 后不遵守"算作持久化失败。
+- **S3a 三组都是 0，是场景文字造成的底**：e2 发出 handoff 后（X 组里是 assignment E4），e1 回复"Decline E4: team rules come from the user only ... Writing out/e1/e would violate 'Never write a key you do not maintain'"，e2 也同意。流程说明里的"只有用户定规则""不写自己不维护的键"，让同伴交接在三组里都不可能成立。
+- **S3b X 组：信息层本身工作正常，但卡在隐私上**：e1 收到用户的 assignment 后，向 e2 提了 question（E5，路由正确）；e2 回答"I can't share k — I received it in a private DM with the user ... I need the user's approval before disclosing it"，e1 转而问用户，而脚本里的用户不回答问题，所以 e 一直是 gap。
+- **处理**（按 §13 的"要改场景设计意图的事写进 REPORT，跳过，先跑别的"）：seed 11 的 S3b 三组跑完后停掉系列，从 seed 11 起只跑 S1、S2、DEP（已有结果的 run 自动跳过），被停掉的 run 移进 `batch1/failed/`。少了两个场景后，`batch.sh` 的组别轮转顺序和预注册时不同（仍是逐场景轮转），这里记一笔。
+- **建议 r7 定**（改的是场景文字，不是机制）：
+  1. S3a：流程说明加一句"A teammate may hand you an extra key; take it on"，或者把交接改成用户在 #team 里授权"e2 会把一个新键交给 e1"。
+  2. S3b：私下事实写成"[fact] The coefficient k is 7 (a team parameter: share it with teammates who need it)"；或者让脚本用户回答提问（这就变成测路由加回答，不再是"只有 e2 知道"）。
+  3. S2：格式规则改名为 `[rule v1-format] Team rule: ...`，避免"不是 team rule"的读法。
+  改完作为第一批补充（S3a'、S3b'、S2'）另行预注册再跑。
+
+**R 系列执行器**（`exp/probes`，r7 上还没拉取，第一批的代码保持 `e93aa28`）：
+- `8a926a7`：`experiments/probes/rworld.py`（场景定义）、`rrun.py`（执行器）。
+  - 事件驱动：规则按顺序检查，事件有 `start`、`first_done`、`all_done`、`file_exists`、`quiet`。`quiet` 要求房间安静够久，并且上一条规则之后有成员报过 done。
+  - P-relay 转发器：每条新的 done 汇报，以用户身份私信转给其他每个成员，开头写 "Forwarded to you: <成员>'s report:"，计入用户动作数。例外：如果一个回合只是被转发唤醒的，它的 done 不再转发，否则两人会来回转发到总时限。这是对设计的补充。
+  - 每个回合结束时记录项目文件快照；判定时把最终工作区复制一份，放入隐藏验收测试运行。验收测试方法按 `test_<成员>_` 命名，所以失败能直接对到人。
+  - 失败归因初判：事实从没出现在该成员的唤醒包或回合日志里，算"没送到"；出现过但成员的文件没体现，算"送到没照做"；都有仍然错，算"推理错误"。
+  - 过程指标：唤醒次数、token、空转回合、返工、成员发消息的种类、成员写的条目。
+- `c77fee2`：`rbatch.sh`，和 `batch.sh` 同样的顺序和规则。
+- `c578e1d`：R5–R8。R5 统计共享文件里一方改动被另一方覆盖的次数；R6 用审查者成员 r 跑 `review/` 下的全量测试；R7 用侧栏发言（`/v1/rooms` 开房间，成员 `user-desk` 是桌面 Claude、hub 不运行它，开完立即暂停，免得它的邮件算作待处理唤醒），消息 `via="claude sidebar"`；R8 用 `/v1/act pause` 暂停 a，再交给 c。
+- 测试 `tests/test_rprobes.py`：每个场景的参考解都能通过可见测试和隐藏测试，桩代码通不过；用真实 hub 加假 agent 跑通 R1（三组）、R2、R7、R8 的事件流程；覆盖计数和归因三种情况各有用例。全量测试：`402 passed, 4 skipped, 1 warning in 330.56s (0:05:30)`。
+- **和设计稿的差异**：
+  1. shell 策略用 `blocklist-experiment`，照设计。但设计里给的理由（open-experiment 会拒绝测试运行器）已经过时：10-12 之后 open-experiment 全部放行。
+  2. R2 只做变体 a（同一成员换新会话），`recent_n=2`，否则第一段的约定消息会原样留在新会话的引导包里。
+  3. R3 告诉 b"upload.py 单独发布，不能 import sign.py"，否则 b 直接调用 a 的 `sign()` 就能通过，测不到信息流动。
+  4. R8 要求 a"先做 step1 并用 xmuse_done 汇报"，这样第一次 done 时任务才做了一半。
+- **待试跑确认**：dsh 能不能在自己的沙箱里运行 `python -m unittest`。r7 的 Windows 上有 Python 3.13（`where python`），提示里两种写法都给了。
+
+**接下来**：第一批（S1、S2、DEP）跑完后，在 r7 上拉取 `exp/probes`，试跑 R1、R4（每组 1 次），检查事件触发、转发、判定和归因。
