@@ -310,7 +310,11 @@ async function pollOnce($: any, waitOverride?: number): Promise<void> {
   try {
     await pollInner($, waitOverride)
   } catch (err) {
-    await setConn($, 'down', String(err))
+    try {
+      await setConn($, 'down', String(err))
+    } catch {
+      // the environment is going away (reload / session end): nothing to report to
+    }
   } finally {
     busy = false
   }
