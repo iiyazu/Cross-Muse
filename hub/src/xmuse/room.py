@@ -127,8 +127,10 @@ def _online(conn, a: dict) -> bool:
 
 
 def _unread(conn, member: str, thread: str | None = None) -> int:
+    # hub notices reach only desktop members (the coordinator relays them): left out, so unread means the same
+    # for every vendor's sidebar
     sql = ("select count(*) from deliveries d join messages m on m.id=d.message_id where d.recipient=?"
-           " and d.read_at is null and d.acked_at is null and d.state != 'canceled'")
+           " and d.read_at is null and d.acked_at is null and d.state != 'canceled' and m.kind != 'notice'")
     args = [member]
     if thread:
         sql, args = sql + " and m.thread_id=?", args + [thread]
