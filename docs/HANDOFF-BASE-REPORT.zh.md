@@ -749,3 +749,128 @@ ws-broken（故意编译失败）compiled=false fixed=0/44 regressions=0 seconds
 - **一处已修的问题**：第一次打出的猎场把 `work/prize-hub-app/data/log/` 下 3.9 GB 的运行日志也带进去了。这些日志是之前跑原有测试时产生的，不在 git 跟踪范围内。现在 `mkarena`、`grade`、`runvariant` 都排除了 `data/log`，并重新生成了猎场。arena 那次 0/44 的判分用的是旧猎场，但两份猎场的代码完全一样，只差这些日志。
 - **镜像拉取**：清理 root 属主的文件时，从 Docker Hub 拉了 `alpine:latest`，本机原来没有这个镜像。
 - **runvariant 的耗时**：去掉日志之前，每次运行都会把这 3.9 GB 日志 rsync 一遍，上面的耗时里包含这部分开销；以后会更快一些。
+
+## T15 第 4 步：迁到 r7、判分器逐类编译、猎场题面补充（2026-10-11）——因 r7 C 盘低于 2GB 暂停
+
+**提交**：
+- xmuse2：本节。
+- prizehub-bench（r7 私有）：`e214288`（判分器逐类编译、README、run-tests、日志）、`dc5abde`（修 `.gitignore`）、`f1cd796`（grade 自建 `var/`），以及本节同时推送的提交（加入单干驱动 `tools/solo_dsh.py`，还没跑过）。
+
+### 0. base 现状（`wsl --shutdown` 之后）
+- **互操作**：已恢复。`/proc/sys/fs/binfmt_misc/WSLInterop` 显示 enabled，`cmd.exe /c ver` 正常。
+- **D:\swebp**：base 上不存在。
+- **D:\lb**：保留原样，没动。最后写入时间是 15:38，`trial.err` 为空。
+- **lb-t01…t04 的 12 个容器**：全部 `Exited (255)`，是被 shutdown 打断的。按指示没有重跑。
+- **base 上 hub 驱动 dsh 的端到端**：没做。用户更正后，实验改在 r7 上跑，端到端在 r7 上做了，见下文。
+
+### 1. 判分器改为逐个隐藏测试类单独编译
+**做法**：`runvariant.compile_tests`
+1. 先跑 `mvn test-compile`。
+2. 失败时，从 `[ERROR] /src/<file>.java:[行,列]` 中取出出错的文件。
+3. 出错的全是隐藏测试类：删掉这些类，重新编译，最多重复 10 轮。只要有一个出错文件不是隐藏测试（主代码或可见测试），或者报错里没有文件名，就判"不能编译"。
+
+`grade.py` 的输出：
+- 新增 `unjudgeable` / `unjudgeable_ids`：判定测试编译不过的 bug，不算修好，单独计数。
+- R 类编译不过时，记为回归 `Rxx: does not compile`。
+- 新增 `compile_errors`：编译失败时附上报错原文。
+
+**验证**：把 `ISchemeRepository.queryTodayUserDrawCount` 改名为 `countTodayUserDraws`，同时改了 3 个调用它的主代码文件。隐藏测试里只有 H03Test、H30Test 引用这个方法，可见测试没有引用。base 上的原文：
+```
+arena        {'compiled': True, 'fixed': 0,  'total': 44, 'unjudgeable_ids': [],             'regressions': 0, 'visible_tests': 16, 'seconds': 67, 'cross_layer_fixed': 0}
+work         {'compiled': True, 'fixed': 44, 'total': 44, 'unjudgeable_ids': [],             'regressions': 0, 'visible_tests': 16, 'seconds': 51, 'cross_layer_fixed': 17}
+ws-ren-work  {'compiled': True, 'fixed': 42, 'total': 44, 'unjudgeable_ids': ['H03', 'H30'], 'regressions': 0, 'visible_tests': 16, 'seconds': 49, 'cross_layer_fixed': 17}
+ws-ren-arena {'compiled': True, 'fixed': 0,  'total': 44, 'unjudgeable_ids': ['H03', 'H30'], 'regressions': 0, 'visible_tests': 16, 'seconds': 65, 'cross_layer_fixed': 0}
+```
+结论：参考解加改名之后，只有引用这个方法的 H03、H30 判不了，其余 42 个照常判为修好。猎场加改名之后，也只有这两个判不了。
+
+### 2. 猎场题面和脚本
+- **README "任务"一节**：补了一句"保持现有类名、方法签名和数据库表结构不变。"
+- **H15、H23、H26、H30 旁边的注释**：保留，没改。
+- **`run-tests.sh`**：
+  - 支持 `COMPOSE_PROJECT_NAME`（默认 `prizehub-bench`）和 `M2_CACHE`；
+  - 可以把这两个变量写进 `docs/dev-ops/bench/local.env`，这个文件已加进猎场的 `.gitignore`；
+  - 脚本自己 `docker compose up -d --wait`，已经起着的就复用；
+  - 测试容器带 `--log-opt max-size=10m`。
+- **新增 `run-tests.cmd`**：Windows 入口，通过 `wsl.exe --cd "%~dp0" -- bash ./run-tests.sh %*`（默认发行版）调用同一个脚本，给 dsh 用。README 的"本地环境"一节写明了这几项。
+- **关掉写文件的日志**：
+  - bench profile 的 `logging.config` 改为 `classpath:logback-bench.xml`，只输出到控制台；
+  - 这个文件放在 `prize-hub-app/src/test/resources/`，判分时整个 `src/test` 用猎场原件覆盖，agent 改不了它；
+  - 核对过：改完以后跑测试，`data/log` 下没有新文件。
+- **docker 日志**：
+  - compose 里每个服务都设了 `json-file`，`max-size 10m`、`max-file 2`（已用 `docker inspect` 核对 LogConfig）；
+  - runner 容器同样设置；
+  - MySQL 加了 `--disable-log-bin`。
+  - 没有改 `/etc/docker/daemon.json`（属于系统设置）。
+- **工具路径**：kit 里的工具改为以仓库根目录为基准（原来写死 `~/bench`），在 r7 上直接用 `~/bench/phb`。
+
+### 3. 迁到 r7（`~/bench/phb/`，就是 prizehub-bench 的检出目录）
+| 步骤 | 结果 | Windows 侧 C 盘剩余 |
+|---|---|---|
+| 开始前 | — | 6.09 GB |
+| 克隆 kit；用 rsync 把 base 的 `~/bench/m2`（310 MB）拷过去 | 拷贝成功，r7 上没有下载任何依赖。scp 在这条链路上会挂住，后面统一改用 `ssh … 'cat > f'` | 6.08 GB |
+| 拉 4 个镜像：redis:6.2 166MB、rabbitmq:3.12.9 356MB、maven:3.9-eclipse-temurin-8 532MB、mysql:8.0.32 728MB | 第一次 `docker pull` 失败：`error getting credentials … A specified logon session does not exist`（ssh 会话里没有 Windows 登录会话，凭据助手用不了）。改为单条命令带 `DOCKER_CONFIG=~/bench/phb/.docker`（一个空的 `{}` 配置）匿名拉取，没有改全局配置。alpine 没拉 | 6.08 GB |
+| 在 r7 上用 `mkarena.py` 生成猎场，和 base 核对 | 两边 `HEAD^{tree}` 都是 `9f15d022b5a8c15c7e69ef90b994f3f76bf789d0`，内容和文件权限完全一致。核对前先修了 kit 的问题：`.gitignore` 里的 `prizehub/` 同时匹配到了 `io/prizehub/`，私有仓库里的 `work/` 缺了 289 个源文件，隐藏测试也没进去（`6de63c3` 就有这个问题）。改成只匹配根目录（`dc5abde`）之后，文件数 385 = 385 | — |
+| 克隆 xmuse2 rc/portfolio 到 `~/bench/phb/xmuse2`，执行 `bootstrap.sh` | doctor 0 failed | 5.86 GB |
+| hub → dsh 端到端（工作区 `/mnt/c/Users/user/phb/e2e`，状态目录 `~/bench/phb/state`） | 成功，原文见下 | — |
+| r7 全量判分（worker 1、2 并行） | 原样猎场 0/44、参考解 44/44，和 base 一致，原文见下 | **1.7 GB → 按规则停下** |
+
+**端到端原文**（ssh 会话里执行，没改任何系统设置）：
+```
+hub started: {'port': 43117, 'pid': 1711895, 'shell_policy': 'allowlist'}
+#1 19:08:39 human (via cli) → dm:dsh-ms13+human [message] (chain 1, depth 0)
+  ↳ turn 1 dsh-ms13 dsh fresh 19:08:39–19:08:56 succeeded chat tokens=34,546 ctx=9,242 calls=4
+#2 19:08:53 dsh-ms13 → dm:dsh-ms13+human [message] (chain 1, depth 1)
+    PONG
+#3 19:08:55 dsh-ms13 → dm:dsh-ms13+human [done] (chain 1, depth 1)
+```
+
+**r7 判分原文**：
+```
+arena {'compiled': True, 'fixed': 0, 'total': 44, 'unjudgeable_ids': [], 'regressions': 0, 'visible_tests': 16, 'seconds': 55, 'cross_layer_fixed': 0, 'by_layer': {'app': 0, 'domain': 0, 'infrastructure': 0, 'trigger': 0}}
+work  {'compiled': True, 'fixed': 44, 'total': 44, 'unjudgeable_ids': [], 'regressions': 0, 'visible_tests': 16, 'seconds': 41, 'cross_layer_fixed': 17, 'by_layer': {'app': 1, 'domain': 18, 'infrastructure': 17, 'trigger': 8}}
+```
+
+**两套环境同时运行时的内存**（`docker stats --no-stream`，判分刚结束时取的一次，不是峰值）：
+- mysql：每套约 427 MiB；
+- rabbitmq：130–159 MiB；
+- redis：4–12 MiB；
+- runner：5–95 MiB。
+
+### 为什么停下：r7 的 C 盘
+- r7 的 docker 是 **Docker Desktop**。镜像、容器层和卷都在 `C:\Users\user\AppData\Local\Docker\wsl\disk\docker_data.vhdx` 里，这个文件现在 **23.71 GB**。不在 Ubuntu 自己的 vhdx 里：Ubuntu 的 `/` 还剩 859 GB。
+- 我这次在 docker 里新增的：
+  - 镜像 1.78 GB；
+  - 6 个卷 432 MB（两套 MySQL 各 216 MB）；
+  - 容器层很小。
+
+  pull 刚结束时 C 盘读数没有变化，判分之后一次掉到 1.7 GB。看起来 vhdx 是滞后扩展的，但我没法把这 4.4 GB 逐项对上，也不排除同一时间 r7 上有别的写入。
+- vhdx 只会变大、不会自动缩小，所以在 docker 里删东西不能把空间还给 C 盘。
+- 下面这些都属于系统层面的操作，没做：
+  - 压缩 vhdx（Docker Desktop 的 Clean/Purge，或者 `Optimize-VHD`）；
+  - 把 Docker Desktop 的磁盘挪到别处（r7 只有 C 盘）；
+  - 清理 C 盘上的其它东西。
+- 当前状态：
+  - 两套判分环境（phbench1、phbench2，加上 phrun1、phrun2）还在运行，空闲状态下基本不再写盘；
+  - e2e 的 hub 已经停了。
+
+### 后续实验对磁盘的预估（供决定用）
+- 单干：要一套 compose，MySQL 卷约 216 MB，再加 Maven 的 target 等，约 0.3–0.5 GB。
+- 团队：每个执行者一套 compose，P 整合时再用一套或者复用一套，合计约 1–1.5 GB。
+- 判分：复用现有的两套 phbench。
+
+建议至少腾出 3–4 GB 再开跑。
+
+### 已准备好、还没跑的
+- `tools/solo_dsh.py`：单干驱动。
+  - 一个 headless dsh 进程，不挂 xmuse MCP，提示词就是工作区的 `README.md` 原文，中途不补任何提示；
+  - 墙钟上限 7200 秒；
+  - 每 900 秒快照一次工作区（排除 target、`data/log`、`.git`），结束时再存一份 `final`；
+  - `meta.json` 记录结束方式（agent 自己停下 / 到时限）、用时、token。到时限时，还会按 patch 文件名在 Windows 侧结束 dsh 进程。
+- r7 上跑后台任务的方式：
+  - 观察：ssh 会话落在 `/init.scope`，`setsid nohup` 起的后台任务在会话结束时被杀了；
+  - 改用 `systemd-run --user`（r7 已开 Linger）。
+
+### 没做 / 拿不准
+- 第 3–6 步都没开始：单干难度测试、团队前置核验、两组团队实验、结果汇总。原因是 C 盘低于 2 GB，按规则停下。
+- 第 4 步核验 T12、T14、T13 本身已经完成（见前面各节）。"信息层关闭时对齐层工具全部不可用"，`tests/test_info_layer.py` 覆盖了；还没在 r7 上用真实 agent 再验一次。
+- dsh 在 headless 沙箱里能不能调用 `run-tests.cmd`（wsl.exe → docker），还没有用真实模型验证过。计划在单干正式开始前，先在一份单独的工作区里做一次很短的冒烟测试，不计入结果。
