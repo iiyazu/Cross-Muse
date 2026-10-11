@@ -133,7 +133,7 @@ const readBindings = (f) => JSON.parse(fs.readFileSync(f, 'utf8'))
 
 test('exports and command registration', async () => {
   assert.equal(name, 'xmuse')
-  assert.deepEqual(inject, ['commands', 'agents', 'sessions', 'tools', 'sessionController'])
+  assert.deepEqual(inject, ['commands', 'agents', 'sessions', 'tools', 'sessionController', 'webServer'])
   const t = setup()
   assert.ok(t.commands.has('xmuse'))
   assert.equal(t.commands.get('xmuse').recordInput, false)

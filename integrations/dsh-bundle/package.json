@@ -1,22 +1,27 @@
 {
   "name": "xmuse-dsh-bundle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
-  "description": "xmuse 2 dsh relay: /xmuse bind|unbind|status, 7 native xmuse_* tools, long-poll relay of hub messages into the bound session",
+  "description": "xmuse 2 dsh bundle: sidebar drawer (XMUSE2-VIEW-API v0) + /xmuse join|room new|bind|unbind|status, 7 native xmuse_* tools, long-poll relay of hub messages into the bound session",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
+    "./sidebar-host": "./sidebar-host.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
   "scripts": {
-    "test": "node --import ./test/register.mjs --test test/bundle.test.mjs"
+    "test": "node --import ./test/register.mjs --test test/bundle.test.mjs test/sidebar.test.mjs"
   },
   "files": [
     "index.js",
+    "client.js",
+    "sidebar-host.js",
     "tools.json",
     "cordis.patch.yml",
+    "SIDEBAR.zh.md",
     "locale/*.json"
   ],
   "peerDependencies": {
@@ -27,6 +32,10 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
     }
   }
 }
