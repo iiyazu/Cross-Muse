@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
-from .adapters.opencode import shell_auto_ok
+from .adapters.opencode import auto_decision
 from .config import HUMAN
 
 log = logging.getLogger(__name__)
@@ -275,18 +275,20 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
-        auto = shell_auto_ok(req.get("action"), req.get("resources"), self.shell_policy) and "opencode" in self.drivers
+        auto = auto_decision(req.get("action"), req.get("resources"), self.shell_policy) \
+            if "opencode" in self.drivers else None
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
                                                   json.dumps(req.get("resources")), db.now()))
         if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
             try:
-                self.drivers["opencode"].approve(session, req["id"], "once", agent_id)
+                self.drivers["opencode"].approve(session, req["id"], auto, agent_id)
                 with db.tx(conn):
-                    conn.execute("update approvals set state='decided', decision='once', decided_at=? where id=?",
-                                 (db.now(), req["id"]))
-                log.info("auto-approved shell for %s: %s", agent_id, req.get("resources"))
+                    conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
+                                 (auto, db.now(), req["id"]))
+                log.info("auto-%s %s for %s: %s", "approved" if auto == "once" else "rejected", req.get("action"),
+                         agent_id, req.get("resources"))
                 return
             except Exception:
                 log.exception("auto-approve failed; asking the human")

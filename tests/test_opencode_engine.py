@@ -228,6 +228,36 @@ def test_experiment_policy_is_the_old_blocklist_and_only_by_name():
     assert not shell_auto_ok("shell", probe, "anything-else")
 
 
+def test_open_experiment_policy_never_asks_the_human():
+    from xmuse.adapters.opencode import auto_decision
+    once = [["git branch --show-current", "git status --short"], ["git merge main", "rm -rf target"],
+            ["curl -s http://x"], ["python3 tools/check.py"], ["grep -rn javadoc src"]]
+    for cmds in once:
+        assert auto_decision("shell", cmds, "open-experiment") == "once", cmds
+    assert auto_decision("external_directory", ["/tmp/x"], "open-experiment") == "once"
+    runners = ["mvn -q -o test", "cd x && ./mvnw test", "docker run --rm maven", "/usr/bin/java -jar a.jar",
+               "MAVEN_OPTS=-X mvn test", "powershell.exe -c mvn test", "C:\\tools\\mvn.cmd test", "(gradle test)"]
+    for cmd in runners:
+        assert auto_decision("shell", ["ls", cmd], "open-experiment") == "reject", cmd
+    assert auto_decision("shell", ["git branch --show-current"]) is None  # default allowlist: the human decides
+    assert auto_decision("shell", ["git status --short"]) == "once"
+
+
+def test_open_experiment_rejects_runners_without_parking(make, monkeypatch):
+    monkeypatch.setenv("XMUSE_SHELL_POLICY", "open-experiment")
+    h = make(OC)
+    h.oc.plan = [{"result": "hang"}]
+    h.send("opencode-1", "go")
+    h.wait(lambda: h.hub.engine.drivers["opencode"].headless.turns, what="tracked")
+    h.oc.ask_permission("ses_fake1", "per_a", "mvn -q -o test")
+    h.oc.ask_permission("ses_fake1", "per_b", "git branch --show-current")
+    h.wait(lambda: len(h.oc.replies) == 2, what="auto replies")
+    assert sorted((r["request"], r["decision"]) for r in h.oc.replies) == [("per_a", "reject"), ("per_b", "once")]
+    assert not h.q("select 1 from messages where kind='notice' and body like '%asks permission%'")
+    assert {r["id"]: r["decision"] for r in h.q("select id, decision from approvals")} == \
+        {"per_a": "reject", "per_b": "once"}
+
+
 def test_hub_takes_the_policy_from_its_environment_only(make, monkeypatch):
     import pytest
     monkeypatch.setenv("XMUSE_SHELL_POLICY", "blocklist-experiment")
