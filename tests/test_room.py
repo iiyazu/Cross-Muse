@@ -105,6 +105,23 @@ def test_invite_join_once_within_ten_minutes_for_the_named_vendor(make):
     assert v["me"]["id"] == "claude" and any("claude joined the room" in t["text"] for t in v["timeline"])
 
 
+def test_unread_leaves_out_hub_notices_for_every_vendor(make):
+    """Hub notices are delivered to desktop (Claude) members only; a sidebar's unread must not count them."""
+    h = make()
+    ot = open_room(h)["operator_token"]  # lead: a Claude desktop member
+    _, inv = act(h, ot, act="invite", vendor="claude")
+    _, j = call(h, "POST", "/v1/join", {"code": inv["code"], "vendor": "claude", "session_id": "S2"})
+    assert h.q("select count(*) n from deliveries d join messages m on m.id=d.message_id"
+               " where m.kind='notice' and d.recipient='claude'")[0]["n"] >= 1  # the join notice reached it
+    unread = lambda v: {m["id"]: m["unread"] for m in v["members"] if m["id"] in ("lead", "claude")}  # noqa: E731
+    _, v = view(h, j["member_token"], "S2")
+    assert unread(v) == {"lead": 0, "claude": 0}
+    act(h, ot, act="say", to="#room", text="hi all")
+    _, v = view(h, j["member_token"], "S2")
+    assert unread(v) == {"lead": 1, "claude": 1}
+    assert next(t for t in v["threads"] if t["id"] == "#room")["unread"] == 1
+
+
 def test_named_invite_takes_over_a_registered_member(make):
     """A member `xmuse agent add` registered (no session yet) is taken over by the sidebar that joins as it."""
     h = make([("dog", "claude", {"desktop": True})])
