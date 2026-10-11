@@ -1,6 +1,7 @@
 {
   "name": "xmuse-dsh-bundle",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "xmuse 2 dsh relay: /xmuse bind|unbind|status, 7 native xmuse_* tools, long-poll relay of hub messages into the bound session",
   "private": true,
   "type": "module",
