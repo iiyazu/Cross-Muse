@@ -228,6 +228,27 @@ def test_experiment_policy_is_the_old_blocklist_and_only_by_name():
     assert not shell_auto_ok("shell", probe, "anything-else")
 
 
+def test_loose_policy_lets_curl_reach_this_machine_only():
+    """User 10-12: under the loose policy an agent may curl its own local servers; anything that could leave the
+    machine still asks the human (and the default allowlist is unchanged)."""
+    from xmuse.adapters.opencode import shell_auto_ok
+    local = ["curl -s -u :t3st-pw-123 -XPOST http://127.0.0.1:14101/api/session -H 'content-type: application/json'"
+             " -d '{\"title\":\"xmuse-verify\"}'",
+             "curl -sf http://localhost:43117/v1/view?since=0", "curl 127.0.0.1:8080/health",
+             "curl -o /tmp/out.json 'http://[::1]:9000/x'", "/usr/bin/curl -I https://localhost/"]
+    away = ["curl https://example.com", "curl http://127.0.0.1.evil.com/x", "curl -x http://proxy:3128 http://127.0.0.1/",
+            "curl --proxy=http://p:1 http://127.0.0.1/", "curl -sx p:1 http://127.0.0.1/", "curl -K cfg.txt",
+            "curl --resolve localhost:80:8.8.8.8 http://localhost/", "curl http://127.0.0.1/ --next https://example.com",
+            "curl http://127.0.0.1/ example.com", "curl http://user@127.0.0.1@evil.com/", "curl $(cat url)",
+            "curl http://127.0.0.1/ && curl https://example.com", "curl -s", "curl ftp://127.0.0.1/"]
+    for c in local:
+        assert shell_auto_ok("shell", [c], "blocklist-experiment"), c
+        assert not shell_auto_ok("shell", [c]), c  # allowlist: still the human's
+    for c in away:
+        assert not shell_auto_ok("shell", [c], "blocklist-experiment"), c
+    assert shell_auto_ok("shell", ["sleep 6", local[0], "head -c 500"], "blocklist-experiment")
+
+
 def test_open_experiment_policy_never_asks_the_human():
     from xmuse.adapters.opencode import auto_decision
     once = [["git branch --show-current", "git status --short"], ["git merge main", "rm -rf target"],
