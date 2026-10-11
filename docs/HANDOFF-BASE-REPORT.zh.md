@@ -304,3 +304,66 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 - 混杂：base 臂和 r7 臂的 hub 提交不同（`59407f8` 对 `b97919c`），OpenCode 版本也不同（v2.0.21 对 v2.0.26）。
 
 **待办（r7）**：把 27 个 run 的结果目录和 `metrics-t6-*` 提交到 rc/portfolio。提交后我这里的数字可以直接对照。
+## T10a SWE-Bench Pro 环境（2026-10-11，base）
+
+**主机与磁盘**
+- base：Windows 主机 + Arch WSL，工作区 `/home/goodman/dev/xmuse2` 落在 `/dev/sdd`（1007G）。
+- 开工前检查：Windows 侧 C: 322GB free、D: 1090GB free；WSL `/` 900GB avail。结论：BENCH_DIR 和 Docker 数据目录都放在有足够空间的原生大盘上（WSL `/dev/sdd`），24 镜像约 40–60GB + 20% 余量无压力，不停工。
+- Docker：client 29.8.1 / server 29.8.1，`Docker Root Dir: /var/lib/docker`，overlayfs。`docker run hello-world` 通过，当前用户已在 `docker` 组、免 sudo；`/etc/docker/daemon.json` 只有 `max-concurrent-downloads: 8`，**没有改 data-root，没有用 sudo**。
+
+**BENCH_DIR**：`/home/goodman/bench`
+- 数据集 `swebench-pro-verified/`：`swebench_pro_verified.jsonl`（731 行，sha256 = `9eeac2c01fcbf25fd8db4254a23b9e0d306eb659e9c14dd1308b9fda10faf6d8`，与要求一致）+ `README.md`。Apache-2.0，无需申请访问。
+- 评测脚本 `SWE-bench_Pro-os`：提交号 `66f9276`（v2.0.0），**与 r7 用的版本一致，无差异**。
+- 抽样：`python3 sample.py BENCH_DIR 24 20261011` → `pool 657/731 (<= 400 changed lines)`，`diff` 对比 `BENCH_DIR/pilot/ids-24-20261011.txt` 与仓库同名文件**完全一致**。
+
+**24 个镜像**（`jefzda/sweap-images:<dockerhub_tag>`；Size 列为 `docker images` 显示值，十进制 GB；合计约 112.3GB）：
+
+| 题（短 tag） | 大小 | 拉取耗时 |
+|---|---|---|
+| nodebb 0f788b | 3.29GB | 1540s（旧慢网） |
+| nodebb 18c45b | 3.27GB | 首轮 WiFi 切换断流失败，事后补拉 53s |
+| ansible a7d2a4 | 1.65GB | 119s |
+| ansible e9e600 | 1.65GB | 43s |
+| ansible 564009 | 1.64GB | 52s |
+| element-web 41dfec | 3.84GB | 84s |
+| element-web 5e8488 | 3.85GB | 39s |
+| flipt f74394 | 6.71GB | 142s |
+| flipt 518ec3 | 2.08GB | 20s |
+| flipt 756f00 | 2.08GB | 22s |
+| vuls fd18df | 4.30GB | 65s |
+| vuls 407407 | 6.07GB | 92s |
+| teleport db8920 | 7.16GB | 177s |
+| teleport 78b0d8 | 7.57GB | 82s |
+| openlibrary 9bdfd2 | 4.38GB | 85s |
+| openlibrary 3c48b4 | 3.02GB | 62s |
+| openlibrary 123e6e | 4.55GB | 80s |
+| navidrome ee21f3 | 4.88GB | 116s |
+| navidrome 29bc17 | 4.36GB | 64s |
+| webclients 7e5452 | 12.5GB | 301s |
+| webclients 08bb09 | 15.2GB | 495s |
+| qutebrowser f91ace | 2.15GB | 36s |
+| qutebrowser 8cd067 | 1.99GB | 37s |
+| tutanota fb32e5 | 4.07GB | 92s |
+
+- 拉取策略：逐个 `docker pull`，每拉完看剩余空间（全程远高于 15GB 下限，未触发停拉）。旧 WiFi 实测约 0.8MB/s；换 WiFi 后 14–28MB/s。试过 DaoCloud 镜像加速（本机有用过 `m.daocloud.io` 的痕迹），但 `jefzda/sweap-images` 不在它的白名单被拒，继续直连。完整拉取日志在 base 本机 `~/bench/pilot/pull-24-20261011.log`（未进仓库）。
+
+**参考答案校验**：`bash gold-check.sh BENCH_DIR 24-20261011 "" 2`，`Overall accuracy: 0.9583333333333334`，23/24 为 true。
+
+`eval_results.json` 原文：
+```
+{"instance_NodeBB__NodeBB-0f788b8eaa4bba3c142d171fd941d015c53b65fc-v0ec6d6c2baf3cb4797482ce4829bc25cd5716649": true, "instance_NodeBB__NodeBB-18c45b44613aecd53e9f60457b9812049ab2998d-v0495b863a912fbff5749c67e860612b91825407c": true, "instance_ansible__ansible-a7d2a4e03209cff1e97e59fd54bb2b05fdbdbec6-v0f01c69f1e2528b935359cfe578530722bca2c59": true, "instance_ansible__ansible-e9e6001263f51103e96e58ad382660df0f3d0e39-v30a923fb5c164d6cd18280c02422f75e611e8fb2": true, "instance_ansible__ansible-5640093f1ca63fd6af231cc8a7fb7d40e1907b8c-vba6da65a0f3baefda7a058ebbd0a8dcafb8512f5": true, "instance_element-hq__element-web-41dfec20bfe9b62cddbbbf621bef2e9aa9685157-vnan": false, "instance_element-hq__element-web-5e8488c2838ff4268f39db4a8cca7d74eecf5a7e-vnan": true, "instance_flipt-io__flipt-518ec324b66a07fdd95464a5e9ca5fe7681ad8f9": true, "instance_flipt-io__flipt-f743945d599b178293e89e784b3b2374b1026430": true, "instance_flipt-io__flipt-756f00f79ba8abf9fe53f3c6c818123b42eb7355": true, "instance_future-architect__vuls-future-architect__vuls-fd18df1dd4e4360f8932bc4b894bd8b40d654e7c": true, "instance_gravitational__teleport-db89206db6c2969266e664c7c0fb51b70e958b64": true, "instance_future-architect__vuls-407407d306e9431d6aa0ab566baa6e44e5ba2904": true, "instance_internetarchive__openlibrary-9bdfd29fac883e77dcbc4208cab28c06fd963ab2-v76304ecdb3a5954fcf13feb710e8c40fcf24b73c": true, "instance_internetarchive__openlibrary-3c48b4bb782189e0858e6c3fc7956046cf3e1cfb-v2d9a6c849c60ed19fd0858ce9e40b7cc8e097e59": true, "instance_internetarchive__openlibrary-123e6e5e1c85b9c07d1e98f70bfc480bc8016890-v2733ff199fb72f0d033a30dc62cb0a4742e3a7f4": true, "instance_navidrome__navidrome-ee21f3957e0de91624427e93c62b8ee390de72e3": true, "instance_gravitational__teleport-78b0d8c72637df1129fb6ff84fc49ef4b5ab1288": true, "instance_navidrome__navidrome-29bc17acd71596ae92131aca728716baf5af9906": true, "instance_protonmail__webclients-7e54526774e577c0ebb58ced7ba8bef349a69fec": true, "instance_qutebrowser__qutebrowser-f91ace96223cac8161c16dd061907e138fe85111-v059c6fdc75567943479b23ebca7c07b5e9a7f34c": true, "instance_qutebrowser__qutebrowser-8cd06741bb56cdca49f5cdc0542da97681154315-v5149fcda2a9a6fe1d35dfed1bade1444a11ef271": true, "instance_protonmail__webclients-08bb09914d0d37b0cd6376d4cab5b77728a43e7b": true, "instance_tutao__tutanota-fb32e5f9d9fc152a00144d56dd0af01760a2d4dc-vc4e41fd0029957297843cb9dec4a25c7c756f029": true}
+```
+
+**失败的 1 题**：`instance_element-hq__element-web-41dfec…-vnan`。日志（`pilot/gold-out-24-20261011/<id>/gold_stdout.log`，stderr 为空）显示 2 个 jest suite 失败、106 通过：`BasicMessageComposer › should replaceEmoticons properly`，以及 `SendWysiwygComposer › Should render … isRichTextEnabled is at true`（`Exceeded timeout of 5000 ms`，suite 用时 147s；另一失败 suite 用时 74s）。**判定为环境问题（负载抖动），不是题目或参考答案问题**，依据：
+- 同仓库另一题（`element-web-5e8488`，同镜像家族）一次通过；
+- 该题用单 worker 独跑重测一次：`Overall accuracy: 1.0`，`{"…41dfec…": true}`，harness 计时 49s；
+- 失败形态是 jest 默认 5s 超时 + 被拖慢的 suite（双 worker 并发跑重型 jsdom 本来就挤）。
+有效结论：**参考答案 24/24 通过**（全量跑 23/24 + 单跑补 1/1）。没有改题目或测试。
+
+**单题评测耗时（不含拉镜像；镜像已预拉）**：全量 24 题双 worker 墙钟约 20 分钟；单题 solo 重跑 harness 计时 49s；element-web 同仓另一题 jest 内部计时 146s。官方脚本不记录逐题 harness 耗时，以上为实测墙钟。
+
+**剩余磁盘空间**：`/dev/sdd` 811GB avail（已用 146G，其中 24 镜像约 112GB）。
+
+**约束遵守**：没碰密钥令牌，没用 Modal；只推 r7 的 `rc/portfolio`，没碰 GitHub；评测容器都是一次性的（harness 起停），没删非本机镜像；24 镜像保留本机供后续评测；没跑 agent，没改 xmuse 代码。
+
+**事故记录**：排查失败题时用 ID 子串单跑了一次，harness 把 `pilot/evalin/goldin-24-20261011.jsonl` 和 `gold-out-24-20261011/eval_results.json` 覆盖成了单题版。已用 `gold-check.sh` 同源逻辑重生成两个输入文件（24 条），并按 harness 当时打印的原文逐值重建 `eval_results.json`（24 条、23 true）；各题子目录除 41dfec 外原样未动，41dfec 恢复为全量跑的失败版，solo 通过版另存 base 本机 `~/bench/pilot/rerun-41dfec-solo/`。上面贴的 JSON 与 harness 输出一致。
