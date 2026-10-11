@@ -5,6 +5,7 @@ Each POST /prompt consumes one plan step: {"fixture", "calls": [[tool, args], ..
 framed by inbox.enqueued (carrying the prompt's metadata) / execution.started / inbox.delivered and a
 session.execution.* end event, as the real server does.
 """
+import base64
 import json
 import queue
 import re
@@ -20,8 +21,11 @@ FRAME = {"session.inbox.enqueued", "session.inbox.delivered", "session.execution
 
 
 class FakeOpenCode:
-    def __init__(self, state: Path | None = None):
-        self.state, self.plan, self.n = state, [], 0
+    def __init__(self, state: Path | None = None, port: int = 0, password: str | None = None,
+                 record: Path | None = None):
+        """port/password/record: the subprocess form (fake_opencode_serve.py) binds the port the hub chose, checks
+        the hub's Basic auth, and appends every prompt and tool result to `record` (JSON lines)."""
+        self.state, self.plan, self.n, self.record = state, [], 0, record
         self.subs: list[queue.Queue] = []
         self.sessions, self.prompts, self.replies, self.interrupts = {}, [], [], []
         self.stop_flags: dict[str, threading.Event] = {}
@@ -31,7 +35,22 @@ class FakeOpenCode:
         class H(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
+            def _authed(self) -> bool:
+                if password is None:
+                    return True
+                want = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
+                if self.headers.get("authorization") == want:
+                    return True
+                self._json(401, {"error": "unauthorized"})
+                return False
+
             def do_GET(self):
+                if not self._authed():
+                    return
+                if self.path == "/api/session":
+                    return self._json(200, {"data": [{"id": s} for s in fake.sessions]})
+                if self.path == "/api/model":
+                    return self._json(200, {"data": [{"providerID": "opencode-go", "id": "muse-spark-1.3-contributor"}]})
                 m = re.fullmatch(r"/api/session/([^/?]+)/message(\?.*)?", self.path)
                 if m:  # the v2 shape, one page; messages are whatever a test put in fake.messages[sid]
                     return self._json(200, {"data": fake.messages.get(m.group(1), []),
@@ -57,6 +76,8 @@ class FakeOpenCode:
                     fake.subs.remove(q)
 
             def do_POST(self):
+                if not self._authed():
+                    return
                 body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
                 if self.path == "/api/session":
                     sid = f"ses_fake{len(fake.sessions) + 1}"
@@ -68,6 +89,7 @@ class FakeOpenCode:
                 sid = m.group(1)
                 if m.group(2) == "prompt":
                     fake.prompts.append({"session": sid, **body})
+                    fake._record({"prompt": sid, "for": ((body.get("metadata") or {}).get("xmuse") or {}).get("agent")})
                     threading.Thread(target=fake._run, args=(sid, body), daemon=True).start()
                     return self._json(200, {"data": {"id": "msg_x", "sessionID": sid}})
                 if m.group(2) == "interrupt":
@@ -90,7 +112,7 @@ class FakeOpenCode:
             def log_message(self, *a):
                 pass
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), H)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
@@ -159,4 +181,11 @@ class FakeOpenCode:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/tools/{name}", method="POST",
                                      data=json.dumps({"args": args}).encode(),
                                      headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
-        return json.loads(urllib.request.urlopen(req, timeout=10).read())
+        out = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        self._record({"tool": name, "as": agent, "result": out.get("result")})
+        return out
+
+    def _record(self, obj: dict):
+        if self.record is not None:
+            with self.record.open("a") as f:
+                f.write(json.dumps(obj) + "\n")

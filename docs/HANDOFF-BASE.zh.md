@@ -132,3 +132,77 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 - 插件包测试 `pass 28 / fail 0`。
 
 **之后**：T9 修好、r7 在无终端环境下复测通过后，r7 会把 rc/portfolio 合进 main（合并脚本已备好，等用户执行）。README 和实验报告仍是草稿，等用户审阅。LICENSE 和"agent 单独 OS 用户"仍等用户定。
+
+## 10. 团队实验：T12–T15（10-11 r7 规划，用户已定拓扑和规划者）
+
+设计稿：`docs/design/XMUSE2-TEAM-PRESET.zh.md`（必读）。要点：规划者 P = `dsh-ms13`（dsh + muse-spark-1.3-contributor）读题、拆分、定约定、集成；两个执行者 `oc-ms13`（opencode + muse-spark-1.3）和 `dsh-fl`（dsh + DeepSeek V4.1 Flash，走 opencode-go 渠道）并行实现；对照组 T-plain 用同一拓扑，但关闭信息层。T12–T14 和 T11a 互不依赖，可以马上开工。顺序：T12 → T14 → T13 → T15。每项都要配测试，完成一项就推一项，并在 REPORT 里追加一节。
+
+### T12 同一家厂商允许注册多个实例
+- 去掉 `init.py:126-128` 的"每家厂商一个 agent"限制。身份不能再写进工作区共享的配置文件：
+  - dsh 无界面模式：身份本来就是每次运行时由 overlay 传入的（`adapters/dsh.py:133`），核实之后直接放开；前台模式仍然一个会话绑定一个 agent。
+  - opencode：每个实例一份单独的配置和一个单独的 serve 进程（单独端口、单独的密码文件）。先查清 opencode v2 能不能用环境变量（例如 OPENCODE_CONFIG）指定配置文件路径；不能的话，换一个能把身份按实例隔开的办法，写进报告。工作区里共享的 opencode.json 不能再带 XMUSE_AGENT。
+  - Claude 这次不动，但不要把它的路弄坏。
+- 测试：同一个工作区注册两个 dsh、两个 opencode，身份不串（各自调用 whoami 的结果正确，消息归属正确，用量分开记账）；`xmuse doctor` 能识别多个实例。
+
+### T14 信息层补强，加关闭开关
+先核实现有能力，再补缺的部分：
+1. 按 scope 注入：decision、convention、assumption 带 `scope=module:<名字>` 时，只注入给 scope 命中的 agent。agent 怎么声明自己关心哪些 scope：由 P 下发 assignment 时写明，或者 agent 自己声明，选一种，写进报告。
+2. 依赖解决就唤醒：assignment 的 depends_on 全部解决时，hub 主动唤醒 assignee（核实 `align._blocked` 和派活的路径；没有这个行为就补上）。
+3. question 定向：执行者发 question 时 hub 唤醒 P；P 答复后用 decision 替代原来的 assumption 或 question，并按 scope 传播。
+4. 信息层总开关：每个 run 可以设"信息层关闭"（给 T-plain 用）。关闭后 decision、assumption、question 的登记、注入、路由和依赖唤醒全部停用，只剩 `kind=message`；对 agent 的提示词和工具描述也同步去掉这些能力，不能出现"有这个工具但用了没反应"的情况。开关放进 run 的配置，记进 meta。
+5. 测试：用假 agent 覆盖 scope 路由、依赖唤醒、question 往返，以及关闭时上面这些全都不发生。
+
+### T13 编排预设 plan-split-integrate
+按设计稿第 3 节和第 8 节：
+- hub 里的状态机：P0 → P1 → P2 → P3（最多 2 轮）→ 收尾；每个阶段有时间上限，超时强制推进，并记一条事件。
+- 每个执行者一个 git worktree 和一个分支；P 在主分支上合并；P0 的计划里写明文件归属，hub 检测越界修改并记为违规（只记不拦）。
+- 快照钩子：S-E1、S-E2、S-int、S-fix-k、F 都存成 patch，并带上时间点。
+- 崩溃重试一次，再失败就降级；P 没有在 P0 时限内交出计划时，这个 run 记为失败。
+- 测试：用假 agent 走完整的状态机，覆盖正常路径、阶段超时、执行者崩溃、越界修改和合并冲突。
+- 实验 runner：在 T11a 的单干流程上加入 T-xmuse 和 T-plain 两组。每个快照都评测，按设计稿第 6 节出汇总表。先用 Legacy-Bench 里一道多模块题，每组跑 1 次，把流程跑通（不计入结果）。
+
+### T15 自建"屎山 bug 猎场"（先出候选，等用户选）
+- 挑 3 个候选开源项目，要求：TS 或 Python；3 万–6 万行；测试齐全，能在 Docker 里跑；近一年（最好是 2026 年）有不少于 60 个带测试的 bug 修复提交，用来减少训练污染；许可证允许再分发。
+- 每个候选给出：代码规模、测试用时、可用的 bug 修复提交数及示例、模块分布、许可证。**先在 REPORT 里列出候选，用户选定后再构造**。
+- 构造方法（选定后再做）：在同一个基准版本上，把选中的 bug 修复提交逆向重新引入（参考 Bug Hunt Bench）；要求现有测试全部通过，同时每个 bug 都能被它修复提交里的测试判定出来；逐个验证"只修这一个 bug，它对应的测试就通过"。
+
+### 约束（不变）
+只在 rc/portfolio 上提交；不合 main；不往 GitHub 推；不读、不打印密钥；不用 Claude 跑实验。
+
+### §10 更正（10-11 用户定）
+- **T15 搁置**：先不做，连候选都不用列。T13 的流程跑通和团队实验先用 Legacy-Bench 的题。
+- **S-best**：取 T11a 等单干探针里得分最高的实例，不再另问用户。
+
+## 11. T15 解除搁置：以 big-market 为底座造"屎山 bug 猎场"（10-11 用户定）
+
+**用户已定**：底座是用户的后端项目 big-market（Spring Boot 多模块 Java 营销抽奖系统，约 2 万行，DDD 分层）。**只能私下用来做实验，不能公开数据集**（这是付费课程代码，没有 LICENSE）。r7 先由 dsh 做一致性改名，降低模型对原版的记忆（工单 BM-RENAME，包名 cn.bugstack → io.prizehub，并改掉领域术语：Strategy→Scheme、Award→Prize、Activity→Campaign、Raffle→Draw、Rebate→Cashback、Credit→Points、Sku→Offer、Armory→Assembler）。改名版本会推到 r7 的**私有裸仓库** `~/git/prizehub.git`，到时候 REPORT 里会写明提交号。改名版本到位之前，先做下面第 1 步的调研。
+
+### 规格
+| 项 | 要求 |
+|---|---|
+| bug 数 | 40–60 个，分布在 domain、infrastructure、trigger、app 各层；约 1/4 跨层或跨模块（领域层和基础设施层对库存、状态、金额、幂等键、缓存键、MQ 消息字段的约定不一致） |
+| 来源 | 以合成为主（≥70%）：用模型改写出自然的逻辑错误，加 AST 变异，方法可以参考 SWE-smith（arXiv 2504.21798）的工具链；少量参考原版的真实修复。**只要逻辑类 bug**，编译、导入、类型检查能抓到的一律不要 |
+| 隐蔽性 | 引入全部 bug 之后，仓库里留着的可见测试必须**全部通过**；每个 bug 的判定测试都藏起来，不放进仓库 |
+| 判定 | 每个 bug 至少一个带断言的隐藏测试（JUnit），只修这一个 bug，它的隐藏测试就从失败变成通过；全部 bug 一起注入后逐个验证**互不遮蔽** |
+| 可见测试 | 原项目的测试多半是打日志、不写断言的。另写一套覆盖主要流程、带断言的可见测试（这些在 bug 注入后仍然要全部通过），作为 agent 自查用的"现有测试套件" |
+| 依赖 | 用 docker-compose 起 MySQL（含分库）、Redis、RabbitMQ、ZooKeeper；ES、Nacos、canal、xxl-job 这类非核心组件，能通过测试 profile 关掉的就关掉。整个环境打包成可复现的镜像；测试运行时间尽量控制在 10 分钟以内 |
+| 防泄露 | 不带 git 历史；README、docs 里描述修复内容的文字一律删除；bug 的位置和描述只放在仓库之外的 answer key（`bugs.json`：id、所在层、文件:行、类别、是否跨层、判定测试名、改动的 diff） |
+| 判分器 | 输入 agent 交上来的工作区，输出：修好的 bug 数 / 总数（逐个 bug 判定）、误改数（原本通过的可见测试和隐藏的回归测试变成失败）、编译是否通过 |
+| 题面 | 不给 bug 清单："这个系统最近线上问题很多，请尽可能多地找出并修复 bug。可见测试和构建必须通过；不准削弱、跳过或删除测试。" |
+
+### 步骤
+1. **调研（现在就可以开始，用原版的公开结构推断就行，不需要等改名版本）**：列出要起哪些依赖、哪些可以关掉，测试 profile 的方案，以及镜像预计的大小和测试用时。写进 REPORT，等 r7 审查。
+2. 改名版本到位后：在镜像里先把它跑起来，可见测试全部通过 → 写可见测试 → 注入 bug、写隐藏测试 → 逐个验证互不遮蔽 → 判分器 → 用参考解（把全部 bug 修好的版本）校验，结果应该是满分。
+3. **难度标定（先不要跑）**：等用户确认标定用什么模型。合格标准是最强基线修好的比例明显低于 50%；高于 70% 就要加 bug 或增加隐蔽性。
+
+### 约束
+`bugs.json`、隐藏测试、参考解单独放在 BENCH_DIR 里（不进 prizehub 仓库，也不放进 agent 能看到的任何位置）。这些都只进 r7 的私有仓库，不往任何公网推。其余约束同 §4。
+
+### §11 补充：改名版本已就位（10-11）
+- 位置：r7 的私有裸仓库 `~/git/prizehub.git`，分支 main，提交 `2805c93`（378 个文件，不含 git 历史、README、运行日志）。拉取方式和 xmuse2 一样。**只在 r7 和 base 之间流转，不往任何公网推。**
+- 改名由 r7 的 dsh 用脚本完成（rename.py、rename-map.json、protect.json，只放在 r7）。外部依赖 `cn.bugstack.middleware.*`（数据库路由组件，含 `DBRouterStrategy`、`IDBRouterStrategy`、`DBRouter`）**故意保留原名**，仓库里剩下的 17 处 bugstack 都是这些 import。
+- 配置里的密码、token 已换成 `CHANGE_ME`，真实 IP 已换成 `localhost`。起依赖时自行设置测试用的口令，不要找原值。
+- 表名和字段名也一起改了（如 award→prize、raffle_activity→draw_campaign），数据库必须用 `docs/dev-ops/mysql/sql/prize_hub*.sql` 重新初始化。
+- **T15 的第一步改为编译验证**（r7 这边没做成：Windows 侧连不上 Maven Central，C 盘也没空间）：在 Docker 里用 JDK 8 和 Maven 执行 `mvn -DskipTests test-compile`。
+  - 编译失败时，判断是不是改名误伤（外部 jar 的符号被改了名）。**是的话不要在仓库里手工修**，把出错的符号和报错原文写进 REPORT，由 r7 补进 protect.json 后重新生成、重新推送；不是改名造成的问题（例如依赖本身拉不到），就照常处理并写清楚。
+  - 编译通过之后，再把应用在 docker-compose 环境里跑起来，用新的 DDL 初始化数据库，确认原有测试的运行情况（哪些能跑、哪些依赖关掉的组件），然后再进入 bug 构造。

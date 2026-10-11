@@ -17,14 +17,21 @@ from xmuse.server import Hub, digest  # noqa: E402
 
 FAKE_CLAUDE = Path(__file__).parent / "fakes" / "fake_claude.py"
 FAKE_DSH = Path(__file__).parent / "fakes" / "fake_dsh.py"
+FAKE_OC_SERVE = Path(__file__).parent / "fakes" / "fake_opencode_serve.py"
 
 
 class Harness:
     def __init__(self, tmp: Path, agents, cfg: dict):
         human_check = cfg.pop("_human_check", False)
+        oc_serve = cfg.pop("_oc_serve", False)  # one fake `opencode serve` subprocess per agent (T12)
         self.tmp, self.home = tmp, Path(os.environ["HOME"])
         self.ws = tmp / "ws"
         self.ws.mkdir()
+        if oc_serve:
+            wrapper = tmp / "fake-opencode"
+            wrapper.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_OC_SERVE} "$@"\n')
+            wrapper.chmod(0o755)
+            cfg["opencode_bin"] = str(wrapper)
         subprocess.run(["git", "init", "-q", str(self.ws)], check=True)
         self.state = xinit.init(self.ws)
         c = json.loads((self.state / "config.json").read_text())
@@ -33,18 +40,18 @@ class Harness:
                                                             **cfg}))
         for i, (aid, vendor, *rest) in enumerate(agents):
             settings = rest[0] if rest else {}
-            if vendor == "dsh" or i and vendor in [v for _, v, *_ in agents[:i]]:  # dsh: ws is not on C:\
-                self.add_raw(aid, vendor, settings)
+            if vendor == "dsh" or vendor == "claude" and i and vendor in [v for _, v, *_ in agents[:i]]:
+                self.add_raw(aid, vendor, settings)  # dsh: ws is not on C:\; a second claude: one .mcp.json
             else:
                 xinit.add_agent(self.state, aid, vendor, settings=settings)
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
         (self.home / "fake-dsh").mkdir(parents=True, exist_ok=True)
-        self.oc = FakeOpenCode(self.state) if any(v == "opencode" for _, v, *_ in agents) else None
+        self.oc = FakeOpenCode(self.state) if not oc_serve and any(v == "opencode" for _, v, *_ in agents) else None
         # the human-only admin check (peer.py) is exercised in test_trust.py; elsewhere tests drive admin calls
         self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base,
                        human_check=human_check)
         self.hub.start()
-        if self.oc:
+        if "opencode" in self.hub.engine.drivers:
             assert self.hub.engine.drivers["opencode"].headless.ready.wait(5)
 
     def add_raw(self, aid, vendor, settings=None):

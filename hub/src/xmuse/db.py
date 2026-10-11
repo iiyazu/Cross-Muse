@@ -42,6 +42,7 @@ create table if not exists deliveries(
   id integer primary key, message_id integer not null, recipient text not null,
   wake integer not null,
   state text not null,   -- queued | admitted | done | failed | canceled | held | passive | delivered (relay)
+                         -- | blocked (handoff whose assignment waits on depends_on; align.release queues it)
   turn_id integer, read_at real, acked_at real, outcome text, updated_at real not null,
   unique(message_id, recipient));
 create index if not exists deliveries_open on deliveries(recipient, state);
@@ -64,7 +65,7 @@ create table if not exists usage(
 create table if not exists entries(          -- alignment library (design §4.5.1); never deleted
   id integer primary key,                    -- shown as E<id>
   kind text not null,                        -- decision|convention|assumption|question|lesson|assignment
-  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id>
+  scope text not null,                       -- global | role:<role> | thread:<tid> | agent:<id> | module:<name>
   thread_id text, statement text not null, refs text not null default '[]',  -- refs: source message ids
   author text not null,
   status text not null,                      -- proposed|active|superseded|resolved|archived|rejected
@@ -79,6 +80,16 @@ create table if not exists seen(             -- watermark: alignment version thi
   session_id integer primary key, seq integer not null);
 create table if not exists curated(          -- last message of each thread already sent to MemoryOS /curate
   thread_id text primary key, msg_id integer not null);
+create table if not exists preset_runs(       -- orchestration presets (T13): one row per run
+  id integer primary key, preset text not null, task text not null, planner text not null,
+  executors text not null,                   -- JSON list of agent ids
+  base text not null, branch text not null,  -- base commit and the main workspace's branch
+  phase text not null, phase_at real not null, round integer not null default 0,
+  state text not null default 'running',     -- running | finished | failed
+  limits text not null, data text not null default '{}', created_at real not null, ended_at real);
+create table if not exists preset_events(
+  id integer primary key, run_id integer not null, at real not null, phase text, kind text not null,
+  detail text not null default '{}');
 create table if not exists approvals(
   id text primary key, agent_id text not null, vendor_session text, action text,
   resources text, state text not null default 'pending', decision text,
@@ -103,7 +114,10 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # dsh relay: a polled agent's delivery reported into its desktop session
            ("deliveries", "delivered_at", "real"), ("deliveries", "delivered_session", "text"),
            # the dsh session a foreground agent is bound to (/v1/relay/bind); its tool calls must come from it
-           ("agents", "bound_session", "text")]
+           ("agents", "bound_session", "text"),
+           # assignments: JSON list of modules the assignee owns (handoff scope module:a,b); module entries reach them
+           ("entries", "modules", "text"),
+           ("messages", "stage", "text")]  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
 
 
 def init(path) -> sqlite3.Connection:

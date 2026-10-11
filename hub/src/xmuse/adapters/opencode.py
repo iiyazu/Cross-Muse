@@ -163,37 +163,54 @@ def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> b
     return all(isinstance(r, str) and ok(r) for r in resources)
 
 
+def instance_dir(state: Path, agent_id: str) -> Path:
+    """Per-instance OpenCode files in the hub state (T12): config with the identity, server password."""
+    return state / "oc" / agent_id
+
+
 def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
+    """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
+    v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
+    and carries only the permission rules."""
+    d = instance_dir(state, agent["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    inst = {"$schema": "https://opencode.ai/config.json",
+            "mcp": {"servers": {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
+                                          "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}}}
+    (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
-        "mcp": {"servers": {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
-                                      "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}},
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
                         {"action": "shell", "resource": "*", "effect": "ask"}],
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
-    return [ws / "opencode.json"]
+    return [d / "opencode.json", ws / "opencode.json"]
 
 
 class Server:
-    """The workspace's dedicated OpenCode server (own port and password file; never the user's service)."""
+    """One agent's dedicated OpenCode server (own port, password file and config; never the user's service)."""
 
-    def __init__(self, ws: Path, state: Path, port: int | None = None, base: str | None = None):
-        self.ws, self.state, self.proc = ws, state, None
-        pw = state / "oc.pass"
+    def __init__(self, ws: Path, state: Path, agent_id: str, port: int | None = None, base: str | None = None,
+                 binary: str = "opencode"):
+        self.ws, self.state, self.agent_id, self.binary, self.proc = ws, state, agent_id, binary, None
+        self.dir = instance_dir(state, agent_id)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        pw = self.dir / "oc.pass"
         if not pw.exists():
             pw.write_text(secrets.token_urlsafe(24))
             pw.chmod(0o600)
+        self.pw = pw
         self.auth = "Basic " + base64.b64encode(f"opencode:{pw.read_text().strip()}".encode()).decode()
         self.base = base or f"http://127.0.0.1:{port or _free_port()}"
 
     def start(self, timeout: float = 60) -> None:
         port = self.base.rsplit(":", 1)[1]
-        log = (self.state / "logs" / "opencode.log").open("a")
+        log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a")
         self.proc = subprocess.Popen(
-            ["opencode", "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
-            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": (self.state / "oc.pass").read_text().strip()}),
+            [self.binary, "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
+            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text().strip(),
+                                        "OPENCODE_CONFIG": str(self.dir / "opencode.json")}),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             start_new_session=True)
 
@@ -260,6 +277,7 @@ class OpenCodePrompt:
         self.sink, self.server = sink, server
         self.turns: dict[str, Tracked] = {}      # session -> tracked hub turn
         self.human: dict[str, bool] = {}         # session -> a human input is executing
+        self.known: set[str] = set()             # sessions this server has reported (routes approvals)
         self.lock = threading.Lock()
         self.ready = threading.Event()
         threading.Thread(target=self._listen, daemon=True).start()
@@ -272,6 +290,7 @@ class OpenCodePrompt:
             sid = self.server.api("POST", "/api/session", {
                 "title": f"xmuse {spec.agent['id']}", "model": {"providerID": prov, "id": mid},
                 "location": {"directory": str(spec.cwd)}})["data"]["id"]
+        self.known.add(sid)
         with self.lock:
             self.turns[sid] = Tracked(spec)
         try:
@@ -303,6 +322,8 @@ class OpenCodePrompt:
     def handle(self, ev: dict) -> None:
         typ, d = ev.get("type", ""), ev.get("data") or {}
         sid = d.get("sessionID")
+        if sid:
+            self.known.add(sid)
         with self.lock:
             t = self.turns.get(sid)
         if t is not None:
@@ -350,16 +371,84 @@ class OpenCodePrompt:
         return t.spec.agent["id"] if t else None
 
 
+class _AllReady:
+    def __init__(self, prompts):
+        self.prompts = prompts
+
+    def wait(self, timeout: float | None = None) -> bool:
+        end = None if timeout is None else time.time() + timeout
+        return all(p.ready.wait(None if end is None else max(0.0, end - time.time())) for p in list(self.prompts()))
+
+
+class _Router:
+    """The engine's headless adapter: each turn goes to its agent's own server."""
+    name = OpenCodePrompt.name
+
+    def __init__(self, driver: "OpenCodeDriver"):
+        self.driver = driver
+        self.ready = _AllReady(lambda: driver.prompts.values())
+
+    def start(self, spec: TurnSpec) -> dict:
+        return self.driver.prompt_for(spec.agent["id"]).start(spec)
+
+    def interrupt(self, turn_id: int) -> None:
+        for p in list(self.driver.prompts.values()):
+            p.interrupt(turn_id)
+
+    @property
+    def turns(self) -> dict:
+        return {sid: t for p in list(self.driver.prompts.values()) for sid, t in p.turns.items()}
+
+    @property
+    def human(self) -> dict:
+        return {sid: h for p in list(self.driver.prompts.values()) for sid, h in p.human.items()}
+
+
 class OpenCodeDriver:
+    """Several OpenCode agents per workspace (T12): each runs on its own `opencode serve`, whose OPENCODE_CONFIG
+    names that agent. Servers given one shared `base` (tests with one fake server) share one listener."""
     vendor = "opencode"
     push = None  # one path for both modes: the server serializes TUI and hub input
 
-    def __init__(self, sink, server: Server):
-        self.server = server
-        self.headless = OpenCodePrompt(sink, server)
+    def __init__(self, sink, servers: dict[str, Server], start: bool = True):
+        self.sink, self.servers, self.autostart = sink, dict(servers), start
+        self.prompts: dict[str, OpenCodePrompt] = {}  # server base -> listener
+        self.lock = threading.Lock()
+        for aid in list(self.servers):
+            self.prompt_for(aid)
+        self.headless = _Router(self)
+
+    def prompt_for(self, agent_id: str) -> OpenCodePrompt:
+        with self.lock:
+            srv = self.servers.get(agent_id)
+            if srv is None:  # agent added while the hub runs
+                srv = self.servers[agent_id] = Server(self.sink.ws, self.sink.state, agent_id,
+                                                      binary=self.sink.cfg.get("opencode_bin", "opencode"))
+                if self.autostart:
+                    srv.start()
+            if srv.base not in self.prompts:
+                self.prompts[srv.base] = OpenCodePrompt(self.sink, srv)
+            return self.prompts[srv.base]
+
+    @property
+    def server(self) -> Server:  # single-instance callers (one OpenCode agent)
+        return next(iter(self.servers.values()))
+
+    def server_for(self, session: str, agent_id: str | None = None) -> Server:
+        """The server that owns a session: the agent's own when known (session ids are only unique per server),
+        else the listener that has seen it, else the agent recorded in hub.db."""
+        if agent_id in self.servers:
+            return self.servers[agent_id]
+        for p in list(self.prompts.values()):
+            if session in p.known:
+                return p.server
+        r = self.sink.db().execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
+        if r and r[0] in self.servers:
+            return self.servers[r[0]]
+        return self.server
 
     def presence(self, agent: dict, session: str | None) -> Presence:
-        return Presence("free", bool(session and self.headless.human.get(session)), False)
+        return Presence("free", bool(session and self.prompt_for(agent["id"]).human.get(session)), False)
 
     def on_hook(self, agent: dict, event: str, payload: dict) -> bool:
         return False  # the SSE stream carries everything
@@ -368,22 +457,26 @@ class OpenCodeDriver:
         """The model must be in the server's catalog (filled in shortly after start; costs no tokens)."""
         prov, mid = agent["model"].split("/", 1)
         end = time.time() + wait
+        srv = self.prompt_for(agent["id"]).server
         while True:
-            models = self.server.api("GET", "/api/model")["data"]
+            models = srv.api("GET", "/api/model")["data"]
             if any(m.get("providerID") == prov and m.get("id") == mid for m in models):
                 return None
             if time.time() > end:
                 return f"not in the OpenCode catalog ({len(models)} models; is provider {prov} logged in?)"
             time.sleep(1)
 
-    def approve(self, session: str, request_id: str, decision: str) -> None:
-        self.server.api("POST", f"/api/session/{session}/permission/{request_id}/reply", {"decision": decision})
+    def approve(self, session: str, request_id: str, decision: str, agent_id: str | None = None) -> None:
+        self.server_for(session, agent_id).api("POST", f"/api/session/{session}/permission/{request_id}/reply",
+                                     {"decision": decision})
 
     write_config = staticmethod(write_config)
 
     def attach_command(self, agent: dict, session: str | None) -> str:
-        return (f"OPENCODE_SERVER_PASSWORD=$(cat {self.server.state / 'oc.pass'}) "
-                f"opencode --server {self.server.base}{' --session ' + session if session else ''}")
+        srv = self.prompt_for(agent["id"]).server
+        return (f"OPENCODE_SERVER_PASSWORD=$(cat {srv.pw}) "
+                f"opencode --server {srv.base}{' --session ' + session if session else ''}")
 
     def close(self) -> None:
-        self.server.stop()
+        for srv in list(self.servers.values()):
+            srv.stop()

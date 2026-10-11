@@ -267,7 +267,8 @@ def test_confirm_supersede_and_resolve_of_the_same_question_is_quiet(make, mo):
     h.hub.curator.join()                                                                     # the handoff kicks curate
     (p,) = proposed(h)
     assert view(h, agent="claude-3")["ready"] == []
-    assert h.admin("align", op="confirm", id=f"E{p['id']}")["result"] == {"ok": True}
+    # the confirmed answer unblocks the handoff (T14): its parked delivery is queued again
+    assert h.admin("align", op="confirm", id=f"E{p['id']}")["result"] == {"ok": True, "released": ["claude-3"]}
     assert h.q("select op from entry_events where entry_id=1 order by seq") == [{"op": "add"}, {"op": "supersede"}]
     assert view(h, agent="claude-3")["ready"] == ["E2"]
 

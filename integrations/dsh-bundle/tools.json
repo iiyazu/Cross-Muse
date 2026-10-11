@@ -47,7 +47,7 @@
     },
     "scope": {
      "type": "string",
-     "description": "entry scope: global | role:<role> | thread (default)"
+     "description": "entry scope: global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); kind=handoff: module:<name>[,<name>...] = the modules the assignee owns"
     },
     "supersedes": {
      "type": "string",
@@ -191,6 +191,16 @@
      "type": "string",
      "description": "peer id or 'human' who must act next, or 'none' if the work is finished"
     },
+    "stage": {
+     "type": "string",
+     "enum": [
+      "plan",
+      "part",
+      "integrated",
+      "fix"
+     ],
+     "description": "only in a plan-split-integrate run: the phase you finish (planner: plan, integrated; executor: part, fix)"
+    },
     "declares": {
      "type": "array",
      "description": "decisions/assumptions/questions others will depend on; one decision per cross-module convention (representation, units, errors, ordering, output format)",
@@ -216,7 +226,7 @@
        },
        "scope": {
         "type": "string",
-        "description": "global | role:<role> | thread (default)"
+        "description": "global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); kind=handoff: module:<name>[,<name>...] = the modules the assignee owns"
        },
        "supersedes": {
         "type": "string",

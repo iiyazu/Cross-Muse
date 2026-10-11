@@ -1,6 +1,7 @@
 {
   "name": "xmuse-shim",
   "version": "0.1.0",
+  "license": "MIT",
   "description": "xmuse MCP stdio shim (forwards to the local hub; Claude channel push)",
   "type": "module",
   "private": true,

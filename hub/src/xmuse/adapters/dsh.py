@@ -119,6 +119,21 @@ PI_AI_PROVIDERS = {"opencode-go": "OPENCODE_GO_API_KEY"}
 OWNED, UNKNOWN = "is already owned by an active write handle", "does not exist"
 
 
+def extra_mcp(agent: dict) -> list[dict]:
+    """Validated `extra_mcp` entries of an agent's settings: [{name, command, args?, env?}]."""
+    s = agent.get("settings") or {}
+    raw = (json.loads(s) if isinstance(s, str) else s).get("extra_mcp", [])
+    out = []
+    for x in raw:
+        name = x.get("name", "")
+        if not (name.replace("-", "").replace("_", "").isalnum() and name != "xmuse" and isinstance(x.get("command"), str)
+                and all(isinstance(a, str) for a in x.get("args", []))
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in x.get("env", {}).items())):
+            raise ValueError(f"bad extra_mcp entry: {x!r}")
+        out.append(x)
+    return out
+
+
 def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
     """The per-run --patch file. JSON is valid YAML, so no YAML writer is needed."""
     provider, model = agent["model"].split("/", 1)
@@ -131,6 +146,12 @@ def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
         rows.append({"insert": [{"id": "mcp-xmuse", "name": "@deepseek-ai/dsh-mcp-client", "config": {
             "serverName": "xmuse", "transport": "stdio", "command": "node", "args": [to_win(SHIM)],
             "env": {"XMUSE_STATE": to_win(state), "XMUSE_AGENT": agent["id"]}, "failOnStartupError": True}}]})
+        # per-agent extra stdio MCP servers (`xmuse agent add --extra-mcp`), e.g. a test runner the sandboxed shell
+        # cannot reach; MCP servers dsh starts run outside its worker sandbox, so only mount narrow, fixed-purpose ones
+        for x in extra_mcp(agent):
+            rows.append({"insert": [{"id": f"mcp-{x['name']}", "name": "@deepseek-ai/dsh-mcp-client", "config": {
+                "serverName": x["name"], "transport": "stdio", "command": x["command"], "args": x.get("args", []),
+                "env": x.get("env", {}), "failOnStartupError": True}}]})
     rows += [{"id": r, "disabled": True} for r in DISABLE]
     return json.dumps(rows, indent=1)
 
@@ -187,6 +208,24 @@ def human_turn(log: Path) -> bool:
         elif o.get("type") == "turn/end":
             busy = False
     return busy
+
+
+def hooks_owner(ws: Path) -> str | None:
+    """The dsh agent the workspace .dsh/hooks.json reports for (last argv word of its commands), if any."""
+    try:
+        hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())["hooks"]
+        return next(iter(hooks.values()))[0]["hooks"][0]["command"].split()[-1]
+    except (OSError, ValueError, KeyError, IndexError, StopIteration, AttributeError):
+        return None
+
+
+def _is_headless_dsh(state: Path, agent_id: str) -> bool:
+    conn = db.connect(state / "hub.db")
+    try:
+        a = db.row(conn.execute("select * from agents where id=? and vendor='dsh'", (agent_id,)))
+    finally:
+        conn.close()
+    return a is not None and not db.settings(a).get("foreground")
 
 
 class DshHeadless:
@@ -445,6 +484,11 @@ class DshDriver:
             (ws / ".xmuse-tmp").mkdir(exist_ok=True)
             for f in ("hooks.json", "xmuse-dsh-hook.py"):
                 (d / f).unlink(missing_ok=True)
+            return []
+        owner = hooks_owner(ws)
+        if owner and owner != agent["id"] and _is_headless_dsh(state, owner):
+            # One workspace hooks.json, so desktop-app presence follows one dsh agent: the first one added (T12).
+            # Headless runs of the others carry their identity in the per-run overlay and need no hooks.
             return []
         d.mkdir(parents=True, exist_ok=True)
         cmd = f"python3 .dsh/xmuse-dsh-hook.py {{ev}} {to_win(state)} {agent['id']}"
