@@ -310,7 +310,7 @@ def test_extra_mcp_from_agent_settings_is_mounted_after_xmuse_but_not_in_the_pre
             overlay({**agent, "settings": {"extra_mcp": [bad]}}, tmp_path)
 
 
-def test_agent_add_extra_mcp_is_stored_for_headless_dsh_only(tmp_path, monkeypatch):
+def test_agent_add_extra_mcp_is_stored_for_headless_dsh_and_opencode_only(tmp_path, monkeypatch):
     from xmuse import cli, db
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "st"))
     monkeypatch.setattr(xinit, "_dsh_ws_ok", lambda ws: True)
@@ -323,8 +323,11 @@ def test_agent_add_extra_mcp_is_stored_for_headless_dsh_only(tmp_path, monkeypat
     state = Path(json.loads((ws / ".xmuse.json").read_text())["state"])
     a = db.row(db.connect(state / "hub.db").execute("select * from agents where id='d1'"))
     assert db.settings(a)["extra_mcp"][0]["name"] == "bench-tests"
+    cli.main(["--ws", str(ws), "agent", "add", "o1", "--vendor", "opencode", "--extra-mcp", str(spec)])
+    o = db.row(db.connect(state / "hub.db").execute("select * from agents where id='o1'"))
+    assert db.settings(o)["extra_mcp"][0]["name"] == "bench-tests"
     with pytest.raises(SystemExit):
-        cli.main(["--ws", str(ws), "agent", "add", "o1", "--vendor", "opencode", "--extra-mcp", str(spec)])
+        cli.main(["--ws", str(ws), "agent", "add", "c1", "--vendor", "claude", "--extra-mcp", str(spec)])
 
 
 def test_launch_failure_is_retried_once_inside_the_same_turn(make):

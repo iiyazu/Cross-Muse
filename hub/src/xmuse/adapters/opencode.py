@@ -172,16 +172,23 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
     v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
     and carries only the permission rules."""
+    from .dsh import extra_mcp
     d = instance_dir(state, agent["id"])
     d.mkdir(parents=True, exist_ok=True)
-    inst = {"$schema": "https://opencode.ai/config.json",
-            "mcp": {"servers": {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
-                                          "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}}}
+    servers = {"xmuse": {"type": "local", "command": ["node", str(SHIM)],
+                         "environment": {"XMUSE_STATE": str(state), "XMUSE_AGENT": agent["id"]}}}
+    # per-agent extra stdio MCP servers (`xmuse agent add --extra-mcp`), same entries as for headless dsh
+    extra = extra_mcp(agent)
+    for x in extra:
+        servers[x["name"]] = {"type": "local", "command": [x["command"], *x.get("args", [])],
+                              "environment": x.get("env", {})}
+    inst = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
     (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
+                        *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
                         {"action": "shell", "resource": "*", "effect": "ask"}],
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
