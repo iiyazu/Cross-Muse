@@ -18,8 +18,8 @@ else
   DEST="$WIN_HOME/dsh-work/xmuse-bundle"
 fi
 mkdir -p "$DEST"
-# bindings.json is runtime state written next to index.js; keep it across syncs.
+# bindings.json / sidebar.json are runtime state written next to index.js; keep them across syncs.
 rsync -rt --delete --exclude test/ --exclude node_modules/ --exclude sync.sh --exclude README.zh.md \
-  --exclude bindings.json --exclude .gitignore "$SRC" "$DEST/"
+  --exclude bindings.json --exclude sidebar.json --exclude .gitignore "$SRC" "$DEST/"
 echo "synced to $DEST"
 ls -la "$DEST"
