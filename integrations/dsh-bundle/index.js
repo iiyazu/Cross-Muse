@@ -16,11 +16,13 @@ import path from 'node:path'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { SIDEBAR_PREFIX, createSidebar, createTokenStore } from './sidebar-host.js'
 
 export const name = 'xmuse'
-export const VERSION = '0.1.0'
-// Cordis refuses ctx.<service> access for services not declared here. Same set dsh-schedule declares.
-export const inject = ['commands', 'agents', 'sessions', 'tools', 'sessionController']
+export const VERSION = '0.2.0'
+// Cordis refuses ctx.<service> access for services not declared here. Same set dsh-schedule declares,
+// plus webServer for the sidebar drawer routes (registered via ctx.inject, see D0 probe).
+export const inject = ['commands', 'agents', 'sessions', 'tools', 'sessionController', 'webServer']
 
 // No built-in default: the state dir is per machine and per workspace. `xmuse doctor` prints the value for config.state.
 const NO_STATE = 'config.state is not set: put the hub state dir there as a \\\\wsl.localhost\\<distro>\\... path (`xmuse doctor` prints it)'
@@ -118,6 +120,9 @@ export function apply(ctx, config) {
   const stateDir = typeof cfg.state === 'string' && cfg.state ? cfg.state : (process.env.XMUSE_STATE_WIN || '')
   const bindingsFile = typeof cfg.bindingsFile === 'string' && cfg.bindingsFile
     ? cfg.bindingsFile : path.join(HERE, 'bindings.json')
+  const sidebarFile = typeof cfg.sidebarFile === 'string' && cfg.sidebarFile
+    ? cfg.sidebarFile : path.join(HERE, 'sidebar.json')
+  const roomDir = typeof cfg.roomDir === 'string' && cfg.roomDir ? cfg.roomDir : process.cwd()
   const pollWaitS = Number.isFinite(cfg.pollWaitS) ? cfg.pollWaitS : POLL_WAIT_S
   const backoffMin = Number.isFinite(cfg.backoffMinMs) ? cfg.backoffMinMs : BACKOFF_MIN_MS
   const backoffMax = Number.isFinite(cfg.backoffMaxMs) ? cfg.backoffMaxMs : BACKOFF_MAX_MS
@@ -131,8 +136,18 @@ export function apply(ctx, config) {
   const cursors = new Map()
   /** @type {Map<string,object>} agent id -> relay loop entry */
   const relays = new Map()
-  const selfCheck = { services: {}, hubState: 'unchecked', persistedBindings: 'unchecked', tools: 'unchecked' }
+  const selfCheck = { services: {}, hubState: 'unchecked', persistedBindings: 'unchecked', tools: 'unchecked', sidebar: 'unchecked' }
   let disposed = false
+
+  // ---- sidebar drawer (v0 view API): token store + host routes, tokens never reach the browser ----
+  const sidebarStore = createTokenStore(sidebarFile)
+  const sidebar = createSidebar({
+    readHub: () => readHub(), // readHub 在下面定义：调用时才求值（TDZ 前不能直写）
+    store: sidebarStore,
+    clientFile: path.join(HERE, 'client.js'),
+    log,
+    getService: (n) => { try { return ctx.get(n) } catch { return undefined } },
+  })
 
   // ---- persistence (bundle dir, JSON) ----
   let writing = Promise.resolve()
@@ -340,13 +355,20 @@ export function apply(ctx, config) {
 
   const runSelfCheck = async () => {
     try {
-      for (const svc of ['sessionController', 'sessions', 'commands', 'agents', 'tools']) {
+      for (const svc of ['sessionController', 'sessions', 'commands', 'agents', 'tools', 'webServer']) {
         selfCheck.services[svc] = ctx[svc] !== undefined && ctx[svc] !== null
       }
       selfCheck.services['sessionController.resolveAgent'] = typeof ctx.sessionController?.resolveAgent === 'function'
       selfCheck.services['sessions.flush'] = typeof ctx.sessions?.flush === 'function'
       await checkHubState()
       await restore()
+      try {
+        await sidebarStore.load()
+        const st = sidebar.status()
+        selfCheck.sidebar = st.bound ? `bound as "${st.memberId}"` : 'no room (use /xmuse join or room new)'
+      } catch (e) {
+        selfCheck.sidebar = `store read failed: ${errText(e)}`
+      }
       for (const [s, a] of bindings) startRelay(a, s, true)
       log('info', `self-check ${JSON.stringify(selfCheck)} stateDir=${stateDir}`)
     } catch (e) {
@@ -358,6 +380,7 @@ export function apply(ctx, config) {
     const lines = [`xmuse relay bundle ${VERSION}`, `state dir: ${stateDir}`, 'self-check:']
     for (const [k, v] of Object.entries(selfCheck.services)) lines.push(`  ${k}: ${v ? 'yes' : 'NO'}`)
     lines.push(`  hub state: ${selfCheck.hubState}`, `  bindings file: ${selfCheck.persistedBindings}`, `  tools: ${selfCheck.tools}`)
+    lines.push(`  sidebar: ${selfCheck.sidebar} (routes at ${SIDEBAR_PREFIX}/*)`)
     lines.push(`bindings (${bindings.size}):`)
     for (const [s, a] of bindings) {
       const r = relays.get(a)
@@ -419,9 +442,39 @@ export function apply(ctx, config) {
         }
         case 'status':
           await checkHubState()
+          {
+            const st = sidebar.status()
+            selfCheck.sidebar = st.bound ? `bound as "${st.memberId}"` : 'no room (use /xmuse join or room new)'
+          }
           return { kind: 'success', text: statusText() }
+        case 'join': {
+          // v0 邀请码加入（POST /v1/join）：旧的 bind 保留兼容，见下。
+          const code = rest[0]
+          if (!code) return { kind: 'error', text: 'Usage: /xmuse join <邀请码>' }
+          try {
+            const out = await sidebar.joinRoom({ code, sessionId, clientInfo: { client: 'dsh-slash' } })
+            return { kind: 'success', text: `joined the room as xmuse member "${out.member_id}" (sidebar tokens stored host-side); 抽屉里现在能看到整个房间` }
+          } catch (e) {
+            return { kind: 'error', text: `xmuse: join failed: ${errText(e)}` }
+          }
+        }
+        case 'room': {
+          if (rest[0] !== 'new' || !rest[1]) return { kind: 'error', text: 'Usage: /xmuse room new <名字> [工作目录]' }
+          const roomName = rest[1]
+          const dir = rest[2] || roomDir
+          try {
+            const out = await sidebar.createRoom({ dir, name: roomName, sessionId })
+            return { kind: 'success', text: `room "${out.room.name}" created (${out.room.id}), you are the host as "${out.member_id}" (sidebar tokens stored host-side)` }
+          } catch (e) {
+            return { kind: 'error', text: `xmuse: room new failed: ${errText(e)}` }
+          }
+        }
+        case 'leave': {
+          const out = await sidebar.leaveRoom()
+          return { kind: 'success', text: out.already ? 'sidebar is not in a room' : `sidebar left the room; ${out.note}` }
+        }
         default:
-          return { kind: 'error', text: 'Usage: /xmuse bind <agent-id> | unbind | status | ping' }
+          return { kind: 'error', text: 'Usage: /xmuse bind <agent-id> | join <邀请码> | room new <名字> [工作目录] | leave | unbind | status | ping' }
       }
     } catch (e) {
       log('warn', `/xmuse failed: ${errText(e)}`)
@@ -470,8 +523,8 @@ export function apply(ctx, config) {
       return ctx.commands.register({
         definitionId: CommandDefinitionId('xmuse-dsh-bundle'),
         name: 'xmuse',
-        description: 'xmuse relay: bind <agent-id> | unbind | status | ping',
-        input: { hint: 'bind <agent-id> | unbind | status | ping' },
+        description: 'xmuse relay: bind <agent-id> | join <邀请码> | room new <名字> [工作目录] | leave | unbind | status | ping',
+        input: { hint: 'bind <agent-id> | join <邀请码> | room new <名字> [工作目录] | leave | unbind | status | ping' },
         recordInput: false,
         handler,
       })
@@ -480,6 +533,30 @@ export function apply(ctx, config) {
       return () => {}
     }
   }, 'xmuse.command')
+
+  // Sidebar drawer routes: host prefix -> loopback hub, tokens stay host-side (D0 probe pattern).
+  // inject() waits for the service; a host without a web server simply never registers.
+  ctx.effect(() => {
+    let off = null
+    try {
+      const register = (scope) => {
+        try {
+          off = scope.webServer.register({
+            kind: 'prefix', path: SIDEBAR_PREFIX,
+            handler: (req, res) => { sidebar.handle(req, res).catch((e) => log('warn', `sidebar route crashed: ${errText(e)}`)) },
+          })
+        } catch (e) {
+          log('warn', `sidebar route registration failed: ${errText(e)}`)
+        }
+      }
+      if (typeof ctx.inject === 'function') ctx.inject(['webServer'], register)
+      else if (ctx.webServer) register(ctx)
+      else log('warn', 'no webServer service: sidebar drawer routes not registered')
+    } catch (e) {
+      log('warn', `sidebar route setup failed: ${errText(e)}`)
+    }
+    return () => { try { off?.() } catch { /* ignore */ } }
+  }, 'xmuse.sidebar')
 
   ctx.effect(() => stopAll, 'xmuse.relay')
 
