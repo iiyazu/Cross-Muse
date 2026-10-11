@@ -285,8 +285,9 @@ def main(argv=None) -> None:
     p.add_argument("--role", default="")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
-    p.add_argument("--extra-mcp", type=Path, help="dsh headless: JSON file with a list of extra stdio MCP servers "
-                                                  '[{"name", "command", "args", "env"}] mounted in every run overlay')
+    p.add_argument("--extra-mcp", type=Path, help="dsh / opencode headless: JSON file with a list of extra stdio MCP "
+                                                  'servers [{"name", "command", "args", "env"}] (dsh run overlay, '
+                                                  "opencode instance config)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
     p = sub.add_parser("send")
@@ -379,8 +380,8 @@ def main(argv=None) -> None:
         from .init import add_agent
         st = {("foreground" if a.vendor == "dsh" else "desktop"): True} if a.desktop else {}
         if a.extra_mcp:
-            if a.vendor != "dsh" or a.desktop:
-                raise SystemExit("--extra-mcp is only for headless --vendor dsh agents")
+            if a.vendor not in ("dsh", "opencode") or a.desktop:
+                raise SystemExit("--extra-mcp is only for headless --vendor dsh or opencode agents")
             from .adapters.dsh import extra_mcp
             try:
                 st["extra_mcp"] = extra_mcp({"settings": {"extra_mcp": json.loads(a.extra_mcp.read_text())}})
