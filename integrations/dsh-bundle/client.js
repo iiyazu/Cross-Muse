@@ -120,7 +120,7 @@ window.__ModuleLoader__.load({
 			var roomDir = el('input'); roomDir.type = 'text'; roomDir.placeholder = '工作目录，如 C:\\Users\\me\\proj';
 			var roomName = el('input'); roomName.type = 'text'; roomName.placeholder = '房间名';
 			var roomBtn = el('button', 'primary', '开房间');
-			var joinCode = el('input'); joinCode.type = 'text'; joinCode.placeholder = '邀请码，如 K7Q2-9F';
+			var joinCode = el('input'); joinCode.type = 'text'; joinCode.placeholder = '邀请码，如 AB12-CD';
 			var joinBtn = el('button', null, '加入');
 			var r1 = el('div', 'row'); r1.appendChild(roomDir);
 			var r2 = el('div', 'row'); r2.appendChild(roomName); r2.appendChild(roomBtn);
@@ -393,7 +393,11 @@ window.__ModuleLoader__.load({
 				if (!list.length) apprBox.appendChild(el('div', 'dim', '（无待审批）'));
 				list.forEach(function (a) {
 					var box = el('div', 'appr');
-					box.appendChild(el('div', null, a.id + ' · ' + a.kind + ' · ' + a.member + ' · ' + (a.summary || '')));
+					// 除 shell 外还有 kind=alignment（id 如 E12）和 kind=resume（id 如 resume:<成员>），
+					// 都用 approve 处理；对齐提案可能没有 member/summary，用 author/text 兜底。
+					var who = a.member || a.author || '';
+					box.appendChild(el('div', null, a.id + ' · ' + a.kind + (who ? ' · ' + who : '') +
+						' · ' + (a.summary || a.text || '') + (a.risk === 'high' ? ' · 高风险' : '')));
 					if (a.detail) box.appendChild(el('div', 'dim', a.detail));
 					var row = el('div', 'row');
 					[['批准一次', 'once', 'primary'], ['总是', 'always', null], ['拒绝', 'reject', 'danger']].forEach(function (def) {
