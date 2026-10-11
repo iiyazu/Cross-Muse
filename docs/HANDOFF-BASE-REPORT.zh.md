@@ -453,3 +453,48 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 - `convention` 没有单独成为 kind，约定仍然用 `decision` 登记（`_blocked` 里早就把 convention 当 decision 处理）。如果设计稿要求单独计数，需要在 DECLARE 里加一个 kind，工具表也要跟着变。
 - 订阅只来自 assignment：P 没有通过 handoff（带 module scope）派活的 agent，看不到任何 module 条目。
 - dsh 前台 agent 的 AGENTS.md 段（`xmuse agent add --desktop`）里仍列出 `context` 子命令；团队实验都是无界面模式，没有改。
+
+## T13 编排预设 plan-split-integrate（2026-10-11）
+
+**提交**：hub 部分 `7393b05`；报告 `(this commit)`
+
+**hub 里的状态机**（`hub/src/xmuse/preset.py`；`xmuse run --preset plan-split-integrate --planner P --executors E1,E2 --task-file F [--limits JSON]`，`xmuse run-status`）
+| 阶段 | 开始时 hub 做什么 | 怎样结束 | 超时 |
+|---|---|---|---|
+| P0 | 每个执行者一个 worktree（`<ws>/.xmuse-wt/<id>`，分支 `xmuse/<id>`，从 base 提交开出，复制生成的 xmuse 文件）；执行者设为 cwd=worktree 并暂停；给 P 发规划说明 | P 写好 `.xmuse-plan.json`（`owners` 按执行者列 glob，`acceptance` 列验收清单），并调用 `xmuse_done(stage="plan")`，且这个回合已结束。计划文件无效时退回一次 | 记为失败 run，hub 不代为拆分 |
+| P1 | 给每个执行者发阶段说明（自己的文件、怎样问 P、怎样收尾），然后解除暂停：P 在 P0 发的 handoff 和这条说明合进同一个回合 | 所有执行者 `xmuse_done(stage="part")`，且回合都已结束 | 停掉执行者（中断回合、取消排队），照样往下走 |
+| P2 | 提交各 worktree → 快照 S-E1、S-E2 → 检查越界修改 → hub 依次把分支 merge 进主工作区；冲突的分支先 abort，留给 P 手动 merge → 给 P 发集成说明（含每个分支的合并结果） | P `xmuse_done(stage="integrated")`；`next` 写 `none` 表示全过，否则写一个负责人 | 停掉 P，进入收尾 |
+| P3 | 修复者 = P 在集成阶段发过消息的执行者（加上 `next` 指名的）；把主分支 merge 进他们的 worktree，解除暂停 | 修复者 `xmuse_done(stage="fix")` → hub 合并 → 快照 S-fix-k → 让 P 复查（`P3int`，结束方式同 P2） | 同上；最多 `rounds` 轮（默认 2） |
+| F | 暂停执行者，取消剩余投递；只有超时时才中断 P；提交主工作区 → 快照 F | — | 总时限（默认 3600 秒）到了直接进入 F |
+
+- 快照：`git diff --binary <base> <commit>` 存在 `<state>/runs/preset-<id>/<名字>.patch`，事件里记时间、提交号和文件列表。AGENTS.md、CLAUDE.md、计划文件不进快照。
+- 越界修改：执行者分支相对 base 改动的文件，不在它（以及它接手的部分）的 glob 里时，记 `violation` 事件，只记不拦。
+- 崩溃：本阶段某个 agent 有一个 `failed` 回合 → 记 `crash_retry`，发一条消息再唤醒它一次；第二次 → `degraded`。执行者降级后由另一名执行者接手（`takeover`，接手人要在接手之后重新 `done(stage="part")`），没有人可接手就跳过；P 在 P0 降级则 run 失败，在集成阶段降级则直接收尾。
+- 依赖的改动：engine 支持 `settings.cwd`（每个 agent 有自己的工作目录）；`xmuse_done` 新增可选参数 `stage`，写进新列 `messages.stage`；新增表 `preset_runs` 和 `preset_events`。hub 启动时开一个线程，每隔 `preset_tick` 秒（默认 2 秒）轮询推进。
+- 顺手修了 T12 的遗留：`agent_pids`（判断是否人工操作时用的进程表）以前只看第一个 opencode 服务，现在看所有实例。
+
+**测试**：`tests/test_preset.py`（11 条）。用脚本化的假驱动：每个 agent 一段 Python 行为，在自己的 cwd 里写文件、通过 HTTP 调 hub 工具。覆盖：
+- 正常路径：阶段顺序 P1→P2→F；快照依次是 S-E1、S-E2、S-int、F，文件列表正确；执行者的 cwd 是各自的 worktree；第一个回合同时收到 handoff 和 P1 说明。
+- P0 超时失败，执行者从未起过回合。
+- 计划文件无效时退回一次。
+- P1 超时：中断还没写完的执行者，半成品进入 S-E2。
+- 崩溃：两个执行者各重试一次；e2 降级，由 e1 接手；接手后的文件不算越界。
+- 越界和冲突：两个越界事件；e2 的分支冲突交给 P，P 手动 merge 并解决冲突。
+- P3：修复轮把主分支合进修复者的 worktree，S-fix-1 和复查都执行了，e2 没有被唤醒。
+- 信息层关闭（T-plain）也能跑完，条目数为 0。
+- P 在 P0 连续崩溃两次，run 失败。
+- 通过 CLI 启动，参数错误时报错。
+
+连续跑 3 次都是 `10 passed`（后来加了第 11 条）。
+
+**测试结果原文**（无终端，hub 部分）
+```
+333 passed, 1 skipped, 1 warning in 150.88s (0:02:30)
+```
+插件包：`ℹ pass 28`、`ℹ fail 0`（随包 tools.json 已重新生成：xmuse_done 多了 stage）
+
+**实验 runner：搁置**（用户 10-11 指示：不再做适配具体 benchmark 的事）。写到一半的 Legacy-Bench 团队 runner 和一次中断的流程跑通已移出仓库，放在 base 本机 `D:\lbteam\_parked\`（未删）。多 agent 拓扑本身（hub 预设）继续推进。
+
+**没做 / 拿不准**
+- **WSL 互操作坏了（阻塞 hub 驱动 dsh）**：Arch 和 Ubuntu-24.04 里 `cmd.exe` 报 `Exec format error`，`/proc/sys/fs/binfmt_misc/` 下没有 `WSLInterop`。恢复需要 root 重新注册（`echo ':WSLInterop:M::MZ::/init:PF' > /proc/sys/fs/binfmt_misc/register`）或在探针结束后 `wsl --shutdown`，两者都留给用户。
+- 预设还没有用真实 agent 跑过；设计稿第 6 节里需要大模型判断的指标没有实现；T-silent 没做。
