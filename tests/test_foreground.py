@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import wsl_hub
+
 from xmuse import cli, db, init as xinit
 import xmuse
 
@@ -45,6 +47,7 @@ def wsc(tmp_path, monkeypatch):
     return w
 
 
+@wsl_hub
 def test_add_foreground_stores_settings_and_section(wsc):
     state = xinit.init(wsc)
     a = xinit.add_agent(state, "dsh-1", "dsh", settings=FG)

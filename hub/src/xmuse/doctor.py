@@ -180,7 +180,7 @@ def _agent_files(ws: Path, state: Path, a: dict) -> list[Check]:
             srv = json.loads(mcp.read_text(encoding="utf-8"))["mcpServers"]["xmuse"]
         except (OSError, ValueError, KeyError):
             return [Check("FAIL", f"agent {a['id']}", ".mcp.json has no xmuse server", fix)]
-        flat = json.dumps(srv)
+        flat = " ".join(_strings(srv))  # not json.dumps: it doubles the backslashes of Windows paths
         problems = [p for p, bad in ((f"not this agent ({a['id']})", f"XMUSE_AGENT={a['id']}" not in flat
                                       and srv.get("env", {}).get("XMUSE_AGENT") != a["id"]),
                                      ("points at another state dir", str(state) not in flat),
@@ -224,6 +224,17 @@ def _read(p: Path) -> str:
         return p.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _strings(o) -> list[str]:
+    """Every string inside a JSON value (keys included)."""
+    if isinstance(o, str):
+        return [o]
+    if isinstance(o, dict):
+        return [s for k, v in o.items() for s in (k, *_strings(v))]
+    if isinstance(o, list):
+        return [s for v in o for s in _strings(v)]
+    return []
 
 
 def _instances(agents: list[dict]) -> Check:

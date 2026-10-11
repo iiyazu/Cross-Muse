@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from conftest import set_home, wsl_hub
 from xmuse import db, mail, wakepack
 from xmuse.adapters.claude import branch_points, parse_stream, transcript, transcript_usage
 from xmuse.adapters.opencode import OpenCodePrompt, Tracked
@@ -49,7 +50,7 @@ def test_branch_points(tmp_path):
 
 
 def test_transcript_path_matches_claude_layout(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
+    set_home(monkeypatch, tmp_path)
     assert transcript(Path("/home/u/dev/my_ws.1"), "sid") == \
         tmp_path / ".claude" / "projects" / "-home-u-dev-my-ws-1" / "sid.jsonl"
 
@@ -85,8 +86,10 @@ def test_family_follows_the_model_not_the_shell(make):
     assert h.q("select family from agents where id='dsh-1'")[0]["family"] == "opencode"
 
 
+@wsl_hub
 def test_host_facts_are_derived_or_a_clear_error(tmp_path, monkeypatch):
     import pytest
+
     from xmuse import host
     monkeypatch.setenv("XMUSE_WSL_DISTRO", "Debian")
     assert host.distro() == "Debian"  # the override wins over WSL_DISTRO_NAME

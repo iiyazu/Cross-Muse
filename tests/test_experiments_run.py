@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 EXP = Path(__file__).resolve().parents[1] / "experiments"
 spec = importlib.util.spec_from_file_location("exp_run", EXP / "run.py")
@@ -144,6 +145,7 @@ def test_memoryos_needs_dir(tmp_path, monkeypatch):
         r.mo_start()
 
 
+@posix_only
 def test_memoryos_starts_passes_health_writes_config_and_stops(tmp_path, monkeypatch):
     r = _mo_run(tmp_path, monkeypatch)
     r.mo_start()
@@ -171,6 +173,7 @@ def test_memoryos_starts_passes_health_writes_config_and_stops(tmp_path, monkeyp
         socket.create_connection(("127.0.0.1", port), timeout=2).close()
 
 
+@posix_only
 def test_memoryos_stops_on_exception(tmp_path, monkeypatch):
     r = _mo_run(tmp_path, monkeypatch)
     r.mo_start()
