@@ -1193,3 +1193,34 @@ arena HEAD^{tree} = 00a56823b2b14aba1617867b7b7dc6c11de37b4f   (base 和 r7 各�
 - **NOTES 里 r7 自己列的不确定项**：
   - H58 的双日行、H73 的 Mockito 字段替换：干净树上通过，逐个验证也通过；
   - H59、H71 依赖 3 秒延迟队列：H59 已改成直接入队，不再依赖延迟；H71 改成最多等 8 秒。
+
+## T15 第 9 步：新猎场上的单干（只推理、可编译，30 分钟；2026-10-11，r7）
+
+### 做了什么
+- 用 `tools/solo_dsh.py` 在 r7 上跑：dsh-ms13，`--limit 1800 --every 600`，挂 bench-tests MCP（只有 `compile()`），题面是猎场 README 原文。
+- 工作区 `/mnt/c/Users/user/phb/solo2/ws`，从猎场 `00a56823` 克隆。
+- 结束后在 transcript（`dsh.ndjson`）里搜了两类东西：
+  - 答案路径：BENCH_DIR、phb-addbugs、bm-rename、prizehub-bench、bugdefs、genhidden、bugs.json；
+  - 运行测试的尝试：mvn、gradle、java、docker（compile 自己回显的 `test-compile` 不算）。
+- 然后用 grade.py（worker 3）给 final 快照判分。
+
+### 结果原文
+```
+{"elapsed_s": 731, "ended_by": "self", "rc": 0, "ok": true, "error": "", "usage": {"input": 174872, "cache_read": 14516938, "cache_write": 0, "output": 37760, "context": 183376, "calls": 107, "mode": "code", "model": ""}}
+compile 调用: 2      (logs/bt-calls.jsonl, project phb-solo2)
+答案路径命中: 0      测试运行尝试命中: 0
+{'compiled': True, 'fixed': 44, 'total': 70, 'unjudgeable': 0, 'regressions': 0, 'cross_layer_fixed': 26, 'cross_layer_total': 43}
+fixed: H02 H03 H04 H08 H09 H10 H14 H16 H18 H19 H05 H27 H30 H31 H32 H24 H29 H34 H35 H38 H40 H42 H43 H44 H45
+       H47 H49 H50 H51 H53 H54 H55 H56 H57 H58 H59 H60 H61 H63 H64 H66 H68 H71 H72
+```
+- **44/70 = 62.9%**，超过 50%。按预注册第 1 节和 5a、5b，不再调整难度，直接在当前猎场上跑团队实验，协作质量是主要指标。6 次团队 run 已经开始（plain、xmuse 交替）。
+- **按来源分**：
+  - 旧的 44 个修好 25 个。没修好的 19 个：H01 H06 H07 H11 H13 H15 H17 H20 H21 H22 H23 H25 H26 H28 H33 H36 H39 H41 H46；
+  - r7 新写的 26 个修好 19 个。没修好的 7 个：H48 H52 H62 H65 H69 H73 H74。
+- **和上一次单干比**（旧猎场 44 个 bug，能跑测试但 0 次调用，题面是旧 README）：旧的那批这次少修了 7 个（32 → 25）。两次猎场、README 和条件都不同，只记录事实，不归因。
+
+### 没做的和拿不准的
+- 单干只跑了 1 次，有随机波动。
+- 预注册只要求单干跑一次，没有重复。
+- 结果文件（meta.json、dsh.ndjson、grade-final.json、快照）在 r7 的 `~/bench/phb/runs/solo2`，等团队 run 跑完后和团队结果一起推到 prizehub-bench 的 `results/`。
+- `bm-rename` 还在 r7 的 C 盘上（见第 8 步），这次 transcript 里没有读它的痕迹。
