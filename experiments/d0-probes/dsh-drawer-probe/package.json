@@ -1,0 +1,23 @@
+{
+  "name": "dsh-drawer-probe",
+  "version": "0.0.1",
+  "private": true,
+  "description": "D0 probe: xmuse sidebar drawer for the dsh web GUI (host route proxying to a loopback hub + a collapsible fixed drawer). No product code.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

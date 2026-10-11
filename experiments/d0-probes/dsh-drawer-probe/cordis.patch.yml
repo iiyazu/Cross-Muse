@@ -1,0 +1,8 @@
+# dsh-drawer-probe: mounts the xmuse drawer probe (host half + browser half).
+# hubUrl: the loopback URL of whatever answers /v1/view (for the probe: the echo server
+# `node http-echo-server.js 18080 127.0.0.1 <log>` from experiments/d0-probes/).
+- insert:
+    - id: xmuse-drawer-probe
+      name: 'dsh-drawer-probe'
+      config:
+        hubUrl: 'http://127.0.0.1:18080'
