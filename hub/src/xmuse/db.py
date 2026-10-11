@@ -159,6 +159,13 @@ def settings(agent: dict) -> dict:
     return json.loads(agent["settings"] or "{}")
 
 
+def workdir(agent: dict, ws) -> "Path":
+    """Where the agent works and where a Claude member's project configs (.mcp.json, .claude/) live: its own
+    settings.cwd (a member directory, or a git worktree), else the workspace root."""
+    from pathlib import Path
+    return Path(settings(agent).get("cwd") or ws)
+
+
 def polled(agent: dict) -> bool:
     """Lives in a desktop session the hub never runs (Claude coordinator or dsh foreground): only polled."""
     s = settings(agent)

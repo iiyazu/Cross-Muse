@@ -45,6 +45,8 @@ class Hub:
             log.warning("information layer off: plain messages only (no entries, injection, routing or dependency wake)")
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
+        from .init import sync_member_dirs
+        sync_member_dirs(self.ws, state, self.cfg)  # Claude members' worktrees outside the workspace
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
             for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
                 c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))
