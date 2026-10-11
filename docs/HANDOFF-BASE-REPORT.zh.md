@@ -498,3 +498,58 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 **没做 / 拿不准**
 - **WSL 互操作坏了（阻塞 hub 驱动 dsh）**：Arch 和 Ubuntu-24.04 里 `cmd.exe` 报 `Exec format error`，`/proc/sys/fs/binfmt_misc/` 下没有 `WSLInterop`。恢复需要 root 重新注册（`echo ':WSLInterop:M::MZ::/init:PF' > /proc/sys/fs/binfmt_misc/register`）或在探针结束后 `wsl --shutdown`，两者都留给用户。
 - 预设还没有用真实 agent 跑过；设计稿第 6 节里需要大模型判断的指标没有实现；T-silent 没做。
+
+## T15 第 1 步：big-market 底座调研（2026-10-11）
+
+**提交**：本节（只有调研，没有代码）
+
+**怎么调研的**：只读方式查看了 r7 上的原版（Windows `C:\Users\user\backend\bigmarket\big-market`，WSL 下是 `/mnt/c/...`，HEAD `7e31b53`，共 213 个提交）。看了 pom、`application-*.yml`（密码类字段在输出时已打码，没有读取明文）、`docs/dev-ops` 里的 compose 文件、配置类和测试。仓库里没有复制任何东西，也没有构建或启动。
+
+### 规模（只算 `src/main` 的 Java 行数）
+| 模块 | main | test |
+|---|---|---|
+| domain | 6130（strategy 2365、activity 2039、award 608、credit 438、rebate 430、auth 138、task 112） | 0 |
+| infrastructure | 4068（7 个 Repository 共 1898 行，ActivityRepository 一个文件 822 行） | 0 |
+| trigger | 1773（HTTP 控制器、Dubbo 服务、4 个 RabbitMQ 监听器、3 个 xxl-job 任务） | 0 |
+| app | 833（配置类、AOP） | 1411（20 个 `@SpringBootTest`） |
+| api / types / querys | 762 / 201 / 55 | 0 |
+| **合计（不算 learning-demos）** | **约 1.38 万行**，另有 22 个 MyBatis mapper XML | |
+| learning-demos | 3530 | 1464 |
+
+- 和 §11 写的"约 2 万行"有出入：约 2 万这个数要把 learning-demos、测试和 XML 都算进去。`big-market-learning-demos` 是用户自己的学习骨架代码，**建议不放进猎场**。
+- 仓库根目录下有 `resume/`、`docs/interview/`、`data/`、`.m2/`（14 MB 本地依赖），这些都要在构造猎场时剔除。
+- 环境：Java 目标版本 1.8，Spring Boot 2.7.12，MyBatis；分库分表用 `plus.gaga.middleware:db-router-spring-boot-starter:1.0.4`（2 库 4 表，`big_market` 存配置，`big_market_01/02` 存用户数据）。
+- 测试现状：app 的 surefire 配置是 `skipTests=true`；20 个测试类全部是 `@SpringBootTest`、要连真实中间件，带断言的很少（全仓库带 assert 的测试文件 14 个，其中有一部分属于 learning-demos）。这和 §11 的判断一致：可见测试要重新写。
+- 历史里有 36 个 `fix:` 提交，可以作为"少量参考原版真实修复"的来源。猎场本身不带 git 历史。
+
+### 中间件：必须起的和可以关的
+| 组件 | 代码里怎么用 | 测试 profile 的处理 |
+|---|---|---|
+| **MySQL 8.0.32**（3 个库） | db-router 和 MyBatis，所有核心流程都要 | **必须起**；用 `docs/dev-ops/mysql/sql/big_market*.sql` 初始化，每个测试类开始前重置数据 |
+| **Redis 6.2**（Redisson） | 策略装配、库存扣减、分布式锁、缓存键 | **必须起**；库存和缓存键类的 bug 都在这一层 |
+| **RabbitMQ 3.12.9** | 4 个监听器：`activity_sku_stock_zero`、`send_award`、`send_rebate`、`credit_adjust_success`，消息由 task 表补偿发送 | **建议起**：MQ 消息字段约定是 §11 指定的跨层 bug 类别之一。只为启动的话可以不连，监听器连不上只会重试，不会导致启动失败 |
+| ZooKeeper 3.9 | 只用于 DCC 动态开关（`degradeSwitch`、`rateLimiterSwitch`），由 `zookeeper.sdk.config.enable` 控制，dev 环境默认已经是 `false`；`@DCCValue` 字段为空时按"关闭"处理；DCCController 用 `@Autowired(required=false)` 注入 | **可以关**（§11 把它列成必须起的，按代码看不需要） |
+| Elasticsearch 7.17 + canal | ES 用 JDBC 数据源，只给 querys 和 ERP 查询用户抽奖单；canal 把 MySQL 同步到 ES | **关掉**：Hikari 是懒连接，启动时不会连 ES。ERP 查询那一条路径不放 bug、不测 |
+| Nacos + Dubbo | `@EnableDubbo`，3 个控制器同时导出为 `@DubboService`，注册中心是 `nacos://127.0.0.1:8848` | **关掉**：测试 profile 里设 `dubbo.registry.address=N/A`（启动时需要验证） |
+| xxl-job | 3 个定时任务：task 补偿发送、SKU 库存、奖品库存，执行器端口 9999 | **不起调度中心**：测试里直接调用 job 方法；执行器注册失败只会打日志 |
+| Retrofit 网关 | `AwardPort` 调外部接口（`gateway.config.apiHost`），用于一种奖品的发放 | 用 WireMock 或者桩替代，或者这类奖品不放 bug |
+| Prometheus、Grafana、Kibana、phpMyAdmin、redis-commander | 只做监控和管理 | 不起 |
+
+### 测试镜像方案（建议）
+- compose 一共 4 个服务：`mysql:8.0.32`、`redis:6.2`、`rabbitmq:3.12.9`，加一个运行测试的容器（`maven:3.9-eclipse-temurin-8`，依赖提前装进本地 Maven 仓库，测试时离线运行，不依赖 Maven Central）。
+- 新增一个 `application-bench.yml`：ZooKeeper、ES、Dubbo 注册中心、xxl-job 都关掉，网关指向桩；只用这一个 profile 运行可见测试和隐藏测试。
+- 可见测试用 Spring 上下文缓存（同一套配置只启动一次）。数据重置用 `@Sql` 或者一个 truncate 加种子数据的工具类。
+- **大小预估**：mysql 约 560 MB，redis 约 110 MB，rabbitmq 约 220 MB，maven+JDK8 约 500 MB，依赖约 150–250 MB，合计约 **1.5–1.7 GB**（ES、ZooKeeper、Nacos 都不起，省掉 1 GB 以上）。
+- **时间预估**：Spring 上下文冷启动约 15–30 秒；隐藏测试按 50 个 bug、每个 1–2 个用例算，加上可见测试，共享上下文时单次全量运行 **3–6 分钟**，在 10 分钟以内。"逐个 bug 验证"需要 40–60 次构建加测试，可以只编译受影响的模块，并且只跑这个 bug 对应的测试类，以控制总时间。以上都是估计，没有实测。
+- r7 的 WSL 里有 docker 29.9（约 25 GB 内存），但没有 Java 和 Maven，所以构建和测试都要放进容器里做。
+
+### 可以放 bug 的位置（初步）
+- domain：strategy（装配、权重和概率表、责任链和规则树）、activity（额度、日/月账户、SKU 库存）、award、credit、rebate。
+- 跨层（约 1/4）：Redis 库存键和扣减（domain 和 infrastructure 之间）、task 表加 MQ 消息字段（domain、infrastructure、trigger 之间）、幂等键（outBusinessNo、bizId）、积分金额（BigDecimal 的精度和正负号）、库存为零的消息和 xxl-job 更新库存。
+- 这些要等改名版本到位后，对照代码再定。
+
+**没做 / 拿不准**
+- 只做了阅读，没有在镜像里启动过；`dubbo.registry.address=N/A` 能不能启动、ES 懒连接是否成立，都要等第 2 步验证。
+- `plus.gaga` 的两个依赖（db-router、business-behavior-monitor-sdk）是否都在 Maven Central 上，还没核实；仓库里自带的 `.m2/`（14 MB）可能就是为这个准备的。
+- 难度标定（第 3 步）按 §11 的要求没有跑。
+- 猎场的构造（第 2 步）等 r7 推送 prizehub 之后再做；要不要剔除 learning-demos、resume、interview，请 r7 或用户确认。
