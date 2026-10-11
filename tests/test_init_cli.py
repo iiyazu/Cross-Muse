@@ -1,6 +1,9 @@
 """`xmuse init` / `agent add` config generation and the CLI against a real hub process."""
 import json
 import os
+import pty
+import select
+import signal
 import stat
 import subprocess
 import sys
@@ -113,6 +116,55 @@ def run(ws, *args, check=True):
     return r
 
 
+def run_tty(ws, *args):
+    """Run the CLI on a pty and return its output (stdout and stderr together) as text.
+
+    The human-only admin actions ask peer.py whether the caller is a human: the caller must be findable
+    as a loopback peer in /proc and must own a controlling terminal. A subprocess fed by pipes has no
+    controlling terminal, so it would be refused for the caller's sake rather than for the command's,
+    which is not what the test is about. pty.fork() gives the child a session and a controlling terminal.
+    """
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "hub" / "src")}
+    pid, fd = pty.fork()
+    if pid == 0:  # the child: the pty is its controlling terminal
+        try:
+            os.chdir(ws)
+            os.execvpe(sys.executable, [*XMUSE, *args], env)
+        finally:
+            os._exit(127)  # never fall back into pytest in the forked child
+    out = bytearray()
+    timed_out = False
+    while True:
+        try:
+            ready, _, _ = select.select([fd], [], [], 60)
+        except InterruptedError:
+            continue
+        if not ready:
+            timed_out = True
+            break
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:  # EIO: the child side of the pty is gone
+            break
+        if not chunk:
+            break
+        out += chunk
+    os.close(fd)
+    if timed_out:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    _, status = os.waitpid(pid, 0)
+    text = out.decode(errors="replace")
+    if timed_out:
+        raise AssertionError(f"timed out after 60s: {text}")
+    # a real tty adds CR before LF: callers match substrings, not whole lines
+    if os.WIFSIGNALED(status):
+        raise AssertionError(f"killed by {signal.Signals(os.WTERMSIG(status)).name}: {text}")
+    return text
+
+
 def test_hub_start_gives_up_after_the_deadline_and_stops_the_hub(tmp_path, monkeypatch):
     from xmuse import cli
     state = tmp_path / "state"
@@ -160,7 +212,9 @@ def test_cli_end_to_end_with_a_fake_agent(ws):
         assert "Bash(make test)" in json.loads((home / "calls.jsonl").read_text())["argv"]
         assert "--resume" in run(ws, "attach", "claude-1").stdout
         assert json.loads(run(ws, "stop").stdout) == {"canceled_deliveries": 0, "interrupted_turns": []}
-        assert "no approval" in run(ws, "approve", "per_x", "once", check=False).stderr
+        # approve is human-only, so it needs a controlling terminal (peer.py); run it on a pty to reach
+        # the "no approval" answer instead of the refusal that a pipe-fed caller would get.
+        assert "no approval" in run_tty(ws, "approve", "per_x", "once")
     finally:
         run(ws, "hub", "stop")
     assert not (state / "hub.json").exists()
