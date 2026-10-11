@@ -293,6 +293,40 @@ def test_overlay_registers_opencode_go_through_pi_ai_but_not_deepseek(tmp_path):
     assert ds[0]["id"] == "agent-default-model" and not any(r.get("id") == "llm-pi-ai" for r in ds)
 
 
+def test_extra_mcp_from_agent_settings_is_mounted_after_xmuse_but_not_in_the_precheck(tmp_path):
+    bench = {"name": "bench-tests", "command": "node", "args": ["C:\\phb\\mcp\\bench-tests.mjs"],
+             "env": {"BENCH_WS": "/mnt/c/ws", "BENCH_PROJECT": "phb-e2"}}
+    agent = {"id": "d", "model": "opencode-go/m", "settings": json.dumps({"extra_mcp": [bench]})}
+    rows = json.loads(overlay(agent, tmp_path))
+    names = [r["insert"][0]["config"]["serverName"] for r in rows if "insert" in r]
+    assert names == ["xmuse", "bench-tests"]
+    [x] = [r["insert"][0] for r in rows if "insert" in r and r["insert"][0]["id"] == "mcp-bench-tests"]
+    assert x["config"] == {"serverName": "bench-tests", "transport": "stdio", "command": "node",
+                           "args": ["C:\\phb\\mcp\\bench-tests.mjs"], "env": bench["env"], "failOnStartupError": True}
+    assert not any("insert" in r for r in json.loads(overlay(agent, tmp_path, mcp=False)))
+    assert names == [r["insert"][0]["config"]["serverName"] for r in json.loads(overlay({**agent, "settings": {"extra_mcp": [bench]}}, tmp_path)) if "insert" in r]
+    for bad in ({"name": "xmuse", "command": "node"}, {"name": "a b", "command": "node"}, {"name": "x", "command": "node", "env": {"K": 1}}):
+        with pytest.raises(ValueError):
+            overlay({**agent, "settings": {"extra_mcp": [bad]}}, tmp_path)
+
+
+def test_agent_add_extra_mcp_is_stored_for_headless_dsh_only(tmp_path, monkeypatch):
+    from xmuse import cli, db
+    monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "st"))
+    monkeypatch.setattr(xinit, "_dsh_ws_ok", lambda ws: True)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    cli.main(["init", str(ws)])
+    spec = tmp_path / "extra.json"
+    spec.write_text(json.dumps([{"name": "bench-tests", "command": "node", "args": ["x.mjs"], "env": {"BENCH_PROJECT": "p"}}]))
+    cli.main(["--ws", str(ws), "agent", "add", "d1", "--vendor", "dsh", "--extra-mcp", str(spec)])
+    state = Path(json.loads((ws / ".xmuse.json").read_text())["state"])
+    a = db.row(db.connect(state / "hub.db").execute("select * from agents where id='d1'"))
+    assert db.settings(a)["extra_mcp"][0]["name"] == "bench-tests"
+    with pytest.raises(SystemExit):
+        cli.main(["--ws", str(ws), "agent", "add", "o1", "--vendor", "opencode", "--extra-mcp", str(spec)])
+
+
 def test_launch_failure_is_retried_once_inside_the_same_turn(make):
     h = make(DSH, dsh_retry_wait=0.1)
     h.plan_dsh({"fail_start": True}, {"as": "dsh-1", "calls": [SEND]})

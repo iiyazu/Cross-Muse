@@ -927,3 +927,96 @@ EXIT:-1
 4. 改用 opencode-ms13 做单干（同一个模型，Linux 侧可以直接跑测试）。团队实验里的 dsh 成员仍然要在 1–3 里选一个。
 
 以上都没做；第 3–6 步还没开始。
+
+## T15 第 6 步：bench-tests MCP 工具，dsh 能跑测试了；单干已开跑（2026-10-11）
+
+**提交**：
+- xmuse2：本节，以及 hub 的 `extra_mcp` 改动（同一个提交）。
+- prizehub-bench：`a4b4914`、`38834ea`、`a2f8a0b`。
+
+本地改的 `relay.py` 和 `run-tests.cmd`/`.ps1` 已丢弃，没有推送。
+
+### 1. 前提验证：dsh 拉起的 MCP 子进程不受沙箱限制（成立）
+- **做法**：写了一个最小的 stdio MCP 服务器 `tools/mcp/wslprobe.mjs`（Windows 侧 node，没有依赖，只有一个工具），用 hub 的 overlay 方式挂给 headless dsh，即和 mcp-xmuse 一样插一行 `@deepseek-ai/dsh-mcp-client`。
+- **工具做的事**：执行 `%SystemRoot%\System32\wsl.exe -d Ubuntu-24.04 -- true`。
+- **dsh 调用的结果原文**：
+```
+CALL mcp__wslprobe__wsl_probe {}
+RES  {"exitCode":0,"output":""}
+```
+- **对照**：同一台机器上，沙箱里的 pwsh 执行 `wsl.exe pwd` 报 `Wsl/E_ACCESSDENIED`，见上一节。
+
+### 2. bench-tests：只能跑测试的 MCP 工具
+**两个文件，都在 prizehub-bench 的 `tools/` 下，不进猎场，也不进 agent 的工作区**：
+
+`tools/mcp/bench-tests.mjs`（Windows 侧）
+- 只有一个工具 `run_tests(test?)`。
+- 只接受 `{test?: string}` 这一个参数，`test` 必须匹配 `^[A-Za-z0-9_.,#*]+$`。
+- 工作区路径（`BENCH_WS`）、compose 项目名（`BENCH_PROJECT`）、发行版和脚本路径都由 overlay 的 env 固定，agent 改不了。
+- 用 `wsl.exe -d <distro> --exec python3 bench_tests.py …` 调用：参数按 argv 传，不经过 shell。
+
+`tools/bench_tests.py`（WSL 侧）
+- 再校验一遍参数格式和项目名。
+- 把工作区 rsync 到 `var/bt-<project>/`，排除 target、`data/log`、`.git`、`.xmuse-wt`。
+- **compose 文件和初始化 SQL 用 kit 的 `harness/`，不用工作区里那份**：工作区里的 `compose.yml` agent 能改，改了就可以挂载宿主机路径。
+- **Maven 本地仓库用 `m2-agent`**（`m2` 的一份拷贝），和判分用的 `m2` 分开，agent 污染了缓存也影响不到判分。
+- 在接入该项目 compose 网络的 maven 容器里执行，命令和 `run-tests.sh` 完全相同。
+- 返回每个测试类的 surefire 摘要和 Maven 输出的最后 200 行。
+- 同一个工作区同时只跑一次（文件锁）。
+
+**工作区里的任何脚本都不执行。**
+
+**顺带修了猎场的一个问题**：`run-tests.sh -Dtest=SchemeDrawTest` 在多模块构建里，会在第一个没有匹配测试的模块报错：
+```
+[ERROR] Failed to execute goal ...maven-surefire-plugin:2.22.2:test (default-test) on project prize-hub-types: No tests were executed!
+```
+两种入口都改成同一条命令：
+```
+mvn -B test -Dspring.profiles.active=bench -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false [-Dtest=…]
+```
+猎场已重新生成，`HEAD^{tree}` 是 `859b69f51ac5b2288e31c130e41b4c741b417434`。判分器本来就带这两个参数，所以判分结果不受影响。
+
+**验证原文**
+- 直接发 JSON-RPC，三种坏参数（`"; rm -rf x"`、`"DrawFlowTest$(id)"`、多带一个 `ws` 字段）全部被拒，什么都没执行：
+```
+{"jsonrpc":"2.0","id":2,"result":{"isError":true,"content":[{"type":"text","text":"rejected: only {test?: string} is accepted, and test must match /^[A-Za-z0-9_.,#*]+$/"}]}}
+```
+- `bench_tests.py --test '; rm -rf x'` 单独运行：`rejected: test must match ^[A-Za-z0-9_.,#*]+$`，rc=2。
+- dsh 通过 overlay 调用 `run_tests(SchemeDrawTest)`：
+```
+SchemeDrawTest: tests=6 failures=0 errors=0 skipped=0
+exit code 0
+```
+- 同一个工作区用 `run-tests.sh -Dtest=SchemeDrawTest`：
+```
+[INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 111.316 s - in io.prizehub.test.suite.SchemeDrawTest
+[INFO] BUILD SUCCESS
+```
+两边一致。
+- **速度差异**：`run-tests.sh` 直接在 `/mnt/c` 上编译和运行，这是 9p 文件系统，明显更慢。bench-tests 在 Linux 盘上的 scratch 目录里运行。团队实验里 oc-ms13 用 `run-tests.sh`，它的工作区在 P 的工作区下（`.xmuse-wt`，在 `/mnt/c` 上），所以会受这个速度差影响。这一点会写进预注册。
+
+### 3. hub：按 agent 配置挂额外的 MCP（`extra_mcp`）
+- `xmuse agent add <id> --vendor dsh --extra-mcp <file.json>`：文件内容是 `[{name, command, args, env}]`，写进 agent 的 settings。只允许 headless dsh 用；名字不能是 `xmuse`；env 必须是字符串。
+- `adapters/dsh.overlay()`：在 mcp-xmuse 那一行后面，每个条目各加一行 `@deepseek-ai/dsh-mcp-client`。不需要 MCP 的预检（`mcp=False`）不挂。
+- **新增测试**（`tests/test_dsh_engine.py`，2 条）：
+  - overlay 的行顺序和内容正确，预检里没有这些行，坏条目会被拒绝；
+  - CLI 能把配置存进去，非 dsh 的 vendor 会被拒绝。
+
+**全量测试原文**（base，无终端）：
+```
+335 passed, 1 skipped, 1 warning in 166.08s (0:02:46)
+```
+
+### 4. 单干（第 3 步）已开跑
+- r7 上 2026-10-11 19:54:51 开始。
+- 设置：
+  - dsh-ms13（`opencode-go/muse-spark-1.3-contributor`），挂 bench-tests，compose 项目 `phb-solo`；
+  - 题面是猎场 `README.md` 原文；
+  - 墙钟上限 7200 秒，每 900 秒快照一次；
+  - 工作区 `/mnt/c/Users/user/phb/solo/ws`，从猎场 `859b69f` 克隆。
+- 结果出来后另写一节。
+
+### 其它
+- **dsh-fl 的模型 id**：opencode 模型目录 `~/.cache/opencode/models.json` 里，opencode-go 下有 `deepseek-v4.1-flash`，所以用 `opencode-go/deepseek-v4.1-flash`。`opencode models` 在 ssh 会话里没有任何输出。
+- **我的后台脚本 bug**：`r7bg.sh` 原来在拼命令时把 `$?` 提前展开了，unit 的命令行里变成了 `echo 0 > …done`，导致 `.done` 不可信。已改成调用 r7 上的 `logs/bg/wrap.sh`。之前任务的结论都是对照输出原文核对过的，不受影响。
+- **r7 的 C 盘**：用户删掉 `docker_data.vhdx` 之后剩 26.5 GB；单干开跑前是 23.17 GB。
