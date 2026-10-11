@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
-from .adapters.opencode import shell_auto_ok
+from .adapters.opencode import auto_decision
 from .config import HUMAN
 
 log = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ class Engine:
             for c in {p["chain_id"] for p in pending}:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
         # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
-        cwd = Path(db.settings(agent).get("cwd") or self.ws)
+        cwd = db.workdir(agent, self.ws)
         pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
@@ -275,18 +275,20 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
-        auto = shell_auto_ok(req.get("action"), req.get("resources"), self.shell_policy) and "opencode" in self.drivers
+        auto = auto_decision(req.get("action"), req.get("resources"), self.shell_policy) \
+            if "opencode" in self.drivers else None
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
                                                   json.dumps(req.get("resources")), db.now()))
         if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
             try:
-                self.drivers["opencode"].approve(session, req["id"], "once", agent_id)
+                self.drivers["opencode"].approve(session, req["id"], auto, agent_id)
                 with db.tx(conn):
-                    conn.execute("update approvals set state='decided', decision='once', decided_at=? where id=?",
-                                 (db.now(), req["id"]))
-                log.info("auto-approved shell for %s: %s", agent_id, req.get("resources"))
+                    conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
+                                 (auto, db.now(), req["id"]))
+                log.info("auto-%s %s for %s: %s", "approved" if auto == "once" else "rejected", req.get("action"),
+                         agent_id, req.get("resources"))
                 return
             except Exception:
                 log.exception("auto-approve failed; asking the human")

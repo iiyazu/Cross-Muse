@@ -91,6 +91,10 @@ class Orchestrator:
                     shutil.copytree(src, wt / name, dirs_exist_ok=True)
                 elif src.exists():
                     shutil.copy2(src, wt / name)
+            if roster[a]["vendor"] == "claude":  # the workspace's .mcp.json may belong to another Claude member
+                from .adapters import claude
+                claude.write_config(self.ws, {**roster[a], "settings": json.dumps(
+                    {**db.settings(roster[a]), "cwd": str(wt)})}, self.state)
             wts[a] = str(wt)
         with db.tx(conn):
             for a in executors:  # executors wait for P1; their worktree is their cwd from the first turn on

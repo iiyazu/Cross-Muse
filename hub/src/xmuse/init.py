@@ -25,6 +25,7 @@ CLAUDE_ALLOW = ["Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(p
 # Python projects also get the interpreter (user 10-09): unittest plus free edits already run arbitrary code,
 # so this adds no real risk and lets a reviewer run its own probe scripts. Per workspace: config.json claude_allow.
 PYTHON_ALLOW = ["Bash(python3:*)", "Bash(python:*)"]
+GENERATED = [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/", ".xmuse-tmp/"]
 SKILL_DIRS = [".claude/skills", ".opencode/skills", ".agents/skills"]  # .agents/skills: dsh
 
 
@@ -110,6 +111,41 @@ def write_prompts(ws: Path, state: Path, cfg: dict) -> None:
     agents_md.write_text(text, encoding="utf-8")
 
 
+def _claude_md(d: Path) -> None:
+    claude_md = d / "CLAUDE.md"  # Claude Code reads CLAUDE.md; import AGENTS.md instead of copying it
+    if not claude_md.exists():
+        claude_md.write_text("@AGENTS.md\n", encoding="utf-8")
+    elif "@AGENTS.md" not in claude_md.read_text(encoding="utf-8"):
+        claude_md.write_text(claude_md.read_text(encoding="utf-8").rstrip() + "\n\n@AGENTS.md\n", encoding="utf-8")
+
+
+def sync_member_dir(ws: Path, d: Path, state: Path, cfg: dict) -> None:
+    """A Claude member working in its own git worktree outside the workspace gets what a worktree lacks (the generated
+    files are untracked): .xmuse.json (the CLI and the agent's tools find the state through it), AGENTS.md and the
+    skill, as the plan-split-integrate preset copies them. A member directory inside the workspace inherits them from
+    the workspace root (CLAUDE.md and .xmuse.json are found upward) and gets nothing."""
+    ws, d = ws.resolve(), d.resolve()
+    if d == ws or d.is_relative_to(ws):
+        return
+    (d / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n", encoding="utf-8")
+    write_prompts(d, state, cfg)
+    _claude_md(d)
+    _exclude(d, GENERATED)
+
+
+def sync_member_dirs(ws: Path, state: Path, cfg: dict) -> None:
+    """Hub start: refresh the member worktrees' prompts for the current config (see write_prompts)."""
+    conn = db.connect(state / "hub.db")
+    try:
+        agents = db.rows(conn.execute("select * from agents where vendor='claude'"))
+    finally:
+        conn.close()  # the hub starts in tests by the hundred: do not leave a descriptor per start
+    for a in agents:
+        c = db.settings(a).get("cwd")
+        if c and Path(c).is_dir():
+            sync_member_dir(ws, Path(c), state, cfg)
+
+
 def init(ws: Path) -> Path:
     ws = ws.resolve()
     state = config.state_dir_for(ws)
@@ -127,12 +163,8 @@ def init(ws: Path) -> Path:
         _token(state / "tokens" / "_admin")
     (ws / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n", encoding="utf-8")
     write_prompts(ws, state, config.load(state))
-    claude_md = ws / "CLAUDE.md"  # Claude Code reads CLAUDE.md; import AGENTS.md instead of copying it
-    if not claude_md.exists():
-        claude_md.write_text("@AGENTS.md\n", encoding="utf-8")
-    elif "@AGENTS.md" not in claude_md.read_text(encoding="utf-8"):
-        claude_md.write_text(claude_md.read_text(encoding="utf-8").rstrip() + "\n\n@AGENTS.md\n", encoding="utf-8")
-    _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/", ".xmuse-tmp/"])
+    _claude_md(ws)
+    _exclude(ws, GENERATED)
     return state
 
 
@@ -142,6 +174,25 @@ def _dsh_ws_ok(ws) -> bool:
     if os.name == "nt":
         return not str(ws).startswith("\\\\")
     return re.match(r"/mnt/[a-zA-Z]/", str(ws)) is not None
+
+
+def _member_cwd(ws: Path, raw: str) -> Path | None:
+    """--cwd of a Claude member. The directory must exist and be either inside the workspace, or the root of a git
+    worktree of the workspace's repository (same git common dir); a relative path is taken from the current
+    directory. The workspace root itself is the default and is stored as no cwd."""
+    d = Path(raw).expanduser().resolve()
+    if not d.is_dir():
+        raise SystemExit(f"--cwd {d}: not an existing directory (create it, or: git -C {ws} worktree add {d})")
+    ws = ws.resolve()
+    if d == ws:
+        return None
+    if d.is_relative_to(ws):
+        return d
+    common, mine = _git_common_dir(ws), _git_common_dir(d)
+    if mine is None or common is None or mine != common:
+        raise SystemExit(f"--cwd {d}: must be inside the workspace {ws} or the root of a git worktree of its "
+                         f"repository (git -C {ws} worktree add {d})")
+    return d
 
 
 def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None, role: str = "",
@@ -156,20 +207,39 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
         raise SystemExit("foreground mode is only for --vendor dsh")
     cfg = config.load(state)
     ws = Path(cfg["workspace"])
+    settings = dict(settings or {})
+    if "cwd" in settings and vendor != "claude":
+        raise SystemExit("--cwd is only for --vendor claude (a member directory holding its own .mcp.json)")
+    if settings.get("effort") and vendor != "claude":
+        print(f"--effort is only passed to claude; ignored for {vendor} agent {agent_id}")
+    if vendor != "claude":
+        settings.pop("effort", None)
+    elif settings.get("effort") is not None and settings["effort"] not in claude.EFFORTS:
+        raise SystemExit(f"--effort must be one of: {', '.join(claude.EFFORTS)}")
+    if vendor == "claude":
+        member = _member_cwd(ws, settings["cwd"]) if settings.get("cwd") else None
+        settings.pop("cwd", None)
+        settings.update({"cwd": str(member)} if member else {})
     conn = db.connect(state / "hub.db")
     old = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
     if old and old["vendor"] != vendor:
         raise SystemExit(f"agent {agent_id} exists with vendor {old['vendor']}")
-    other = conn.execute("select id from agents where vendor=? and id!=?", (vendor, agent_id)).fetchone()
-    if other and vendor == "claude":  # .mcp.json carries one identity; opencode and dsh keep theirs per instance (T12)
-        raise SystemExit(f"workspace already has a {vendor} agent: {other[0]}")
+    if vendor == "claude":  # .mcp.json carries one identity: one Claude member per directory (opencode and dsh: T12)
+        here = claude.config_dir(ws, {"settings": json.dumps(settings)}).resolve()
+        for o in db.rows(conn.execute("select * from agents where vendor='claude' and id!=?", (agent_id,))):
+            if claude.config_dir(ws, o).resolve() == here:
+                raise SystemExit(
+                    f"workspace already has a claude agent in {here}: {o['id']} (its .mcp.json carries one identity "
+                    f"per directory). Give {agent_id} its own directory: xmuse agent add {agent_id} --vendor claude "
+                    f"--cwd <dir>, with <dir> inside the workspace or a git worktree of it "
+                    f"(git -C {ws} worktree add <dir>)")
     if vendor == "dsh" and not _dsh_ws_ok(ws):  # dsh cannot write through the wsl.localhost UNC form
         raise SystemExit(
             "dsh needs the workspace on a Windows drive (under /mnt/<drive>/, e.g. /mnt/c/), not " + str(ws) + ": "
             "dsh runs as a Windows app and its sandbox cannot write through the wsl.localhost UNC form "
             "(probe 2026-10-10: ENOTSUP on file writes); move the workspace under /mnt/c/ and retry")
     s = {"allowed_tools": cfg.get("claude_allow", CLAUDE_ALLOW)} if vendor == "claude" else {}
-    s.update(settings or {})
+    s.update(settings)
     with db.tx(conn):
         if old:  # re-add: new settings, same token and history
             m = model or old["model"]
@@ -183,6 +253,13 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
                          (agent_id, vendor, m, config.family(vendor, m), role, json.dumps(s), digest(tok), db.now()))
     agent = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
     WRITERS[vendor](ws, agent, state)
+    if vendor == "claude":
+        mine = claude.config_dir(ws, agent).resolve()
+        if old and (was := claude.config_dir(ws, old).resolve()) != mine:  # moved: drop the configs left behind
+            claude.clean_config(was, agent_id)
+        if mine != ws.resolve():
+            _exclude(mine, GENERATED)
+            sync_member_dir(ws, mine, state, cfg)
     if s.get("foreground"):
         _exclude(ws, [".xmuse-tmp/"])
     return agent

@@ -102,6 +102,7 @@ def status(state: Path) -> dict:
             desktop.add(a["id"])
             a.update({"foreground": True} if db.settings(a).get("foreground") else {"desktop": True},
                      **mail.pending(conn, a["id"]))
+        a.update({k: v for k, v in db.settings(a).items() if k in ("cwd", "effort")})  # a Claude member's directory
         del a["settings"]
     return {
         "hub": json.loads((state / "hub.json").read_text(encoding="utf-8")) if (state / "hub.json").exists() else None,
@@ -294,6 +295,11 @@ def main(argv=None) -> None:
     p.add_argument("--role", default="")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
+    p.add_argument("--cwd", type=Path, help="--vendor claude: the member's own directory (its .mcp.json and .claude/ "
+                                            "go there, its turns run there): inside the workspace, or a git worktree "
+                                            "of its repository; default: the workspace root (one Claude per directory)")
+    p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"],
+                   help="--vendor claude headless: passed to claude --effort; ignored for other vendors")
     p.add_argument("--extra-mcp", type=Path, help="dsh / opencode headless: JSON file with a list of extra stdio MCP "
                                                   'servers [{"name", "command", "args", "env"}] (dsh run overlay, '
                                                   "opencode instance config)")
@@ -400,6 +406,10 @@ def main(argv=None) -> None:
                 st["extra_mcp"] = extra_mcp({"settings": {"extra_mcp": json.loads(a.extra_mcp.read_text(encoding="utf-8"))}})
             except (OSError, ValueError, AttributeError) as e:
                 raise SystemExit(f"--extra-mcp {a.extra_mcp}: {e}")
+        if a.cwd:
+            st["cwd"] = str(a.cwd)
+        if a.effort:
+            st["effort"] = a.effort
         agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None)
         if a.allow:
             conn = db.connect(state / "hub.db")

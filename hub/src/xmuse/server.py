@@ -45,6 +45,8 @@ class Hub:
             log.warning("information layer off: plain messages only (no entries, injection, routing or dependency wake)")
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
+        from .init import sync_member_dirs
+        sync_member_dirs(self.ws, state, self.cfg)  # Claude members' worktrees outside the workspace
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
             for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
                 c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))
@@ -60,7 +62,9 @@ class Hub:
             raise SystemExit(f"XMUSE_SHELL_POLICY must be one of {', '.join(POLICIES)}, not {policy!r}")
         self.engine.shell_policy = policy
         if policy != "allowlist":
-            log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
+            log.warning("shell approval policy %s: %s", policy,
+                        "everything approved except build/test runners (rejected), no human" if policy ==
+                        "open-experiment" else "bypassable blocklist for unattended experiments")
         self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
         ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]
