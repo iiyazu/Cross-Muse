@@ -85,7 +85,9 @@ _CURL_AWAY = ("-x", "--proxy", "--preproxy", "--socks4", "--socks4a", "--socks5"
 def loopback_curl(cmd: str) -> bool:
     """`curl` to this machine only (user 10-12: agents check their own local servers without asking). Every URL
     must be http(s) on localhost/127.x/[::1], bare host arguments too; proxies, --resolve/--connect-to, config
-    files and --next stay with the human. No chaining or substitution."""
+    files and --next stay with the human. No chaining or substitution; the harmless redirections 2>&1 and
+    >/dev/null are allowed."""
+    cmd = re.sub(r"\s+(\d?>&\d|\d?>\s*/dev/null)(?=\s|$)", "", cmd)
     if any(c in cmd for c in ";&|`$\n") or "<(" in cmd:
         return False
     try:

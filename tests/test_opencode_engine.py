@@ -235,7 +235,9 @@ def test_loose_policy_lets_curl_reach_this_machine_only():
     local = ["curl -s -u :t3st-pw-123 -XPOST http://127.0.0.1:14101/api/session -H 'content-type: application/json'"
              " -d '{\"title\":\"xmuse-verify\"}'",
              "curl -sf http://localhost:43117/v1/view?since=0", "curl 127.0.0.1:8080/health",
-             "curl -o /tmp/out.json 'http://[::1]:9000/x'", "/usr/bin/curl -I https://localhost/"]
+             "curl -o /tmp/out.json 'http://[::1]:9000/x'", "/usr/bin/curl -I https://localhost/",
+             "curl -s -o /dev/null -w \"%{http_code}\\n\" http://127.0.0.1:14101/api/event 2>&1",
+             "curl -s http://127.0.0.1:1/x > /dev/null"]
     away = ["curl https://example.com", "curl http://127.0.0.1.evil.com/x", "curl -x http://proxy:3128 http://127.0.0.1/",
             "curl --proxy=http://p:1 http://127.0.0.1/", "curl -sx p:1 http://127.0.0.1/", "curl -K cfg.txt",
             "curl --resolve localhost:80:8.8.8.8 http://localhost/", "curl http://127.0.0.1/ --next https://example.com",
