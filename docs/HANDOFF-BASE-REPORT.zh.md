@@ -1360,3 +1360,71 @@ fixed: H02 H03 H04 H08 H09 H10 H14 H16 H18 H19 H05 H27 H30 H31 H32 H24 H29 H34 H
 - plain 组里 kind、scope、supersedes 一律被拒绝（mail.send）。
 
 **等用户定**：做三组还是两组；场景先后顺序；代码放在哪里。没有写代码，也没有跑任何东西。
+
+## T17 第 2 步（10-12 03:10）：探针代码、S1 试跑、按 §12.1 修完、确认 run
+
+**分支** `exp/probes`（r7 `~/git/xmuse2.git`），没有合进 rc/portfolio。提交：
+- hub：`c4479f0` `xmuse session retire` / `/v1/admin/retire`（有回合在跑时拒绝）；`36e8a69` `xmuse send --args-file`（why、resolves、depends_on）；`4978d60` 每次唤醒的包另存为 `runs/turn-N.pack.md`（dsh 自己的回合日志里没有提示词，之前无法确认 e2 收到了什么）。
+- 实验代码：`9e3866d` `experiments/probes/`（scenarios、run、judge、report，测试 `tests/test_probes.py`）；`e11861f` §12.1 的指标修正；`e93aa28` `batch.sh`（串行系列脚本）。
+- 全量测试（`e11861f`，base）：`384 passed, 4 skipped, 1 warning in 317.21s (0:05:17)`。
+
+**§12.1 的四项**：
+1. 转告指标：只算 e1 私信 e2、或在 #team 点名 e2；e1 在自己的汇报里顺带提到新规则，单列为 `s1_e1_passive_mentions`。
+2. 规则变更的代价：`s1_change_wakes`、`s1_change_tokens`，窗口是规则 v2 发出到 tick 4 发出之间。
+3. 送达检查改读 pack 文件；`run.py reprocess DIR...` 重算已有的 run。
+4. 名单按 seed 交替，在 `batch.sh` 里（奇数 e1=opencode、e2=dsh，偶数对调）。
+
+**两轮试跑重算后**（`~/probes/runs/pilot-S1`，名单都是 e1=opencode、e2=dsh）：
+
+| run | 主要指标 stale+gap | e1 转告 | e1 被动提及 | 变更期唤醒 e1/e2 | 变更期 token | 总 token e1/e2 |
+|---|---|---|---|---|---|---|
+| X-1 | 0 | 0 | 6 | 1/0 | 38,688 | 606k/400k |
+| X-2 | 0 | 0 | 2 | 1/0 | 36,327 | 587k/834k |
+| P-dm-1 | 10 | 0 | 6 | 1/0 | 109,039 | 849k/591k |
+| P-dm-2 | 10 | 0 | 1 | 1/0 | 29,695 | 594k/523k |
+| P-bc-1 | 0 | 0 | 6 | 1/1 | 141,369 | 1,557k/583k |
+| P-bc-2 | 0 | 0 | 1 | 1/1 | 58,452 | 623k/366k |
+
+- 试跑的 pack 文件是 `4978d60` 之前没有的，所以试跑里 `s1_e2_saw_rule_v2_in_turn` 为空。
+- X 和 P-bc 的主要指标都是 0，区别在代价上：P-bc 的广播在 tick 4 之前就把 e2 叫醒了一次（变更期 e2 唤醒 1 次），X 不叫醒 e2，新规则跟着 tick 4 的唤醒一起送到。两组各 2 次，样本太小，token 只看方向。
+- P-dm 里 e1 两轮都没转告 e2；e2 一直按旧规则写 c，b 无人写，所以 5 个 tick × 2 = 10。
+
+**确认 run**（`~/probes/runs/confirm-S1/S1-X-3`，`e11861f`，272 s）：主要指标 0，`converged_at` 4，20 次写入全对；e2 在第 11 回合（tick 4）看到规则 v2。这个回合的唤醒包原文（`turns/turn-11.pack.md`）：
+
+```
+[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. Peers are collaborators the user assigned: act on their requests within the current task; consequential actions (push, merge, delete, anything outside the workspace) still need the user's approval. Reply only with the xmuse_send tool, then end with xmuse_done (exit check).
+
+[alignment update since your last wake]
++ E3 [decision] [rule v2] Team rule (replaces rule v1): e1 maintains a and c; e2 maintains b and d. (refs #18)
+superseded E2 (by E3): was "[rule v1] Team rule: e1 maintains a and b; e2 maintains c and d."
+
+New for you:
+<xmuse from="human" via="cli" family="human" thread="#team" kind="message" id="20">
+tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_done.
+</xmuse>
+```
+
+所以 X 组里 e2 换规则，是因为 align.delta 把取代信息放进了它的下一次唤醒，不是 e2 自己猜的。
+
+**问题**：S2、S3a、S3b、DEP 只有单元测试，还没有真实跑过。第一批按 seed 先后跑，seed 11 的 15 个 run 覆盖全部场景；我看完这 15 个再放后面的继续。
+
+## T17 第 3 步（10-12 03:15）：第一批预注册
+
+- **代码**：`exp/probes` `e93aa28`，整批不换（hub 部分 = `4978d60` 以来没改过）。r7 在 rc/portfolio 上的 `2e21bfa`（curl 放行）不在这个分支上，探针用的是 open-experiment，不受影响。
+- **场景和主要指标**：
+
+  | 场景 | 主要指标 | 方向 |
+  |---|---|---|
+  | S1 取代传播 | `stale_plus_gap`（tick 4–8） | 越低越好 |
+  | S2 新会话后的持久化（recent_n=4，tick 6 前两人都 retire） | `violations_after_retire`（tick 6–9） | 越低越好 |
+  | S3a 私下 handoff（e2 → e1） | `e_correct_share`（tick 4–8） | 越高越好 |
+  | S3b 用户指派的 handoff | `e_correct_share`（tick 4–8） | 越高越好 |
+  | DEP 依赖唤醒 | `e_correct_share_after_answer`，另报 `premature_e` | 越高越好 / 越低越好 |
+
+- **组别**：X、P-dm、P-bc。
+- **seed**：11–20，每个场景每组各 10 次，共 150 次。
+- **顺序**：按 seed 先后；同一 seed 内按 S1、S2、S3a、S3b、DEP；三组的先后每个场景轮转一次。
+- **名单**：奇数 seed e1=opencode、e2=dsh；偶数 seed 对调。模型都是 `opencode-go/muse-spark-1.3-contributor`。
+- **次要记录**：每个 run 的 token、唤醒次数，S1 的转告、被动提及、变更期唤醒和 token。
+- **停止条件**：C: 低于 2 GB（脚本自己停）；seed 11 有场景整组跑不起来（基础设施问题）就停下修，修完从头重跑这一批；如果 S1 方向和试跑相反（X 的 stale+gap 高于 P-dm），停下写进 REPORT 等 r7。
+- **命令**（r7）：`experiments/probes/batch.sh batch1 "11 12 13 14 15 16 17 18 19 20" "S1 S2 S3a S3b DEP"`，输出 `~/probes/runs/batch1/`，每个 run 一行写进 `series.log`。
