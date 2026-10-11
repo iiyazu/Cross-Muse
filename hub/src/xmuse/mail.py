@@ -20,7 +20,8 @@ from .tools import DECLARE, WHY_FIELDS, ToolError
 
 
 def agents(conn) -> dict[str, dict]:
-    return {a["id"]: a for a in db.rows(conn.execute("select * from agents order by id"))}
+    """The roster: members still in the room (a removed member keeps its history but gets no mail)."""
+    return {a["id"]: a for a in db.rows(conn.execute("select * from agents where removed=0 order by id"))}
 
 
 def dm_id(a: str, b: str) -> str:
@@ -271,7 +272,8 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
     me = roster[agent_id]
     return {"id": agent_id, "vendor": me["vendor"], "family": me["family"], "role": me["role"],
             "workspace": workspace,
-            "peers": [{"id": a["id"], "family": a["family"], "role": a["role"]}
+            "peers": [{"id": a["id"], "family": a["family"], "role": a["role"],
+                       **({"description": a["description"]} if a.get("description") else {})}
                       for a in roster.values() if a["id"] != agent_id] + [{"id": HUMAN, "role": "the user"}],
             "threads": [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]}
 

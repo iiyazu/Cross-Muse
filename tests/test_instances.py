@@ -7,14 +7,14 @@ from xmuse.adapters import dsh
 
 
 def _records(h, aid):
-    return [json.loads(x) for x in (h.state / "fake-oc" / f"{aid}.jsonl").open()]
+    return [json.loads(x) for x in (h.state / "fake-oc" / f"{aid}.jsonl").open(encoding="utf-8")]
 
 
 def test_two_opencode_instances_keep_their_identity(make):
     h = make([("oc-a", "opencode"), ("oc-b", "opencode")], _oc_serve=True)
     drv = h.hub.engine.drivers["opencode"]
     a, b = drv.servers["oc-a"], drv.servers["oc-b"]
-    assert a.base != b.base and a.pw != b.pw and a.pw.read_text() != b.pw.read_text()  # own port, own password
+    assert a.base != b.base and a.pw != b.pw and a.pw.read_text(encoding="utf-8") != b.pw.read_text(encoding="utf-8")  # own port, own password
     assert len(drv.prompts) == 2
     h.send("oc-a", "ping a", mentions=["oc-a"])
     h.send("oc-b", "ping b", mentions=["oc-b"])
@@ -65,10 +65,10 @@ def test_registering_several_instances(tmp_path, monkeypatch):
     for aid, vendor in (("oc-a", "opencode"), ("oc-b", "opencode"), ("ds-a", "dsh"), ("ds-b", "dsh"),
                         ("claude-1", "claude")):
         xinit.add_agent(state, aid, vendor)
-    shared = (ws / "opencode.json").read_text()
+    shared = (ws / "opencode.json").read_text(encoding="utf-8")
     assert "XMUSE_AGENT" not in shared and "mcp" not in json.loads(shared)
     for aid in ("oc-a", "oc-b"):
-        env = json.loads((state / "oc" / aid / "opencode.json").read_text())["mcp"]["servers"]["xmuse"]["environment"]
+        env = json.loads((state / "oc" / aid / "opencode.json").read_text(encoding="utf-8"))["mcp"]["servers"]["xmuse"]["environment"]
         assert env == {"XMUSE_STATE": str(state), "XMUSE_AGENT": aid}
     assert dsh.hooks_owner(ws) == "ds-a"  # one hooks.json: desktop presence follows the first dsh agent
     xinit.add_agent(state, "ds-b", "dsh", model="opencode-go/deepseek-v4.1-flash")  # re-add keeps the owner
@@ -90,8 +90,8 @@ def test_registering_several_instances(tmp_path, monkeypatch):
         assert checks[f"agent {aid}"].level == "ok", checks[f"agent {aid}"]
     assert "belong to ds-a" in checks["agent ds-b"].detail
     # a workspace opencode.json that names an agent (pre-T12 layout) fails every instance
-    (ws / "opencode.json").write_text(json.dumps({"mcp": {"servers": {"xmuse": {"environment": {"XMUSE_AGENT": "oc-a"}}}}}))
-    (state / "oc" / "oc-b" / "opencode.json").write_text("{}")
+    (ws / "opencode.json").write_text(json.dumps({"mcp": {"servers": {"xmuse": {"environment": {"XMUSE_AGENT": "oc-a"}}}}}), encoding="utf-8")
+    (state / "oc" / "oc-b" / "opencode.json").write_text("{}", encoding="utf-8")
     checks = {c.name: c for c in doctor.workspace(state)}
     assert checks["agent oc-a"].level == "FAIL" and "carries an agent identity" in checks["agent oc-a"].detail
     assert "has no xmuse server" in checks["agent oc-b"].detail

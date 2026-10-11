@@ -13,7 +13,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, mail
+from . import config, db, mail, proc
 from .env import clean_env
 
 HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
@@ -23,9 +23,9 @@ def call(state: Path, path: str, body: dict | None = None, token: str = "_admin"
     hub = state / "hub.json"
     if not hub.exists():
         raise SystemExit("hub is not running (xmuse hub start)")
-    port = json.loads(hub.read_text())["port"]
+    port = json.loads(hub.read_text(encoding="utf-8"))["port"]
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body or {}).encode(),
-                                 headers={"authorization": "Bearer " + (state / "tokens" / token).read_text().strip(),
+                                 headers={"authorization": "Bearer " + (state / "tokens" / token).read_text(encoding="utf-8").strip(),
                                           "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -40,31 +40,53 @@ def call(state: Path, path: str, body: dict | None = None, token: str = "_admin"
     return out["result"]
 
 
+def act(state: Path, body: dict) -> dict:
+    """POST /v1/act with the admin token (the sidebar API: HTTP statuses, {"error": code, "message"})."""
+    hub = state / "hub.json"
+    if not hub.exists():
+        raise SystemExit("hub is not running (xmuse hub start)")
+    port = json.loads(hub.read_text(encoding="utf-8"))["port"]
+    tok = (state / "tokens" / "_admin").read_text(encoding="utf-8").strip()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/act", method="POST", data=json.dumps(body).encode(),
+                                 headers={"authorization": "Bearer " + tok, "content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read())
+        except ValueError:
+            raise SystemExit(f"error: http {e.code}")
+        raise SystemExit(f"error: {err.get('error')}: {err.get('message')}")
+
+
 def hub_start(state: Path) -> None:
     if (state / "hub.json").exists():
-        pid = json.loads((state / "hub.json").read_text())["pid"]
-        if Path(f"/proc/{pid}").exists():
+        pid = json.loads((state / "hub.json").read_text(encoding="utf-8"))["pid"]
+        if proc.alive(pid):
             print(f"hub already running (pid {pid})")
             return
         (state / "hub.json").unlink()
-    log = (state / "logs" / "hub.log").open("a")
+    log = (state / "logs" / "hub.log").open("a", encoding="utf-8")
     # host facts (host.py) and the experiment-only shell policy reach the hub; agents get clean_env() again from it
     extra = {k: os.environ[k] for k in ("XMUSE_SHELL_POLICY", "XMUSE_WSL_DISTRO", "XMUSE_WIN_HOME", "WSL_DISTRO_NAME",
                                         "WSL_INTEROP") if k in os.environ}
-    p = subprocess.Popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state), **extra}),
-                         stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    if proc.WINDOWS:
+        extra["PYTHONUTF8"] = "1"  # files and pipes in UTF-8, whatever the ANSI code page
+    p = proc.popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state), **extra}),
+                   stdin=subprocess.DEVNULL, stdout=log, stderr=log, detach=True)
     # model prechecks run first: dsh about 10 s, but a cold start may be retried once after the 180 s first-event
     # watchdog, so allow 600 s
     deadline = time.time() + HUB_START_TIMEOUT_S
     while time.time() < deadline:
         if (state / "hub.json").exists():
-            print(f"hub started: {json.loads((state / 'hub.json').read_text())}")
+            print(f"hub started: {json.loads((state / 'hub.json').read_text(encoding="utf-8"))}")
             return
         if p.poll() is not None:
-            tail = (state / "logs" / "hub.log").read_text().strip().splitlines()[-6:]
+            tail = (state / "logs" / "hub.log").read_text(encoding="utf-8").strip().splitlines()[-6:]
             raise SystemExit("hub exited:\n" + "\n".join(tail))
         time.sleep(0.25)
-    os.killpg(p.pid, signal.SIGTERM)  # never leave a hub running that its caller has given up on
+    proc.kill_tree(p, "term")  # never leave a hub running that its caller has given up on
     raise SystemExit(f"hub did not start in {HUB_START_TIMEOUT_S} s (stopped it); see {state / 'logs' / 'hub.log'}")
 
 
@@ -72,8 +94,15 @@ def hub_stop(state: Path) -> None:
     if not (state / "hub.json").exists():
         print("hub not running")
         return
-    pid = json.loads((state / "hub.json").read_text())["pid"]
-    os.kill(pid, signal.SIGTERM)
+    pid = json.loads((state / "hub.json").read_text(encoding="utf-8"))["pid"]
+    if proc.WINDOWS:  # no SIGTERM on Windows: ask the hub itself, so it still shuts down cleanly
+        try:
+            call(state, "/v1/admin/shutdown")
+        except SystemExit:  # not answering: end the process
+            proc.terminate(pid)
+            (state / "hub.json").unlink(missing_ok=True)
+    else:
+        os.kill(pid, signal.SIGTERM)
     for _ in range(120):
         if not (state / "hub.json").exists():
             print("hub stopped")
@@ -96,7 +125,7 @@ def status(state: Path) -> dict:
         a.update({k: v for k, v in db.settings(a).items() if k in ("cwd", "effort")})  # a Claude member's directory
         del a["settings"]
     return {
-        "hub": json.loads((state / "hub.json").read_text()) if (state / "hub.json").exists() else None,
+        "hub": json.loads((state / "hub.json").read_text(encoding="utf-8")) if (state / "hub.json").exists() else None,
         "agents": agents,
         "running": q("select id, agent_id, adapter, chain_id, started_at from turns where state='running'"),
         "queued": [r for r in q("select recipient, count(*) n from deliveries where state='queued' and wake=1"
@@ -284,6 +313,7 @@ def main(argv=None) -> None:
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
+    p.add_argument("--description", help="what this member is responsible for (peers and the sidebars see it)")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
     p.add_argument("--cwd", type=Path, help="--vendor claude: the member's own directory (its .mcp.json and .claude/ "
@@ -296,6 +326,11 @@ def main(argv=None) -> None:
                                                   "opencode instance config)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
+    p = sub.add_parser("invite", help="an invitation code for a sidebar to join this room (/xmuse join <code>)")
+    p.add_argument("vendor", choices=["claude", "opencode", "dsh"])
+    p.add_argument("--role", default="")
+    p.add_argument("--description", default="")
+    p.add_argument("--name", help="member id (default: <vendor>, <vendor>-2, ...)")
     p = sub.add_parser("send")
     p.add_argument("to")
     p.add_argument("body")
@@ -356,6 +391,10 @@ def main(argv=None) -> None:
     p = sub.add_parser("hook", help="compact: Claude SessionStart(compact) hook; stdin is the hook JSON")
     p.add_argument("kind", choices=["compact"])
     a = ap.parse_args(argv)
+    if proc.WINDOWS:  # pipes get UTF-8 and \n whatever the ANSI code page (a console uses WriteConsoleW anyway)
+        for s in (sys.stdout, sys.stderr):
+            if hasattr(s, "reconfigure"):
+                s.reconfigure(encoding="utf-8", errors="replace", newline="\n")
     if a.cmd == "hook":  # re-inject the alignment after Claude compacted; never blocks Claude, whatever fails
         try:
             sid = json.load(sys.stdin).get("session_id")
@@ -390,14 +429,14 @@ def main(argv=None) -> None:
                 raise SystemExit("--extra-mcp is only for headless --vendor dsh or opencode agents")
             from .adapters.dsh import extra_mcp
             try:
-                st["extra_mcp"] = extra_mcp({"settings": {"extra_mcp": json.loads(a.extra_mcp.read_text())}})
+                st["extra_mcp"] = extra_mcp({"settings": {"extra_mcp": json.loads(a.extra_mcp.read_text(encoding="utf-8"))}})
             except (OSError, ValueError, AttributeError) as e:
                 raise SystemExit(f"--extra-mcp {a.extra_mcp}: {e}")
         if a.cwd:
             st["cwd"] = str(a.cwd)
         if a.effort:
             st["effort"] = a.effort
-        agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None)
+        agent = add_agent(state, a.id, a.vendor, a.model, a.role, st or None, a.description)
         if a.allow:
             conn = db.connect(state / "hub.db")
             st = db.settings(agent)
@@ -408,6 +447,9 @@ def main(argv=None) -> None:
     elif a.cmd == "hub":
         {"start": hub_start, "stop": hub_stop,
          "status": lambda s: print(json.dumps(status(s), indent=1))}[a.action](state)
+    elif a.cmd == "invite":  # the sidebar API: no {"result": ...} envelope
+        print(json.dumps(act(state, {"act": "invite", "vendor": a.vendor, "role": a.role,
+                                     "description": a.description, "name": a.name}), indent=1, ensure_ascii=False))
     elif a.cmd == "send":
         print(json.dumps(call(state, "/v1/admin/send", {"to": a.to, "body": a.body, "kind": a.kind,
                                                          "mentions": a.mention, "idem": a.idem,
@@ -456,6 +498,6 @@ def main(argv=None) -> None:
     elif a.cmd == "run":
         print(json.dumps(call(state, "/v1/admin/run", {
             "preset": a.preset, "planner": a.planner, "executors": [x for x in a.executors.split(",") if x],
-            "task": a.task_file.read_text(), "limits": json.loads(a.limits)}), indent=1))
+            "task": a.task_file.read_text(encoding="utf-8"), "limits": json.loads(a.limits)}), indent=1))
     elif a.cmd == "run-status":
         print(json.dumps(call(state, "/v1/admin/runs", {"id": a.id}), indent=1, ensure_ascii=False))

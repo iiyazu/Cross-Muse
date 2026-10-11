@@ -25,7 +25,7 @@ def find_state():
         f = d / ".xmuse.json"
         try:
             if f.exists():
-                return json.loads(f.read_text())["state"]
+                return json.loads(f.read_text(encoding="utf-8"))["state"]
         except (OSError, ValueError, KeyError):
             pass
     return None
@@ -36,9 +36,9 @@ try:
     state = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("XMUSE_STATE")
     agent = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("XMUSE_AGENT")
     state = state or find_state()
-    p = json.load(sys.stdin)
-    hub = json.load(open(os.path.join(state, "hub.json")))
-    token = open(os.path.join(state, "tokens", agent)).read().strip()
+    p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))  # UTF-8 whatever the Windows code page
+    hub = json.load(open(os.path.join(state, "hub.json"), encoding="utf-8"))
+    token = open(os.path.join(state, "tokens", agent), encoding="utf-8").read().strip()
     body = {"event": event, "session_id": p.get("session_id"), "cwd": p.get("cwd"),
             "prompt": str(p.get("prompt", ""))[:200], "source": p.get("source"),
             "transcript_path": p.get("transcript_path")}

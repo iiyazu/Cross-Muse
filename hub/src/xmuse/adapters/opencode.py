@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .. import proc
 from ..config import SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
@@ -202,7 +203,7 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
         servers[x["name"]] = {"type": "local", "command": [x["command"], *x.get("args", [])],
                               "environment": x.get("env", {})}
     inst = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
-    (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n")
+    (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n", encoding="utf-8")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
@@ -210,7 +211,7 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
                         *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
                         {"action": "shell", "resource": "*", "effect": "ask"}],
     }
-    (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     return [d / "opencode.json", ws / "opencode.json"]
 
 
@@ -224,21 +225,21 @@ class Server:
         self.dir.mkdir(parents=True, exist_ok=True)
         pw = self.dir / "oc.pass"
         if not pw.exists():
-            pw.write_text(secrets.token_urlsafe(24))
+            pw.write_text(secrets.token_urlsafe(24), encoding="utf-8")
             pw.chmod(0o600)
         self.pw = pw
-        self.auth = "Basic " + base64.b64encode(f"opencode:{pw.read_text().strip()}".encode()).decode()
+        self.auth = "Basic " + base64.b64encode(f"opencode:{pw.read_text(encoding="utf-8").strip()}".encode()).decode()
         self.base = base or f"http://127.0.0.1:{port or _free_port()}"
 
     def start(self, timeout: float = 60) -> None:
         port = self.base.rsplit(":", 1)[1]
-        log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a")
-        self.proc = subprocess.Popen(
-            [self.binary, "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
-            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text().strip(),
+        log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a", encoding="utf-8")
+        self.proc = proc.popen(
+            [*proc.argv(self.binary), "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
+            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text(encoding="utf-8").strip(),
                                         "OPENCODE_CONFIG": str(self.dir / "opencode.json")}),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            start_new_session=True)
+            encoding="utf-8", errors="replace")
 
         def pump():  # keep the log, never the password line
             for line in self.proc.stdout:
@@ -256,7 +257,10 @@ class Server:
         raise RuntimeError(f"opencode serve did not come up on {self.base}")
 
     def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
+        if self.proc and self.proc.poll() is None and proc.WINDOWS:  # terminate() would leave its children
+            proc.kill_tree(self.proc)
+            self.proc.wait(10)
+        elif self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(10)
@@ -293,7 +297,7 @@ def _free_port() -> int:
 
 class Tracked:
     def __init__(self, spec: TurnSpec):
-        self.spec, self.usage, self.seen, self.delivered, self.log = spec, Usage(), set(), False, spec.run_log.open("w")
+        self.spec, self.usage, self.seen, self.delivered, self.log = spec, Usage(), set(), False, spec.run_log.open("w", encoding="utf-8")
 
 
 class OpenCodePrompt:

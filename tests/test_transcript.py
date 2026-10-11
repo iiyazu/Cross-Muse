@@ -23,7 +23,7 @@ def test_claude_transcript_keeps_streamed_blocks_once(tmp_path):
         {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": "x" * 50}]}]}},
         {"type": "summary"},
     ]
-    p.write_text("\n".join(json.dumps(r) for r in recs) + "\nnot json\n")
+    p.write_text("\n".join(json.dumps(r) for r in recs) + "\nnot json\n", encoding="utf-8")
     entries = tr.claude(p)
     assert entries == [("user", "review calc.py"), ("assistant", "Looking."),
                        ("tool Read", '{"file": "calc.py"}'), ("tool result", "x" * 50)]
@@ -79,7 +79,7 @@ def test_cli_transcript_per_vendor(make, tmp_path):
     _session(h, "claude-1", "sid-c")
     p = claude_path(h.ws, "sid-c")
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps({"type": "user", "message": {"content": "hello claude"}}) + "\n")
+    p.write_text(json.dumps({"type": "user", "message": {"content": "hello claude"}}) + "\n", encoding="utf-8")
     assert cli.transcript(h.state, "claude-1") == "[user]\nhello claude"
     # dsh: the session log under dsh_home
     _session(h, "ds", "sid-d")
