@@ -68,6 +68,22 @@
 3. **逐 bug 对照**：每个 bug 一行，列单干 / T-plain 第 1–3 次 / T-xmuse 第 1–3 次，每格标"修好、未修好、判不了"。另外给出每组 3 次里修好的次数。
 4. 原始 json（grade、usage、log、run-status、align 列表）推到 prizehub-bench 的 `results/`；REPORT 里给出路径。
 
+## 5a. 修订（2026-10-11，开跑前；用户定）
+- **墙钟改为 30 分钟**（第 2 节的 7200 秒作废）。单干和团队都是 1800 秒。团队各阶段按 hub 默认时限减半：P0 300、P1 750、P2 300、P3 240 × 2 轮（秒），总计 1800；`turn_timeout` 1800。单干每 600 秒存一次快照。
+- **E1 的测试入口**：第 2 节的"如果 opencode 挂不上"没有发生。hub 的 `extra_mcp` 已扩展到 headless opencode（服务器写进实例配置，并给这个服务器的工具加 allow 规则）。r7 上用真实的 oc-ms13、默认白名单 shell 验证过：它能看到 `bench-tests.run_tests`，调用 `run_tests(SchemeDrawTest)` 返回 `tests=6 failures=0`，没有停下等人工审批。所以三个成员用的是同一种入口，shell 策略也都是默认白名单。
+- **猎场**：换成合并了 r7 新 bug 后的版本，bug 数和 `HEAD^{tree}` 以 REPORT 中的记录为准。第 1 节的判定口径不变。
+- **run_tests 调用次数**：从 `bench_tests.py` 写的调用日志（`logs/bt-calls.jsonl`，按 compose 项目区分 agent）统计。（已被 5b 取代）
+
+## 5b. 修订（2026-10-11，开跑前；用户定）：只推理、可编译、不能运行测试
+- **实验条件**：所有 agent 都只能推理和编译，不能运行测试。理由（用户）：能跑测试，就能靠反复试错修 bug；这里要测的是推理和协作。第一次单干（32/44）一次测试都没跑，正好可以作为同条件的基线。
+- **猎场**：删掉 `docs/dev-ops/bench/` 下的运行脚本和 compose。判分器只用 kit 里 `harness/` 那份，不受影响。README 改两处：
+  - "本地环境"一节改为"本环境不能运行测试，可以调用 compile 工具检查能否编译"；
+  - "任务"一节的"可见测试和构建必须通过"改为"构建必须通过（判分时会运行全部测试）"，"不准削弱、跳过或删除测试"保留。
+- **工具**：bench-tests MCP 只提供 `compile()`，没有参数，删掉 `run_tests`。它在固定的 scratch 副本上执行 `mvn -q -o test-compile`，容器无网络，用离线 Maven 缓存；返回成功或失败，以及报错原文（前 200 行）。P、E1、E2 和单干都挂这一个工具。
+- **shell**：oc-ms13 用默认白名单。白名单里没有 docker、java、mvn、gradle。剩下一条间接途径：白名单会自动批准 `python3 <工作区或 /tmp 里的 .py>`，这样的脚本可以调用 docker。所以每个 run 结束后，在 transcript 和 turn 日志里搜 mvn、gradle、java、docker 的调用，命中就记为违规并逐条列出，不做事后剔除。
+- **记录**：每个 agent 调用 `compile` 的次数，取自 `logs/bt-calls.jsonl`。第 4.3 节里"每个 agent 调用 `run_tests` 的次数"换成这一项。
+- **其余不变**：第 1 节判定口径、30 分钟墙钟（5a）、3 + 3 次交替、指标、报告格式都不变。
+
 ## 6. 现状（预注册提交时）
 - 当前猎场：44 个 bug，r7 上的猎场 `HEAD^{tree}` = `859b69f51ac5b2288e31c130e41b4c741b417434`。
 - 上一次单干（旧 README、挂了 `run_tests` 但一次都没调用）：32/44。
