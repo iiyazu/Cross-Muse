@@ -1,9 +1,12 @@
 """Delivery engine through the dsh headless adapter, with a fake dsh replaying M0-dsh NDJSON recordings."""
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import wsl_hub
 
 from xmuse import init as xinit
 from xmuse.adapters.dsh import human_turn, overlay, parse
@@ -155,6 +158,7 @@ def test_parse_and_human_turn_units(tmp_path):
     assert not human_turn(tmp_path / "missing.zstd")
 
 
+@wsl_hub
 def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     (tmp_path / "ws").mkdir()
@@ -168,6 +172,7 @@ def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     assert not xinit._dsh_ws_ok("/home/user/dev/ws")
 
 
+@wsl_hub
 def test_to_win_maps_mnt_drives_and_wsl_paths(monkeypatch):
     from xmuse.adapters.base import to_win
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-24.04")
@@ -216,14 +221,14 @@ def test_dsh_hook_script_reports_to_the_hub(make):
     sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
     payload = {"session_id": sid, "hook_event_name": "UserPromptSubmit",
                "cwd": "C:\\ws", "prompt": "typed by the human"}
-    subprocess.run(["python3", str(DSH_HOOK), "UserPromptSubmit", str(h.state), "dsh-1"],
+    subprocess.run([sys.executable, str(DSH_HOOK), "UserPromptSubmit", str(h.state), "dsh-1"],
                    input=json.dumps(payload), text=True, check=True, timeout=10)
     assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is True
-    subprocess.run(["python3", str(DSH_HOOK), "Stop", str(h.state), "dsh-1"],
+    subprocess.run([sys.executable, str(DSH_HOOK), "Stop", str(h.state), "dsh-1"],
                    input=json.dumps({"session_id": sid}), text=True, check=True, timeout=10)
     assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is False
     # never blocks dsh, even when the hub is gone
-    r = subprocess.run(["python3", str(DSH_HOOK), "Stop", "/nonexistent", "dsh-1"],
+    r = subprocess.run([sys.executable, str(DSH_HOOK), "Stop", "/nonexistent", "dsh-1"],
                        input="{}", text=True, timeout=10)
     assert r.returncode == 0
 

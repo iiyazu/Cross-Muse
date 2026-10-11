@@ -1,6 +1,8 @@
 """Claude session lease, channel push and human-input admission (hook reports as Claude sends them)."""
 import json
+import os
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -12,7 +14,7 @@ import pytest
 @pytest.fixture
 def tui():
     """A live process standing in for the interactive Claude Code TUI (its pid is the lease holder)."""
-    p = subprocess.Popen(["sleep", "120"])
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
     yield p
     p.kill()
 
@@ -135,7 +137,7 @@ def test_wrong_nonce_push_fails_the_turn(make, tui):
 def test_dead_tui_pid_releases_the_lease(make):
     h = make()
     sid = first_session(h)
-    dead = subprocess.Popen(["true"])
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
     h.hook("claude-1", "SessionStart", pid=dead.pid, entrypoint="cli", session_id=sid)
     h.plan_claude({})
@@ -174,13 +176,14 @@ def test_hook_script_reports_to_the_hub(make, tui):
     payload = {"session_id": "s-hook", "hook_event_name": "SessionStart", "source": "startup",
                "transcript_path": "/x"}
     env = {"XMUSE_STATE": str(h.state), "XMUSE_AGENT": "claude-1", "CLAUDE_PID": str(tui.pid),
-           "CLAUDE_CODE_ENTRYPOINT": "cli", "PATH": "/usr/bin:/bin"}
-    subprocess.run(["python3", str(HOOK), "SessionStart"], input=json.dumps(payload), text=True, env=env,
+           "CLAUDE_CODE_ENTRYPOINT": "cli", "PATH": "/usr/bin:/bin",
+           **{k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ}}  # Windows sockets need it
+    subprocess.run([sys.executable, str(HOOK), "SessionStart"], input=json.dumps(payload), text=True, env=env,
                    check=True, timeout=10)
     assert h.q("select pid, vendor_session, holder from leases")[0] == {"pid": tui.pid, "vendor_session": "s-hook",
                                                                        "holder": "tui"}
     # never blocks Claude, even when the hub is gone
-    r = subprocess.run(["python3", str(HOOK), "Stop"], input="{}", text=True,
+    r = subprocess.run([sys.executable, str(HOOK), "Stop"], input="{}", text=True,
                        env={**env, "XMUSE_STATE": "/nonexistent"}, timeout=10)
     assert r.returncode == 0
 

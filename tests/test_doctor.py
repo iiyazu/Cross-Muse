@@ -5,6 +5,8 @@ import subprocess
 
 import pytest
 
+from conftest import wsl_hub
+
 from xmuse import doctor, init as xinit
 
 
@@ -68,6 +70,7 @@ def test_missing_toolchain(monkeypatch, tmp_path):
     assert c["claude cli"].level == "warn"    # merely absent
 
 
+@wsl_hub
 def test_dsh_needs_a_windows_home(monkeypatch, tmp_path):
     monkeypatch.delenv("XMUSE_WIN_HOME")
     from xmuse import host
