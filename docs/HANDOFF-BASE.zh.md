@@ -206,3 +206,23 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 - **T15 的第一步改为编译验证**（r7 这边没做成：Windows 侧连不上 Maven Central，C 盘也没空间）：在 Docker 里用 JDK 8 和 Maven 执行 `mvn -DskipTests test-compile`。
   - 编译失败时，判断是不是改名误伤（外部 jar 的符号被改了名）。**是的话不要在仓库里手工修**，把出错的符号和报错原文写进 REPORT，由 r7 补进 protect.json 后重新生成、重新推送；不是改名造成的问题（例如依赖本身拉不到），就照常处理并写清楚。
   - 编译通过之后，再把应用在 docker-compose 环境里跑起来，用新的 DDL 初始化数据库，确认原有测试的运行情况（哪些能跑、哪些依赖关掉的组件），然后再进入 bug 构造。
+
+## 12. T17 机制探针：审定，开始实现（10-12 用户定，r7 审定）
+
+**用户已定**：不在屎山代码库上做实验，按信息协作层愿景里的功能逐个做小而确定的验证；设计稿交给 base 实现。T16 不做；T15 只写成"低协作需求下的基线和开销测量"，不做两组对比。
+
+**依据**：`docs/design/XMUSE2-PROBES.zh.md`（审定稿，以你的 T17 草案为底）。和 T17 不一致的地方以审定稿为准。要点：
+- T17 第 5 节的三个问题已定：三组（X / P-dm / P-bc，P-bc 要点名所有执行者）；顺序 S1 → S2 → S3，之后 S4、S5、产品探针 P1–P4，S6 可选；代码放 xmuse2 的 `experiments/probes/`。
+- S3 要改：question 的自动路由唤醒的是给提问者派活的人，不是知情人（`mail._routed`），按原设计 X 组会必然失败。改成 S3a（知情人就是派活人）和 S3b（只能靠职责描述找到知情人）两个变体，依赖唤醒单独测。
+- S2 的换会话不要改数据库，给 hub 加 `POST /v1/admin/retire` 和 `xmuse session retire --agent`；对照组靠 `recent_n` 拿最近消息，决定要落在窗口之外，两组注入的 token 都记录。
+- `xmuse send` 加 `--args-file`（带 `why`、`resolves`、`depends_on`），否则脚本发不出人类身份的 handoff、答复和依赖。
+- 执行器自己要有不调用真实模型的测试（用 `tests/fakes/`），判定器用手工正反例测试。
+
+**步骤**：
+1. 两处 hub 改动（各自单独提交、带测试、全量测试通过）。
+2. 执行器、判定器、汇总，以及它们的测试。
+3. S1 试跑（每组 2 次），只看刺激送达和判定器是否正确；写进 REPORT，等 r7 看过再跑第一批。
+4. 第一批（S1、S2、S3a、S3b、依赖唤醒，每个每组 10 次，三组交替）。开跑前把场景定义和主要指标提交进仓库，作为预注册。
+5. 第二批（S4、S5、P1–P4）。
+
+**约束**：在 `exp/probes` 分支开发，推到 r7 裸仓库，r7 审查后合进 rc/portfolio；不合 main，不往 GitHub 推。不碰 r7 上正在运行的开发房间。执行者用 `opencode-go/muse-spark-1.3-contributor`（dsh 和 OpenCode），需要 Claude 时只用 `claude-haiku-5-5`。只记录 token，不设预算。其余约束同 §4。
