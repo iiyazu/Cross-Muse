@@ -90,7 +90,7 @@ def test_claude_config(ws):
     assert "matcher" not in plain and compact["matcher"] == "compact"
     assert compact["hooks"][0]["command"] == f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"
     assert mode(state / "tokens" / "claude-1") == 0o600
-    with pytest.raises(SystemExit, match="already has a claude agent"):
+    with pytest.raises(SystemExit, match="already has a claude agent.*--cwd <dir>"):  # one per directory
         xinit.add_agent(state, "claude-2", "claude")
     with pytest.raises(SystemExit, match="agent id"):
         xinit.add_agent(state, "human", "opencode")

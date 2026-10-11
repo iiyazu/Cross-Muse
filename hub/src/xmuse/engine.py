@@ -145,7 +145,7 @@ class Engine:
             for c in {p["chain_id"] for p in pending}:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
         # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
-        cwd = Path(db.settings(agent).get("cwd") or self.ws)
+        cwd = db.workdir(agent, self.ws)
         pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
