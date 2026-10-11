@@ -553,3 +553,13 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 - `plus.gaga` 的两个依赖（db-router、business-behavior-monitor-sdk）是否都在 Maven Central 上，还没核实；仓库里自带的 `.m2/`（14 MB）可能就是为这个准备的。
 - 难度标定（第 3 步）按 §11 的要求没有跑。
 - 猎场的构造（第 2 步）等 r7 推送 prizehub 之后再做；要不要剔除 learning-demos、resume、interview，请 r7 或用户确认。
+
+## T15 第 1 步（改名版）：prizehub 编译验证（2026-10-11）
+
+**提交**：本节（prizehub 仓库没有改动）
+
+- 来源：r7 `~/git/prizehub.git` main `2805c93`（只有 1 个提交，7 个模块，learning-demos 已经去掉），克隆到 base 的 Arch WSL `~/bench/prizehub`（不在任何公开位置）。
+- 命令：`docker run --rm -v $PWD:/src -v ~/bench/m2:/root/.m2 -w /src maven:3.9-eclipse-temurin-8 mvn -B -q -DskipTests test-compile`
+- 结果原文：除 12 行 `[debug] execute contextualize` 外没有其他输出，`exit=0`。
+- 编译出的 main class 文件 356 个，test class 文件 23 个；本地 Maven 仓库 148M。plus.gaga 下的依赖（business-behavior-monitor-sdk middleware ）都能从 Maven Central 拉到，上次调研中"拿不准"的那一项解决了，用不上原仓库自带的 .m2。
+- **没有发现改名误伤**：`cn.bugstack.middleware.*` 按原名保留，可以正常解析；其他外部符号也没有报错。protect.json 不需要补充。
