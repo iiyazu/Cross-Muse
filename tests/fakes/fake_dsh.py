@@ -34,17 +34,17 @@ prompt = sys.stdin.read()
 sid = argv[argv.index("--session-id") + 1] if "--session-id" in argv else None
 win_patch = argv[argv.index("--patch") + 1]
 patch = Path("/" + win_patch.split("\\", 4)[4].replace("\\", "/")) if win_patch.startswith("\\\\") else Path(win_patch)
-overlay = json.loads(patch.read_text())
-n = int((home / "n").read_text()) if (home / "n").exists() else 0
-(home / "n").write_text(str(n + 1))
-plan = json.loads((home / "plan.json").read_text()) if (home / "plan.json").exists() else []
+overlay = json.loads(patch.read_text(encoding="utf-8"))
+n = int((home / "n").read_text(encoding="utf-8")) if (home / "n").exists() else 0
+(home / "n").write_text(str(n + 1), encoding="utf-8")
+plan = json.loads((home / "plan.json").read_text(encoding="utf-8")) if (home / "plan.json").exists() else []
 step = plan[n] if n < len(plan) else {}
-with (home / "calls.jsonl").open("a") as f:
+with (home / "calls.jsonl").open("a", encoding="utf-8") as f:
     f.write(json.dumps({"n": n, "argv": argv, "prompt": prompt, "cwd": os.getcwd(), "overlay": overlay,
                         "env": {k: os.environ.get(k) for k in ("DSH_TELEMETRY_DISABLED", "ELECTRON_RUN_AS_NODE",
                                                                "WSLENV")}}) + "\n")
 store = home / "sessions.json"
-sessions = json.loads(store.read_text()) if store.exists() else {}
+sessions = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
 
 
 def fail(msg):
@@ -66,20 +66,20 @@ model = next(r for r in overlay if r.get("id") == "agent-default-model")["config
 fixture = "dsh-bogus.jsonl" if "bogus" in model else step.get("fixture", "dsh-chat.jsonl")
 sid = sid or f"session-{uuid.uuid4()}"
 sessions[sid] = os.getcwd()
-store.write_text(json.dumps(sessions))
+store.write_text(json.dumps(sessions), encoding="utf-8")
 
 
 def tool(name, args):
-    state = Path(json.loads((Path.cwd() / ".xmuse.json").read_text())["state"])
-    port = json.loads((state / "hub.json").read_text())["port"]
-    token = (state / "tokens" / step["as"]).read_text().strip()
+    state = Path(json.loads((Path.cwd() / ".xmuse.json").read_text(encoding="utf-8"))["state"])
+    port = json.loads((state / "hub.json").read_text(encoding="utf-8"))["port"]
+    token = (state / "tokens" / step["as"]).read_text(encoding="utf-8").strip()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/tools/{name}", method="POST",
                                  data=json.dumps({"args": args}).encode(),
                                  headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
-lines = [json.loads(x) for x in (HERE.parent / "fixtures" / fixture).open()]
+lines = [json.loads(x) for x in (HERE.parent / "fixtures" / fixture).open(encoding="utf-8")]
 for i, o in enumerate(lines):
     if o["type"] == "session":
         o.update(sessionId=sid, cwd=os.getcwd())

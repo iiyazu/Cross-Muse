@@ -116,7 +116,7 @@ def test_admin_send_is_recorded_via_cli_and_shown_to_agents(make, capsys):
 def test_identity_rules_are_in_the_templates_skill_and_foreground_block():
     from pathlib import Path
     from xmuse.adapters import dsh
-    texts = {f: " ".join(f.read_text().split())
+    texts = {f: " ".join(f.read_text(encoding="utf-8").split())
              for f in (config.TEMPLATES / "AGENTS.xmuse.md", config.TEMPLATES.parent / "skill" / "xmuse-collab" / "SKILL.md")}
     for f, t in texts.items():
         assert "Never read `tokens/`" in t and "never use the admin `xmuse send` command to speak" in t, f

@@ -18,14 +18,14 @@ from fake_opencode import FakeOpenCode  # noqa: E402
 port = int(sys.argv[sys.argv.index("--port") + 1])
 merged: dict = {}
 for f in (Path(os.environ["OPENCODE_CONFIG"]), Path.cwd() / "opencode.json"):
-    for k, v in json.loads(f.read_text()).items():
+    for k, v in json.loads(f.read_text(encoding="utf-8")).items():
         merged.setdefault(k, v)
 env = merged["mcp"]["servers"]["xmuse"]["environment"]
 state, agent = Path(env["XMUSE_STATE"]), env["XMUSE_AGENT"]
 (state / "fake-oc").mkdir(exist_ok=True)
 record = state / "fake-oc" / f"{agent}.jsonl"
 fake = FakeOpenCode(state, port=port, password=os.environ["OPENCODE_SERVER_PASSWORD"], record=record)
-fake._record({"started": agent, "port": port, "shared_identity": "XMUSE_AGENT" in (Path.cwd() / "opencode.json").read_text()})
+fake._record({"started": agent, "port": port, "shared_identity": "XMUSE_AGENT" in (Path.cwd() / "opencode.json").read_text(encoding="utf-8")})
 fake.plan = [{"as": agent, "calls": [["xmuse_whoami", {}],
                                      ["xmuse_send", {"to": "human", "body": f"hello from {agent}"}]]}] * 50
 while True:

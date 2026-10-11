@@ -11,7 +11,7 @@ OC = [("opencode-1", "opencode")]
 
 def recorded_usage(name):
     tot, seen, last = dict(input=0, cache_read=0, cache_write=0, output=0, calls=0), set(), None
-    for line in (FAKE_CLAUDE.parent.parent / "fixtures" / name).open():
+    for line in (FAKE_CLAUDE.parent.parent / "fixtures" / name).open(encoding="utf-8"):
         ev = json.loads(line)
         if ev.get("type") != "session.step.ended" or ev["id"] in seen:
             continue
@@ -42,7 +42,7 @@ def test_turn_posts_queue_prompt_with_metadata_and_explicit_model(make):
     assert {k: t[k] for k in tot} == tot and t["context"] == ctx and t["mode"] == "chat"
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
     assert h.q("select body from messages where sender='opencode-1'")[0]["body"] == "pong"
-    assert (h.state / "runs" / "turn-1.jsonl").read_text().count("session.step.ended") == tot["calls"]
+    assert (h.state / "runs" / "turn-1.jsonl").read_text(encoding="utf-8").count("session.step.ended") == tot["calls"]
 
 
 def test_code_turn_and_session_reuse(make):
@@ -233,7 +233,7 @@ def test_hub_takes_the_policy_from_its_environment_only(make, monkeypatch):
     monkeypatch.setenv("XMUSE_SHELL_POLICY", "blocklist-experiment")
     h = make(OC)
     assert h.hub.engine.shell_policy == "blocklist-experiment"
-    assert json.loads((h.state / "hub.json").read_text())["shell_policy"] == "blocklist-experiment"
+    assert json.loads((h.state / "hub.json").read_text(encoding="utf-8"))["shell_policy"] == "blocklist-experiment"
     monkeypatch.setenv("XMUSE_SHELL_POLICY", "yolo")
     from xmuse.server import Hub
     with pytest.raises(SystemExit, match="XMUSE_SHELL_POLICY"):  # refused before any driver starts
@@ -251,7 +251,7 @@ def test_hub_start_passes_host_facts_and_policy(monkeypatch, tmp_path):
     monkeypatch.setenv("XMUSE_SHELL_POLICY", "blocklist-experiment")
     monkeypatch.setenv("SECRET_THING", "x")
     (tmp_path / "logs").mkdir()
-    (tmp_path / "logs" / "hub.log").write_text("")
+    (tmp_path / "logs" / "hub.log").write_text("", encoding="utf-8")
     with __import__("pytest").raises(SystemExit):  # the fake process "exits" at once
         cli.hub_start(tmp_path)
     env = seen["env"]
@@ -262,7 +262,7 @@ def test_hub_start_passes_host_facts_and_policy(monkeypatch, tmp_path):
 def test_opencode_asks_for_every_shell_command(tmp_path):
     from xmuse.adapters.opencode import write_config
     write_config(tmp_path, {"id": "oc"}, tmp_path / "state")
-    perms = json.loads((tmp_path / "opencode.json").read_text())["permissions"]
+    perms = json.loads((tmp_path / "opencode.json").read_text(encoding="utf-8"))["permissions"]
     assert {"action": "shell", "resource": "*", "effect": "ask"} in perms
     assert not any(p["action"] == "shell" and p["effect"] == "allow" for p in perms)
 
@@ -271,11 +271,11 @@ def test_extra_mcp_goes_into_the_instance_config_with_an_allow_rule(tmp_path):
     from xmuse.adapters.opencode import write_config
     bench = {"name": "bench-tests", "command": "node", "args": ["/k/bench-tests.mjs"], "env": {"BENCH_PROJECT": "p"}}
     inst, wsf = write_config(tmp_path, {"id": "oc", "settings": json.dumps({"extra_mcp": [bench]})}, tmp_path / "state")
-    servers = json.loads(inst.read_text())["mcp"]["servers"]
+    servers = json.loads(inst.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert list(servers) == ["xmuse", "bench-tests"]
     assert servers["bench-tests"] == {"type": "local", "command": ["node", "/k/bench-tests.mjs"],
                                       "environment": {"BENCH_PROJECT": "p"}}
-    perms = json.loads(wsf.read_text())["permissions"]
+    perms = json.loads(wsf.read_text(encoding="utf-8"))["permissions"]
     assert {"action": "bench-tests_*", "resource": "*", "effect": "allow"} in perms
     assert perms[-1] == {"action": "shell", "resource": "*", "effect": "ask"}
     with pytest.raises(ValueError):

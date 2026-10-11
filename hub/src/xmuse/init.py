@@ -4,6 +4,7 @@ Nothing global is touched. Generated files that should not be committed are list
 .git/info/exclude (not in the project's .gitignore).
 """
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -29,7 +30,7 @@ SKILL_DIRS = [".claude/skills", ".opencode/skills", ".agents/skills"]  # .agents
 
 def _token(path: Path) -> str:
     tok = "xmt_" + secrets.token_urlsafe(32)
-    path.write_text(tok)
+    path.write_text(tok, encoding="utf-8")
     path.chmod(0o600)
     return tok
 
@@ -48,9 +49,9 @@ def _git_common_dir(ws: Path) -> Path | None:
         return (ws / out.stdout.strip()).resolve()
     if (ws / ".git").is_dir():
         return ws / ".git"
-    gitdir = (ws / (ws / ".git").read_text().split("gitdir:", 1)[-1].strip()).resolve()  # no git binary
+    gitdir = (ws / (ws / ".git").read_text(encoding="utf-8").split("gitdir:", 1)[-1].strip()).resolve()  # no git binary
     common = gitdir / "commondir"
-    return (gitdir / common.read_text().strip()).resolve() if common.exists() else gitdir
+    return (gitdir / common.read_text(encoding="utf-8").strip()).resolve() if common.exists() else gitdir
 
 
 def _exclude(ws: Path, paths: list[str]) -> None:
@@ -59,8 +60,8 @@ def _exclude(ws: Path, paths: list[str]) -> None:
         return
     ex = common / "info" / "exclude"
     ex.parent.mkdir(parents=True, exist_ok=True)
-    have = ex.read_text().splitlines() if ex.exists() else []
-    ex.write_text("\n".join(have + [p for p in paths if p not in have]) + "\n")
+    have = ex.read_text(encoding="utf-8").splitlines() if ex.exists() else []
+    ex.write_text("\n".join(have + [p for p in paths if p not in have]) + "\n", encoding="utf-8")
 
 
 _INFO = re.compile(r"^<!-- info:(on|off|end) -->\n", re.M)
@@ -82,31 +83,31 @@ def render(text: str, info: bool) -> str:
 
 
 def skill_text(cfg: dict) -> str:
-    return render((config.SKILL / "SKILL.md").read_text(), config.info_on(cfg))
+    return render((config.SKILL / "SKILL.md").read_text(encoding="utf-8"), config.info_on(cfg))
 
 
 def agents_section(cfg: dict) -> str:
-    return render((config.TEMPLATES / "AGENTS.xmuse.md").read_text(), config.info_on(cfg))
+    return render((config.TEMPLATES / "AGENTS.xmuse.md").read_text(encoding="utf-8"), config.info_on(cfg))
 
 
 def write_prompts(ws: Path, state: Path, cfg: dict) -> None:
     """What agents are told and offered, for the workspace's current config: tools.json (read by the shim), the
     skill copies and the AGENTS.md section. Rewritten by `xmuse init` and on every hub start, so a run that turns the
     information layer off never offers what the hub would refuse."""
-    (state / "tools.json").write_text(json.dumps(tools_for(cfg), indent=1))
+    (state / "tools.json").write_text(json.dumps(tools_for(cfg), indent=1), encoding="utf-8")
     skill = skill_text(cfg)
     for d in SKILL_DIRS:
         dst = ws / d / "xmuse-collab"
         dst.mkdir(parents=True, exist_ok=True)
-        (dst / "SKILL.md").write_text(skill)
+        (dst / "SKILL.md").write_text(skill, encoding="utf-8")
     section = agents_section(cfg)
     agents_md = ws / "AGENTS.md"
-    text = agents_md.read_text() if agents_md.exists() else ""
+    text = agents_md.read_text(encoding="utf-8") if agents_md.exists() else ""
     if "<!-- xmuse:begin" in text:
         text = text[:text.index("<!-- xmuse:begin")] + section + text[text.index("<!-- xmuse:end -->") + 18:].lstrip("\n")
     else:
         text = (text.rstrip() + "\n\n" if text.strip() else "") + section
-    agents_md.write_text(text)
+    agents_md.write_text(text, encoding="utf-8")
 
 
 def init(ws: Path) -> Path:
@@ -121,22 +122,25 @@ def init(ws: Path) -> Path:
         python = any((ws / f).exists() for f in ("pyproject.toml", "setup.py", "requirements.txt")) or \
             any(ws.glob("*.py")) or any(ws.glob("*/*.py"))
         cfg.write_text(json.dumps({"workspace": str(ws),
-                                   "claude_allow": CLAUDE_ALLOW + (PYTHON_ALLOW if python else [])}, indent=2))
+                                   "claude_allow": CLAUDE_ALLOW + (PYTHON_ALLOW if python else [])}, indent=2), encoding="utf-8")
     if not (state / "tokens" / "_admin").exists():
         _token(state / "tokens" / "_admin")
-    (ws / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n")
+    (ws / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n", encoding="utf-8")
     write_prompts(ws, state, config.load(state))
     claude_md = ws / "CLAUDE.md"  # Claude Code reads CLAUDE.md; import AGENTS.md instead of copying it
     if not claude_md.exists():
-        claude_md.write_text("@AGENTS.md\n")
-    elif "@AGENTS.md" not in claude_md.read_text():
-        claude_md.write_text(claude_md.read_text().rstrip() + "\n\n@AGENTS.md\n")
+        claude_md.write_text("@AGENTS.md\n", encoding="utf-8")
+    elif "@AGENTS.md" not in claude_md.read_text(encoding="utf-8"):
+        claude_md.write_text(claude_md.read_text(encoding="utf-8").rstrip() + "\n\n@AGENTS.md\n", encoding="utf-8")
     _exclude(ws, [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "opencode.json", ".dsh/", ".xmuse-tmp/"])
     return state
 
 
 def _dsh_ws_ok(ws) -> bool:
-    """Any /mnt/<drive>/ workspace maps to its DRIVE-colon form; native WSL paths do not."""
+    """Any /mnt/<drive>/ workspace maps to its DRIVE-colon form; native WSL paths do not. On a Windows-native hub the
+    workspace is a Windows path already; only a UNC path (\\\\wsl.localhost\\...) is refused."""
+    if os.name == "nt":
+        return not str(ws).startswith("\\\\")
     return re.match(r"/mnt/[a-zA-Z]/", str(ws)) is not None
 
 

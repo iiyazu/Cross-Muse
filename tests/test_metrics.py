@@ -22,24 +22,24 @@ def forge(root: Path, name, group="C", rot=None, tests=None, review=None, bug="1
     rot = rot or {"expected": False, "injected": False}
     (d / "meta.json").write_text(json.dumps({
         "run": name, "seed": seed, "group": group, "scenario": scenario, "first_message_id": 1, "seconds": 60, "quiet": True,
-        "agents": [["opencode-1", "opencode", None], ["dsh-1", "dsh", None]], "rot": rot}))
+        "agents": [["opencode-1", "opencode", None], ["dsh-1", "dsh", None]], "rot": rot}), encoding="utf-8")
     msgs = [{"id": 1, "sender": "human", "kind": "message"}, {"id": 2, "sender": "opencode-1", "kind": "review_request"}]
     if rot.get("injected"):
         msgs.append({"id": 3, "sender": "human", "kind": "decision"})
     msgs.append({"id": 9, "sender": "hub", "kind": "notice"})
     ts = [turn(1, "opencode-1", "snapshot", 400, 4), turn(2, "dsh-1", "delta", 100, 6), turn(3, "opencode-1", "none", 0, 6)]
-    (d / "log.json").write_text(json.dumps({"messages": msgs, "turns": ts}))
+    (d / "log.json").write_text(json.dumps({"messages": msgs, "turns": ts}), encoding="utf-8")
     (d / "entries.json").write_text(json.dumps({"entries": [
-        {"kind": k, "author": a, "statement": s, "refs": "[2]"} for k, a, s in entries], "events": []}))
+        {"kind": k, "author": a, "statement": s, "refs": "[2]"} for k, a, s in entries], "events": []}), encoding="utf-8")
     if tests is not None:
-        (d / "public.status").write_text("pass")
-        (d / "hidden.status").write_text(tests)
+        (d / "public.status").write_text("pass", encoding="utf-8")
+        (d / "hidden.status").write_text(tests, encoding="utf-8")
     if rot.get("injected"):
-        (d / "rot-tests.json").write_text(json.dumps({"tests": rot_tests or {"test_rot1_a": "ok", "test_rot1_b": "fail", "test_rot2_c": "fail"}}))
+        (d / "rot-tests.json").write_text(json.dumps({"tests": rot_tests or {"test_rot1_a": "ok", "test_rot1_b": "fail", "test_rot2_c": "fail"}}), encoding="utf-8")
     if hidden_ids is not None:
-        (d / "hidden-tests.json").write_text(json.dumps({"ids": hidden_ids}))
+        (d / "hidden-tests.json").write_text(json.dumps({"ids": hidden_ids}), encoding="utf-8")
     if review:
-        (d / "review.md").write_text(review)
+        (d / "review.md").write_text(review, encoding="utf-8")
     return d
 
 
@@ -52,7 +52,7 @@ def test_run_metrics_and_groups(tmp_path):
     forge(tmp_path, "ledger-B-1", group="B", rot={"expected": True, "injected": False}, tests="fail")
     out = tmp_path / "out"
     metrics.main([str(tmp_path / "ledger-C-1"), str(tmp_path / "ledger-B-1"), "--out", str(out)])
-    m = json.loads((out / "metrics.json").read_text())
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     c, b = m["runs"]
     assert (c["completed"], c["turns"], c["tokens"]) == (False, 3, 3 * 10100)  # rot only partial -> not complete
     assert c["hidden"] == "fail" and c["hidden_unaffected"] == {"passed": 2, "total": 2, "excluded": 14, "failed": []}
@@ -66,9 +66,9 @@ def test_run_metrics_and_groups(tmp_path):
     assert b["completed"] is False and b["rot"]["verdict"] == "not_injected" and b["review"] is None
     assert m["groups"]["C"]["completion_rate"] == 0.0 and m["groups"]["B"]["completion_rate"] == 0.0
     assert m["groups"]["C"]["rot"] == {"partial": 1}
-    rows = list(csv.reader((out / "view-curve.csv").open()))
+    rows = list(csv.reader((out / "view-curve.csv").open(encoding="utf-8")))
     assert rows[0][-2:] == ["wake_no", "view_entries"] and ["ledger-C-1", "ledger", "C", "opencode-1", "2", "6"] in rows
-    md = (out / "metrics.md").read_text()
+    md = (out / "metrics.md").read_text(encoding="utf-8")
     assert "| ledger-C-1/ledger | C |" in md and "## Groups" in md and "| fail | 2/2 |" in md
 
 
@@ -99,10 +99,10 @@ def test_review_detection_and_false_positives(tmp_path):
     forge(tmp_path, "review-1", review=hit)
     forge(tmp_path, "review-2", review=miss)
     metrics.main([str(tmp_path / "review-1"), str(tmp_path / "review-2"), "--out", str(tmp_path / "o")])
-    r1, r2 = json.loads((tmp_path / "o" / "metrics.json").read_text())["runs"]
+    r1, r2 = json.loads((tmp_path / "o" / "metrics.json").read_text(encoding="utf-8"))["runs"]
     assert r1["review"] == {"planted": "bug-1", "detected": True, "false_positives": [], "modules_without_bug": 2}
     assert r2["review"]["detected"] is False and r2["review"]["false_positives"] == ["report\\.py", "rules\\.py"]
-    g = json.loads((tmp_path / "o" / "metrics.json").read_text())["groups"]["review-C"]
+    g = json.loads((tmp_path / "o" / "metrics.json").read_text(encoding="utf-8"))["groups"]["review-C"]
     assert g["review_detection_rate"] == 0.5 and g["review_false_positive_rate"] == 0.5
 
 
@@ -118,7 +118,7 @@ def test_review_sound_context_is_not_a_false_positive(tmp_path):
     forge(tmp_path, "real", review=real)
     forge(tmp_path, "named", review=named)
     metrics.main([str(tmp_path / "real"), str(tmp_path / "named"), "--out", str(tmp_path / "o")])
-    r1, r2 = json.loads((tmp_path / "o" / "metrics.json").read_text())["runs"]
+    r1, r2 = json.loads((tmp_path / "o" / "metrics.json").read_text(encoding="utf-8"))["runs"]
     assert r1["review"]["detected"] is True and r1["review"]["false_positives"] == []
     assert r2["review"]["false_positives"] == ["report\\.py", "rules\\.py"]
 
@@ -132,11 +132,11 @@ def test_parent_dir_with_stages_is_expanded(tmp_path):
 
 def _forge_mo(root: Path, name):
     d = forge(root, name, group="L", seed="ledger", tests="pass")
-    meta = json.loads((d / "meta.json").read_text())
+    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     meta["scenario"]["MEMORYOS"] = "on"
     meta["memoryos"] = {"enabled": True, "url": "http://127.0.0.1:1", "capabilities": ["recall", "curate.collab"],
                         "proposals": 2, "conflicts": 1}
-    (d / "meta.json").write_text(json.dumps(meta))
+    (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     (d / "memoryos-calls.json").write_text(json.dumps([
         {"path": "/recall", "ms": 20, "ok": True, "usage": None},
         {"path": "/recall", "ms": 40, "ok": False, "usage": None},
@@ -145,14 +145,14 @@ def _forge_mo(root: Path, name):
          "usage": {"prompt_tokens": 800, "completion_tokens": 1200, "attempts": 1, "unmetered_attempts": 0}},
         {"path": "/curate", "ms": 25000, "ok": True,
          "usage": {"prompt_tokens": 700, "completion_tokens": 900, "attempts": 2, "unmetered_attempts": 1}},
-    ]))
+    ]), encoding="utf-8")
     (d / "entries.json").write_text(json.dumps({"entries": [
         {"kind": "decision", "author": "curate", "statement": "a", "status": "proposed", "refs": "[2]"},
         {"kind": "decision", "author": "curate", "statement": "b", "status": "proposed", "refs": "[2]"},
-        {"kind": "decision", "author": "opencode-1", "statement": "c", "status": "active", "refs": "[2]"}], "events": []}))
-    log = json.loads((d / "log.json").read_text())
+        {"kind": "decision", "author": "opencode-1", "statement": "c", "status": "active", "refs": "[2]"}], "events": []}), encoding="utf-8")
+    log = json.loads((d / "log.json").read_text(encoding="utf-8"))
     log["messages"].append({"id": 10, "sender": "hub", "kind": "notice", "body": "curate: E1 and E2 may contradict each other: x"})
-    (d / "log.json").write_text(json.dumps(log))
+    (d / "log.json").write_text(json.dumps(log), encoding="utf-8")
     return d
 
 
@@ -162,7 +162,7 @@ def test_memoryos_absent_by_default(tmp_path):
     assert m["memoryos"] is None
     out = tmp_path / "o"
     metrics.main([str(d), "--out", str(out)])
-    assert "## MemoryOS" not in (out / "metrics.md").read_text()
+    assert "## MemoryOS" not in (out / "metrics.md").read_text(encoding="utf-8")
 
 
 def test_memoryos_ops_metrics(tmp_path):
@@ -177,7 +177,7 @@ def test_memoryos_ops_metrics(tmp_path):
     assert (mo["proposals"], mo["conflicts"]) == (2, 1)
     out = tmp_path / "o"
     metrics.main([str(d), "--out", str(out)])
-    md = (out / "metrics.md").read_text()
+    md = (out / "metrics.md").read_text(encoding="utf-8")
     assert "## MemoryOS" in md and "lower-bound" in md and "| mo-run/ledger | 3 | 30 | 2 | 20,000 | 1 |" in md
 
 
@@ -186,6 +186,6 @@ def test_memoryos_mixed_runs_only_mo_shows_section(tmp_path):
     forge(tmp_path, "plain", tests="pass")
     out = tmp_path / "o"
     metrics.main([str(tmp_path / "mo"), str(tmp_path / "plain"), "--out", str(out)])
-    runs = {r["run"]: r for r in json.loads((out / "metrics.json").read_text())["runs"]}
+    runs = {r["run"]: r for r in json.loads((out / "metrics.json").read_text(encoding="utf-8"))["runs"]}
     assert runs["mo"]["memoryos"] is not None and runs["plain"]["memoryos"] is None
-    assert "## MemoryOS" in (out / "metrics.md").read_text()
+    assert "## MemoryOS" in (out / "metrics.md").read_text(encoding="utf-8")

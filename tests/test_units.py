@@ -13,7 +13,7 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 def test_parse_stream_uses_per_run_result_and_last_call_context():
-    lines = (FIX / "claude-chat.jsonl").read_text().splitlines(keepends=True)
+    lines = (FIX / "claude-chat.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
     info, u = parse_stream(lines)
     res = [json.loads(x) for x in lines if '"type": "result"' in x][0]
     assert info["ok"] and info["session"] == res["session_id"] and info["denied"] == []
@@ -25,7 +25,7 @@ def test_parse_stream_uses_per_run_result_and_last_call_context():
 
 
 def test_parse_stream_without_result_is_not_ok():
-    lines = [x for x in (FIX / "claude-chat.jsonl").read_text().splitlines() if '"type": "result"' not in x]
+    lines = [x for x in (FIX / "claude-chat.jsonl").read_text(encoding="utf-8").splitlines() if '"type": "result"' not in x]
     info, u = parse_stream(lines + ["not json", ""])
     assert not info.get("ok") and u.total == 0 and u.context > 0
 
@@ -35,7 +35,7 @@ def test_branch_points(tmp_path):
     assert branch_points(p) == 0
     rows = [("a", None, "user"), ("b", "a", "assistant"), ("c", "b", "user"), ("d", "b", "user"),
             ("e", "c", "assistant"), ("s", "e", "assistant")]
-    with p.open("w") as f:
+    with p.open("w", encoding="utf-8") as f:
         for u, parent, typ in rows:
             f.write(json.dumps({"type": typ, "uuid": u, "parentUuid": parent,
                                 "isSidechain": u == "s"}) + "\n")
@@ -59,7 +59,7 @@ def test_transcript_usage_counts_only_new_calls_once(tmp_path):
     old = "2020-01-01T00:00:00.000Z"
     new = "2030-01-01T00:00:00.500Z"
     u = {"input_tokens": 1, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 10, "output_tokens": 5}
-    with p.open("w") as f:
+    with p.open("w", encoding="utf-8") as f:
         for ts, mid in ((old, "m0"), (new, "m1"), (new, "m1"), (new, "m2")):
             f.write(json.dumps({"type": "assistant", "timestamp": ts, "message": {
                 "id": mid, "model": "x", "usage": u, "content": [{"type": "text", "text": "hi"}]}}) + "\n")
@@ -115,14 +115,14 @@ def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
         def turn_ended(self, e): self.ended.append(e); self.done.set()
 
     sink, p = Sink(), tmp_path / "t.jsonl"
-    p.write_text("")
+    p.write_text("", encoding="utf-8")
     ch = ClaudeChannel(sink, None)
     ch.turns["s1"] = {"turn_id": 7, "since": time.time(), "cwd": tmp_path}
     assert ch.stopped("s1", str(p)) and not sink.ended  # nothing flushed yet: not ended with zeros
     ts = datetime.now(timezone.utc).isoformat()
     u = {"input_tokens": 2, "cache_read_input_tokens": 300, "cache_creation_input_tokens": 0, "output_tokens": 9}
     p.write_text(json.dumps({"type": "assistant", "timestamp": ts, "message": {
-        "id": "m1", "model": "x", "usage": u, "content": [{"type": "text", "text": "ok"}]}}) + "\n")
+        "id": "m1", "model": "x", "usage": u, "content": [{"type": "text", "text": "ok"}]}}) + "\n", encoding="utf-8")
     assert sink.done.wait(5)
     assert (sink.ended[0].turn_id, sink.ended[0].usage.context, sink.ended[0].usage.calls) == (7, 302, 1)
 
@@ -141,7 +141,7 @@ def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):
     p.lock = threading.Lock()
     spec = TurnSpec(5, {"id": "opencode-1"}, "ses_1", "x", tmp_path, tmp_path / "t.jsonl")
     p.turns["ses_1"] = Tracked(spec)
-    evs = [json.loads(x) for x in (FIX / "oc-code.events.jsonl").open()]
+    evs = [json.loads(x) for x in (FIX / "oc-code.events.jsonl").open(encoding="utf-8")]
     for ev in evs:
         if "sessionID" in (ev.get("data") or {}):
             ev["data"]["sessionID"] = "ses_1"

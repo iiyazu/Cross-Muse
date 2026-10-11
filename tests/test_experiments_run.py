@@ -67,9 +67,9 @@ def test_review_workspace_has_the_bug_and_no_trace_of_it(tmp_path, seed, bug):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     run.add_seed(tmp_path, seed, "", bug)
     leaks = [p for p in (tmp_path / run.PKG[seed]).glob("*.py")
-             if any(w in p.read_text().lower() for w in ("planted", "bug", "reference"))]
+             if any(w in p.read_text(encoding="utf-8").lower() for w in ("planted", "bug", "reference"))]
     assert leaks == [] and not (tmp_path / "BUGS.md").exists()
-    (tmp_path / "tests" / f"test_hidden_{seed}.py").write_text((EXP / "hidden" / f"test_hidden_{seed}.py").read_text())
+    (tmp_path / "tests" / f"test_hidden_{seed}.py").write_text((EXP / "hidden" / f"test_hidden_{seed}.py").read_text(encoding="utf-8"), encoding="utf-8")
     r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_hidden_*.py"],
                        cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode != 0 and "FAILED" in r.stderr  # the planted bug is live
@@ -100,7 +100,7 @@ def test_memoryos_cmd_default_and_port(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMORYOS_DIR", str(tmp_path))  # no .venv/bin/memoryos there: still PATH
     assert run.memoryos_cmd(8123)[0] == "memoryos"
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
-    (tmp_path / ".venv" / "bin" / "memoryos").write_text("#!/bin/sh\n")
+    (tmp_path / ".venv" / "bin" / "memoryos").write_text("#!/bin/sh\n", encoding="utf-8")
     assert run.memoryos_cmd(8123) == [str(tmp_path / ".venv" / "bin" / "memoryos"), "api", "--host", "127.0.0.1",
                                       "--port", "8123"]
     monkeypatch.delenv("MEMORYOS_DIR")
@@ -155,10 +155,10 @@ def test_memoryos_starts_passes_health_writes_config_and_stops(tmp_path, monkeyp
         assert body["status"] == "ok" and "recall" in body["capabilities"]
         assert set(r.mo_caps) == set(body["capabilities"])
         cfgf = tmp_path / "config.json"
-        cfgf.write_text(json.dumps({"memoryos_url": ""}))
-        cfg = {**json.loads(cfgf.read_text()), "memoryos_url": r.mo_url}
-        cfgf.write_text(json.dumps(cfg))
-        assert json.loads(cfgf.read_text())["memoryos_url"] == r.mo_url
+        cfgf.write_text(json.dumps({"memoryos_url": ""}), encoding="utf-8")
+        cfg = {**json.loads(cfgf.read_text(encoding="utf-8")), "memoryos_url": r.mo_url}
+        cfgf.write_text(json.dumps(cfg), encoding="utf-8")
+        assert json.loads(cfgf.read_text(encoding="utf-8"))["memoryos_url"] == r.mo_url
         time.sleep(0.3)  # let the fake flush its startup line
         assert "fake-memoryos" in (r.res / "memoryos.log").read_bytes().decode(errors="replace")
         proc = r.mo_proc
@@ -199,13 +199,13 @@ def test_mo_parse_hub_log_and_collect(tmp_path):
         "INFO:xmuse.memoryos:memoryos-call {\"path\": \"/recall\", \"ms\": 40, \"ok\": false}\n"
         "INFO:xmuse.memoryos:memoryos-call {\"path\": \"/curate\", \"ms\": 15000, \"ok\": true}\n"
         "INFO:xmuse.memoryos:curate #task usage {\"prompt_tokens\": 100, \"completion_tokens\": 50, \"attempts\": 1, \"unmetered_attempts\": 1}\n"
-        "WARNING:xmuse.memoryos:memoryos /recall failed: Timeout\n")
+        "WARNING:xmuse.memoryos:memoryos /recall failed: Timeout\n", encoding="utf-8")
     (out / "entries.json").write_text(json.dumps({"entries": [
         {"author": "curate", "status": "proposed"}, {"author": "curate", "status": "rejected"},
-        {"author": "opencode-1", "status": "proposed"}], "events": []}))
+        {"author": "opencode-1", "status": "proposed"}], "events": []}), encoding="utf-8")
     (out / "log.json").write_text(json.dumps({"messages": [
         {"kind": "notice", "body": "curate: E1 and E2 may contradict each other: x"},
-        {"kind": "notice", "body": "something else"}, {"kind": "message", "body": "hi"}]}))
+        {"kind": "notice", "body": "something else"}, {"kind": "message", "body": "hi"}]}), encoding="utf-8")
     calls = r.mo_parse_hub_log(out / "hub.log")
     assert [(c["path"], c["ok"]) for c in calls] == [("/recall", True), ("/recall", False), ("/curate", True)]
     assert calls[0]["ms"] == 20 and calls[2]["usage"]["prompt_tokens"] == 100

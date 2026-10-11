@@ -168,9 +168,9 @@ def test_hook_compact_never_fails_or_prints_without_a_session_or_hub(make, monke
                          (tmp_path / "no-hub", json.dumps({"session_id": "x"}))]:
         hook_compact(monkeypatch, state, stdin)
     (tmp_path / "stale").mkdir()
-    (tmp_path / "stale" / "hub.json").write_text('{"port": 1, "pid": 1}')
+    (tmp_path / "stale" / "hub.json").write_text('{"port": 1, "pid": 1}', encoding="utf-8")
     (tmp_path / "stale" / "tokens").mkdir()
-    (tmp_path / "stale" / "tokens" / "_admin").write_text("x")
+    (tmp_path / "stale" / "tokens" / "_admin").write_text("x", encoding="utf-8")
     hook_compact(monkeypatch, tmp_path / "stale", json.dumps({"session_id": "x"}))
     assert capsys.readouterr().out == ""
 

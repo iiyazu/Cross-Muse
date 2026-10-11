@@ -144,7 +144,7 @@ def test_reply_via_tools_after_relay_reaches_the_sender(make):
 def test_coordinator_rule_text():
     from xmuse import config
     for f in (config.TEMPLATES / "AGENTS.xmuse.md", config.TEMPLATES.parent / "skill" / "xmuse-collab" / "SKILL.md"):
-        t = " ".join(f.read_text().split())
+        t = " ".join(f.read_text(encoding="utf-8").split())
         assert "Send as yourself by default" in t and "explicitly asks for the message to go out in their name" in t
         assert "offer to resend in their name" in t and "Replies addressed to the user arrive in your inbox" in t
         assert "directly asks for something to be done by a peer" not in t
@@ -157,7 +157,7 @@ def test_dsh_bundle_tool_schemas_match_tools_py():
     import json
     from pathlib import Path
     from xmuse.tools import TOOLS
-    mirrored = json.loads((Path(__file__).parents[1] / "integrations" / "dsh-bundle" / "tools.json").read_text())
+    mirrored = json.loads((Path(__file__).parents[1] / "integrations" / "dsh-bundle" / "tools.json").read_text(encoding="utf-8"))
     assert mirrored == json.loads(json.dumps(TOOLS)), (
         "regenerate: python -c 'import json;from xmuse.tools import TOOLS;"
         "print(json.dumps(TOOLS, indent=1, ensure_ascii=False))' > integrations/dsh-bundle/tools.json")

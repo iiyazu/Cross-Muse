@@ -14,7 +14,7 @@ SEND = ["xmuse_send", {"to": "human", "body": "done"}]
 
 
 def fixture_usage(name):
-    steps = [json.loads(x)["usage"] for x in (FIX / name).open() if '"step_end"' in x and '"usage"' in x]
+    steps = [json.loads(x)["usage"] for x in (FIX / name).open(encoding="utf-8") if '"step_end"' in x and '"usage"' in x]
     return sum(s["inputTokens"] for s in steps), sum(s["cacheReadTokens"] for s in steps), len(steps)
 
 
@@ -97,7 +97,7 @@ def test_unknown_session_is_retried_in_a_fresh_session(make):
     h.plan_dsh({"as": "dsh-1", "calls": [SEND]}, {}, {"as": "dsh-1", "calls": [SEND]})
     h.send("dsh-1", "first")
     h.wait_quiet()
-    (h.home / "fake-dsh" / "sessions.json").write_text("{}")  # dsh forgot the session
+    (h.home / "fake-dsh" / "sessions.json").write_text("{}", encoding="utf-8")  # dsh forgot the session
     m = h.send("dsh-1", "second")
     h.wait_quiet()
     assert [t["state"] for t in h.turns()] == ["succeeded", "failed", "succeeded"]
@@ -148,7 +148,7 @@ def test_stop_interrupts_a_running_dsh_turn(make):
 
 
 def test_parse_and_human_turn_units(tmp_path):
-    info, u = parse((FIX / "dsh-bogus.jsonl").read_text().splitlines())
+    info, u = parse((FIX / "dsh-bogus.jsonl").read_text(encoding="utf-8").splitlines())
     assert not info["ok"] and info["error"].startswith("INVALID_REQUEST:") and u.calls == 0
     info, _ = parse(['{"type":"error","message":"session \\"s\\" is already owned by an active write handle"}'])
     assert info["owned"] and not info["unknown"]
@@ -233,14 +233,14 @@ def test_dsh_write_config_installs_workspace_hooks(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     paths = DshDriver.write_config(ws, {"id": "dsh-1"}, tmp_path / "state")
-    hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())
+    hooks = json.loads((ws / ".dsh" / "hooks.json").read_text(encoding="utf-8"))
     assert set(hooks["hooks"]) == {"SessionStart", "UserPromptSubmit", "Stop"}
     for ev, groups in hooks["hooks"].items():
         [g] = groups
         [ho] = g["hooks"]
         assert ho["type"] == "command" and "xmuse-dsh-hook.py " + ev in ho["command"] \
             and "dsh-1" in ho["command"]
-    assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text().startswith("#!/usr/bin/env python3")
+    assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text(encoding="utf-8").startswith("#!/usr/bin/env python3")
     assert [p.name for p in paths] == ["hooks.json", "xmuse-dsh-hook.py"]
 
 
@@ -318,9 +318,9 @@ def test_agent_add_extra_mcp_is_stored_for_headless_dsh_and_opencode_only(tmp_pa
     ws.mkdir()
     cli.main(["init", str(ws)])
     spec = tmp_path / "extra.json"
-    spec.write_text(json.dumps([{"name": "bench-tests", "command": "node", "args": ["x.mjs"], "env": {"BENCH_PROJECT": "p"}}]))
+    spec.write_text(json.dumps([{"name": "bench-tests", "command": "node", "args": ["x.mjs"], "env": {"BENCH_PROJECT": "p"}}]), encoding="utf-8")
     cli.main(["--ws", str(ws), "agent", "add", "d1", "--vendor", "dsh", "--extra-mcp", str(spec)])
-    state = Path(json.loads((ws / ".xmuse.json").read_text())["state"])
+    state = Path(json.loads((ws / ".xmuse.json").read_text(encoding="utf-8"))["state"])
     a = db.row(db.connect(state / "hub.db").execute("select * from agents where id='d1'"))
     assert db.settings(a)["extra_mcp"][0]["name"] == "bench-tests"
     cli.main(["--ws", str(ws), "agent", "add", "o1", "--vendor", "opencode", "--extra-mcp", str(spec)])
