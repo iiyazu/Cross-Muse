@@ -85,7 +85,9 @@ To set up the Claude desktop app as coordinator, dsh foreground mode or the dsh 
   - A crashed agent is retried once, then degraded and taken over by another executor. A branch that conflicts on merge is left to the planner and logged as an event; edits outside an executor's files are logged, not blocked.
   - Usage: `xmuse run --preset plan-split-integrate --planner P --executors E1,E2 --task-file F [--limits JSON]`; progress with `xmuse run-status [id]`.
   - So far the whole flow has been tested only with scripted fake agents, not yet run end to end with real ones.
-- **Extra MCP servers for headless dsh**: `xmuse agent add <id> --vendor dsh --extra-mcp file.json` mounts additional stdio MCP servers (`[{name, command, args, env}]`) in every run of that agent, for example a tool that can only run tests in the experiments.
+- **Extra MCP servers for headless dsh and OpenCode**: `xmuse agent add <id> --vendor dsh|opencode --extra-mcp file.json` mounts additional stdio MCP servers (`[{name, command, args, env}]`) for that agent, for example a tool that can only run tests in the experiments.
+  - dsh: written into the overlay of every run.
+  - OpenCode: written into that instance's own config, plus an allow rule in the workspace permissions for the tools under those server names (`<name>_*`).
 - **Identity and provenance**
   - Every agent has its own token, and messages record `via`. Words the coordinator relays for the user show as "human (via coordinator)"; messages sent from the CLI show "via cli".
   - A dsh session must `/xmuse bind` to an agent before it can act as that agent.
@@ -162,7 +164,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # tests that need 
 (cd integrations/dsh-bundle && npm test)
 ```
 
-Last measured: hub 335 passed, 1 skipped, in about 2 min 35 s; bundle 28 passed. One test in `tests/test_desktop.py` (`test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing`) fails now and then: it first sends a message to another agent, and the hub notice to the coordinator when that agent's turn ends sometimes arrives ahead of the line the test reads. It is a race in the test itself, and a rerun on its own usually passes.
+Last measured: hub 337 passed, 1 skipped, in about 2 min 28 s; bundle 28 passed.
 
 ## License
 
