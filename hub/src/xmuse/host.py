@@ -1,4 +1,5 @@
-"""The WSL host this hub runs on: distro name and the Windows user's home, derived, never hard-coded.
+"""The host this hub runs on: in WSL, the distro name and the Windows user's home, derived, never hard-coded.
+A Windows-native hub (D1) needs neither: its own home is the Windows home and no path is translated.
 
 Overrides (in this order): environment XMUSE_WSL_DISTRO / XMUSE_WIN_HOME, then what WSL itself reports
 (WSL_DISTRO_NAME; %USERPROFILE% through cmd.exe and wslpath). When neither works the caller gets a HostError
@@ -35,9 +36,14 @@ def _userprofile() -> Path | None:
         return None
 
 
+WINDOWS = os.name == "nt"  # Windows-native hub (D1): no WSL in between, Windows paths everywhere
+
+
 def win_home() -> Path:
     if os.environ.get("XMUSE_WIN_HOME"):
         return Path(os.environ["XMUSE_WIN_HOME"])
+    if WINDOWS:
+        return Path.home()
     p = _userprofile()
     if p and p.is_dir():
         return p

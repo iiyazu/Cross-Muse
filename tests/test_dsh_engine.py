@@ -1,9 +1,12 @@
 """Delivery engine through the dsh headless adapter, with a fake dsh replaying M0-dsh NDJSON recordings."""
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import wsl_hub
 
 from xmuse import init as xinit
 from xmuse.adapters.dsh import human_turn, overlay, parse
@@ -14,7 +17,7 @@ SEND = ["xmuse_send", {"to": "human", "body": "done"}]
 
 
 def fixture_usage(name):
-    steps = [json.loads(x)["usage"] for x in (FIX / name).open() if '"step_end"' in x and '"usage"' in x]
+    steps = [json.loads(x)["usage"] for x in (FIX / name).open(encoding="utf-8") if '"step_end"' in x and '"usage"' in x]
     return sum(s["inputTokens"] for s in steps), sum(s["cacheReadTokens"] for s in steps), len(steps)
 
 
@@ -97,7 +100,7 @@ def test_unknown_session_is_retried_in_a_fresh_session(make):
     h.plan_dsh({"as": "dsh-1", "calls": [SEND]}, {}, {"as": "dsh-1", "calls": [SEND]})
     h.send("dsh-1", "first")
     h.wait_quiet()
-    (h.home / "fake-dsh" / "sessions.json").write_text("{}")  # dsh forgot the session
+    (h.home / "fake-dsh" / "sessions.json").write_text("{}", encoding="utf-8")  # dsh forgot the session
     m = h.send("dsh-1", "second")
     h.wait_quiet()
     assert [t["state"] for t in h.turns()] == ["succeeded", "failed", "succeeded"]
@@ -148,13 +151,14 @@ def test_stop_interrupts_a_running_dsh_turn(make):
 
 
 def test_parse_and_human_turn_units(tmp_path):
-    info, u = parse((FIX / "dsh-bogus.jsonl").read_text().splitlines())
+    info, u = parse((FIX / "dsh-bogus.jsonl").read_text(encoding="utf-8").splitlines())
     assert not info["ok"] and info["error"].startswith("INVALID_REQUEST:") and u.calls == 0
     info, _ = parse(['{"type":"error","message":"session \\"s\\" is already owned by an active write handle"}'])
     assert info["owned"] and not info["unknown"]
     assert not human_turn(tmp_path / "missing.zstd")
 
 
+@wsl_hub
 def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     (tmp_path / "ws").mkdir()
@@ -168,6 +172,7 @@ def test_dsh_agent_needs_a_workspace_on_a_windows_drive(tmp_path, monkeypatch):
     assert not xinit._dsh_ws_ok("/home/user/dev/ws")
 
 
+@wsl_hub
 def test_to_win_maps_mnt_drives_and_wsl_paths(monkeypatch):
     from xmuse.adapters.base import to_win
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-24.04")
@@ -216,14 +221,14 @@ def test_dsh_hook_script_reports_to_the_hub(make):
     sid = h.q("select vendor_session from sessions")[0]["vendor_session"]
     payload = {"session_id": sid, "hook_event_name": "UserPromptSubmit",
                "cwd": "C:\\ws", "prompt": "typed by the human"}
-    subprocess.run(["python3", str(DSH_HOOK), "UserPromptSubmit", str(h.state), "dsh-1"],
+    subprocess.run([sys.executable, str(DSH_HOOK), "UserPromptSubmit", str(h.state), "dsh-1"],
                    input=json.dumps(payload), text=True, check=True, timeout=10)
     assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is True
-    subprocess.run(["python3", str(DSH_HOOK), "Stop", str(h.state), "dsh-1"],
+    subprocess.run([sys.executable, str(DSH_HOOK), "Stop", str(h.state), "dsh-1"],
                    input=json.dumps({"session_id": sid}), text=True, check=True, timeout=10)
     assert h.hub.engine.drivers["dsh"].presence({"id": "dsh-1"}, sid).human_turn is False
     # never blocks dsh, even when the hub is gone
-    r = subprocess.run(["python3", str(DSH_HOOK), "Stop", "/nonexistent", "dsh-1"],
+    r = subprocess.run([sys.executable, str(DSH_HOOK), "Stop", "/nonexistent", "dsh-1"],
                        input="{}", text=True, timeout=10)
     assert r.returncode == 0
 
@@ -233,14 +238,14 @@ def test_dsh_write_config_installs_workspace_hooks(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     paths = DshDriver.write_config(ws, {"id": "dsh-1"}, tmp_path / "state")
-    hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())
+    hooks = json.loads((ws / ".dsh" / "hooks.json").read_text(encoding="utf-8"))
     assert set(hooks["hooks"]) == {"SessionStart", "UserPromptSubmit", "Stop"}
     for ev, groups in hooks["hooks"].items():
         [g] = groups
         [ho] = g["hooks"]
         assert ho["type"] == "command" and "xmuse-dsh-hook.py " + ev in ho["command"] \
             and "dsh-1" in ho["command"]
-    assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text().startswith("#!/usr/bin/env python3")
+    assert (ws / ".dsh" / "xmuse-dsh-hook.py").read_text(encoding="utf-8").startswith("#!/usr/bin/env python3")
     assert [p.name for p in paths] == ["hooks.json", "xmuse-dsh-hook.py"]
 
 
@@ -318,9 +323,9 @@ def test_agent_add_extra_mcp_is_stored_for_headless_dsh_and_opencode_only(tmp_pa
     ws.mkdir()
     cli.main(["init", str(ws)])
     spec = tmp_path / "extra.json"
-    spec.write_text(json.dumps([{"name": "bench-tests", "command": "node", "args": ["x.mjs"], "env": {"BENCH_PROJECT": "p"}}]))
+    spec.write_text(json.dumps([{"name": "bench-tests", "command": "node", "args": ["x.mjs"], "env": {"BENCH_PROJECT": "p"}}]), encoding="utf-8")
     cli.main(["--ws", str(ws), "agent", "add", "d1", "--vendor", "dsh", "--extra-mcp", str(spec)])
-    state = Path(json.loads((ws / ".xmuse.json").read_text())["state"])
+    state = Path(json.loads((ws / ".xmuse.json").read_text(encoding="utf-8"))["state"])
     a = db.row(db.connect(state / "hub.db").execute("select * from agents where id='d1'"))
     assert db.settings(a)["extra_mcp"][0]["name"] == "bench-tests"
     cli.main(["--ws", str(ws), "agent", "add", "o1", "--vendor", "opencode", "--extra-mcp", str(spec)])

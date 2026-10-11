@@ -59,7 +59,7 @@ def git(cwd, *args):
 
 def write(p: Path, text: str):
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
 
 def setup(make, behave, **cfg):
@@ -130,8 +130,8 @@ def test_normal_path_plans_splits_integrates_and_snapshots(make):
     snaps = {s["name"]: s for s in st["data"]["snapshots"]}
     assert snaps["S-E1"]["files"] == ["src/a.py"] and snaps["S-E2"]["files"] == ["src/b.py"]
     assert snaps["F"]["files"] == ["src/a.py", "src/b.py"]
-    assert "+a = 1" in Path(snaps["F"]["patch"]).read_text() and "+b = 2" in Path(snaps["F"]["patch"]).read_text()
-    assert (h.ws / "src/a.py").read_text() == "a = 1\n" and (h.ws / "src/b.py").read_text() == "b = 2\n"
+    assert "+a = 1" in Path(snaps["F"]["patch"]).read_text(encoding="utf-8") and "+b = 2" in Path(snaps["F"]["patch"]).read_text(encoding="utf-8")
+    assert (h.ws / "src/a.py").read_text(encoding="utf-8") == "a = 1\n" and (h.ws / "src/b.py").read_text(encoding="utf-8") == "b = 2\n"
     assert not kinds(st, "violation") and not kinds(st, "merge_conflict") and not kinds(st, "phase_timeout")
     # executors worked in their own worktrees, only after the plan; the handoffs reached them in their first turn
     cwd = {a: c for a, _, c in drv.prompts}
@@ -200,7 +200,7 @@ def test_crash_is_retried_once_then_the_part_is_taken_over(make):
     assert [e["detail"]["agent"] for e in kinds(st, "degraded")] == ["e2"]
     assert kinds(st, "takeover")[0]["detail"] == {"from": "e2", "to": "e1"}
     assert st["data"]["degraded"] == ["e2"]
-    assert (h.ws / "src/b.py").read_text() == "b = 'e1 did it'\n" and not kinds(st, "violation")
+    assert (h.ws / "src/b.py").read_text(encoding="utf-8") == "b = 'e1 did it'\n" and not kinds(st, "violation")
     assert not kinds(st, "phase_timeout")
 
 
@@ -227,7 +227,7 @@ def test_out_of_bounds_edits_are_recorded_and_conflicts_go_to_the_planner(make):
     assert sorted((e["detail"]["agent"], e["detail"]["file"]) for e in kinds(st, "violation")) == [
         ("e1", "src/shared.py"), ("e2", "src/shared.py")]
     assert kinds(st, "merge_conflict")[0]["detail"] == {"agent": "e2", "files": ["src/shared.py"]}
-    assert (h.ws / "src/shared.py").read_text() == "x = 3\n" and (h.ws / "src/b.py").read_text() == "b = 2\n"
+    assert (h.ws / "src/shared.py").read_text(encoding="utf-8") == "x = 3\n" and (h.ws / "src/b.py").read_text(encoding="utf-8") == "b = 2\n"
     assert st["state"] == "finished"
 
 
@@ -246,7 +246,7 @@ def test_fix_round_goes_back_to_the_owner_and_is_merged(make):
 
     def e1(h, aid, prompt, cwd, stop):
         if "Phase P3" in prompt:
-            assert "a must be 10" in prompt and (cwd / "src/b.py").read_text() == "b = 2\n"  # main merged in
+            assert "a must be 10" in prompt and (cwd / "src/b.py").read_text(encoding="utf-8") == "b = 2\n"  # main merged in
             write(cwd / "src/a.py", "a = 10\n")
             return h.tool(aid, "xmuse_done", summary="fixed", next="plan", stage="fix") and None
         return executor("src/a.py", "a = 1\n")(h, aid, prompt, cwd, stop)
@@ -255,7 +255,7 @@ def test_fix_round_goes_back_to_the_owner_and_is_merged(make):
     st = wait_end(h)
     assert [s["name"] for s in st["data"]["snapshots"]] == ["S-E1", "S-E2", "S-int", "S-fix-1", "F"]
     assert [e["phase"] for e in kinds(st, "phase")] == ["P1", "P2", "P3fix", "P3int", "F"]
-    assert st["round"] == 1 and (h.ws / "src/a.py").read_text() == "a = 10\n"
+    assert st["round"] == 1 and (h.ws / "src/a.py").read_text(encoding="utf-8") == "a = 10\n"
     assert not h.q("select 1 from turns where agent_id='e2' and started_at>?", kinds(st, "phase")[2]["at"])
 
 
@@ -284,7 +284,7 @@ def test_cli_starts_a_run_and_reports_it(make, tmp_path):
     h, _ = setup(make, {"plan": planner, "e1": executor("src/a.py", "a = 1\n"), "e2": executor("src/b.py", "b = 2\n")})
     from xmuse import cli
     task = tmp_path / "task.txt"
-    task.write_text("make a and b")
+    task.write_text("make a and b", encoding="utf-8")
     cli.main(["--ws", str(h.ws), "run", "--planner", "plan", "--executors", "e1,e2", "--task-file", str(task),
               "--limits", json.dumps(FAST)])
     st = wait_end(h)

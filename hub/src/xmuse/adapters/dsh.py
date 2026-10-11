@@ -26,8 +26,6 @@
 """
 import json
 import logging
-import os
-import signal
 import subprocess
 import sys
 import threading
@@ -36,7 +34,7 @@ from pathlib import Path
 
 import zstandard
 
-from .. import db, host
+from .. import db, host, proc
 from ..config import DSH_HOOK, SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage, to_win
@@ -73,34 +71,41 @@ Loop:
    BACKGROUND task, so that its completion wakes you. Never run watch in the foreground.
 2. When woken, run `X tool --agent {id} inbox`, do the work, reply with `send`, `ack` what you handled, then
    start the watch again.
-3. Never put message text on the wsl.exe command line: wsl.exe re-joins arguments and breaks on `#` and spaces.
+3. {argline}
    Always pass text through `--args-file`.
 
 Identity: you are {id} only through the commands above. Never read `tokens/` under the xmuse state directory or any
 other agent's credentials, and never use the admin `xmuse send` command to speak (it is recorded as `human (via
 cli)`, which impersonates the user). If this session was bound with the dsh bundle (`/xmuse bind {id}`), use its
 native `xmuse_*` tools instead: the hub then refuses `X tool` calls until `/xmuse unbind`.
-
+{linux}"""
+WSL_ARGLINE = "Never put message text on the wsl.exe command line: wsl.exe re-joins arguments and breaks on `#` and spaces."
+WSL_LINUX = """
 Tests and any Linux tooling go through
 `wsl.exe -d {distro} -- bash -lc "cd {ws} && <command>"`.
 """
 
 
 def foreground_section(ws: Path, agent: dict) -> str:
+    if host.WINDOWS:  # the hub runs on Windows itself: no wsl.exe hop
+        prefix = f'"{sys.executable}" -m xmuse --ws "{ws}"'
+        return FG_TEMPLATE.format(id=agent["id"], prefix=prefix, linux="",
+                                  argline="Never put message text on the command line: quoting breaks on `#`, quotes and spaces.")
     prefix = f"wsl.exe -d {_distro()} -- {sys.executable} -m xmuse --ws {ws}"
-    return FG_TEMPLATE.format(id=agent["id"], prefix=prefix, distro=_distro(), ws=ws)
+    return FG_TEMPLATE.format(id=agent["id"], prefix=prefix, argline=WSL_ARGLINE,
+                              linux=WSL_LINUX.format(distro=_distro(), ws=ws))
 
 
 def _set_block(path: Path, begin: str, end: str, body: str | None) -> None:
     """Replace, add (body) or remove (None) one generated block of a file, leaving the rest alone."""
-    text = path.read_text() if path.exists() else ""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     if begin in text and end in text:
         i, j = text.index(begin), text.index(end) + len(end)
         text = (text[:i].rstrip("\n") + "\n\n" if text[:i].strip() else "") + text[j:].lstrip("\n")
     if body is not None:
         text = (text.rstrip() + "\n\n" if text.strip() else "") + f"{begin}\n{body}{end}\n"
     if text or path.exists():
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
 
 # A hub-owned prompt starts with the wakepack relay header; a hook report carrying it is the
 # hub's own headless prompt, never human input.
@@ -213,7 +218,7 @@ def human_turn(log: Path) -> bool:
 def hooks_owner(ws: Path) -> str | None:
     """The dsh agent the workspace .dsh/hooks.json reports for (last argv word of its commands), if any."""
     try:
-        hooks = json.loads((ws / ".dsh" / "hooks.json").read_text())["hooks"]
+        hooks = json.loads((ws / ".dsh" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
         return next(iter(hooks.values()))[0]["hooks"][0]["command"].split()[-1]
     except (OSError, ValueError, KeyError, IndexError, StopIteration, AttributeError):
         return None
@@ -241,7 +246,7 @@ class DshHeadless:
         self.runs: dict[int, dict] = {}
 
     def command(self, patch: Path, session: str | None) -> list[str]:
-        return [self.exe, "--expose-internals", self.clijs, "--profile", "headless", "--patch", to_win(patch),
+        return [*proc.argv(self.exe), "--expose-internals", self.clijs, "--profile", "headless", "--patch", to_win(patch),
                 "--json", *(["--session-id", session] if session else []), "-"]  # task text on stdin
 
     @staticmethod
@@ -274,27 +279,20 @@ class DshHeadless:
     def _run_once(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None,
                   limit: float | None = None):
         got, hung, late = threading.Event(), threading.Event(), threading.Event()
-        with log.open("a") as out, log.with_suffix(".err").open("a") as err:
-            p = subprocess.Popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=err, text=True, encoding="utf-8", start_new_session=True,
-                                 env=clean_env(ENV))
+        with log.open("a", encoding="utf-8") as out, log.with_suffix(".err").open("a", encoding="utf-8") as err:
+            p = proc.popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           stderr=err, text=True, encoding="utf-8", env=clean_env(ENV))
             if st is not None:
                 st["p"] = p
 
             def watchdog():  # no NDJSON line at all within the limit: the launch is stuck, not slow
                 if not got.wait(self.first_event) and p.poll() is None:
                     hung.set()
-                    try:
-                        os.killpg(p.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                    proc.kill_tree(p)
 
             def overall():  # a precheck that started but never finishes (seen: step_start, then 10 min of silence)
                 late.set()
-                try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                proc.kill_tree(p)
 
             if self.first_event:
                 threading.Thread(target=watchdog, daemon=True).start()
@@ -327,7 +325,7 @@ class DshHeadless:
 
     def start(self, spec: TurnSpec) -> dict:
         patch = self.state / "runs" / f"turn-{spec.turn_id}.patch.yml"
-        patch.write_text(overlay(spec.agent, self.state))
+        patch.write_text(overlay(spec.agent, self.state), encoding="utf-8")
         st = self.runs[spec.turn_id] = {"stop": threading.Event()}
         threading.Thread(target=self._turn, args=(spec, patch, st), daemon=True).start()
         return {"handle": spec.session, "cwd": to_win(spec.cwd)}
@@ -355,7 +353,7 @@ class DshHeadless:
         elif info.get("ok") and info.get("rc") == 0:
             end = TurnEnd(spec.turn_id, "succeeded", sid, total)
         else:
-            tail = spec.run_log.with_suffix(".err").read_text()[-300:].strip() if spec.run_log.with_suffix(
+            tail = spec.run_log.with_suffix(".err").read_text(encoding="utf-8")[-300:].strip() if spec.run_log.with_suffix(
                 ".err").exists() else ""
             end = TurnEnd(spec.turn_id, "failed", sid, total, info.get("error") or f"exit {info.get('rc')}: {tail}")
         total.model = spec.agent["model"].split("/", 1)[1]
@@ -367,10 +365,7 @@ class DshHeadless:
             return
         st["stop"].set()
         if st.get("p") and st["p"].poll() is None:
-            try:
-                os.killpg(st["p"].pid, signal.SIGKILL)  # the lease dies with the process (M0-dsh crash tests)
-            except ProcessLookupError:
-                pass
+            proc.kill_tree(st["p"])  # the lease dies with the process (M0-dsh crash tests)
 
 
 class DshDriver:
@@ -404,7 +399,7 @@ class DshDriver:
     def precheck(self, agent: dict, ws: Path) -> str | None:
         """One minimal run without tools: an unknown model or provider fails here (about 10 s, no tokens)."""
         patch = self.state / "runs" / f"precheck-{agent['id']}.patch.yml"
-        patch.write_text(overlay(agent, self.state, mcp=False))
+        patch.write_text(overlay(agent, self.state, mcp=False), encoding="utf-8")
         log = self.state / "logs" / f"precheck-{agent['id']}.jsonl"
         err = None
         for attempt in (0, 1):  # one retry: dsh headless sometimes exits 1 (empty stderr) on a cold start
@@ -491,11 +486,14 @@ class DshDriver:
             # Headless runs of the others carry their identity in the per-run overlay and need no hooks.
             return []
         d.mkdir(parents=True, exist_ok=True)
-        cmd = f"python3 .dsh/xmuse-dsh-hook.py {{ev}} {to_win(state)} {agent['id']}"
+        if host.WINDOWS:  # the hub's own interpreter; there may be no python3 on a Windows PATH
+            cmd = f'"{sys.executable}" .dsh/xmuse-dsh-hook.py {{ev}} "{state}" {agent["id"]}'
+        else:
+            cmd = f"python3 .dsh/xmuse-dsh-hook.py {{ev}} {to_win(state)} {agent['id']}"
         hooks = {"hooks": {ev: [{"hooks": [{"type": "command", "command": cmd.format(ev=ev)}]}]
                            for ev in ("SessionStart", "UserPromptSubmit", "Stop")}}
-        (d / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n")
-        (d / "xmuse-dsh-hook.py").write_text(DSH_HOOK.read_text())
+        (d / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+        (d / "xmuse-dsh-hook.py").write_text(DSH_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
         return [d / "hooks.json", d / "xmuse-dsh-hook.py"]
 
     def attach_command(self, agent: dict, session: str | None) -> str:

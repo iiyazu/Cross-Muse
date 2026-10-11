@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None or not (SHIM.parent
 
 class Mcp:
     def __init__(self, env):
-        self.p = subprocess.Popen(["node", str(SHIM)], env={"PATH": os.environ["PATH"], **env},
+        self.p = subprocess.Popen(["node", str(SHIM)], env={"PATH": os.environ["PATH"], **{k: os.environ[k] for k in ("SYSTEMROOT",) if k in os.environ}, **env},
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.n = 0
         self.notes = []

@@ -60,7 +60,11 @@ DSH_HOOK = Path(__file__).resolve().parent / "dsh_hook.py"
 
 
 def state_root() -> Path:
-    return Path(os.environ.get("XMUSE_STATE_ROOT") or Path.home() / ".local" / "state" / "xmuse")
+    if os.environ.get("XMUSE_STATE_ROOT"):
+        return Path(os.environ["XMUSE_STATE_ROOT"])
+    if os.name == "nt":  # Windows-native hub (D1): %LOCALAPPDATA%\xmuse\<room>-<hash>
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "xmuse"
+    return Path.home() / ".local" / "state" / "xmuse"
 
 
 def state_dir_for(ws: Path) -> Path:
@@ -76,12 +80,12 @@ def find_state(start: Path | None = None) -> Path:
     for d in (p, *p.parents):
         f = d / ".xmuse.json"
         if f.exists():
-            return Path(json.loads(f.read_text())["state"])
+            return Path(json.loads(f.read_text(encoding="utf-8"))["state"])
     raise SystemExit(f"no xmuse workspace at or above {p}; run `xmuse init <workspace>` first")
 
 
 def load(state: Path) -> dict:
-    cfg = json.loads((state / "config.json").read_text())
+    cfg = json.loads((state / "config.json").read_text(encoding="utf-8"))
     return {**DEFAULTS, **cfg}
 
 
