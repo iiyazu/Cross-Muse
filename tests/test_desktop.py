@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from test_init_cli import XMUSE, run
-from xmuse import init as xinit
+from xmuse import db, init as xinit
 from xmuse.adapters.claude import write_config, win_path
 from xmuse.config import SHIM
 
@@ -274,6 +274,8 @@ def start_watch(h, agent, *extra):
 
 def test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing(make):
     h = make([("dog", "claude", {"desktop": True}), ("oc", "opencode")])
+    with db.tx(h.conn()) as c:  # a real wake of oc ends with a hub notice to dog, which can beat the line read below
+        c.execute("update agents set paused=1 where id='oc'")
     h.send("dog", "old one")  # before the watch starts: not reported
     w = start_watch(h, "dog")
     try:

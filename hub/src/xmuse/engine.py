@@ -131,6 +131,11 @@ class Engine:
             adapter = driver.headless
             fresh = session is None  # never rotated automatically (design §4.1 principle 9)
         with db.tx(conn):
+            # Pause is a safety switch and other threads set it (preset.pause, resume/pause admin): decide it in the
+            # same transaction that creates the turn, not from the agent list read at the start of this kick.
+            if conn.execute("select 1 from agents where id=? and paused=0 and coalesce(paused_until, 0)<=?",
+                            (agent["id"], db.now())).fetchone() is None:
+                return  # the messages stay queued; resume kicks the engine
             chain = pending[-1]["chain_id"]
             tid = conn.execute("insert into turns(agent_id, session_id, adapter, chain_id, fresh, state, started_at)"
                                " values(?,?,?,?,?,?,?)", (agent["id"], None if fresh else session["id"], adapter.name,

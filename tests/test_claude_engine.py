@@ -364,6 +364,38 @@ def test_mail_already_handled_mid_turn_wakes_nobody(make):
     assert {d["state"] for d in h.q("select state from deliveries where recipient='claude-1'")} == {"done"}
 
 
+def test_pause_set_while_a_kick_is_mid_admission_still_blocks_the_wake(make, monkeypatch):
+    """A kick that already selected the agent as unpaused must not start a turn once the agent got paused
+    (preset.pause runs on another thread; the pause is a safety switch, so no window may let a wake through)."""
+    import threading
+    from xmuse import mail
+    h = make()
+    h.plan_claude({})
+    orig, entered, go = mail.running_turn, threading.Event(), threading.Event()
+    stalled = []
+
+    def stall_once(conn, agent_id):  # the engine thread has selected claude-1 (paused=0) and stops right here
+        r = orig(conn, agent_id)
+        if not stalled:
+            stalled.append(1)
+            entered.set()
+            assert go.wait(10)
+        return r
+    monkeypatch.setattr(mail, "running_turn", stall_once)
+    h.hub.engine.kick()
+    assert entered.wait(10)
+    _paused(h)
+    h.send("claude-1", "one")
+    go.set()
+    h.hub.engine.call(lambda: None)  # every kick queued so far (the stalled one and the one from send) has run
+    assert h.turns() == []
+    assert [d["state"] for d in h.q("select state from deliveries where recipient='claude-1'")] == ["queued"]
+    h.admin("resume", agent="claude-1")
+    h.wait_quiet()
+    assert len(h.turns()) == 1
+    assert {d["state"] for d in h.q("select state from deliveries where recipient='claude-1'")} == {"done"}
+
+
 def test_read_but_unanswered_mail_still_wakes(make):
     h = make()
     h.plan_claude({})

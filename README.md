@@ -85,7 +85,9 @@ Claude 桌面版当协调者、dsh 前台模式和插件包的配置，见 [hub/
   - agent 崩溃时重试一次，再失败就降级，由另一名执行者接手；分支合并冲突交给规划者手动解决，并记为事件；越界修改只记录、不拦截。
   - 用法：`xmuse run --preset plan-split-integrate --planner P --executors E1,E2 --task-file F [--limits JSON]`，进度用 `xmuse run-status [id]`。
   - 目前只用脚本化的假 agent 测过整条流程，还没有用真实 agent 完整跑过。
-- **headless dsh 的额外 MCP**：`xmuse agent add <id> --vendor dsh --extra-mcp file.json`，给这个 agent 的每次运行再挂几个 stdio MCP 服务（`[{name, command, args, env}]`），例如实验里一个只能跑测试的工具。
+- **headless dsh 和 OpenCode 的额外 MCP**：`xmuse agent add <id> --vendor dsh|opencode --extra-mcp file.json`，给这个 agent 再挂几个 stdio MCP 服务（`[{name, command, args, env}]`），例如实验里一个只能跑测试的工具。
+  - dsh：写进每次运行的 overlay。
+  - OpenCode：写进这个实例自己的配置，并在工作区的权限规则里放行这些服务名下的工具（`<名字>_*`）。
 - **身份和来源**
   - 每个 agent 有自己的令牌；消息记录 `via`。协调者代用户转达的话记为"用户（经协调者）"，CLI 发出的记为"via cli"。
   - dsh 会话要先 `/xmuse bind` 才能以某个 agent 的身份行事。
@@ -162,7 +164,7 @@ hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # 依赖 Windows /
 (cd integrations/dsh-bundle && npm test)
 ```
 
-最近一次实测：hub 335 个通过、1 个跳过，耗时约 2 分 35 秒；插件包 28 个通过。`tests/test_desktop.py` 里有一条用例（`test_watch_reports_new_messages_only_for_its_agent_and_marks_nothing`）偶尔失败：它先发一条给别的 agent 的消息，那个 agent 的回合结束时 hub 发给协调者的提示，有时抢在测试要读的那一行之前。这是测试本身的竞态，单独重跑通常能过。
+最近一次实测：hub 337 个通过、1 个跳过，耗时约 2 分 28 秒；插件包 28 个通过。
 
 ## 许可证
 
