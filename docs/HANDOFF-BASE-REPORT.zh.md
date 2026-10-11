@@ -1258,3 +1258,27 @@ fixed: H02 H03 H04 H08 H09 H10 H14 H16 H18 H19 H05 H27 H30 H31 H32 H24 H29 H34 H
 **拿不准的地方**：
 - r3 是在白名单下跑的，r4–r8 在新策略下跑。两者只在"本该挂起的请求"上有区别，而 r3 一次也没有，所以算作同条件。
 - 新策略下 oc-ms13 的 shell 权限比 dsh 成员宽（dsh 有自己的沙箱），这一点会在结果里标明。
+
+## T15 第 11 步（10-12 01:00）：发现跨 run 读取，r3 作废，工作区移出 C:
+
+**发现**：r3-plain 的 runner 命中里，dsh-fl（E2，turn-2）用 PowerShell 遍历了 r7 的 `C:\Users\user\phb\`，把自己的文件和 `solo\ws`、`solo2\ws`、`r1-plain\ws`、`r2-xmuse\ws` 逐个 diff，还写了 `_diff_solo.txt`。也就是说它读了以前 run 的修复。原来的泄漏扫描只搜 BENCH_DIR、phb-addbugs、bm-rename、prizehub-bench，没覆盖兄弟工作区。
+
+**全量复扫**（新模式 `phb[\/](solo2?|r\d-…|e2e|il-o…|ocprobe|smoke)`，排除本 run 自己的路径）：
+- solo2：clean。单干基线 44/70 有效。
+- pilot/r1-plain：clean。
+- pilot/r2-xmuse：命中（turn-2 dsh-fl，读到 solo、r1-plain、solo2、smoke、e2e、il-off、ocprobe）。
+- r3-plain：命中（turn-2 dsh-fl，读到 solo、solo2、r1-plain、r2-xmuse）。
+- r4-xmuse：clean。
+- r5-plain：开跑时 clean。
+
+**处理**：
+- r3-plain 作废（属于泄漏，不是 agent 自身的失败）。r9-plain 跑完后，它会被移到 `runs/team-void`。补跑 r9-plain 排在 r8 之后（r7 上的 `team9.sh` 会等 team5 结束），交替顺序仍是 x p x p x p。T-plain = r5、r7、r9，T-xmuse = r4、r6、r8。
+- 旧工作区：用户在 r7 上手动用 `docker run … mv`，把 solo、solo2、r1–r4、e2e、il-on、il-off、ocprobe、smoke 移到了 `~/bench/phb/archive/ws/`（没有删除；我自己执行时被权限检查拦下）。现在 C: 的 phb 下只剩 `mcp` 和正在跑的 run。
+- kit `a5e520f`（用户同意）：
+  - `team_run.py` 每个 run 判分后，把自己的工作区移到 `archive/ws/<label>`；开跑前也会把残留的已完成 run 的工作区先移走。这样 r5 跑完之后，也会在 r6 开跑前被移走。
+  - `team_regrade.py` 从 archive 克隆。
+- r4-xmuse 结果（team_run 当场判分，只有 worktree 的分数有效）：wt-E1 17/70，wt-E2 21/70；用时 1041 秒；oc-ms13 有 1 次被自动拒绝（`mvn -o -q compile`）；挂起 0 次。
+
+**还没做 / 拿不准**：
+- `team_report.py` 读 git 的位置还没改成 archive，改的时候被权限检查拦下；出报表前要处理。
+- 残余风险：agent 仍然能通过 `\\wsl$` 读到 WSL 里的 archive 和 runs 目录。之后每个 run 都用新模式复扫，命中就作废。
