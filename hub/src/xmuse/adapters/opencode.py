@@ -47,10 +47,10 @@ PIPE_FILTERS = {"head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "nl"}
 # (audit B2-2); kept so experiment runs need no human and stay comparable with the M2b runs.
 ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git clean*", "git branch -D*",
              "git checkout -- *", "rm -r*", "rm -f*", "sudo *", "curl *", "wget *"]
-# open-experiment (T15 team runs, user 10-12): no request ever waits for a human. Everything is approved except
-# commands that name a build/test runner or a way out to one (the runs are "reason + compile tool only"); those are
-# rejected at once. Matched on every word of the command line, so `cd x && docker run ...` is caught; a script that
-# starts one itself is not (the run's transcripts are searched for runners afterwards).
+# open-experiment (T15 team runs, user 10-12): no request ever waits for a human and every request is approved.
+# A first version rejected build/test runners, but OpenCode ends the agent's turn on a rejection (r4: oc-ms13 lost
+# the rest of P1 to one `mvn compile`), so the user had that lifted too. Runner use is only logged here (the words
+# below) and searched for in the transcripts afterwards; a hit is recorded as a violation.
 RUNNERS = {"docker", "podman", "java", "javac", "mvn", "mvnw", "mvn.cmd", "gradle", "gradlew", "gradle.bat",
            "wsl", "wsl.exe", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 _WORDS = re.compile(r"[^\s;&|()<>`'\"$={}]+")
@@ -215,8 +215,7 @@ def names_runner(cmd: str) -> bool:
 def auto_decision(action: str | None, resources, policy: str = "allowlist") -> str | None:
     """The hub's own answer to a permission request ('once' or 'reject'), or None: the human decides."""
     if policy == "open-experiment":
-        cmds = resources if isinstance(resources, list) else [resources]
-        return "reject" if action == "shell" and any(isinstance(c, str) and names_runner(c) for c in cmds) else "once"
+        return "once"
     return "once" if shell_auto_ok(action, resources, policy) else None
 
 

@@ -67,7 +67,7 @@ class Hub:
         self.engine.shell_policy = policy
         if policy != "allowlist":
             log.warning("shell approval policy %s: %s", policy,
-                        "everything approved except build/test runners (rejected), no human" if policy ==
+                        "everything approved, build/test runners flagged, no human" if policy ==
                         "open-experiment" else "bypassable blocklist for unattended experiments")
         self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)

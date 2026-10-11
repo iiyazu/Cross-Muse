@@ -94,6 +94,17 @@
   - 新顺序：r4-xmuse → r5-plain → r6-xmuse → r7-plain → r8-xmuse。T-plain = r3、r5、r7，T-xmuse = r4、r6、r8，仍是交替。
 - **新增记录**：每个 run 的审批记录（agent、命令、批准还是拒绝），以及被拒绝的次数。
 
+## 5d. 修订（2026-10-12 01:20，用户定）：全部批准，系列重开
+- **起因**：
+  - r3-plain：dsh-fl 读到了以前 run 留在 C: 上的工作区，属于泄漏，作废。
+  - r4-xmuse：hub 按 5c 拒绝了 oc-ms13 的一次 `mvn compile`。OpenCode 收到拒绝就结束了这一轮，E1 因此空等了 P1 剩下的 7 分钟。
+- **策略**：`open-experiment` 改为对所有请求一律批准。命令里出现构建/测试运行器（docker、java、mvn 等）只在 hub 日志里标记（"runs a build/test runner"）。之后照旧在 transcript 里搜索运行器，命中就记违规，并逐条列出。hub `4850b97`（合并后）。
+- **隔离**：每个 run 判分后，工作区移到 `~/bench/phb/archive/ws/`；下一个 run 开跑前，C: 上残留的 run 工作区（包括中止的）也会先被移走。每个 run 结束后，用模式 `phb[\/](solo2?|r\d+-…|…)` 搜索跨 run 读取，命中就作废。
+- **run 的处理**：
+  - r1、r2、r4 移到 `runs/team-pilot`；r3 移到 `runs/team-void`；r5 跑到一半被停，移到 `runs/team-aborted`。这些都不进两组统计。
+  - 重新跑 6 次：r11-plain、r12-xmuse、r13-plain、r14-xmuse、r15-plain、r16-xmuse。
+- 其余不变：5a 的 30 分钟墙钟，5b 的只推理、可编译。
+
 ## 6. 现状（预注册提交时）
 - 当前猎场：44 个 bug，r7 上的猎场 `HEAD^{tree}` = `859b69f51ac5b2288e31c130e41b4c741b417434`。
 - 上一次单干（旧 README、挂了 `run_tests` 但一次都没调用）：32/44。

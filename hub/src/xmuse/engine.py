@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import align, db, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
-from .adapters.opencode import auto_decision
+from .adapters.opencode import auto_decision, names_runner
 from .config import HUMAN
 
 log = logging.getLogger(__name__)
@@ -281,6 +281,10 @@ class Engine:
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
                          " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
                                                   json.dumps(req.get("resources")), db.now()))
+        if self.shell_policy == "open-experiment" and req.get("action") == "shell" and \
+                any(isinstance(c, str) and names_runner(c) for c in req.get("resources") or []):
+            log.warning("open-experiment: %s runs a build/test runner (approved, flagged): %s", agent_id,
+                        req.get("resources"))
         if auto:  # not one of the consequential commands (env prefix stripped): no need to bother the human
             try:
                 self.drivers["opencode"].approve(session, req["id"], auto, agent_id)
