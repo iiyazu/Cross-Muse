@@ -629,3 +629,123 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 ### 测试环境的修正
 - RabbitMQ 健康检查原来用的是 `rabbitmq-diagnostics`。它以 root 身份执行，在 broker 启动前就生成了 `.erlang.cookie`，导致第二个实例因为 `eacces` 起不来。已改为 TCP 端口检查。
 - MySQL 的健康检查在初始化阶段的临时服务器上就会通过。runner 改为等待日志里出现 `init process done` 之后才继续。
+
+## T15 第 3 步（下）：bug 猎场构造完成（2026-10-11）
+
+**提交**：
+- 本节（xmuse2 rc/portfolio）。
+- 答案和工具推到了 r7 新建的私有裸仓库 `~/git/prizehub-bench.git`，分支 main，提交 `6de63c3`。仓库里有：
+  - `work/`：参考解；
+  - `BENCH_DIR/`：bug 定义、`bugs.json`、隐藏测试、判分器；
+  - `tools/`；`harness/`；
+  - `results/`：本节引用的原始结果。
+
+  `var/`、`logs/`、`m2/`、`prizehub/`、`arena/` 没有进仓库。这个仓库只在 r7 和 base 之间流转。
+
+### 规格对照（§11 补充）
+| 要求 | 现状 |
+|---|---|
+| 40–60 个逻辑 bug | 44 个（H01–H46，没有 H12、H37），分布在 29 个文件里 |
+| 约 1/4 跨层 | 17/44（39%） |
+| 合成 ≥70% | 100% 合成。每个 bug 都是在干净代码上做一处文本替换，没有用原版历史里的真实修复 |
+| 注入后可见测试全过 | 是，可见测试 16 条（4 个类：BenchTestBase 之外的 SchemeDrawTest 6、DrawFlowTest 5、CashbackPointsTest 5），全部用断言判定 |
+| 每个 bug 有隐藏判定测试，单独修好就由失败变通过，互不遮蔽 | 是，见下面的验证原文 |
+| docker-compose（MySQL、Redis、RabbitMQ），测试 10 分钟内跑完 | 全量（可见 + 44 个判定 + 6 个回归）用时 49–72 秒 |
+| 猎场里没有 git 历史，bugs.json 不在仓库里 | 猎场是只有一个提交的新仓库，作者是 `bench`。打包时会做泄露检查：grep `test.hidden`、`bugdefs`、`BENCH_DIR` |
+| 判分器输出修好数/总数、回归数、能否编译 | `grade.py`，见下文 |
+| 题面 | 写在猎场 README 的"任务"一节，原文照抄 §11 |
+| 难度标定 | **没跑**（按指示） |
+
+### bug 分布
+| 层 | 数量 | 其中跨层 |
+|---|---|---|
+| domain | 18 | 5 |
+| infrastructure（含 MyBatis mapper XML） | 17 | 6 |
+| trigger（HTTP、MQ 监听、job） | 8 | 6 |
+| app（AOP 限流） | 1 | 0 |
+
+类别：
+
+| 类别 | 个数 |
+|---|---|
+| wrong-field | 6 |
+| off-by-one | 4 |
+| missing-field | 4 |
+| cache-key | 3 |
+| copy-paste | 3 |
+| boundary | 2 |
+| state-init | 2 |
+| idempotency-key | 2 |
+| SQL 类（arithmetic、missing-column、idempotency、comparison、guard、wrong-column、missing-filter） | 各 1 |
+| 其余（wrong-strategy、membership-check、string-parsing、stock-consistency、wrong-condition、missing-statement、arithmetic、ttl、stale-cache、idempotency、error-handling） | 各 1 |
+
+逐条内容（位置、diff、判定测试）见私有仓库的 `BENCH_DIR/bugs.json`。
+
+### 隐藏测试
+- 判定测试：每个 bug 一个（`io.prizehub.test.hidden.HxxTest`），共 44 个。
+- 回归测试 R01–R06：保护 bug 周边的正常行为，干净代码和全部注入时都必须通过，判分时算作回归项。
+
+| 测试 | 方法 |
+|---|---|
+| R01 | `second_sign_in_same_day_is_rejected_as_duplicate` |
+| R02 | `blacklisted_draw_returns_blacklist_points_config` |
+| R03 | `unknown_user_has_zero_points` |
+| R04 | `rule_tree_loads_nodes_and_root` |
+| R05 | `assembled_offer_stock_matches_db` |
+| R06 | `stage_campaign_lookup` |
+
+- 用到数据库的测试都各自造新用户（随机 userId），用 Mockito、`ReflectionTestUtils`、`AopTestUtils` 把要测的那一处和其他 bug 隔开。之前出现过两处遮蔽，已经改掉：
+  - H15 原来被 H29 遮蔽，改成直接种两条待支付订单；
+  - H35 原来被 H21 遮蔽，改成直接测 DAO。
+
+### 验证结果原文
+ver1（44 个 bug、47 个类，`verify.py --workers 1,2`）：
+```
+{"started": "2026-10-11 17:54:33", "clean": {"classes": 47, "failed": [], "seconds": 52}, "allbugs": {"visible_failed": [], "judge_not_failing": [], "seconds": 67}, "finished": "2026-10-11 18:15:06"}
+non-masking: 44/44 pass; masked: []
+```
+逐个 all-except-i（注入除 i 以外的全部 bug，只跑 i 的判定测试）：44 次，每次 27–43 秒，平均 37 秒。
+
+ver2：H01 改成连原注释一起替换（见下文"拿不准的"），同时加入 R01–R06，共 53 个类：
+```
+{"started": "2026-10-11 18:15:11", "clean": {"classes": 53, "failed": [], "seconds": 49}, "allbugs": {"visible_failed": [], "judge_not_failing": [], "seconds": 65}, "finished": "2026-10-11 18:17:10"}
+except-H01: PASS 27s
+```
+（`visible_failed` 统计的是所有不以 H 开头的类，也就包括了 R01–R06。）
+
+### 判分器
+用法：`grade.py <workspace> --worker N [--out x.json]`。流程：
+1. 把工作区 rsync 到暂存目录；
+2. 用猎场里的原件覆盖受保护的文件：所有 pom、`src/test` 整棵树、`application-bench.yml`、种子 SQL。agent 对这些文件的改动一律作废，判分时的 SQL 也只从 harness 加载；
+3. 清掉 `target`（`--fresh`，防止已删除源码留下的旧 class 冒充通过）；
+4. 加入隐藏测试，跑可见 + 判定 + 回归。
+
+四次判分的原文摘录：
+```
+arena/prizehub-arena  compiled=true  fixed=0/44   regressions=0 visible_tests=16 seconds=72 cross_layer 0/17
+work（参考解）         compiled=true  fixed=44/44  regressions=0 visible_tests=16 seconds=58 by_layer app1 domain18 infrastructure17 trigger8 cross_layer 17/17
+ws-h01（猎场只修 H01） compiled=true  fixed=1/44 ['H01'] regressions=0 seconds=57
+ws-broken（故意编译失败）compiled=false fixed=0/44 regressions=0 seconds=5
+```
+
+### 猎场的位置和用法
+- 位置：base 的 `~/bench/arena/prizehub-arena/`（3.0 MB，单提交 git 仓库）和 `~/bench/arena/prizehub-arena.tar.gz`（200 KB）。
+- 猎场没有推到任何仓库。需要时可以用私有仓库里的 `tools/mkarena.py <out>` 重新生成，结果是确定的。
+- 猎场自带 `docs/dev-ops/bench/`，里面有：
+  - `compose.yml`、`my.cnf`、`sql/`（与判分 harness 相同的 4 个 init 脚本）；
+  - `run-tests.sh`：在接入 compose 网络的 `maven:3.9-eclipse-temurin-8` 容器里跑 `mvn test -Dspring.profiles.active=bench`。
+
+### 没做的 / 拿不准的
+- **难度标定没跑。** 也没有让任何 agent 在猎场上试做。
+- **H01 的提示**：原代码的注释直接写了"使用时可以实例化 AnalyticalEqual 即可"，等于把答案告诉了 agent。现在注入时把这行注释换成中性的写法，参考解保留原注释。我用脚本把每个注入点前后 4 行内的注释都列了出来，逐条看过。除了 H01，没有别的注释直接说出了修法。有 4 处注释描述的是正确的行为，和注入后的代码对不上：
+  - H15："一个月以内的未支付订单"；
+  - H23："活动到期 + 延迟1天"；
+  - H26："当新创建日账户时，会获得总账户额度"；
+  - H30："总次数 - 剩余的，等于今日参与的"。
+
+  "注释和代码对不上"本来就是老代码里常见的线索，所以这 4 处故意保留了，没有改。要不要也换成中性写法，由 r7 决定。
+- **隐藏测试依赖内部 API**：隐藏测试直接引用了 DAO、仓储接口，以及 `ReflectionTestUtils` 用到的私有字段名。如果 agent 做了合理的重构（改名、改签名），隐藏测试会编译失败，这次判分就记为 `compiled=false`、0 分。是否需要放宽，由 r7 决定。
+- **编译失败时**，`regressions` 记为 0，因为测试根本没跑。看结果时要先看 `compiled`。
+- **一处已修的问题**：第一次打出的猎场把 `work/prize-hub-app/data/log/` 下 3.9 GB 的运行日志也带进去了。这些日志是之前跑原有测试时产生的，不在 git 跟踪范围内。现在 `mkarena`、`grade`、`runvariant` 都排除了 `data/log`，并重新生成了猎场。arena 那次 0/44 的判分用的是旧猎场，但两份猎场的代码完全一样，只差这些日志。
+- **镜像拉取**：清理 root 属主的文件时，从 Docker Hub 拉了 `alpine:latest`，本机原来没有这个镜像。
+- **runvariant 的耗时**：去掉日志之前，每次运行都会把这 3.9 GB 日志 rsync 一遍，上面的耗时里包含这部分开销；以后会更快一些。
