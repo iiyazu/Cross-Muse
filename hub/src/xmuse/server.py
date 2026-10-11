@@ -59,7 +59,9 @@ class Hub:
             raise SystemExit(f"XMUSE_SHELL_POLICY must be one of {', '.join(POLICIES)}, not {policy!r}")
         self.engine.shell_policy = policy
         if policy != "allowlist":
-            log.warning("shell approval policy %s: bypassable blocklist for unattended experiments", policy)
+            log.warning("shell approval policy %s: %s", policy,
+                        "everything approved except build/test runners (rejected), no human" if policy ==
+                        "open-experiment" else "bypassable blocklist for unattended experiments")
         self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
         ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]

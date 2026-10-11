@@ -46,7 +46,14 @@ PIPE_FILTERS = {"head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr", "nl"}
 # (audit B2-2); kept so experiment runs need no human and stay comparable with the M2b runs.
 ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git clean*", "git branch -D*",
              "git checkout -- *", "rm -r*", "rm -f*", "sudo *", "curl *", "wget *"]
-POLICIES = ("allowlist", "blocklist-experiment")
+# open-experiment (T15 team runs, user 10-12): no request ever waits for a human. Everything is approved except
+# commands that name a build/test runner or a way out to one (the runs are "reason + compile tool only"); those are
+# rejected at once. Matched on every word of the command line, so `cd x && docker run ...` is caught; a script that
+# starts one itself is not (the run's transcripts are searched for runners afterwards).
+RUNNERS = {"docker", "podman", "java", "javac", "mvn", "mvnw", "mvn.cmd", "gradle", "gradlew", "gradle.bat",
+           "wsl", "wsl.exe", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
+_WORDS = re.compile(r"[^\s;&|()<>`'\"$={}]+")
+POLICIES = ("allowlist", "blocklist-experiment", "open-experiment")
 _META = re.compile(r";|&&|\|\||&|`|\$\(|\$\{|<\(|>\(|<|\n|\\\n")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
 
@@ -161,6 +168,18 @@ def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> b
         return False
     ok = blocklist_ok if policy == "blocklist-experiment" else command_auto_ok
     return all(isinstance(r, str) and ok(r) for r in resources)
+
+
+def names_runner(cmd: str) -> bool:
+    return any(w.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower() in RUNNERS for w in _WORDS.findall(cmd))
+
+
+def auto_decision(action: str | None, resources, policy: str = "allowlist") -> str | None:
+    """The hub's own answer to a permission request ('once' or 'reject'), or None: the human decides."""
+    if policy == "open-experiment":
+        cmds = resources if isinstance(resources, list) else [resources]
+        return "reject" if action == "shell" and any(isinstance(c, str) and names_runner(c) for c in cmds) else "once"
+    return "once" if shell_auto_ok(action, resources, policy) else None
 
 
 def instance_dir(state: Path, agent_id: str) -> Path:
