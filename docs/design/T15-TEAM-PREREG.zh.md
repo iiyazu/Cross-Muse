@@ -84,6 +84,16 @@
 - **记录**：每个 agent 调用 `compile` 的次数，取自 `logs/bt-calls.jsonl`。第 4.3 节里"每个 agent 调用 `run_tests` 的次数"换成这一项。
 - **其余不变**：第 1 节判定口径、30 分钟墙钟（5a）、3 + 3 次交替、指标、报告格式都不变。
 
+## 5c. 修订（2026-10-12 00:20，系列中途；用户定）：不再挂起等人工审批
+- **原因**：默认白名单不含 `git branch`。r1-plain、r2-xmuse 里 oc-ms13 在 P1 的第一条 shell（`git branch --show-current` 等）被挂起等人工审批，无人值守，E1 整个 P1 没有产出（S-E1 = 基线）。r2 的 P3 又因 `mvn -q -o test-compile` 挂起一次。
+- **新策略**：hub 的 `XMUSE_SHELL_POLICY=open-experiment`（xmuse2 `34cf280` 里的 hub 提交）。所有权限请求由 hub 自己答复，不会挂起：命令行里任何一个词是构建/测试运行器（docker、podman、java、javac、mvn、mvnw、mvn.cmd、gradle、gradlew、wsl、wsl.exe、cmd.exe、powershell、pwsh）就立即拒绝，其余一律批准。"只推理、可编译"的条件（5b）不变。脚本间接调用运行器仍拦不住，照旧事后搜索，命中记违规。
+- **run 的取舍**：
+  - r1-plain、r2-xmuse 作废（条件不同：E1 在 P1 被挂起），移到 `runs/team-pilot`，只作试跑记录，不进入两组统计。
+  - r3-plain 保留：整次 0 个挂起，所有请求都被白名单自动批准，新策略下 agent 看到的结果完全相同。
+  - r4-xmuse 刚开始就被中止（移到 `runs/team-aborted`），按新策略从头跑。
+  - 新顺序：r4-xmuse → r5-plain → r6-xmuse → r7-plain → r8-xmuse。T-plain = r3、r5、r7，T-xmuse = r4、r6、r8，仍是交替。
+- **新增记录**：每个 run 的审批记录（agent、命令、批准还是拒绝），以及被拒绝的次数。
+
 ## 6. 现状（预注册提交时）
 - 当前猎场：44 个 bug，r7 上的猎场 `HEAD^{tree}` = `859b69f51ac5b2288e31c130e41b4c741b417434`。
 - 上一次单干（旧 README、挂了 `run_tests` 但一次都没调用）：32/44。

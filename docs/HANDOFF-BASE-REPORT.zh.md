@@ -1224,3 +1224,37 @@ fixed: H02 H03 H04 H08 H09 H10 H14 H16 H18 H19 H05 H27 H30 H31 H32 H24 H29 H34 H
 - 预注册只要求单干跑一次，没有重复。
 - 结果文件（meta.json、dsh.ndjson、grade-final.json、快照）在 r7 的 `~/bench/phb/runs/solo2`，等团队 run 跑完后和团队结果一起推到 prizehub-bench 的 `results/`。
 - `bm-rename` 还在 r7 的 C 盘上（见第 8 步），这次 transcript 里没有读它的痕迹。
+
+## T15 第 10 步（10-12 00:30）：用户决定后改审批策略、迁走 bm-rename、重排团队系列
+
+**用户决定**：1）删掉 r7 上的 bm-rename，迁到 base；2）为了不再挂起等人工审批，暂时放开权限；r1/r2 如果还有价值，就只补跑必要的部分。
+
+**bm-rename**：整个目录（769 个文件，3.5 MB）用 tar 流传到 base `~/bench/private/bm-rename`。两边逐文件 sha256 汇总一致（`827a5333…`）之后，删掉了 r7 的 `C:\Users\user\dsh-work\bm-rename`。
+
+**中止旧系列**：r1、r2、r3 已跑完，r4-xmuse 刚开始 1 分钟就被中止。停了 systemd 单元，清掉 Windows 侧残留的 r4 进程（dsh、bench-tests.mjs、shim）。只停了这个系列自己的进程，其它会话的进程（xmuse2-dshb/ccd 等）没碰。
+
+**挂起情况**（取自 log.txt 的 "asks permission"）：
+- r1-plain：1 次，`git branch --show-current` 等，P1 超时等的是 oc-ms13。
+- r2-xmuse：2 次，一次是 `git branch …`，一次是 `mvn -q -o test-compile -DskipTests`；P1 和 P3fix 超时等的都是 oc-ms13。
+- r3-plain：0 次。r3 当时的 worktree 分数：wt-E1 53/70（回归 0），wt-E2 28/70（回归 1）。
+- 判断：r1、r2 里 E1 在 P1 什么都没做，和新条件不可比，只能作试跑记录；r3 一次挂起都没有，新策略下行为完全相同，保留。所以不是只补跑 r3，而是保留 r3、补 5 次。
+
+**hub 新策略 `open-experiment`**（xmuse2 rc/portfolio，合并后 `34cf280`）：
+- `adapters/opencode.py`：新增 `auto_decision()`。open-experiment 下，命令行里出现运行器（docker、java、mvn、gradle、wsl/cmd/powershell 等，按词的 basename 匹配）就答 `reject`，其余答 `once`。其它策略的行为不变。
+- `engine._on_approval`：把这个答复交给 OpenCode，并写进 approvals 表，不再发人工通知。
+- 测试：新增 2 个（策略判定表、引擎端到端：mvn 被拒、git branch 被批、没有 notice）。合并 r7 的改动之后整套是 `352 passed, 1 skipped`。
+
+**kit**（prizehub-bench `eafb6d3`）：
+- `team_run.py`：`XMUSE_SHELL_POLICY=open-experiment`，写进 meta.shell_policy，并把 approvals 表也写进 meta。
+- `team_report.py`：增加 shell_policy 和 approvals_rejected 两项。
+
+**预注册**：加了 5c，见 `docs/design/T15-TEAM-PREREG.zh.md`。
+
+**新系列**（r7 `team5.sh`，00:27 开始）：
+- r1、r2 移到 `runs/team-pilot`，中止的 r4 移到 `runs/team-aborted`。
+- 顺序是 r4-xmuse → r5-plain → r6-xmuse → r7-plain → r8-xmuse，预计 03:00 前后跑完。之后对全部 6 个 run（r3–r8）跑 team_regrade 和 team_report。
+- r4 的 hub 日志确认策略生效：`shell approval policy open-experiment: everything approved except build/test runners (rejected), no human`。
+
+**拿不准的地方**：
+- r3 是在白名单下跑的，r4–r8 在新策略下跑。两者只在"本该挂起的请求"上有区别，而 r3 一次也没有，所以算作同条件。
+- 新策略下 oc-ms13 的 shell 权限比 dsh 成员宽（dsh 有自己的沙箱），这一点会在结果里标明。
