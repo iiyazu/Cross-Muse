@@ -74,6 +74,43 @@ def _safe_path(p: str) -> bool:
     return p.startswith("/tmp/") or not p.startswith(("/", "~"))
 
 
+_LOOPBACK = re.compile(r"(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?")
+_HOSTISH = re.compile(r"(\d{1,3}(\.\d{1,3}){3}|[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}|localhost|\[[0-9a-fA-F:]+\])"
+                      r"(:\d+)?(/\S*)?")
+# options that would send the request somewhere else, or read more URLs from a file
+_CURL_AWAY = ("-x", "--proxy", "--preproxy", "--socks4", "--socks4a", "--socks5", "--socks5-hostname",
+              "--connect-to", "--resolve", "-K", "--config", "--doh-url", "-:", "--next")
+
+
+def loopback_curl(cmd: str) -> bool:
+    """`curl` to this machine only (user 10-12: agents check their own local servers without asking). Every URL
+    must be http(s) on localhost/127.x/[::1], bare host arguments too; proxies, --resolve/--connect-to, config
+    files and --next stay with the human. No chaining or substitution."""
+    if any(c in cmd for c in ";&|`$\n") or "<(" in cmd:
+        return False
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return False
+    if not argv or argv[0].rsplit("/", 1)[-1] != "curl":
+        return False
+    urls = []
+    for a in argv[1:]:
+        if a in _CURL_AWAY or any(a.startswith(o + "=") for o in _CURL_AWAY if o.startswith("--")) \
+                or re.match(r"-[A-Za-z]*[xK]", a):  # also attached/clustered short forms: -xhost, -sK file
+            return False
+        if "://" in a:
+            m = re.fullmatch(r"https?://([^/?#@]+@)?([^/?#]+)([/?#]\S*)?", a)
+            if not m or not _LOOPBACK.fullmatch(m.group(2)):
+                return False
+            urls.append(a)
+        elif not a.startswith("-") and _HOSTISH.fullmatch(a):
+            if not _LOOPBACK.fullmatch(a.split("/", 1)[0]):
+                return False
+            urls.append(a)
+    return bool(urls)
+
+
 def safe_rm_f(cmd: str) -> bool:
     """`rm -f PATH...` with only -f and only safe paths (agents clean up their own probe files, e.g. /tmp/x.py).
 
@@ -159,7 +196,7 @@ def command_auto_ok(cmd: str) -> bool:
 
 def blocklist_ok(cmd: str) -> bool:
     c = strip_env(cmd)
-    return safe_rm_f(c) or not any(fnmatch.fnmatchcase(c, p) for p in ASK_SHELL)
+    return safe_rm_f(c) or loopback_curl(c) or not any(fnmatch.fnmatchcase(c, p) for p in ASK_SHELL)
 
 
 def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> bool:
