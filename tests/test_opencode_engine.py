@@ -2,6 +2,8 @@
 import json
 import time
 
+import pytest
+
 from conftest import FAKE_CLAUDE
 
 OC = [("opencode-1", "opencode")]
@@ -263,6 +265,22 @@ def test_opencode_asks_for_every_shell_command(tmp_path):
     perms = json.loads((tmp_path / "opencode.json").read_text())["permissions"]
     assert {"action": "shell", "resource": "*", "effect": "ask"} in perms
     assert not any(p["action"] == "shell" and p["effect"] == "allow" for p in perms)
+
+
+def test_extra_mcp_goes_into_the_instance_config_with_an_allow_rule(tmp_path):
+    from xmuse.adapters.opencode import write_config
+    bench = {"name": "bench-tests", "command": "node", "args": ["/k/bench-tests.mjs"], "env": {"BENCH_PROJECT": "p"}}
+    inst, wsf = write_config(tmp_path, {"id": "oc", "settings": json.dumps({"extra_mcp": [bench]})}, tmp_path / "state")
+    servers = json.loads(inst.read_text())["mcp"]["servers"]
+    assert list(servers) == ["xmuse", "bench-tests"]
+    assert servers["bench-tests"] == {"type": "local", "command": ["node", "/k/bench-tests.mjs"],
+                                      "environment": {"BENCH_PROJECT": "p"}}
+    perms = json.loads(wsf.read_text())["permissions"]
+    assert {"action": "bench-tests_*", "resource": "*", "effect": "allow"} in perms
+    assert perms[-1] == {"action": "shell", "resource": "*", "effect": "ask"}
+    with pytest.raises(ValueError):
+        write_config(tmp_path, {"id": "oc", "settings": {"extra_mcp": [{"name": "xmuse", "command": "node"}]}},
+                     tmp_path / "state")
 
 
 def test_safe_rm_f_is_auto_approved_and_everything_riskier_still_asks():
