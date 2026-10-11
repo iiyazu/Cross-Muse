@@ -52,7 +52,8 @@ class Hub:
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
         self.stopping = threading.Event()
-        self.admin = digest((state / "tokens" / "_admin").read_text().strip())
+        self.done = threading.Event()  # serve() returns when set (signal, or /v1/admin/shutdown)
+        self.admin = digest((state / "tokens" / "_admin").read_text(encoding="utf-8").strip())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         policy = os.environ.get("XMUSE_SHELL_POLICY") or "allowlist"
         if policy not in POLICIES:
@@ -447,7 +448,7 @@ class Hub:
         threading.Thread(target=preset.loop, args=(self.preset, self.stopping, self.cfg.get("preset_tick", 2.0)),
                          daemon=True).start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
-                                                         "shell_policy": self.engine.shell_policy}))
+                                                         "shell_policy": self.engine.shell_policy}), encoding="utf-8")
         self.engine.kick()
 
     def shutdown(self) -> None:
@@ -467,8 +468,16 @@ class Hub:
                 d.close()
             raise SystemExit("precheck failed:\n" + "\n".join(errors))
         self.start()
-        done = threading.Event()
+        done = self.done
         signal.signal(signal.SIGTERM, lambda *_: done.set())
         signal.signal(signal.SIGINT, lambda *_: done.set())
-        done.wait()
+        if hasattr(signal, "SIGBREAK"):  # Windows: Ctrl+Break, and what a console close turns into
+            signal.signal(signal.SIGBREAK, lambda *_: done.set())
+        while not done.wait(1.0):  # a timed wait: on Windows a blocked wait never returns to run signal handlers
+            pass
         self.shutdown()
+
+    def admin_shutdown(self, body: dict):
+        """`xmuse hub stop` on Windows, which has no SIGTERM: the reply goes out, then serve() shuts down."""
+        self.done.set()
+        return {"ok": True}

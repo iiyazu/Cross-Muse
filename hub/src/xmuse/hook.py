@@ -23,6 +23,7 @@ import urllib.request
 BAKED = globals().get("BAKED") or {}  # defined by the generated header of the per-workspace copy
 
 try:
+    sys.stdout.reconfigure(encoding="utf-8")  # the reminder reaches the model as UTF-8, whatever the code page
     state = BAKED.get("state") or os.environ["XMUSE_STATE"]
     agent = BAKED.get("agent") or os.environ["XMUSE_AGENT"]
     event = sys.argv[1]
@@ -33,9 +34,9 @@ try:
         sys.stdout.buffer.write(r.stdout)
         sys.stdout.flush()
         sys.exit(0)
-    p = json.load(sys.stdin)
-    hub = json.load(open(os.path.join(state, "hub.json")))
-    token = open(os.path.join(state, "tokens", agent)).read().strip()
+    p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))  # UTF-8 whatever the Windows code page
+    hub = json.load(open(os.path.join(state, "hub.json"), encoding="utf-8"))
+    token = open(os.path.join(state, "tokens", agent), encoding="utf-8").read().strip()
     pid = int(os.environ.get("CLAUDE_PID") or os.getppid())
     body = {"event": event, "pid": pid, "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
             "session_id": p.get("session_id"), "source": p.get("source"), "reason": p.get("reason"),

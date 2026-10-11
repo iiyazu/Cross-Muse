@@ -139,7 +139,7 @@ class FakeOpenCode:
         self._frame(sid, "session.inbox.enqueued", inboxID="msg_in", item=item)
         self._frame(sid, "session.execution.started")
         self._frame(sid, "session.inbox.delivered", inboxID="msg_in")
-        for line in (FIX / step.get("fixture", "oc-chat.events.jsonl")).open():
+        for line in (FIX / step.get("fixture", "oc-chat.events.jsonl")).open(encoding="utf-8"):
             ev = json.loads(line)
             if ev.get("type") in FRAME:
                 continue
@@ -176,8 +176,8 @@ class FakeOpenCode:
                                                          "resources": [command], "save": ["git push *"]}})
 
     def tool(self, agent: str, name: str, args: dict):
-        port = json.loads((self.state / "hub.json").read_text())["port"]
-        token = (self.state / "tokens" / agent).read_text().strip()
+        port = json.loads((self.state / "hub.json").read_text(encoding="utf-8"))["port"]
+        token = (self.state / "tokens" / agent).read_text(encoding="utf-8").strip()
         req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/tools/{name}", method="POST",
                                      data=json.dumps({"args": args}).encode(),
                                      headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
@@ -187,5 +187,5 @@ class FakeOpenCode:
 
     def _record(self, obj: dict):
         if self.record is not None:
-            with self.record.open("a") as f:
+            with self.record.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(obj) + "\n")

@@ -27,17 +27,19 @@ class Harness:
         self.tmp, self.home = tmp, Path(os.environ["HOME"])
         self.ws = tmp / "ws"
         self.ws.mkdir()
-        if oc_serve:
+        if oc_serve and os.name == "nt":  # no shebangs: the hub runs a .py binary with its own interpreter
+            cfg["opencode_bin"] = str(FAKE_OC_SERVE)
+        elif oc_serve:
             wrapper = tmp / "fake-opencode"
-            wrapper.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_OC_SERVE} "$@"\n')
+            wrapper.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_OC_SERVE} "$@"\n', encoding="utf-8")
             wrapper.chmod(0o755)
             cfg["opencode_bin"] = str(wrapper)
         subprocess.run(["git", "init", "-q", str(self.ws)], check=True)
         self.state = xinit.init(self.ws)
-        c = json.loads((self.state / "config.json").read_text())
+        c = json.loads((self.state / "config.json").read_text(encoding="utf-8"))
         (self.state / "config.json").write_text(json.dumps({**c, "sweep_interval": 3600, "dsh_exe": str(FAKE_DSH),
                                                             "dsh_backoff": 0.1, "dsh_home": str(tmp / "dsh-home"),
-                                                            **cfg}))
+                                                            **cfg}), encoding="utf-8")
         for i, (aid, vendor, *rest) in enumerate(agents):
             settings = rest[0] if rest else {}
             if vendor == "dsh" or vendor == "claude" and i and vendor in [v for _, v, *_ in agents[:i]]:
@@ -60,7 +62,7 @@ class Harness:
     def add_raw(self, aid, vendor, settings=None):
         """A second agent of the same vendor (project configs allow one; the engine does not care), or dsh."""
         tok = "xmt_" + aid
-        (self.state / "tokens" / aid).write_text(tok)
+        (self.state / "tokens" / aid).write_text(tok, encoding="utf-8")
         model = (settings or {}).pop("model", None) or MODELS[vendor]
         with db.tx(self.conn()) as c:
             c.execute("insert into agents(id, vendor, model, family, settings, token_digest, created_at)"
@@ -80,7 +82,7 @@ class Harness:
         return db.rows(self.conn().execute(sql, args))
 
     def post(self, path, body, token, session=None):
-        port = json.loads((self.state / "hub.json").read_text())["port"]
+        port = json.loads((self.state / "hub.json").read_text(encoding="utf-8"))["port"]
         req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST", data=json.dumps(body).encode(),
                                      headers={"authorization": f"Bearer {token}", "content-type": "application/json",
                                               **({"x-xmuse-session": session} if session else {})})
@@ -90,7 +92,7 @@ class Harness:
             return {"status": e.code, **json.loads(e.read())}
 
     def token(self, who):
-        return (self.state / "tokens" / ("_admin" if who == "human" else who)).read_text().strip()
+        return (self.state / "tokens" / ("_admin" if who == "human" else who)).read_text(encoding="utf-8").strip()
 
     def admin(self, name, **body):
         return self.post(f"/v1/admin/{name}", body, self.token("human"))
@@ -111,20 +113,20 @@ class Harness:
 
     def plan_claude(self, *steps):
         """Set the fake's plan; the step counter restarts at the first step."""
-        (self.home / "fake-claude" / "plan.json").write_text(json.dumps(list(steps)))
-        (self.home / "fake-claude" / "n").write_text("0")
+        (self.home / "fake-claude" / "plan.json").write_text(json.dumps(list(steps)), encoding="utf-8")
+        (self.home / "fake-claude" / "n").write_text("0", encoding="utf-8")
 
     def plan_dsh(self, *steps):
-        (self.home / "fake-dsh" / "plan.json").write_text(json.dumps(list(steps)))
-        (self.home / "fake-dsh" / "n").write_text("0")
+        (self.home / "fake-dsh" / "plan.json").write_text(json.dumps(list(steps)), encoding="utf-8")
+        (self.home / "fake-dsh" / "n").write_text("0", encoding="utf-8")
 
     def dsh_calls(self):
         f = self.home / "fake-dsh" / "calls.jsonl"
-        return [json.loads(x) for x in f.open()] if f.exists() else []
+        return [json.loads(x) for x in f.open(encoding="utf-8")] if f.exists() else []
 
     def claude_calls(self):
         f = self.home / "fake-claude" / "calls.jsonl"
-        return [json.loads(x) for x in f.open()] if f.exists() else []
+        return [json.loads(x) for x in f.open(encoding="utf-8")] if f.exists() else []
 
     def wait(self, cond, timeout=10, what="condition"):
         end = time.time() + timeout
@@ -156,9 +158,22 @@ def wsl_host(tmp_path, monkeypatch):
     monkeypatch.setenv("XMUSE_WIN_HOME", str(tmp_path / "winhome"))
 
 
+def set_home(monkeypatch, path) -> None:
+    """HOME for the fakes and POSIX; USERPROFILE is what Path.home() (and Claude Code) use on Windows."""
+    monkeypatch.setenv("HOME", str(path))
+    if os.name == "nt":
+        monkeypatch.setenv("USERPROFILE", str(path))
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX only (pty / process groups / ctty)")
+# A hub in WSL reaches Windows-side apps through wsl.exe and UNC paths; a Windows-native hub (D1) needs neither.
+wsl_hub = pytest.mark.skipif(os.name == "nt", reason="WSL-hub behaviour (wsl.exe, /mnt and UNC paths)")
+windows_hub = pytest.mark.skipif(os.name != "nt", reason="Windows-native hub behaviour")
+
+
 @pytest.fixture
 def make(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, tmp_path / "home")
     monkeypatch.setenv("XMUSE_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.delenv("XMUSE_STATE", raising=False)
     (tmp_path / "home").mkdir()

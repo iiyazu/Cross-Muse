@@ -49,14 +49,14 @@ def test_add_foreground_stores_settings_and_section(wsc):
     state = xinit.init(wsc)
     a = xinit.add_agent(state, "dsh-1", "dsh", settings=FG)
     assert db.settings(a) == FG and db.polled(a)
-    text = (wsc / "AGENTS.md").read_text()
+    text = (wsc / "AGENTS.md").read_text(encoding="utf-8")
     assert text.count("<!-- xmuse:fg dsh-1 begin") == 1 and "<!-- xmuse:fg dsh-1 end -->" in text
     prefix = f"wsl.exe -d Ubuntu-Test -- {sys.executable} -m xmuse --ws {wsc}"
     assert f"`{prefix}`" in text and "watch --agent dsh-1 --once" in text
     assert "BACKGROUND task" in text and "--args-file" in text and ".xmuse-tmp/" in text
     assert f'wsl.exe -d Ubuntu-Test -- bash -lc "cd {wsc} && ' in text
     assert "take priority" in text
-    assert ".xmuse-tmp/" in (wsc / ".git" / "info" / "exclude").read_text()
+    assert ".xmuse-tmp/" in (wsc / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert (wsc / ".xmuse-tmp").is_dir()
     assert text.index("<!-- xmuse:begin") < text.index("<!-- xmuse:fg dsh-1 begin")
     assert not (wsc / ".dsh" / "hooks.json").exists()  # no presence hooks: they would make the hub adopt the session
@@ -65,17 +65,17 @@ def test_add_foreground_stores_settings_and_section(wsc):
 def test_readd_updates_settings_keeps_token_and_section(wsc):
     state = xinit.init(wsc)
     xinit.add_agent(state, "dsh-1", "dsh", settings=FG, role="coder")
-    tok = (state / "tokens" / "dsh-1").read_text()
+    tok = (state / "tokens" / "dsh-1").read_text(encoding="utf-8")
     xinit.add_agent(state, "dsh-1", "dsh", settings=FG)
-    assert (state / "tokens" / "dsh-1").read_text() == tok
-    assert (wsc / "AGENTS.md").read_text().count("xmuse:fg dsh-1 begin") == 1
+    assert (state / "tokens" / "dsh-1").read_text(encoding="utf-8") == tok
+    assert (wsc / "AGENTS.md").read_text(encoding="utf-8").count("xmuse:fg dsh-1 begin") == 1
     conn = db.connect(state / "hub.db")
     assert conn.execute("select role from agents where id='dsh-1'").fetchone()[0] == "coder"
     # back to a background agent: section gone, hooks written, same token
     a = xinit.add_agent(state, "dsh-1", "dsh")
     assert db.settings(a) == {} and not db.polled(a)
-    assert "xmuse:fg" not in (wsc / "AGENTS.md").read_text()
-    assert (wsc / ".dsh" / "hooks.json").exists() and (state / "tokens" / "dsh-1").read_text() == tok
+    assert "xmuse:fg" not in (wsc / "AGENTS.md").read_text(encoding="utf-8")
+    assert (wsc / ".dsh" / "hooks.json").exists() and (state / "tokens" / "dsh-1").read_text(encoding="utf-8") == tok
     with pytest.raises(SystemExit):
         xinit.add_agent(state, "dsh-1", "claude")
 
@@ -84,7 +84,7 @@ def test_init_rewrite_keeps_the_foreground_section(wsc):
     state = xinit.init(wsc)
     xinit.add_agent(state, "dsh-1", "dsh", settings=FG)
     xinit.init(wsc)
-    assert (wsc / "AGENTS.md").read_text().count("xmuse:fg dsh-1 begin") == 1
+    assert (wsc / "AGENTS.md").read_text(encoding="utf-8").count("xmuse:fg dsh-1 begin") == 1
 
 
 def test_foreground_validation(wsc):
@@ -205,7 +205,7 @@ def test_watch_once_exits_1_when_hub_stops(make):
         code, out, _ = finish(p)
         assert code == 1 and out.strip() == "[xmuse] hub stopped"
     finally:
-        (h.state / "hub.json").write_text(json.dumps({"port": 0, "pid": os.getpid()}))
+        (h.state / "hub.json").write_text(json.dumps({"port": 0, "pid": os.getpid()}), encoding="utf-8")
 
 
 # ---- xmuse tool -------------------------------------------------------------------------------
@@ -228,7 +228,7 @@ def test_tool_args_file_encodings(make, tmp_path, enc):
 
 def test_tool_relative_args_file_and_prefixed_name(make, tmp_path):
     h = make([("dsh-1", "dsh", FG)])
-    (tmp_path / "a.json").write_text(json.dumps({"to": "human", "body": "rel"}))
+    (tmp_path / "a.json").write_text(json.dumps({"to": "human", "body": "rel"}), encoding="utf-8")
     code, out, err = finish(start_cli(h, "tool", "--agent", "dsh-1", "xmuse_send", "--args-file", "a.json", cwd=tmp_path))
     assert code == 0, err
     assert h.q("select body from messages where sender='dsh-1'")[0]["body"] == "rel"
@@ -251,7 +251,7 @@ def test_tool_errors_exit_nonzero(make, tmp_path):
     assert code != 0 and out == "" and "error:" in err
     code, out, err = finish(start_cli(h, "tool", "--agent", "dsh-1", "nosuch", stdin=True), b"")
     assert code != 0 and "error:" in err
-    (tmp_path / "bad.json").write_text("[1]")
+    (tmp_path / "bad.json").write_text("[1]", encoding="utf-8")
     code, out, err = finish(start_cli(h, "tool", "--agent", "dsh-1", "send", "--args-file", str(tmp_path / "bad.json")))
     assert code != 0 and "JSON object" in err
     code, out, err = finish(start_cli(h, "tool", "--agent", "ghost", "whoami", stdin=True), b"")

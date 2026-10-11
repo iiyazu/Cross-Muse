@@ -40,12 +40,12 @@ def test_fresh_workspace_is_clean(ws):
 def test_stale_files_are_reported_with_the_fix_and_left_alone(ws):
     state = xinit.init(ws)
     xinit.add_agent(state, "c1", "claude")
-    (ws / ".claude/skills/xmuse-collab/SKILL.md").write_text("old skill")
-    (ws / "AGENTS.md").write_text("# mine\n")
-    mcp = json.loads((ws / ".mcp.json").read_text())
+    (ws / ".claude/skills/xmuse-collab/SKILL.md").write_text("old skill", encoding="utf-8")
+    (ws / "AGENTS.md").write_text("# mine\n", encoding="utf-8")
+    mcp = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
     mcp["mcpServers"]["xmuse"]["env"]["XMUSE_STATE"] = "/elsewhere"
-    (ws / ".mcp.json").write_text(json.dumps(mcp))
-    (state / "hub.json").write_text(json.dumps({"pid": 99999999, "port": 1}))
+    (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
+    (state / "hub.json").write_text(json.dumps({"pid": 99999999, "port": 1}), encoding="utf-8")
     before = snapshot(ws)
     c = by_name(doctor.workspace(state))
     assert c["skill"].level == "warn" and ".claude/skills" in c["skill"].detail and "xmuse init" in c["skill"].fix
@@ -74,7 +74,7 @@ def test_dsh_needs_a_windows_home(monkeypatch, tmp_path):
     monkeypatch.setattr(host, "_userprofile", lambda: None)
     assert by_name(doctor.vendor_clis({"dsh"}, {}))["dsh"].level == "FAIL"
     exe = tmp_path / "dsh.exe"
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
     assert by_name(doctor.vendor_clis({"dsh"}, {"dsh_exe": str(exe)}))["dsh"].level == "ok"
 
 

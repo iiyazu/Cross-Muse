@@ -7,7 +7,7 @@ FIX_CHAT = {"input": 6, "cache_read": 51779}  # spot values from fixtures/claude
 
 def fixture_result(name):
     from conftest import FAKE_CLAUDE
-    for line in (FAKE_CLAUDE.parent.parent / "fixtures" / name).open():
+    for line in (FAKE_CLAUDE.parent.parent / "fixtures" / name).open(encoding="utf-8"):
         o = json.loads(line)
         if o.get("type") == "result":
             return o["usage"]
@@ -240,7 +240,7 @@ def test_idempotent_resend_within_a_turn(make):
                                                 ["xmuse_send", {"to": "human", "body": "same"}]]})
     h.send("claude-1", "go")
     h.wait_quiet()
-    res = [json.loads(x) for x in (h.home / "fake-claude" / "tool-results.jsonl").open()]
+    res = [json.loads(x) for x in (h.home / "fake-claude" / "tool-results.jsonl").open(encoding="utf-8")]
     assert res[0]["out"]["result"]["id"] == res[1]["out"]["result"]["id"]
     assert res[1]["out"]["result"]["duplicate"] is True
     assert len(h.q("select * from messages where sender='claude-1'")) == 1

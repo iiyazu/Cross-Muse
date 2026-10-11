@@ -54,7 +54,7 @@ def write_transcript(h, sid, tokens):
     path = transcript(h.ws, sid)
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    with path.open("a") as f:
+    with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"type": "assistant", "uuid": "u1", "parentUuid": None, "timestamp": ts,
                             "message": {"id": "m1", "model": "claude-opus-5-5", "content": [
                                 {"type": "tool_use", "name": "Edit", "input": {}}],
