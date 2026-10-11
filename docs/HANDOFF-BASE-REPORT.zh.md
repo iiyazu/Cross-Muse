@@ -563,3 +563,39 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 - 结果原文：除 12 行 `[debug] execute contextualize` 外没有其他输出，`exit=0`。
 - 编译出的 main class 文件 356 个，test class 文件 23 个；本地 Maven 仓库 148M。plus.gaga 下的依赖（business-behavior-monitor-sdk middleware ）都能从 Maven Central 拉到，上次调研中"拿不准"的那一项解决了，用不上原仓库自带的 .m2。
 - **没有发现改名误伤**：`cn.bugstack.middleware.*` 按原名保留，可以正常解析；其他外部符号也没有报错。protect.json 不需要补充。
+
+## T15 第 2 步：依赖分析对照到改名版本（2026-10-11）
+
+**提交**：本节（prizehub 仓库没有改动；测试环境放在 base 的 `~/bench/harness`，不在任何仓库里）
+
+### 原版 → prizehub 对照
+| 项 | 原版 big-market | prizehub `2805c93` |
+|---|---|---|
+| 模块 | big-market-*（另有 learning-demos） | prize-hub-app/domain/infrastructure/trigger/types/api/querys（learning-demos、resume、interview 都已去掉） |
+| 包名 | `cn.bugstack` | `io.prizehub`；只有外部依赖 `cn.bugstack.middleware.db.router.*` 保留原名（17 处 import） |
+| 库 | big_market / big_market_01 / big_market_02 | `prize_hub`（12 张表）/ `prize_hub_01`、`prize_hub_02`（各 25 张表，2 库 4 表） |
+| 主要表 | strategy、strategy_award、strategy_rule、award、raffle_activity*、user_raffle_order、user_credit_*、user_behavior_rebate_order | `scheme`、`scheme_prize`、`scheme_rule`、`prize`、`draw_campaign`、`draw_campaign_offer`、`draw_campaign_count`、`draw_campaign_account(_day/_month)`、`draw_campaign_order_00x`、`user_draw_order_00x`、`user_prize_record_00x`、`user_points_account`、`user_points_order_00x`、`user_behavior_cashback_order_00x`、`daily_behavior_cashback`、`rule_tree*`、`task` |
+| MQ topic | activity_sku_stock_zero、send_award、send_rebate、credit_adjust_success | `campaign_offer_stock_zero`、`send_prize`、`send_cashback`、`points_adjust_success` |
+| Redis 键前缀 | big_market_*、strategy_*、activity_sku_* | `prize_hub_campaign_key_`、`prize_hub_campaign_offer_key_`、`prize_hub_scheme_*`、`scheme_prize_count_key_`、`scheme_rule_weight_key_`、`campaign_offer_stock_count_key_`、`campaign_offer_count_query_key`、`rule_tree_vo_key_` 等（`types/common/Constants.java`） |
+| 配置键 | 和原版一致：`mini-db-router.jdbc.datasource.*`（routerKey=userId）、`redis.sdk.config.*`、`zookeeper.sdk.config.enable`（默认 false）、`dubbo.*`（scan 改成 `io.prizehub.trigger.api`）、`xxl.job.*`（appname 改成 prize-hub-job）、`gateway.config.*`（`prize-hub-appId/appToken`） | |
+| 口令 | 真实值 | 全部是 `CHANGE_ME`；测试环境用的口令只写在 base 本机的 harness 里，是测试专用值 |
+
+调研阶段的结论在改名版本上都成立：MySQL 和 Redis 必须起；RabbitMQ 起，用来测 MQ 字段的跨层约定；ZooKeeper 默认就是关的；ES 是懒连接，不起；Dubbo 注册中心设成 `N/A`；xxl-job 不起调度中心。
+
+### 测试环境（`~/bench/harness`）
+- `compose.yml`（项目名 `phbench`）一共 3 个服务：`mysql:8.0.32`（把 `prize_hub*.sql` 挂进 `docker-entrypoint-initdb.d`，配上原来的 my.cnf）、`redis:6.2`、`rabbitmq:3.12.9`。初始化完成后表数是 12 / 25 / 25。
+- `application-bench.yml`：在 dev 配置的基础上改为
+  - 主机名用容器内的（mysql:3306、redis:6379、rabbitmq）；
+  - 口令换成测试值；
+  - `useSSL=false&allowPublicKeyRetrieval=true`；
+  - `dubbo.registry.address: N/A`；
+  - `server.port: 0`；xxl 执行器端口设为 -1（自动分配）。
+- 测试在一个 `maven:3.9-eclipse-temurin-8` 容器里跑，和中间件在同一个网络，加上 `-Dspring.profiles.active=bench`。
+- **已验证**：Spring 上下文能在这个 profile 下启动，ES、ZooKeeper、Nacos、xxl-job 都没有起；`PrizeDaoTest` 通过，单个类用时 13.85 秒。
+- 小坑：MySQL 的健康检查在初始化期间用的临时服务器上就会通过，所以等 healthy 之后还要再等初始化脚本跑完。后面会把健康检查改成查询 `prize_hub_02` 里的表。
+
+### 为了跑原有测试，在工作副本里做的改动（`~/bench/work`，不推送）
+1. `prize-hub-app/pom.xml` 原来把 surefire 2.6 配成了 `skipTests=true`，测试根本不会运行。改成 surefire 2.22.2、`skipTests=false`。
+2. 加了 `junit-vintage-engine`（test 范围）。原因：Boot 2.7 的 starter-test 带的是 JUnit 5，原有测试全部是 JUnit 4（`@RunWith(SpringRunner)`），不加的话 surefire 会报告 `Tests run: 0`。
+3. 加了 `application-bench.yml`。
+4. 猎场正式构造时，以上三项都会进入猎场的 pom 和资源目录。
