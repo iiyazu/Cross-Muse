@@ -1,0 +1,16 @@
+{
+  "name": "xmuse-opencode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "xmuse 侧栏：OpenCode 2.x TUI 插件（约定 v0）",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "2.0.26"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.26"
+  }
+}
