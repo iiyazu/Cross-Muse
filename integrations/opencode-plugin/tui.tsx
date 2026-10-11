@@ -350,8 +350,10 @@ export default Plugin.define({
                 }
               } else if (cmd === "ack") {
                 const ids = (ui.view?.timeline || []).filter((m) => m.for_me).map((m) => m.id)
-                if (ids.length) await client().ack(ids)
-                out = `已确认 ${ids.length} 条`
+                if (ids.length) {
+                  const r = await client().ack(ids)
+                  out = `已确认 ${r.acked ?? ids.length} 条`
+                } else out = "没有 @ 我的消息"
               } else out = "用法：/xmuse status|room new <名>|invite <provider> <角色> <描述>|join <码>|leave|say <to> <文字>|approve [id] [once|always|reject]|more|ack"
               try {
                 ctx.ui.toast.show({ title: "xmuse", message: out.slice(0, 300), variant: "info" })
