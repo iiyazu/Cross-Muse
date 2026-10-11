@@ -402,3 +402,54 @@ r7 在 07:13 跑完了 27 个 run（`t6-e1-B2`、`t6-e2a`、`t6-e5-cross`），*
 - 人在工作区里直接运行 `opencode`（不经过 hub 的服务）时，不再带任何 xmuse 身份；接入正在运行的实例要用 `xmuse attach <id>` 给出的命令。
 - 一个工作区只能有一个 dsh agent 接收桌面端的在场钩子。团队实验全部是无界面模式，不受影响。
 - 旧状态目录里的 `oc.pass` 和工作区旧 `opencode.json` 不会自动清理；重新 `agent add` 一次就会改写成新布局，doctor 会提示。
+
+## T14 信息层补强和关闭开关（2026-10-11）
+
+**提交**：`ec1cdfa`
+
+**先核实现有能力**
+| 项 | 原来 | 补了什么 |
+|---|---|---|
+| 1 按 scope 注入 | scope 只有 global、thread、role:<角色>；注入（快照、增量、xmuse_context）按 agent 所在的 scope 过滤 | 新增 `module:<名字>`（`all` 作为 global 的别名） |
+| 2 依赖解决就唤醒 | `align._blocked` 只用于视图里的 `ready` 列表；handoff 一发出去，被点名的人就被唤醒，不管依赖有没有解决 | 补上"依赖未解决不派活、解决了就唤醒" |
+| 3 question 定向 | question 只按 mentions 唤醒；答复没有任何路由 | 补上：唤醒规划者，答复唤醒提问者 |
+| 4 总开关 | `alignment=off`（M2b 的 B 组）只关注入和 curate，declare、handoff 仍然登记 | 新增 `info_layer=off`，比 `alignment=off` 更彻底；B 组的旧语义不变，所以和 T6 的 B2 仍然可比 |
+
+**做法**
+1. **module scope 的订阅：选"P 下发 assignment 时写明"**。handoff 带 `scope="module:a,b"`，写进 assignment 的新列 `entries.modules`。
+   - 一个 agent 订阅的 module = 它作为 assignee 或作者（即规划者）持有的、未拒绝也未归档的 assignment 里的 module。所以 P 能看到它下发过的所有 module。
+   - 带 module scope 的条目只注入给订阅了这个 module 的 agent，外加条目的作者（执行者登记了一条影响别人模块的 assumption，自己也能看到它后来的去向）。
+   - decision、assumption、question 一次只能写一个 module。
+   - 不选"agent 自己声明"：多一个工具或参数，而且执行者可能漏报；文件归属本来就是 P0 计划的一部分。
+2. **依赖唤醒**：handoff 带 `depends_on`，并且依赖未解决时，给 assignee 的投递记为新状态 `blocked`，不唤醒（返回 `blocked: [...]`）。
+   - 之后任何条目变化都会调用 `align.release`：xmuse_send、xmuse_done 的 declares、人工 confirm（`xmuse align confirm`）、关闭线程。依赖已解决的投递改回 `queued`（链已到上限的改为 `held`），返回 `released: [...]`，engine 随即唤醒。
+   - `xmuse stop` 也会取消 `blocked` 的投递。
+3. **question 往返**：
+   - 发出 question 时，hub 额外唤醒提问者当前 active assignment 的作者（即 P），不需要点名。
+   - P 用 decision `supersedes` 这个 question 时，如果没写 scope，就沿用被替代条目的 scope，于是按原来的 module 传播；同时唤醒 question 的作者。`resolves` 一个 question 也唤醒它的作者。
+   - 增量包里，"被替代"一行会带上新条目的原文，前提是提问者不在新条目的 scope 里。否则答复只在 P 能看到的 module 里，提问者看不到答复内容。
+4. **总开关 `info_layer`**：hub 配置项，默认 `on`；runner 用场景变量 `INFO_LAYER` 设置，并记进 `meta.json → hub_config`。关闭后：
+   - **工具**：hub 启动时按配置重写 `<state>/tools.json`。`xmuse_send` 的 kind 只剩 `message`，去掉 scope、supersedes、resolves、depends_on、why；`xmuse_done` 去掉 declares；不提供 `xmuse_context`。hub 用同一份工具表校验调用，带这些参数会得到 unknown argument。
+   - **提示词**：skill 和 AGENTS.md 的 xmuse 段在模板里用 `<!-- info:on|off|end -->` 标出两种写法。hub 启动和 `xmuse init` 时按配置渲染，标记行本身不会写进去。关闭时文本里不出现 decision、assumption、Why-First、xmuse_context、depends_on、review_request、declares。dsh 前台中继的结尾提示也去掉了 xmuse_context。
+   - **其它路径**：`mail.send` 对所有人（包括 CLI 和协调者）拒绝非 `message` 的 kind 和上述字段；不注入、不 curate、不按 scope 或 question 路由、不释放依赖。只按 mentions 唤醒。
+   - `xmuse doctor` 按当前配置检查 tools.json、skill 和 AGENTS.md，关闭时会注明。
+
+**测试**：`tests/test_info_layer.py`（6 条，用假 agent：4 个 Claude 回合立即结束，测的是路由）
+- scope 路由：module 条目只到订阅者、作者和 P，不到无关的 agent。替代时沿用 module；作者在增量里看到替代它的原文。
+- 依赖唤醒：被 question 卡住的 handoff 不唤醒、不起回合；答复之后被释放并起回合，`ready` 非空。另外覆盖了 resolve 释放和关闭线程释放。
+- question 往返：不点名也唤醒 P；P 的答复唤醒提问者，并且沿用 module scope；没有 assignment 的人发 question，仍按 mentions 唤醒。
+- 关闭：tools.json、skill、AGENTS.md 都不含这些能力；工具、CLI、xmuse_done 的 declares 三条路径都被拒；普通消息照常按 mentions 唤醒；条目数为 0，唤醒包里没有对齐段；doctor 判 ok。
+- 打开时：渲染结果里没有标记行。
+- 旧测试的改动：`test_align` 的报错文本更新了；`test_memoryos` 里 confirm 的返回多了 `released: ["claude-3"]`，这正是依赖唤醒。插件包随包的 tools.json 已重新生成（scope 的描述加了 module）。
+- 第一次全量时 `test_units.py::test_wakepack_tags_relay_and_passive_summary` 失败 1 次，单跑通过。原因是测试本身的竞态：claude-1 被 handoff 真的唤醒，把被动消息标成已读，然后 render 才执行。和 T2 修过的几处一样，先暂停收件人再测。
+
+**测试结果原文**（无终端）
+```
+323 passed, 1 skipped, 1 warning in 151.90s (0:02:31)
+```
+插件包：`ℹ pass 28`、`ℹ fail 0`
+
+**没做 / 拿不准**
+- `convention` 没有单独成为 kind，约定仍然用 `decision` 登记（`_blocked` 里早就把 convention 当 decision 处理）。如果设计稿要求单独计数，需要在 DECLARE 里加一个 kind，工具表也要跟着变。
+- 订阅只来自 assignment：P 没有通过 handoff（带 module scope）派活的 agent，看不到任何 module 条目。
+- dsh 前台 agent 的 AGENTS.md 段（`xmuse agent add --desktop`）里仍列出 `context` 子命令；团队实验都是无界面模式，没有改。
