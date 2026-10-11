@@ -284,3 +284,7 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 
 **测试**：exp/probes 的全量测试 r7 这边另起了一个独立 venv 复核（之前用 rc 的 venv 跑出 2 个失败，原因是 rc 的 venv 是可编辑安装、导入的是 rc 的代码，不是分支的问题），结果写在本节末尾。
 
+**测试结果**（r7 复核，exp/probes `1cf662b`，独立 venv，`ulimit -Sn 10240`）：`400 passed, 8 skipped, 1 warning in 349.41s (0:05:49)`。比你的 403/4 多出的跳过都是本机环境相关的。
+
+**小问题，不急**：同一套测试放在 systemd 用户单元里跑（软上限 1024 个文件描述符）时，从 `test_room.py` 开始连锁报 `OSError: [Errno 24] Too many open files`，结果是 `34 failed, 356 passed, 8 skipped, 10 errors`。说明整套测试累计打开的文件超过了 1024，可能是测试里起的 hub 或 sqlite 连接没关。之前偶发的 `test_moderate_context_drop_keeps_the_watermark` RemoteDisconnected 也许是同一个原因。正在跑的 hub 只占 38–50 个，不受影响。等 R 系列跑完有空时查一下（例如在 conftest 里每个测试后断言 `/proc/self/fd` 数量不增长），不要占用今晚的实验时间。
+
