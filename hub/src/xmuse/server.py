@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import align, config, db, mail, memoryos, peer, preset, wakepack
+from .adapters.agy import AgyDriver
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
@@ -73,6 +74,8 @@ class Hub:
             self.engine.drivers["opencode"] = OpenCodeDriver(self.engine, servers, start=oc_base is None)
         if self.db().execute("select 1 from agents where vendor='dsh'").fetchone():
             self.engine.drivers["dsh"] = DshDriver(self.engine, state, self.cfg)
+        if self.db().execute("select 1 from agents where vendor='agy'").fetchone():
+            self.engine.drivers["agy"] = AgyDriver(self.engine, state, self.cfg)
 
     def precheck(self) -> list[str]:
         """Each agent's explicit model must exist before anything is delivered (dsh: about 10 s per model)."""

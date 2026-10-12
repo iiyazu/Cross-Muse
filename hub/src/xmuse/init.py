@@ -10,11 +10,12 @@ import subprocess
 from pathlib import Path
 
 from . import config, db
-from .adapters import claude, dsh, opencode
+from .adapters import agy, claude, dsh, opencode
 from .server import digest
 from .tools import tools_for
 
-WRITERS = {"claude": claude.write_config, "opencode": opencode.write_config, "dsh": dsh.DshDriver.write_config}
+WRITERS = {"claude": claude.write_config, "opencode": opencode.write_config, "dsh": dsh.DshDriver.write_config,
+           "agy": agy.AgyDriver.write_config}
 # Headless Claude coding profile: edits in the workspace plus test/inspection commands. Anything else
 # (push, rm, network) is denied in -p mode and reported as permission_denied.
 CLAUDE_ALLOW = ["Bash(python -m pytest:*)", "Bash(python3 -m pytest:*)", "Bash(pytest:*)",
