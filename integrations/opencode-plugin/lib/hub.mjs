@@ -1,5 +1,6 @@
 // hub HTTP 客户端：按 XMUSE2-VIEW-API v0。fetch 可注入以便测试。
 // 令牌只经参数传入，本模块不打印、不持久化。
+import { isLoopback } from "./registry.mjs"
 
 export class HubError extends Error {
   constructor(code, message, status) {
@@ -10,20 +11,25 @@ export class HubError extends Error {
 }
 
 export class HubClient {
-  constructor({ baseUrl, memberToken, operatorToken, sessionId, fetchFn }) {
+  constructor({ baseUrl, memberToken, operatorToken, sessionId, sidebarKey, fetchFn }) {
     this.baseUrl = String(baseUrl || "").replace(/\/$/, "")
     this.memberToken = memberToken || ""
     this.operatorToken = operatorToken || ""
     this.sessionId = sessionId || ""
+    this.sidebarKey = isLoopback(this.baseUrl) ? sidebarKey || "" : ""  // 凭据只发给回环地址的 hub
     this.fetch = fetchFn || globalThis.fetch
   }
 
-  headers({ operator } = {}) {
-    const tok = operator ? this.operatorToken : this.memberToken
+  headers({ operator, bare } = {}) {
     const h = { "content-type": "application/json" }
-    if (tok) h.authorization = "Bearer " + tok
-    // 成员令牌请求带会话绑定头；操作令牌按约定不需要但带上无害（mock-hub 忽略）
-    if (!operator && this.sessionId) h["x-xmuse-session"] = this.sessionId
+    if (!bare) {
+      const tok = operator ? this.operatorToken : this.memberToken
+      if (tok) h.authorization = "Bearer " + tok
+      // 成员令牌请求带会话绑定头；操作令牌按约定不需要但带上无害（mock-hub 忽略）
+      if (!operator && this.sessionId) h["x-xmuse-session"] = this.sessionId
+    }
+    // v0.1 本机入口要凭据头；只在插件进程里持有，绝不打印
+    if (this.sidebarKey) h["x-xmuse-sidebar"] = this.sidebarKey
     return h
   }
 
@@ -94,6 +100,97 @@ export class HubClient {
       member_id: memberId,
       description,
     })
+  }
+
+  // v0.1 本机入口：GET /v1/rooms 只带凭据头（成员令牌带了反而 403）
+  async roomsInfo() {
+    const r = await this.fetch(this.baseUrl + "/v1/rooms", {
+      headers: {
+        ...(this.sidebarKey ? { "x-xmuse-sidebar": this.sidebarKey } : {}),
+      },
+    })
+    const text = await r.text()
+    let data = null
+    try {
+      data = text ? JSON.parse(text) : null
+    } catch {
+      throw new HubError("bad_json", "hub 返回了非 JSON", r.status)
+    }
+    if (r.status < 200 || r.status >= 300) {
+      throw new HubError(data?.error || "http_error", data?.message || text, r.status)
+    }
+    return data
+  }
+
+  // v0.1 本机加入：不带 code，凭据头认证；dir/room_id 至少给一个。
+  // 不带成员令牌（带了会 403 member_forbidden）。
+  joinLocal({ dir, roomId, vendor, sessionId, name, role, description, clientInfo }) {
+    const body = { vendor: vendor || "opencode", session_id: sessionId }
+    if (dir !== undefined) body.dir = dir
+    if (roomId !== undefined) body.room_id = roomId
+    if (name) body.name = name
+    if (role) body.role = role
+    if (description) body.description = description
+    if (clientInfo) body.client_info = clientInfo
+    return this.req("POST", "/v1/join", body, { bare: true })
+  }
+
+  // v0.1 新增 act（都要操作令牌）
+  memberAdd({ vendor, model, role, description, name }) {
+    const body = { act: "member_add", vendor }
+    if (model) body.model = model
+    if (role) body.role = role
+    if (description) body.description = description
+    if (name) body.name = name
+    return this.act(body, { operator: true })
+  }
+
+  memberEdit(member, { role, description, model }) {
+    const body = { act: "member_edit", member }
+    if (role !== undefined) body.role = role
+    if (description !== undefined) body.description = description
+    if (model !== undefined) body.model = model
+    return this.act(body, { operator: true })
+  }
+
+  transferHost(member) {
+    return this.act({ act: "transfer_host", member }, { operator: true })
+  }
+
+  pauseMember(member) {
+    return this.act({ act: "pause", member }, { operator: true })
+  }
+
+  resumeMember(member) {
+    return this.act({ act: "resume", member }, { operator: true })
+  }
+
+  removeMember(member) {
+    return this.act({ act: "remove", member }, { operator: true })
+  }
+
+  threadNew({ id, members, title }) {
+    const body = { act: "thread_new", id, members }
+    if (title) body.title = title
+    return this.act(body, { operator: true })
+  }
+
+  threadAdd(thread, member) {
+    return this.act({ act: "thread_add", thread, member }, { operator: true })
+  }
+
+  threadRemove(thread, member) {
+    return this.act({ act: "thread_remove", thread, member }, { operator: true })
+  }
+
+  shareMark(messageId, to) {
+    const body = { act: "share_mark", message_id: messageId }
+    if (to) body.to = to
+    return this.act(body, { operator: true })
+  }
+
+  wakeHost() {
+    return this.act({ act: "wake_host" }, { operator: true })
   }
 
   join(code, vendor, sessionId, clientInfo) {
