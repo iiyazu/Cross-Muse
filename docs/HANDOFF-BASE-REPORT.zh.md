@@ -1664,9 +1664,9 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
    > [rule v2] Team rule: e1 maintains a and b; e2 maintains c and d. e2 will hand a new key to e1; from then on e1 maintains it.
 
    这条取代 v1，然后 e2 再发原来那条 handoff。handoff 里仍然不给 k 的值，k 的事实保留 "share it"。先冒烟（seed 11，X 组一次），大于 0 才整批跑 seed 11–20、三组；还是 0 就停，写进本文件，不再改措辞。
-2. **私信里的事实默认不分享**（用户 10-12 定）：用户私信给某个成员的内容默认不外传，要分享得用户主动批准。理由不只是隐私：同步无关的信息会占用别人的上下文和注意力。对探针的影响：
+2. **私信里的事实默认不分享**（用户 10-12 定）：用户私信给某个成员的内容默认不外传，要分享得用户主动批准。理由不只是隐私：同步无关的信息会占用别人的上下文和注意力。**这是正式使用的默认**；探针和实验是测能力，场景需要时可以默认同步，在刺激或世界说明里写明即可（用户补充）。对探针的影响：
    - 第一批作废的旧 S3b 里，e2 拒绝透露 k，**在这个决定下是正确行为**，不算失败。
-   - 改过措辞的 S3b 里，k 的事实写了 "share it with a teammate who needs it"，相当于用户在消息里预先批准了。所以 batch1-s3 的 S3b 仍然只测"问题能不能路由到知情人"。报告里要写明这一点，不要写成"私信默认可分享"。
+   - 改过措辞的 S3b 里，k 的事实写了 "share it with a teammate who needs it"，相当于用户在消息里预先批准了。所以 batch1-s3 的 S3b 仍然只测"问题能不能路由到知情人"，这样做是合规的。报告里要写明，实验里的"可分享"是场景设定，不是产品默认。
    - 产品侧（约定 v0.1，coord 负责，不在探针范围）：分享走审批队列（新增审批类型 `share`）；"该不该同步"的判断只做建议，先用规则，再用本地 FastEmbed，Jev 只在离线对比里用。
 3. **"PROCEDURE 不强调 team rule"的对照：做**（r7，§13.3）：新场景 `S2p-noTR`、`DEP-noTR`，PROCEDURE 去掉 "Team rules come from the user"，其余和 S2p、DEP 完全相同。seed 11–15、三组，每格 5 次。开跑前在本文件里预注册，标明是探索性对照。排在 R 系列（R1–R4 正式跑、R5–R8）之后。
 
