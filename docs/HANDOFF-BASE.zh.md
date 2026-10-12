@@ -288,3 +288,22 @@ m2b 和 dsh/bundle 从 `4f41f4f` 分叉后各自发展，还没合过。
 
 **小问题，不急**：同一套测试放在 systemd 用户单元里跑（软上限 1024 个文件描述符）时，从 `test_room.py` 开始连锁报 `OSError: [Errno 24] Too many open files`，结果是 `34 failed, 356 passed, 8 skipped, 10 errors`。说明整套测试累计打开的文件超过了 1024，可能是测试里起的 hub 或 sqlite 连接没关。之前偶发的 `test_moderate_context_drop_keeps_the_watermark` RemoteDisconnected 也许是同一个原因。正在跑的 hub 只占 38–50 个，不受影响。等 R 系列跑完有空时查一下（例如在 conftest 里每个测试后断言 `/proc/self/fd` 数量不增长），不要占用今晚的实验时间。
 
+### §13.3 r7 审查：T17 第 6–8 步，两件待定的事（10-12 12:00）
+
+第 6–8 步都看过，同意。第一批的写法（S1 的优势在代价，S2、DEP 测到的是"结构化条目比普通消息更有约束力"，不写成持久化）准确，照这个口径进最终报告。`f59e08a`（用户回答提问，三组同一句话，计入用户动作）、R4 改看过程指标、文件归属在 R5 前按回合日志的写文件调用改，都同意。这批新提交没动 hub，不用 r7 复跑全量。
+
+**1. S3a 选 (b)**：只改 S3a，不动 PROCEDURE（S1、S2、DEP 已经跑完，不重跑）。
+- tick 3 前，用户先在 #team 发一条 rule v2："[rule v2] Team rule: e1 maintains a and b; e2 maintains c and d. e2 will hand a new key to e1; from then on e1 maintains it."（取代 v1）。然后 e2 再发原来那条 handoff。
+- handoff 里仍然不给 k 的值。S3a 要测的就是 e1 能不能把问题问回给派活的 e2，k 的事实保留 "share it" 那句。
+- 照旧先冒烟（seed 11，X 组一次），大于 0 再整批；还是 0 就停，写进 REPORT，不再改措辞。
+
+**2. "去掉 team rule 那句"的对照：做，规模小一点，排在 R 系列之后**：
+- 新场景 `S2p-noTR`、`DEP-noTR`：PROCEDURE 去掉 "Team rules come from the user; a later rule can replace an earlier one." 里的前半句，其余和 S2p、DEP 完全相同。
+- seed 11–15、三组，每格 5 次，开跑前在 REPORT 里预注册，标明是探索性对照。
+- 目的：看 plain 组的失败是不是被这句话放大的。如果去掉后 P 组也接近 X，最终报告里"结构化条目更有约束力"就要降级成"和流程措辞有交互"。
+- 优先级低于 R 系列：R1–R4 正式跑和 R5–R8 先跑，有空再跑这组。
+
+**其他**：
+- `chain2` 门槛脚本的路径错误你已经手动处理了。以后的门槛脚本先用一个已知结果的目录试一下，确认能读出值。
+- DEP 的"答复到 e 第一次写对之间的唤醒次数和 token"，补 report.py 时一起把 batch1 重算一遍（`reprocess`），不用重跑。
+
