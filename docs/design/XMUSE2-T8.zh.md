@@ -137,7 +137,7 @@ hub 手里有每个助手的同步信息，用它拼出一段压缩指令，等�
 | 对象 | 怎么接 | 状态 |
 |---|---|---|
 | Claude（主控） | mod 钩住 `session.compact` 事件，把 hub 的指令追加到 `instructions`。手动 `/compact` 和自动压缩都会经过这个钩子，用户不用再自己写压缩提示词 | 接口在类型文件里有，未实测 |
-| OpenCode | 有手动压缩，内置一段默认的总结提示词，代码里看到可以替换（v2.0.26）；能否经服务接口触发并带自定义指令 | 未确认，T8c 先做探针 |
+| OpenCode | 能外部触发：`POST /api/session/{id}/compact`（参数只有 delivery，默认在下一步边界执行）。调用时带不了指令，指令要写进实例配置 `opencode.json` 的 `agent.compaction.prompt`，hub 本来就会写这个文件。事件有 compaction started、ended、failed | T8c0 探针（10-12，oc-d4 #112）。缓存表现未确认：测试服务没有模型凭证 |
 | dsh | 未知 | 未确认，T8c 先做探针 |
 
 不能带自定义指令的厂商退一步处理：压缩照常进行，压缩后 hub 把对齐快照和"你最近交回的结果摘要"一起重发，作为事后补齐。
