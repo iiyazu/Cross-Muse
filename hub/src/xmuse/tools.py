@@ -30,6 +30,10 @@ TOOLS = [
          "kind": {"type": "string", "enum": KINDS, "description": "default message; decision/assumption/question "
                                                                   "also record a shared entry"},
          "mentions": {"type": "array", "items": {"type": "string"}, "description": "peers to wake (groups)"},
+         "members": {"type": "array", "items": {"type": "string"},
+                     "description": "Only effective when this message creates a new '#group': makes it a private group "
+                                    "of you, the user and these peers (others cannot see or write to it). Ignored if "
+                                    "the group already exists."},
          "scope": _s("entry scope: " + SCOPE),
          "supersedes": _s("entry id (E7) this decision/assumption/question replaces"),
          "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
@@ -52,6 +56,8 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["id"], "properties": {
          "id": _s("thread id, e.g. '#task' or 'dm:a+b'"), "query": _s("text to search for"),
          "limit": {"type": "integer", "description": "default 20"}}}},
+    {"name": "xmuse_leave_thread", "description": "Leave a private group you are in (you cannot leave public groups).",
+     "inputSchema": {"type": "object", "required": ["thread"], "properties": {"thread": _s("private group id, e.g. '#x'")}}},
     {"name": "xmuse_context", "description": "Your alignment view: active decisions, assumptions, open questions, "
                                              "work assigned to you.",
      "inputSchema": {"type": "object", "required": [], "properties": {"topic": _s("only this thread (e.g. '#task')")}}},
