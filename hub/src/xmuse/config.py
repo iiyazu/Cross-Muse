@@ -37,6 +37,7 @@ DEFAULTS = {
     "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
     "curate_timeout_s": 480,         # /curate collab (background): 2 attempts x 200 s worst case (max_repairs 1)
     "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
+    "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",

@@ -34,6 +34,8 @@ TOOLS = [
          "supersedes": _s("entry id (E7) this decision/assumption/question replaces"),
          "resolves": {"type": "array", "items": {"type": "string"}, "description": "question/assignment ids resolved"},
          "depends_on": {"type": "array", "items": {"type": "string"}, "description": "entry ids (handoff only)"},
+         "notify": {"type": "string", "enum": ["batch", "now"], "description": "handoff from the room's host only: "
+                    "now = wake me as soon as this task comes back; default batch (once all handed-out tasks are back)"},
          "on_behalf_of": {"type": "string", "enum": ["human"], "description": "Coordinator (desktop) sessions only. "
                           "Use only when the user explicitly asked for this message to go out in their name; "
                           "quote their words. Default is to send as yourself."},
@@ -59,6 +61,10 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["summary", "next"], "properties": {
          "summary": _s("what you did"),
          "next": _s("peer id or 'human' who must act next, or 'none' if the work is finished"),
+         "outcome": {"type": "string", "enum": ["completed", "needs_alignment", "blocked", "progress"],
+                     "description": "default completed (done as asked, nothing new to agree on); needs_alignment: a "
+                                    "contract, convention or decision must change or an assumption affects others; "
+                                    "blocked: you cannot go on, or checks fail; progress: an interim report"},
          "stage": {"type": "string", "enum": ["plan", "part", "integrated", "fix"],
                    "description": "only in a plan-split-integrate run: the phase you finish (planner: plan, "
                                   "integrated; executor: part, fix)"},
@@ -75,7 +81,7 @@ TOOLS = [
          "user_said": _s("the user's own words, verbatim")}}},
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
-INFO_FIELDS = ("scope", "supersedes", "resolves", "depends_on", "why")
+INFO_FIELDS = ("scope", "supersedes", "resolves", "depends_on", "why", "notify")
 
 
 def tools_for(cfg: dict) -> list[dict]:
