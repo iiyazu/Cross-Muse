@@ -67,6 +67,18 @@ def test_register_updates_by_room_and_unregister_removes_only_its_own():
     assert sorted(p.name for p in registry.directory().iterdir()) == ["hubs.json"]  # no temp or lock files left
 
 
+def test_install_record_says_how_to_start_a_hub(monkeypatch):
+    """The panel starts a hub after a reboot from this record: the interpreter and the WSL distro; kept, not churned."""
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-X")
+    registry.write_install()
+    got = json.loads(registry.install_path().read_text(encoding="utf-8"))
+    assert got == {"python": sys.executable, "distro": "Ubuntu-X", "os": os.name}
+    before = registry.install_path().stat().st_mtime_ns
+    registry.write_install()  # unchanged: not rewritten
+    assert registry.install_path().stat().st_mtime_ns == before
+    assert sorted(p.name for p in registry.directory().iterdir()) == ["install.json"]
+
+
 def test_dead_pids_are_dropped_on_read_and_on_write():
     gone = dead_pid()
     registry.hubs_path().parent.mkdir(parents=True, exist_ok=True)

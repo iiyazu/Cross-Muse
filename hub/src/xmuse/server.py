@@ -1108,6 +1108,7 @@ class Hub:
             registry.register({"room_id": rooms.room_id(self.ws), "name": r["name"] if r else self.ws.name,
                                "dir": str(self.ws), "url": f"http://127.0.0.1:{self.httpd.server_address[1]}",
                                "host": r["host"] if r else None, "pid": os.getpid(), "started_at": self.started_at})
+            registry.write_install()
         except (OSError, ValueError):
             log.warning("cannot write the hub registry in %s", registry.directory(), exc_info=True)
 
