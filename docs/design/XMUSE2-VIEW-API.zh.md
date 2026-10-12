@@ -1,4 +1,4 @@
-# xmuse 2 侧栏接口约定 v0（D2 实现，D3/D4 照此开发）
+# xmuse 2 侧栏接口约定 v0.1（v0：D2 实现；v0.1 第 8 节：协作拓扑 T0–T5）
 
 2026-10-11，r7 主控。三家侧栏（Claude mod、OpenCode TUI 插件、dsh 抽屉）和 hub 之间只走这份约定。D2 按它实现；D3/D4 在 D2 完成前用自己的假接口（返回下面示例 JSON 的最小 HTTP 服务）开发。约定要改，先由主控更新本文件并在房间里发 decision，不要各改各的。
 
@@ -115,3 +115,143 @@
 待定（v0.1 再议）：
 1. OpenCode TUI 要用 `--server --session` 连到 hub 起的 serve，视图里还没有这两个值（serve 有密码，只能给成员自己的令牌看）。
 2. `members[].status` 对 Claude/dsh 侧栏成员只能反映"在线/离线/有待唤醒"，回合是否在跑 hub 不知道；需要的话由侧栏上报。
+
+## 8. v0.1：协作拓扑（里程碑 XMUSE2-TOPO 的 T0–T5，2026-10-12）
+
+本节在 v0 的基础上**只做加法**，v0 的接口照旧可用。用户在 10-12 定了几条：
+- 本机加入不要邀请码；
+- 主控负责接活和分派；
+- 成员可以自己建私有小群；
+- 审查者核验在正式使用时默认开启；
+- 私信默认不外传，要外传需用户批准；
+- 主控按结果标签决定是否唤醒。
+
+实现按下面的模块划分，新逻辑尽量写进新模块，共用文件里只加挂接点：
+
+| 模块 | 内容 |
+|---|---|
+| `registry.py` | 本机登记表和侧栏凭据 |
+| `threads.py` | 小群 |
+| `dispatch.py` | 主控分派、结果标签、合并唤醒 |
+| `evidence.py` | 证据核对、审查者核验 |
+| `share.py` | 私信分享 |
+| `route.py` | 按职责路由 |
+
+### 8.1 本机加入（T0）
+
+- **本机登记表**：
+  - 位置：Windows 下是 `%LOCALAPPDATA%\xmuse\hubs.json`，其他系统是 `${XDG_STATE_HOME:-~/.local/state}/xmuse/hubs.json`。
+  - 格式：`{"hubs": [{"room_id", "name", "dir", "url", "host", "pid", "started_at"}]}`。
+  - hub 启动时按 `room_id` 写入或更新自己那一条，正常退出时删除。读的人要丢掉 `pid` 已经不在的条目。写入方式是先写临时文件再原子改名，同时要容忍几个 hub 并发写。
+- **侧栏凭据**：
+  - 和登记表放在同一目录，文件名 `sidebar.key`，32 字节随机数，十六进制保存，权限 600。不存在时由第一个启动的 hub 生成。
+  - 侧栏插件读取它，放在请求头 `x-xmuse-sidebar: <key>` 里发出。agent 进程的环境里不提供它。
+  - hub 的 shell 策略（allowlist 和 blocklist-experiment 都算）拒绝任何引用 `sidebar.key` 的命令。这只是同一 OS 用户下的约束，挡住的是 agent 无意或常规地自行加入，挡不住刻意的绕过。设计稿里要写明这一点。
+- **`POST /v1/join`（v0.1）**：
+  - 不带 `code` 时：必须带 `x-xmuse-sidebar`，请求体是 `{"dir" 或 "room_id", "vendor", "session_id", "name?", "role?", "description?", "client_info?"}`。
+  - `dir` 和 hub 的工作区不一致时，返回 `400 wrong_dir`。`dir` 的比较和 v0 相同：Windows 写法和 `/mnt/c` 写法视为同一个目录。
+  - 带 `name` 时：
+    - 该成员已存在、vendor 相同、还没绑定会话，就接管它；
+    - 已经绑定了，返回 `409 member_exists`。
+  - 不带 `name` 时：成员 id 从 vendor 名开始取一个没被占用的。
+  - 凭据缺失或不对，返回 `401 bad_sidebar_key`。
+  - 返回值和 v0 相同：`{"member_id", "member_token", "operator_token", "room"}`。
+  - 带 `code` 的旧路径照旧可用。
+- **`POST /v1/rooms`**：从 v0.1 起也必须带 `x-xmuse-sidebar`，否则返回 `401 bad_sidebar_key`。
+- **`GET /v1/rooms`**：新增。必须带 `x-xmuse-sidebar`，返回本 hub 的房间概况 `{"room", "members": [{id, vendor, role, online}]}`。用在侧栏"房间列表"里显示成员；房间列表本身从登记表读。
+- **成员令牌**调用 join、rooms、`member_add`、`member_edit` 一律返回 `403`。所有 `xmuse_*` 工具都不提供加入或加人的能力。每次加入、添加成员，都要往 `#room` 写一条事件。
+
+### 8.2 新增的 act（除特别说明外，只有操作令牌能用）
+
+| act | 参数 | 返回 | 说明 |
+|---|---|---|---|
+| `member_add` | `vendor`（`claude` / `opencode` / `dsh`），`model?`，`role?`，`description?`，`name?` | `{"member_id"}` | 登记一个由 hub 起回合的成员，效果等同于 `xmuse agent add`，有消息时 hub 起它的回合。vendor 不支持返回 `400 bad_vendor` |
+| `member_edit` | `member`，`role?`，`description?`，`model?` | `{"ok": true}` | 改角色、职责描述、模型 |
+| `thread_new` | `id`（`#名字`），`members: [..]`，`title?` | `{"thread"}` | 建私有小群，用户自动在内。已存在返回 `409 thread_exists` |
+| `thread_add` / `thread_remove` | `thread`，`member` | `{"ok": true}` | 只对私有小群有效；对公开群返回 `400 public_thread` |
+| `share_mark` | `message_id`，`to?` | `{"ok": true}` | 把一条用户私信标成可分享：`to` 为空表示可以分享给任何人（见 8.6） |
+| `wake_host` | — | `{"ok": true}` | 不等合并，立即唤醒主控（见 8.4） |
+
+**成员令牌和 `xmuse_send`**：发到一个还不存在的 `#名字` 时，可以带 `members: [..]` 建私有小群，发送者和用户自动在内。成员只能退出自己所在的私有小群（工具 `xmuse_leave_thread {thread}`），不能拉别人进来。
+
+### 8.3 小群（T2）
+
+- **公开群**：`#名字` 第一次被发消息时自动建立，所有成员都在内，和 v0 相同。
+- **私有群**：由 `thread_new` 或带 `members` 的 send 建立，只有名单里的成员和用户。
+- 非成员对私有群：
+  - 不投递，主动消息和被动消息都没有；
+  - `xmuse_thread`、`xmuse_context` 读不到；
+  - scope 为 `thread:#x` 的对齐条目，不进非成员的唤醒包。
+- 视图里的 `threads[]` 加 `"private": bool`。
+- 成员令牌的视图里，`threads` 和 `timeline` 只包含它所在的线程，`#room` 例外，一直包含。v0 里成员令牌能看到全部时间线，v0.1 收紧了。
+- 操作令牌（用户）照旧能看到全部。
+- 加人：沿用 v0 的处理，新成员下次被唤醒时，补发这个线程的对齐快照。
+
+### 8.4 主控分派（T0）和结果标签
+
+- **用户不点名的话交给主控**：用户（操作令牌，或者 via 为 cli）`say` 时：
+  - 没有 `to`，或者 `to` 是 `#room`、公开群，并且没有点名任何人——只唤醒主控，其他人只收被动投递；
+  - 响应里加 `"routed_to": "<主控 id>"`。
+
+  点了名的消息照旧。
+- **主控的身份说明**：主控的唤醒包里，身份段要写明它是主控，职责是：分析、拆分，用 handoff 派给合适的成员，验收；除非用户点名要它做，否则自己不写代码。这只是 xmuse 给它的角色说明，不改 agent 本身。
+- **`xmuse_done` 新增 `outcome`**：取值 `completed | needs_alignment | blocked | progress`，不填视为 `completed`。消息上会记录：
+  - `outcome`，最终生效的标签；
+  - `outcome_by`：`"member"` 表示用执行者填的，`"hub"` 表示被 hub 改判过；
+  - `outcome_reason`，改判理由，hub 改判时才有。
+- **hub 改判**：
+  - 执行者填了 `completed`，但 `declares` 里带 decision、assumption 或 question，并且 scope 不只是自己（scope 不是 `member:<自己>`），或者带了 `supersedes`——改判为 `needs_alignment`；
+  - 证据核对没通过（见 8.5）——改判为 `blocked`。
+- **唤醒主控的规则**：只对结果的接收人是主控时适用，也就是 `next` 是主控，或者这个结果对应主控派出的 handoff。
+  - `needs_alignment`、`blocked`、`kind: question`：立即唤醒。
+  - `progress`：不唤醒，只被动投递。
+  - `completed`：按批次等。
+    - "批次"是指主控派出、执行者还没交回的 handoff 集合。这些都交回了就唤醒；
+    - 或者从第一条结果到达算起，满 `host_batch_max_s` 秒也唤醒，这是配置项，默认 600。
+- **handoff 的 `notify`**：主控派活时可以给 handoff 加 `notify: "now"`，这个任务交回时立即唤醒主控。默认是 `"batch"`。
+- **视图新增**：
+  - 顶层 `host_wait`：
+
+    ```json
+    {"waiting_on": [{"member", "handoff_id", "since"}], "results_held": <条数>, "wake_at": <时间|null>}
+    ```
+
+  - `members[]` 加 `wakes_hour`；
+  - `timeline[]` 加 `outcome`、`outcome_by`、`evidence_status`（只在 done 消息上有）。
+
+### 8.5 证据（T5）
+
+- **`xmuse_done` 新增 `evidence`**：格式 `[{"kind": "test" | "diff" | "command", "ref": "<命令或文件路径>", "result": "<声称的结果>"}]`，可以不填。
+- **hub 核对**：拿这个回合的回合日志（transcript）来对：
+  - `test` 和 `command`：这条命令在本回合里确实跑过，退出码或输出和声称的一致；
+  - `diff`：这个文件在本回合里确实被写过。
+- **结果**记在消息上：
+  - `evidence_status`：`verified`（全部对上）、`unverified`（有对不上的）、`none`（没交证据）；
+  - `evidence_problems: [..]`，列出对不上的项。
+- **回合日志读不到时**（某家的格式不支持），记 `unverified`，`evidence_problems` 写 `"transcript unavailable"`，不改判结果标签。这种情况要在侧栏上能看出来。
+- **审查者核验**：配置项 `review_gate`，默认 `true`。
+  - 条件：房间里有 role 为 `reviewer` 的成员，执行者的 done 是 `next: none` 且 `completed`，执行者本身不是审查者。
+  - 这时 hub 不直接收尾，而是发一条 handoff 给审查者，`kind: "review"`，附上原 done 和证据；审查者 done 之后，这个任务才算完成。
+  - 测试场景按需要设 `review_gate: false`。
+
+### 8.6 私信分享（T3）
+
+- 用户私信给成员的内容默认不外传。这是正式使用的默认，实验场景可以在世界说明里写明"可以分享"。
+- **工具 `xmuse_share {message_id, to, why}`**：只能分享自己收到的、来自用户的私信。
+  - 这条消息已被用户 `share_mark` 过（`to` 为空，或者正好是这个 `to`）：直接投递；
+  - 否则生成一条审批：`approvals[]`，`kind: "share"`，`id: "share:<n>"`，`summary` 写"<成员> 想把 #<消息 id> 分享给 <to>"，`detail` 是 `{message_id, to, why, excerpt}`。
+- **审批选项**：
+  - `once`：这一次；
+  - `always`：这条消息以后分享给任何人都不再问；
+  - `reject`：拒绝。
+- **投递**：批准后，hub 把原文投给 `to`，`via: "shared"`，消息上带 `shared_from: {member, message_id}`。被拒绝时通知申请人。
+- **建议**：只建议，不执行，先用规则。队友发 question，或者被分派任务时，如果文本里出现了某条用户私信里的键名或关键词（规则：长度大于等于 3 的标识符、数字常量名），就在收到那条私信的成员下次被唤醒时提示一句："你有一条用户私信（#id）可能与 <谁> 的问题有关，需要的话用 xmuse_share 申请"。不单独为提示唤醒它。
+
+### 8.7 按职责路由（T4）
+
+- **成员**发 `kind: question` 到公开群，并且没有点名任何人时：
+  - hub 用问题文本去匹配各成员的 `description` 和 `role`，规则是关键词重叠打分；
+  - 只唤醒得分最高、且分数大于 0 的 1 到 2 个成员；
+  - 消息上记 `routed_to: [..]` 和 `route_reason`，其他人只收被动投递；
+  - 全部没匹配上时照旧，唤醒所有人。
+- **用户**不点名的话，按 8.4 交给主控，不走这条。
