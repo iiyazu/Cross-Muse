@@ -218,6 +218,38 @@ class Hub:
         out = self.engine.call(self.engine.stop, a["id"], thread)
         return {"ok": True, "stopped": bool(out["canceled_deliveries"] or out["interrupted_turns"])}
 
+    RETRACTED = "（用户撤回了这条消息）"
+
+    def act_retract(self, p: rooms.Principal, b: dict) -> dict:
+        """Panel "撤回" (operator only): take back one of the user's own messages. Deliveries not yet taken are
+        canceled, a running turn that took it is interrupted, and the body is replaced so later reads of the
+        thread do not carry it. Returns whose deliveries were canceled and whose turn was interrupted."""
+        mid = b.get("id")
+        if not isinstance(mid, int) or isinstance(mid, bool):
+            raise rooms.ApiError(400, "bad_request", "retract needs id (message id)")
+        conn = self.db()
+        m = db.row(conn.execute("select * from messages where id=?", (mid,)))
+        if m is None:
+            raise rooms.ApiError(404, "unknown_message", f"no message {mid}")
+        if m["sender"] != config.HUMAN or m["kind"] != "message":
+            raise rooms.ApiError(403, "not_yours", "only the user's own messages can be retracted")
+        if m.get("retracted_at"):
+            return {"ok": True, "already": True, "canceled": [], "interrupted": []}
+        with db.tx(conn):
+            spared = [r[0] for r in conn.execute(
+                "select recipient from deliveries where message_id=? and state in ('queued','held','blocked')", (mid,))]
+            conn.execute("update deliveries set state='canceled', updated_at=? where message_id=?"
+                         " and state in ('queued','held','blocked')", (db.now(), mid))
+            turns = [r[0] for r in conn.execute(
+                "select distinct d.turn_id from deliveries d join turns t on t.id=d.turn_id"
+                " where d.message_id=? and d.state='admitted' and t.state='running'", (mid,))]
+            conn.execute("update messages set body=?, retracted_at=? where id=?", (self.RETRACTED, db.now(), mid))
+        stopped = self.engine.call(self.engine.interrupt_turns, turns) if turns else []
+        interrupted = [r[0] for r in conn.execute(
+            f"select agent_id from turns where id in ({','.join('?' * len(stopped))})", stopped)] if stopped else []
+        self.engine.kick()
+        return {"ok": True, "canceled": spared, "interrupted": interrupted}
+
     def act_compact(self, p: rooms.Principal, b: dict) -> dict:
         """T8c H3 manual compaction (operator only): opencode members only; async, returns at once."""
         from . import compact as _compact_mod

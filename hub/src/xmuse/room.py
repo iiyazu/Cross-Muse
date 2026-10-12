@@ -28,7 +28,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark",
-        "member_add", "member_edit", "wake_host", "promote", "read", "brief", "compact", "stop"}
+        "member_add", "member_edit", "wake_host", "promote", "read", "brief", "compact", "stop", "retract"}
 ACTS |= groups.ACTS  # T2 private groups
 
 
@@ -228,6 +228,7 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
             "at": m["created_at"], "for_me": for_me, **dispatch.item(m),
             **({"reply_to": m["reply_to"]} if m.get("reply_to") else {}),
+            **({"retracted": True} if m.get("retracted_at") else {}),
             **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {}),
             **({"routed_to": json.loads(m["route_to"])} if m.get("route_to") else {}),
             **({"route_reason": m["route_reason"]} if m.get("route_reason") else {})}
