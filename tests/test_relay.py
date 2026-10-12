@@ -143,7 +143,11 @@ def test_reply_via_tools_after_relay_reaches_the_sender(make):
 
 def test_coordinator_rule_text():
     from xmuse import config
-    for f in (config.TEMPLATES / "AGENTS.xmuse.md", config.TEMPLATES.parent / "skill" / "xmuse-collab" / "SKILL.md"):
+    # the coordinator rules live in the AGENTS.md / CLAUDE.md section only; the skill, loaded by every member, points
+    # there (T1: it costs every woken peer tokens it never uses)
+    skill = (config.TEMPLATES.parent / "skill" / "xmuse-collab" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Coordinator (desktop) sessions: see the xmuse section of AGENTS.md" in skill
+    for f in (config.TEMPLATES / "AGENTS.xmuse.md",):
         t = " ".join(f.read_text(encoding="utf-8").split())
         assert "Send as yourself by default" in t and "explicitly asks for the message to go out in their name" in t
         assert "offer to resend in their name" in t and "Replies addressed to the user arrive in your inbox" in t
