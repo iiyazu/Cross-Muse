@@ -16,6 +16,7 @@ DEFAULTS = {
     # no injection, no scope or question routing, no dependency wake; tools and prompts no longer offer them.
     "info_layer": "on",
     "review_gate": True,             # done next=none is handed to a member with role "reviewer" first (evidence.py)
+    "stall_notice": True,            # a turn that ends with handoffs unreturned notifies the assigner (stall.py)
     "preset_tick": 2.0,             # seconds between checks of a running orchestration preset (preset.py)
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain

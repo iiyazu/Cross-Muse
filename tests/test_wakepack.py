@@ -239,6 +239,26 @@ def test_size_notice_once_per_session(make):
     assert h.q("select notified from sessions") == [{"notified": 1}]
 
 
+def test_wake_cost_is_one_context_not_cumulative(make):
+    """Defect B (#66: 'one wake now costs about 39315k'): per-step inputs each hold the whole context, so the
+    turn total is ~90x the context; a wake re-reads one context."""
+    from xmuse.adapters.base import TurnEnd, Usage
+    h = two(make, session_notice_tokens=1000)
+    with h.conn() as c:
+        chain = c.execute("insert into chains(thread_id, origin, max_wakes, max_tokens, created_at)"
+                          " values('#g', 'agent:claude-1', 5, 1000000, 0)").lastrowid
+        sess = c.execute("insert into sessions(agent_id, vendor_session, origin, state, created_at)"
+                         " values('claude-1', 'sess1', 'hub', 'current', 0)").lastrowid
+        turn = c.execute("insert into turns(agent_id, session_id, adapter, chain_id, state, started_at)"
+                         " values('claude-1', ?, 'claude', ?, 'running', 0)", (sess, chain)).lastrowid
+    u = Usage(input=39000000, cache_read=0, cache_write=0, output=315000, context=437000, calls=90, mode="chat")
+    h.hub.engine.call(lambda: h.hub.engine._on_end(TurnEnd(turn, "succeeded", "sess1", u)))
+    [n] = h.q("select thread_id, body from messages where body like '%session holds%'")
+    assert n["thread_id"] == "#g"
+    assert "about 437k tokens; one wake now costs about 437k" in n["body"]
+    assert "39315k" not in n["body"]
+
+
 def test_no_size_notice_below_threshold(make):
     h = two(make)
     h.plan_claude({})
