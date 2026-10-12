@@ -102,6 +102,12 @@ create table if not exists invites(          -- one-time invitation codes (/v1/a
   code text primary key, vendor text not null, role text not null default '', description text not null default '',
   name text, created_by text, created_at real not null, expires_at real not null, used_at real, used_by text);
 create table if not exists meta(key text primary key, value text not null);  -- view_version
+create table if not exists share_marks(      -- user DMs released for sharing (T3, share.py); target '' = to anyone
+  message_id integer not null, target text not null default '', created_at real not null,
+  primary key(message_id, target));
+create table if not exists share_hints(      -- T3: a user DM that may relate to a teammate's question, shown once to its holder
+  dm_id integer not null, question_id integer not null, holder text not null, asker text not null,
+  shown integer not null default 0, primary key(dm_id, question_id));
 """
 
 
@@ -127,7 +133,8 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("entries", "modules", "text"),
            ("messages", "stage", "text"),  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
            # D2: what a member is responsible for (shown to peers and in the sidebars); removed from the room
-           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0")]
+           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0"),
+           ("messages", "shared_from", "text")]  # T3: JSON {member, message_id} of a shared user DM (via "shared")
 
 
 def init(path) -> sqlite3.Connection:

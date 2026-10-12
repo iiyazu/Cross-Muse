@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 
-from . import align, db
+from . import align, db, share
 from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
 
@@ -158,6 +158,8 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
                          " values(?,?,?,?,?)", (mid, r, int(r in wake), state, db.now()))
         _to_coordinators(conn, mid, thread["id"], sender)
+        if kind in ("question", "handoff") and sender in roster:  # T3: hint a holder of a related user DM (no wake)
+            share.suggest(conn, mid, sender, " ".join([body, *map(str, (why or {}).values())]))
         if kind in DECLARE:
             eids = [align.declare(conn, sender, thread["id"], mid, kind, body, scope, supersedes, via)]
         elif kind == "handoff":  # one assignment per named peer (a DM names its peer)

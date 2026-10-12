@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from . import align, config, db, mail
+from . import align, config, db, mail, share
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
 
@@ -26,7 +26,7 @@ VENDORS = ("claude", "opencode", "dsh")
 TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
-ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align"}
+ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark"}
 
 
 class ApiError(Exception):
@@ -177,7 +177,8 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
             "select 1 from deliveries where message_id=? and recipient=? and wake=1", (m["id"], reader)).fetchone()))
     return {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
-            "at": m["created_at"], "for_me": for_me}
+            "at": m["created_at"], "for_me": for_me,
+            **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {})}
 
 
 def _thread_members(conn) -> dict[str, list[str]]:
@@ -222,7 +223,8 @@ def alignment(conn) -> list[dict]:
 
 def approvals(conn) -> list[dict]:
     out = []
-    for a in db.rows(conn.execute("select * from approvals where state='pending' order by created_at")):
+    for a in db.rows(conn.execute("select * from approvals where state='pending' and id not like 'share:%'"
+                                  " order by created_at")):
         res = a["resources"] or ""
         try:  # resources: the JSON list OpenCode asked about (commands, paths)
             summary = " ; ".join(map(str, json.loads(res))) if res.startswith("[") else res
@@ -239,7 +241,7 @@ def approvals(conn) -> list[dict]:
         out.append({"id": f"resume:{a['id']}", "kind": "resume", "member": a["id"],
                     "summary": f"{a['id']} is paused; approve to resume it", "detail": "", "risk": "normal",
                     "at": a["paused_until"] or a["created_at"]})
-    return out
+    return out + share.approvals(conn)
 
 
 def run_view(conn) -> dict | None:
