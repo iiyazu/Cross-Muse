@@ -10,7 +10,7 @@ the task; consequential actions still go through the agent's own permission prom
 import json
 from types import SimpleNamespace
 
-from . import align, db, share
+from . import align, db, dispatch, share
 from .config import HUMAN, alignment_on, info_on
 
 RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. "
@@ -22,7 +22,9 @@ RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user se
 def tag(m: dict, roster: dict) -> str:
     fam = roster[m["sender"]]["family"] if m["sender"] in roster else m["sender"]
     via = f' via="{m["via"]}"' if m.get("via") else ""
-    attrs = f'from="{m["sender"]}"{via} family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}" id="{m["id"]}"'
+    outcome = f' outcome="{m["outcome"]}"' if m.get("outcome") else ""  # a done's label (dispatch.py)
+    attrs = (f'from="{m["sender"]}"{via} family="{fam}" thread="{m["thread_id"]}" kind="{m["kind"]}"{outcome}'
+             f' id="{m["id"]}"')
     body = m["body"]
     if m.get("why"):
         why = json.loads(m["why"])
@@ -56,7 +58,7 @@ def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamesp
         " and d.read_at is null and d.state != 'canceled' order by m.id", (agent["id"],)))
     seen = align.watermark(conn, session_id) if session_id is not None else None
     x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=msgs, seen=seen, mode="none", tokens=0)
-    parts = [alignment(x)]
+    parts = [dispatch.identity(conn, agent["id"], True) if seen is None else "", alignment(x)]  # a new session: its role
     parts.append(share.hints(x))
     if msgs:
         lines, used = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0
@@ -77,14 +79,16 @@ def relay(x) -> str:
 
 
 def identity(x) -> str:
+    host = dispatch.identity(x.conn, x.agent["id"], x.fresh)  # the room's host: its job (T0), one line once told
     if not x.fresh:
-        return ""
+        return host
     a = x.agent
     peers = ", ".join(f"{p['id']} ({p['family']}{', ' + p['role'] if p['role'] else ''}"
                       f"{': ' + p['description'] if p.get('description') else ''})"  # what each one is responsible for
                       for p in x.roster.values() if p["id"] != a["id"])
     return (f"You are {a['id']} ({a['family']}{', ' + a['role'] if a['role'] else ''}) in workspace {x.ws}. "
-            f"Peers: {peers}; '{HUMAN}' is the user. Follow the xmuse-collab skill (see AGENTS.md).")
+            f"Peers: {peers}; '{HUMAN}' is the user. Follow the xmuse-collab skill (see AGENTS.md)."
+            + (f"\n{host}" if host else ""))
 
 
 def alignment(x) -> str:

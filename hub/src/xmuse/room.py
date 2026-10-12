@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from . import align, config, db, evidence, mail, share
+from . import align, config, db, dispatch, evidence, mail, share
 from . import threads as groups
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
@@ -28,7 +28,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark",
-        "member_add", "member_edit"}
+        "member_add", "member_edit", "wake_host"}
 ACTS |= groups.ACTS  # T2 private groups
 
 
@@ -104,7 +104,7 @@ def fingerprint(conn) -> tuple:
             one("select name, host from room"),
             one("select count(*), max(used_at) from invites"),
             one("select max(id), max(phase_at), group_concat(state) from preset_runs"),
-            one("select max(id) from preset_events"))
+            one("select max(id) from preset_events"), dispatch.fingerprint(conn))
 
 
 def stored_version(conn) -> int:
@@ -159,7 +159,8 @@ def members(conn, cfg: dict) -> list[dict]:
         out.append({"id": a["id"], "vendor": a["vendor"], "model": a["model"], "role": a["role"],
                     "description": a["description"], "status": _status(conn, a, online), "online": online,
                     "paused": bool(a["paused"]), "unread": _unread(conn, a["id"]), "tokens_hour": tokens,
-                    "tokens_hour_cap": int(cfg.get("agent_hourly_tokens") or 0)})
+                    "tokens_hour_cap": int(cfg.get("agent_hourly_tokens") or 0),
+                    "wakes_hour": dispatch.wakes_hour(conn, a, since)})
     return out
 
 
@@ -178,9 +179,10 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
     for_me = m["sender"] != reader and (
         reader in mentions or (m["thread_id"].startswith("dm:") and reader in to) or bool(conn.execute(
             "select 1 from deliveries where message_id=? and recipient=? and wake=1", (m["id"], reader)).fetchone()))
+    for_me = dispatch.for_me(conn, m, reader, for_me)  # a result held for the host's batch is not for it yet
     item = {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
-            "at": m["created_at"], "for_me": for_me,
+            "at": m["created_at"], "for_me": for_me, **dispatch.item(m),
             **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {})}
     if m["kind"] == "done":
         item.update(evidence.view_fields(conn, m["id"]))
@@ -292,7 +294,8 @@ def view(conn, cfg: dict, ws: Path, p: Principal, version: int) -> dict:
             "me": {"kind": p.kind, "id": p.reader},
             "members": members(conn, cfg), "threads": threads(conn, p.reader, restrict), "timeline": tl["items"],
             "timeline_cursor": {"oldest": tl["items"][0]["id"] if tl["items"] else None, "has_more": tl["has_more"]},
-            "alignment": alignment(conn, hidden), "approvals": pending, "run": run_view(conn)}
+            "alignment": alignment(conn, hidden), "approvals": pending, "run": run_view(conn),
+            "host_wait": dispatch.host_wait(conn, cfg, room["host"])}
 
 
 # ---- tokens, invitations ------------------------------------------------------------------------------------

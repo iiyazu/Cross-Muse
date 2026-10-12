@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, preset, registry, share, threads, wakepack
+from . import align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
 from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
@@ -121,7 +121,8 @@ class Hub:
                 sender, via = config.HUMAN, agent
             out = mail.send(conn, self.cfg, sender, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
-                            args.get("resolves"), args.get("depends_on"), via, new_members=args.get("members"))
+                            args.get("resolves"), args.get("depends_on"), via, new_members=args.get("members"),
+                            notify=args.get("notify"))
             self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
@@ -145,9 +146,8 @@ class Hub:
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
             out = mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"),
-                            evidence=args.get("evidence"), cfg=self.cfg)
-            if out.get("review"):  # the gate handed the work to a reviewer: wake it
-                self.engine.kick()
+                            outcome=args.get("outcome"), evidence=args.get("evidence"), cfg=self.cfg)
+            self.engine.kick()  # a result for the host, or a review handoff, may wake someone
             return out
         if name == "xmuse_share":
             out = share.request(conn, self.cfg, agent, args)
@@ -194,13 +194,14 @@ class Hub:
 
     def admin_send(self, body: dict):
         # `xmuse send` is the admin token, readable by any local process: recorded as the user's, but visibly via the CLI
-        out = mail.send(self.db(), self.cfg, config.HUMAN, body["to"], body["body"], body.get("kind", "message"),
-                        body.get("mentions"), body.get("why"), body.get("idem"), body.get("scope"), body.get("supersedes"),
-                        via=config.VIA_CLI)
+        out = mail.send(self.db(), self.cfg, config.HUMAN, body.get("to") or "#room", body["body"],
+                        body.get("kind", "message"), body.get("mentions"), body.get("why"), body.get("idem"),
+                        body.get("scope"), body.get("supersedes"), via=config.VIA_CLI)
         self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", []),
-                **({"pushed": out["pushed"]} if out.get("pushed") else {})}
+                **({"pushed": out["pushed"]} if out.get("pushed") else {}),
+                **({"routed_to": out["routed_to"]} if out.get("routed_to") else {})}
 
     def admin_stop(self, body: dict):
         return self.engine.call(self.engine.stop, body.get("agent"), body.get("thread"))
@@ -539,7 +540,7 @@ class Hub:
                                  e.code, e.message)
 
     def act_say(self, p: rooms.Principal, b: dict) -> dict:
-        to, text, mentions = b.get("to"), b.get("text"), b.get("mentions") or []
+        to, text, mentions = b.get("to") or "#room", b.get("text"), b.get("mentions") or []  # no to: the room (§8.4)
         if not isinstance(to, str) or not isinstance(text, str) or not text.strip() or not isinstance(mentions, list):
             raise rooms.ApiError(400, "bad_request", "say needs to (string), text (string), mentions (list)")
         sender, via = (p.member, None) if p.kind == "member" else (config.HUMAN, self._via(p))
@@ -553,7 +554,13 @@ class Hub:
         out = mail.send(self.db(), self.cfg, sender, to, text, "message", mentions, via=via)
         self.curator.kick(out["thread_id"])
         self.engine.kick()
-        return {"id": out["id"], "thread": out["thread_id"]}
+        return {"id": out["id"], "thread": out["thread_id"], **({"routed_to": out["routed_to"]} if out.get("routed_to")
+                                                                 else {})}
+
+    def act_wake_host(self, p: rooms.Principal, b: dict) -> dict:
+        n = dispatch.wake_host(self.db(), self.cfg)  # the host's held results go out now (§8.4)
+        self.engine.kick()
+        return {"ok": True, "released": n}
 
     def act_ack(self, p: rooms.Principal, b: dict) -> dict:
         ids = b.get("ids")

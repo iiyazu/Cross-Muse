@@ -74,6 +74,14 @@
      },
      "description": "entry ids (handoff only)"
     },
+    "notify": {
+     "type": "string",
+     "enum": [
+      "batch",
+      "now"
+     ],
+     "description": "handoff from the room's host only: now = wake me as soon as this task comes back; default batch (once all handed-out tasks are back)"
+    },
     "on_behalf_of": {
      "type": "string",
      "enum": [
@@ -213,6 +221,16 @@
     "next": {
      "type": "string",
      "description": "peer id or 'human' who must act next, or 'none' if the work is finished"
+    },
+    "outcome": {
+     "type": "string",
+     "enum": [
+      "completed",
+      "needs_alignment",
+      "blocked",
+      "progress"
+     ],
+     "description": "default completed (done as asked, nothing new to agree on); needs_alignment: a contract, convention or decision must change or an assumption affects others; blocked: you cannot go on, or checks fail; progress: an interim report"
     },
     "stage": {
      "type": "string",
