@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -182,14 +183,53 @@ def check_key(given) -> bool:
 
 
 _QUOTES = re.compile(r"[\"'\\]")
+_SEARCH = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr", "select-string"}
+
+
+def _names(text: str) -> bool:
+    """The literal name (any case) or a glob word that would match it (`side*`, `*.key`)."""
+    if KEY_NAME in text:
+        return True
+    globs = (w for w in re.split(r"[\s/;|&<>()=:,]+", text) if any(ch in w for ch in "*?["))
+    # at least 3 literal characters, so a bare `*` (grep foo *) is not taken for an attempt
+    return any(len(re.sub(r"[*?\[\]]", "", w)) >= 3 and fnmatch.fnmatchcase(KEY_NAME, w) for w in globs)
+
+
+def _operands(cmd: str) -> list[str] | None:
+    """The words of each simple command, minus a search tool's pattern (`grep -n "sidebar.key" src/x.py` searches
+    source for the name, it does not open the file). None when the shell syntax does not parse."""
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        toks = list(lex)
+    except ValueError:
+        return None
+    out, words = [], []
+    for t in toks + [";"]:
+        if t and all(ch in "();<>|&" for ch in t):
+            while words and re.fullmatch(r"\w+=.*", words[0]):  # env prefixes
+                words.pop(0)
+            prog = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+            args = words[2:] if prog == "git" and words[1:2] == ["grep"] else words[1:]
+            if prog in _SEARCH or (prog == "git" and words[1:2] == ["grep"]):
+                if any(a in ("-e", "--regexp") for a in args):
+                    args = [a for i, a in enumerate(args) if i == 0 or args[i - 1] not in ("-e", "--regexp")]
+                else:
+                    first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
+                    args = [a for i, a in enumerate(args) if i != first]
+                words = words[:1] + args
+            out += words
+            words = []
+        else:
+            words.append(t)
+    return out
 
 
 def mentions_key(cmd: str) -> bool:
-    """A shell command that names the key file: the literal name (quotes and backslashes inside it removed, any
-    case) or a glob word that would match it (`side*`, `*.key`). Only the same-user nudge of section 8.1."""
-    c = _QUOTES.sub("", str(cmd)).lower()
-    if KEY_NAME in c:
-        return True
-    globs = (w for w in re.split(r"[\s/;|&<>()=:,]+", c) if any(ch in w for ch in "*?["))
-    # at least 3 literal characters, so a bare `*` (grep foo *) is not taken for an attempt
-    return any(len(re.sub(r"[*?\[\]]", "", w)) >= 3 and fnmatch.fnmatchcase(KEY_NAME, w) for w in globs)
+    """A shell command that names the key file as something it would open: the literal name (quotes and backslashes
+    inside it removed, any case) or a glob word that would match it. A search tool's pattern does not count. Only the
+    same-user nudge of section 8.1."""
+    words = _operands(str(cmd))
+    if words is None:  # unparseable: the conservative reading of the whole text
+        return _names(_QUOTES.sub("", str(cmd)).lower())
+    return any(_names(w.lower()) for w in words)
