@@ -257,6 +257,9 @@ def test_done_records_the_check_and_the_view_shows_it(make):
     running_turn(h, "dev", lines=CLAUDE)
     done(h, "dev", summary="again", evidence=[{"kind": "test", "ref": "pytest tests/test_b.py", "result": "passed"},
                                               {"kind": "diff", "ref": "src/zzz.py"}])
+    with db.tx(conn):  # one final done per turn: the third report is a turn of its own
+        conn.execute("update turns set state='succeeded'")
+    running_turn(h, "dev", lines=CLAUDE)
     done(h, "dev", summary="nothing to show")
     bad, none = [r["id"] for r in h.q("select id from messages where kind='done' order by id")][1:]
     st, problems = evidence.status(conn, bad)
