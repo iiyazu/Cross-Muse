@@ -255,3 +255,57 @@
   - 消息上记 `routed_to: [..]` 和 `route_reason`，其他人只收被动投递；
   - 全部没匹配上时照旧，唤醒所有人。
 - **用户**不点名的话，按 8.4 交给主控，不走这条。
+
+### 8.8 v0.1 实现说明（2026-10-12，topo/integrate；与上文不一致时以本节为准）
+
+**8.1 本机加入**
+- 成员令牌调用 `/v1/join`（带不带 code 都算）和 `/v1/rooms`，返回 `403 member_forbidden`。这项检查在核对 key 之前。
+- `dir` 和 `room_id` 至少要给一个；两个都给，必须都对得上。
+  - `room_id` 对不上：返回 `404 unknown_room`。
+  - 两个都没给：返回 `400 bad_request`。
+  - 房间还没建：返回 `404 no_room`。例外是工作区里已经有桌面成员，这时沿用 v0 的规则，自动建房间。
+- 没有房间时，`GET /v1/rooms` 返回 `{"room": null, "members": [...]}`。
+- sidebar.key 只能防止 agent 无意中读到它，防不住刻意绕过：agent 和用户同一个账户，能读用户能读的任何文件。真正的边界是"agent 拿不到侧栏插件的进程环境"，以及 shell 策略会拒绝引用 sidebar.key 的命令（只对 OpenCode 生效）。
+- WSL 里的 hub 写 `~/.local/state/xmuse`，Windows 侧栏读 `%LOCALAPPDATA%\xmuse`，两边互相看不到对方的登记表。Windows 原生 hub 没有这个问题。
+
+**8.2 新增的 act**
+- `member_add` 加 Claude 成员时，同一个目录只能有一个 Claude（沿用 `xmuse agent add` 的限制）。工作区根目录已经有 Claude 成员时，返回 `400 cannot_add`。
+
+**8.3 小群**
+- 成员令牌能看到：`#room`、所有公开群、自己所在的线程（自己的私信、私有群）。看不到别人的私信和别人的私有群。
+  - 公开群算作人人在内：一个成员加入时，已有公开群的 `thread_members` 里不会有它，所以公开群不按成员表过滤。
+- 成员令牌看到的 `alignment[]` 和 `approvals[]`，同样去掉作用范围是别人私有群的条目。
+- 新增两个错误码：
+  - `thread_remove` 移除的人不在群里：`400 not_in_thread`；
+  - 移除用户本人，或者对私信线程做 add、remove：`400 invalid_arguments`。
+- `thread_new` 用在 `#room` 上返回 `409 thread_exists`。
+- `thread_new` 也发 notice，否则视图版本不变，侧栏刷不出新群。
+- 成员被移除或自己退出后，它在该线程里还没取走的投递改为 `canceled`。
+
+**8.4 主控分派**
+- 执行者手上还有主控未收回的 handoff 时，它发给主控的普通消息（kind 为 message）跟它这一批结果一起压住，不单独唤醒主控。question 和其他 kind 不压。
+- 路由只处理 kind 为 message 的话；私有群里不点名的话不路由给主控。
+- `align.declare` 不接受 `member:<自己>` 这种 scope，所以 done 里只要带了 decision、assumption 或 question，就一律改判为 `needs_alignment`。
+- 证据改判只针对 completed 和 needs_alignment，progress 不改判。
+- 返回值：
+  - `wake_host` 返回 `{"ok": true, "released": n}`；
+  - timeline 里的 done，只在被 hub 改判过时带 `outcome_reason`；
+  - xmuse_done 的回复，只在显式填了 outcome 或被改判时才带 `outcome`。
+- `members[].wakes_hour`：hub 起回合的成员，数近 1 小时的回合数；桌面成员和前台成员，数近 1 小时内唤醒投递到达的不同秒数。
+- 主控转让后，未收回的派活不会转给新主控。
+
+**8.5 证据**
+- 送审：hub 以 `kind: "handoff"` 私信审查者（线程 `dm:hub+<审查者>`），正文以 `REVIEW REQUEST from the hub` 开头。没有新增 kind review。信息层关闭时不送审。
+- 只有改判后结果仍是 `completed` 的 done 才送审。被改判成 blocked 的不送审，直接立即唤醒主控。
+- 房间里有多个审查者时，取 id 最小的一个。
+- 核对时机是 done 的当下，不等回合结束。
+- polled 成员（桌面主控、dsh 前台）一律记为 `unverified` 加 `transcript unavailable`，不改判。
+- OpenCode 代码模式（execute）里跑的命令没有解析，会被判为"没跑过"。
+
+**8.6 私信分享**
+- 工具通道一律返回 HTTP 200，错误放在 `error.code` 里，比如 `not_shareable`。act `share_mark` 返回真正的 HTTP 403。
+- 分享出去的消息，发送者是申请人，不是 human，也不是 hub。正文第一行写明来源，`via` 是 `shared`，`shared_from.member` 是申请人。
+- `to` 是线程时，必须是已有的线程，并且申请人在里面。
+- 批准和拒绝都会发 hub notice，并给申请人一条被动投递。
+- 成员令牌的视图里看不到 kind 为 share 的审批，因为审批里带有私信摘录。
+- 建议规则只比较"像代码"的标识符：3 个字符以上，含下划线、数字、驼峰或全大写；也比较 3 位以上的数字。提示只出现在唤醒包里，前台 dsh 成员（relay_poll）暂时看不到。
