@@ -144,7 +144,11 @@ class Hub:
         if name == "xmuse_context":
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
-            return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"))
+            out = mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"),
+                            evidence=args.get("evidence"), cfg=self.cfg)
+            if out.get("review"):  # the gate handed the work to a reviewer: wake it
+                self.engine.kick()
+            return out
         if name == "xmuse_share":
             out = share.request(conn, self.cfg, agent, args)
             self.engine.kick()

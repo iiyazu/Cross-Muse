@@ -257,6 +257,36 @@
        }
       }
      }
+    },
+    "evidence": {
+     "type": "array",
+     "description": "what backs your claim of success; the hub checks it against this turn's log (a test or command must have run here, a diff file must have been written here)",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "ref"
+      ],
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "test",
+         "diff",
+         "command"
+        ]
+       },
+       "ref": {
+        "type": "string",
+        "description": "the command line (test, command) or the file path (diff)"
+       },
+       "result": {
+        "type": "string",
+        "description": "the result you claim, e.g. 'passed', 'exit 0'"
+       }
+      }
+     }
     }
    }
   }

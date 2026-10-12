@@ -9,6 +9,7 @@ import json
 import re
 
 from . import align, db, share, threads
+from . import evidence as ev
 from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
 
@@ -287,12 +288,17 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
             "threads": [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]}
 
 
-def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None, stage: str | None = None) -> dict:
+def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None, stage: str | None = None,
+         evidence: list | None = None, cfg: dict | None = None) -> dict:
     """Exit check: record it on the running turn and post it to the chain's thread (no wake). `stage`: the
-    plan-split-integrate phase this ends (preset.py reads it from messages.stage)."""
+    plan-split-integrate phase this ends (preset.py reads it from messages.stage). `evidence` is checked against the
+    turn's log and stored with the message; with `cfg` (review_gate on), a finished task (next none) is handed to the
+    room's reviewer (evidence.py)."""
     turn = running_turn(conn, agent_id)
-    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, declares, stage]).encode())
-                                   .hexdigest())
+    evidence = evidence or None
+    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps(
+        [summary, nxt, declares, stage] + ([evidence] if evidence else [])).encode()).hexdigest())
+    verdict = ev.check(conn, turn, evidence) if evidence else None
     with db.tx(conn):
         dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
                                           (agent_id, key)))
@@ -323,7 +329,12 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
                 for d in declares or []]
         if eids:
             align.release(conn)
-    return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {})}
+        if verdict:
+            ev.record(conn, mid, evidence, *verdict)
+    reviewer = cfg and ev.request_review(conn, cfg, agent_id, mid, summary, nxt)
+    return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {}),
+            **({"evidence_status": verdict[0], "evidence_problems": verdict[1]} if verdict else {}),
+            **({"review": reviewer} if reviewer else {})}
 
 
 def _public(r: dict) -> dict:
