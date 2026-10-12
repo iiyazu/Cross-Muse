@@ -19,7 +19,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { SIDEBAR_PREFIX, createSidebar, createTokenStore } from './sidebar-host.js'
 
 export const name = 'xmuse'
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.0'
 // Cordis refuses ctx.<service> access for services not declared here. Same set dsh-schedule declares,
 // plus webServer for the sidebar drawer routes (registered via ctx.inject, see D0 probe).
 export const inject = ['commands', 'agents', 'sessions', 'tools', 'sessionController', 'webServer']
@@ -123,6 +123,7 @@ export function apply(ctx, config) {
   const sidebarFile = typeof cfg.sidebarFile === 'string' && cfg.sidebarFile
     ? cfg.sidebarFile : path.join(HERE, 'sidebar.json')
   const roomDir = typeof cfg.roomDir === 'string' && cfg.roomDir ? cfg.roomDir : process.cwd()
+  const registryDir = typeof cfg.registryDir === 'string' && cfg.registryDir ? cfg.registryDir : (process.env.XMUSE_REGISTRY_DIR || '')
   const pollWaitS = Number.isFinite(cfg.pollWaitS) ? cfg.pollWaitS : POLL_WAIT_S
   const backoffMin = Number.isFinite(cfg.backoffMinMs) ? cfg.backoffMinMs : BACKOFF_MIN_MS
   const backoffMax = Number.isFinite(cfg.backoffMaxMs) ? cfg.backoffMaxMs : BACKOFF_MAX_MS
@@ -147,6 +148,7 @@ export function apply(ctx, config) {
     clientFile: path.join(HERE, 'client.js'),
     log,
     getService: (n) => { try { return ctx.get(n) } catch { return undefined } },
+    registryDir,
   })
 
   // ---- persistence (bundle dir, JSON) ----
