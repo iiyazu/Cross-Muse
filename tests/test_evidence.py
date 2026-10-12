@@ -375,7 +375,7 @@ def test_review_gate_off_changes_nothing(make):
     roster(h, rev="reviewer")
     before = h.q("select count(*) n from messages")[0]["n"]
     out = done(h, "dev")
-    assert out == {"recorded": True, "thread": "dm:dev+human"}
+    assert out.pop("note").startswith("Recorded.") and out == {"recorded": True, "thread": "dm:dev+human"}
     assert h.q("select count(*) n from messages")[0]["n"] == before + 1 and handoffs(h) == []
     assert h.q("select count(*) n from entries")[0]["n"] == 0
 

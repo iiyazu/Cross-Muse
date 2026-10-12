@@ -58,5 +58,22 @@ def test_done_resent_in_one_turn_is_one_done(make):
                   dec + [{"kind": "decision", "statement": "errors return None", "scope": "global"}], cfg=cfg)
     assert c["duplicate"] is True and len(c["entries"]) == 2  # only the new declare was added
     assert len(h.q("select id from entries where kind='decision'")) == 2
-    d = mail.done(conn, "claude-1", "a second report", "human", None, cfg=cfg)  # a different report still posts
-    assert "duplicate" not in d
+    d = mail.done(conn, "claude-1", "reworded report", "human", None, cfg=cfg)  # reworded: still the same done
+    assert d["duplicate"] is True and "do not call xmuse_done again" in d["note"]
+    p1 = mail.done(conn, "claude-1", "half way", "none", None, outcome="progress", cfg=cfg)
+    p2 = mail.done(conn, "claude-1", "three quarters", "none", None, outcome="progress", cfg=cfg)
+    assert "duplicate" not in p1 and "duplicate" not in p2  # interim progress reports are one per text
+    assert len(h.q("select id from messages where sender='claude-1' and kind='done'")) == 3
+
+
+def test_done_reply_says_a_relabel_is_not_an_error(make):
+    """agy read the hub's relabel (a member's global decision goes to review) as a failure and sent its done again."""
+    h = make()
+    conn, cfg = h.conn(), h.hub.cfg
+    with db.tx(conn):
+        conn.execute("update agents set paused=1 where id='claude-1'")
+        conn.execute("insert into turns(agent_id, adapter, state, started_at) values('claude-1','claude',"
+                     "'running',?)", (db.now(),))
+    r = mail.done(conn, "claude-1", "wrote it", "human",
+                  [{"kind": "decision", "statement": "errors return None", "scope": "global"}], cfg=cfg)
+    assert r["outcome_by"] == "hub" and "not an error" in r["note"] and "do not call xmuse_done again" in r["note"]

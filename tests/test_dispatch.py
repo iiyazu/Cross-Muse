@@ -145,7 +145,7 @@ def test_upgrade_rules():
 def test_done_records_the_label(make):
     h = team(make)
     r = done(h, "e1", next="none")
-    assert r == {"recorded": True, "thread": "dm:e1+human"}  # the default left alone: the reply it always had
+    assert r.pop("note").startswith("Recorded.") and r == {"recorded": True, "thread": "dm:e1+human"}  # the default left alone: the reply it always had
     m = last_done(h, "e1")
     assert (m["outcome"], m["outcome_by"], m["outcome_reason"]) == ("completed", "member", None)
     r = done(h, "e1", next="none", outcome="progress")
