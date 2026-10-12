@@ -28,7 +28,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark",
-        "member_add", "member_edit", "wake_host", "promote", "read"}
+        "member_add", "member_edit", "wake_host", "promote", "read", "brief"}
 ACTS |= groups.ACTS  # T2 private groups
 
 

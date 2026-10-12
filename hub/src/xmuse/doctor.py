@@ -72,26 +72,46 @@ def node_env() -> list[Check]:
     return out
 
 
+def dsh_candidate(cfg: dict) -> Path:
+    """The dsh binary path before checking it exists (shared with agents.scan). May raise host.HostError."""
+    return Path(cfg.get("dsh_exe") or host.win_home() / "AppData/Local/Programs/DeepSeek Harness"
+                / "DeepSeek Harness.exe")
+
+
+def cli_paths(cfg: dict) -> dict[str, str | None]:
+    """CLI paths per vendor (shared with agents.scan): lookup only, no checks."""
+    try:
+        dsh_exe = dsh_candidate(cfg)
+        dsh = str(dsh_exe) if dsh_exe.exists() else None
+    except host.HostError:
+        dsh = None
+    oc = shutil.which("opencode") or (str(Path.home() / ".opencode/bin/opencode")
+                                      if (Path.home() / ".opencode/bin/opencode").exists() else None)
+    return {"claude": cfg.get("claude_bin") or shutil.which("claude"), "opencode": oc, "dsh": dsh}
+
+
 def vendor_clis(vendors: set[str], cfg: dict) -> list[Check]:
     """Each vendor CLI: FAIL when a configured agent needs it, warn when it is merely absent."""
     out = []
-    claude = cfg.get("claude_bin") or shutil.which("claude")
-    oc = shutil.which("opencode") or (str(Path.home() / ".opencode/bin/opencode")
-                                     if (Path.home() / ".opencode/bin/opencode").exists() else None)
-    for name, found, how in (("claude", claude, "install Claude Code (https://docs.anthropic.com/claude-code)"),
-                             ("opencode", oc, "install OpenCode (https://opencode.ai)")):
+    paths = cli_paths(cfg)
+    for name, how in (("claude", "install Claude Code (https://docs.anthropic.com/claude-code)"),
+                      ("opencode", "install OpenCode (https://opencode.ai)")):
+        found = paths[name]
         if found:
             out.append(Check("ok", f"{name} cli", found))
         else:
             out.append(Check("FAIL" if name in vendors else "warn", f"{name} cli", "not found", how))
     if "dsh" in vendors or cfg.get("dsh_exe"):
-        try:
-            exe = Path(cfg.get("dsh_exe") or host.win_home() / "AppData/Local/Programs/DeepSeek Harness"
-                       / "DeepSeek Harness.exe")
-            out.append(Check("ok" if exe.exists() else "FAIL", "dsh", str(exe), "" if exe.exists() else
-                             "install DeepSeek Harness on Windows, or set dsh_exe in the hub config.json"))
-        except host.HostError as e:
-            out.append(Check("FAIL", "dsh", str(e), "set XMUSE_WIN_HOME or dsh_exe"))
+        if paths["dsh"] is not None:
+            out.append(Check("ok", "dsh", paths["dsh"], ""))
+        else:
+            try:
+                exe = str(dsh_candidate(cfg))
+            except host.HostError as e:
+                out.append(Check("FAIL", "dsh", str(e), "set XMUSE_WIN_HOME or dsh_exe"))
+            else:
+                out.append(Check("FAIL", "dsh", exe,
+                                 "install DeepSeek Harness on Windows, or set dsh_exe in the hub config.json"))
     return out
 
 

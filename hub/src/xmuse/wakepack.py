@@ -43,7 +43,7 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                         roster={a["id"]: a for a in db.rows(conn.execute("select * from agents where removed=0"))},
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
-    parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive, share.hints)) if p]
+    parts = [p for p in (f(x) for f in (relay, identity, brief, wip, alignment, messages, passive, share.hints)) if p]
     v = align.view(conn, {**cfg, "_mo": None}, agent["id"])  # entries in this agent's view now (curve data; recorded even when off)
     return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq,
                            view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
@@ -103,6 +103,52 @@ def alignment(x) -> str:
     if not text:
         x.mode = "none"
     return text
+
+
+def brief(x) -> str:
+    """T8a2 H12: the project brief for a fresh session (before the alignment snapshot, never budgeted)."""
+    if not x.fresh:
+        return ""
+    r = x.conn.execute("select statement from entries where kind='convention' and scope='global'"
+                       " and status='active' and statement like '[brief]%' order by id desc limit 1").fetchone()
+    return f"Project brief:\n{r[0]}" if r else ""
+
+
+def wip(x) -> str:
+    """T8a2 H12: who else is here and what they hold, for a fresh session. Whole section caps at 1500 tokens;
+    over that, members drop off the back end with an …(N more) count."""
+    if not x.fresh:
+        return ""
+    blocks = []
+    for m in sorted(x.roster.values(), key=lambda a: a["id"]):
+        if m["id"] == x.agent["id"]:
+            continue
+        status = "paused" if m.get("paused") else (
+            "running" if x.conn.execute("select 1 from turns where agent_id=? and state='running'",
+                                        (m["id"],)).fetchone() else "idle")
+        lines = [f"- {m['id']}: {status}"]
+        work = ["#%d %s" % (d["message_id"], _short(db.row(x.conn.execute(
+            "select * from messages where id=?", (d["message_id"],)))["body"], 80))
+            for d in db.rows(x.conn.execute(
+                "select message_id from dispatches where member=? and returned_at is null"
+                " order by id limit 3", (m["id"],)))]
+        work += [f"E{e['id']} {e['statement'][:80]}" for e in db.rows(x.conn.execute(
+            "select id, statement from entries where kind='assignment' and assignee=? and status='active'"
+            " order by id", (m["id"],)))]
+        lines += [f"  {w}" for w in work] if work else ["  no open work"]
+        blocks.append(lines)
+    if not blocks:
+        return ""
+    out = ["Work in progress:"]
+    dropped = 0
+    for lines in blocks:
+        out += lines
+        while tokens("\n".join(out)) > 1500 and len(out) > 2:
+            out.pop()
+            dropped += 1
+    if dropped:
+        out.append(f"…({dropped} more)")
+    return "\n".join(out)
 
 
 def _line(e: dict) -> str:
