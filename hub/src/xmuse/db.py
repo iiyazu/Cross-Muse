@@ -127,7 +127,8 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("entries", "modules", "text"),
            ("messages", "stage", "text"),  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
            # D2: what a member is responsible for (shown to peers and in the sidebars); removed from the room
-           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0")]
+           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0"),
+           ("threads", "private", "integer not null default 0")]  # T2: a private group is for its members only
 
 
 def init(path) -> sqlite3.Connection:

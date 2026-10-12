@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, preset, wakepack
+from . import align, config, db, mail, memoryos, peer, preset, threads, wakepack
 from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
@@ -120,7 +120,7 @@ class Hub:
                 sender, via = config.HUMAN, agent
             out = mail.send(conn, self.cfg, sender, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
-                            args.get("resolves"), args.get("depends_on"), via)
+                            args.get("resolves"), args.get("depends_on"), via, new_members=args.get("members"))
             self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
@@ -134,6 +134,8 @@ class Hub:
             return {"acked": mail.ack(conn, agent, args["ids"], args.get("outcome"))}
         if name == "xmuse_thread":
             return mail.thread(conn, agent, args["id"], args.get("query"), args.get("limit", 20))
+        if name == "xmuse_leave_thread":
+            return threads.leave(conn, agent, args["thread"])
         if name == "xmuse_context" and not config.alignment_on(self.cfg):  # M1 behaviour: recent messages only
             tids = [args["topic"]] if args.get("topic") else [r[0] for r in conn.execute(
                 "select thread_id from thread_members where member=? order by 1", (agent,))]
@@ -466,7 +468,8 @@ class Hub:
             return 200, rooms.view(conn, self.cfg, self.ws, p, v)
         if path == "/v1/timeline":
             before = query.get("before")
-            return 200, rooms.timeline(conn, p.reader, int(before) if before else None, int(query.get("limit") or 50))
+            return 200, rooms.timeline(conn, p.reader, int(before) if before else None, int(query.get("limit") or 50),
+                                       restrict=p.kind == "member")
         if path == "/v1/act":
             return 200, self.act(p, body)
         if p.kind != "member":
@@ -510,7 +513,8 @@ class Hub:
         try:
             return getattr(self, "act_" + name)(p, body)
         except ToolError as e:
-            raise rooms.ApiError(404 if e.code.startswith("unknown_") else 400, e.code, e.message)
+            raise rooms.ApiError(threads.STATUS.get(e.code) or (404 if e.code.startswith("unknown_") else 400),
+                                 e.code, e.message)
 
     def act_say(self, p: rooms.Principal, b: dict) -> dict:
         to, text, mentions = b.get("to"), b.get("text"), b.get("mentions") or []
@@ -594,6 +598,15 @@ class Hub:
             conn.execute("update room set host=?", (a["id"],))
         rooms.notice(conn, f"{a['id']} now hosts the room")
         return {"ok": True}
+
+    def act_thread_new(self, p: rooms.Principal, b: dict) -> dict:
+        return threads.act_new(self.db(), b)
+
+    def act_thread_add(self, p: rooms.Principal, b: dict) -> dict:
+        return threads.act_add(self.db(), b)
+
+    def act_thread_remove(self, p: rooms.Principal, b: dict) -> dict:
+        return threads.act_remove(self.db(), b)
 
     def act_align(self, p: rooms.Principal, b: dict) -> dict:
         if b.get("decision") not in ("confirm", "reject"):
