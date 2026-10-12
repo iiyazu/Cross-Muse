@@ -17,6 +17,31 @@ def test_fresh_pack_carries_the_brief_once(make):
     assert "Build a small parser." in snap
 
 
+def test_replacing_a_decision_asks_the_author_of_a_restatement_to_check_it(make):
+    """The probe case: the user's E6-like decision is restated by a member (E8-like); when the user replaces it,
+    that member's next delta names its own entry; another member's does not. Lines say who wrote each entry."""
+    from xmuse import align, wakepack
+    h = make(OC)
+    open_room(h, vendor="claude")
+    conn, cfg = h.conn(), h.hub.cfg
+    with db.tx(conn):
+        old = align.declare(conn, "human", "#room", 1, "decision", "bad input raises ValueError", "global")
+        mine = align.declare(conn, "opencode-1", "#room", 2, "decision", "parse() raises ValueError on bad input",
+                             "global")
+        other = align.declare(conn, "opencode-1", "#room", 3, "decision", "a note for one thread only")
+    since = align.current_seq(conn)
+    with db.tx(conn):
+        new = align.declare(conn, "human", "#room", 4, "decision", "bad input returns None", supersedes=f"E{old}")
+    d = wakepack.delta(conn, cfg, "opencode-1", since)
+    assert f"+ E{new} [decision] bad input returns None (refs #4) · user" in d
+    assert f"superseded E{old} (by E{new})" in d
+    assert f"your E{mine} is in the same scope" in d and f"supersedes: E{mine}" in d
+    assert f"E{other} " not in d  # another scope (its thread), not asked about
+    assert "your E" not in wakepack.delta(conn, cfg, "lead", since)  # lead wrote nothing there
+    snap = wakepack.snapshot(conn, cfg, "lead")
+    assert "prevails" in snap and f"E{mine} [decision] parse() raises ValueError on bad input (refs #2) · opencode-1" in snap
+
+
 def test_done_resent_in_one_turn_is_one_done(make):
     h = make()
     conn, cfg = h.conn(), h.hub.cfg
