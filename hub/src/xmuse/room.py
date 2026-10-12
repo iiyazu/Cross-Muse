@@ -183,7 +183,9 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
     item = {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
             "at": m["created_at"], "for_me": for_me, **dispatch.item(m),
-            **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {})}
+            **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {}),
+            **({"routed_to": json.loads(m["route_to"])} if m.get("route_to") else {}),
+            **({"route_reason": m["route_reason"]} if m.get("route_reason") else {})}
     if m["kind"] == "done":
         item.update(evidence.view_fields(conn, m["id"]))
     return item

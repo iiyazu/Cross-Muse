@@ -148,7 +148,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("threads", "private", "integer not null default 0"),  # T2: a private group is for its members only
            ("messages", "shared_from", "text"),  # T3: JSON {member, message_id} of a shared user DM (via "shared")
            # T0 outcome labels on done messages: the label in effect, member | hub (upgraded), why the hub upgraded it
-           ("messages", "outcome", "text"), ("messages", "outcome_by", "text"), ("messages", "outcome_reason", "text")]
+           ("messages", "outcome", "text"), ("messages", "outcome_by", "text"), ("messages", "outcome_reason", "text"),
+           # T4 §8.7: duty-routed question (column is route_to: dispatch's routed_to return field keeps its name)
+           ("messages", "route_to", "text"), ("messages", "route_reason", "text")]
 
 
 def init(path) -> sqlite3.Connection:

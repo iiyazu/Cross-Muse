@@ -128,7 +128,7 @@ class Hub:
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
                     **({"pushed": out["pushed"]} if out.get("pushed") else {}),
                     **({"entries": out["entries"]} if out.get("entries") else {}),
-                    **{k: out[k] for k in ("blocked", "released") if out.get(k)},
+                    **{k: out[k] for k in ("blocked", "released", "routed_to") if out.get(k)},
                     **({"duplicate": True} if out.get("duplicate") else {})}
         if name == "xmuse_inbox":
             return mail.inbox(conn, agent, args.get("unread_only", True))
