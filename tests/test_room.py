@@ -9,10 +9,10 @@ import urllib.request
 from test_trust import OC, held_approval
 
 
-def call(h, method, path, body=None, token=None, session=None, timeout=40):
+def call(h, method, path, body=None, token=None, session=None, timeout=40, key=None):
     port = json.loads((h.state / "hub.json").read_text(encoding="utf-8"))["port"]
     headers = {"content-type": "application/json", **({"authorization": f"Bearer {token}"} if token else {}),
-               **({"x-xmuse-session": session} if session else {})}
+               **({"x-xmuse-session": session} if session else {}), **({"x-xmuse-sidebar": key} if key else {})}
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method, headers=headers,
                                  data=json.dumps(body).encode() if body is not None else None)
     try:
@@ -25,7 +25,7 @@ def call(h, method, path, body=None, token=None, session=None, timeout=40):
 
 def open_room(h, vendor="claude", member_id="lead", session="S-lead", **kw):
     st, out = call(h, "POST", "/v1/rooms", {"dir": str(h.ws), "name": "dev", "vendor": vendor, "session_id": session,
-                                            "member_id": member_id, **kw})
+                                            "member_id": member_id, **kw}, key=h.key())
     assert st == 200, out
     return out
 
@@ -42,13 +42,13 @@ def view(h, token, session=None, since=0, wait=0):
 
 def test_rooms_creates_the_host_with_both_tokens(make):
     h = make()
-    st, out = call(h, "POST", "/v1/rooms", {"dir": "/elsewhere", "vendor": "claude", "session_id": "S"})
+    st, out = call(h, "POST", "/v1/rooms", {"dir": "/elsewhere", "vendor": "claude", "session_id": "S"}, key=h.key())
     assert st == 400 and out["error"] == "wrong_dir"
     room = open_room(h, description="plans and reviews")
     assert room["member_id"] == "lead" and room["room"]["host"] == "lead" and room["room"]["name"] == "dev"
     mt, ot = room["member_token"], room["operator_token"]
     assert mt != ot and mt.startswith("xmt_") and ot.startswith("xmo_")
-    st, out = call(h, "POST", "/v1/rooms", {"dir": str(h.ws), "vendor": "claude", "session_id": "S2"})
+    st, out = call(h, "POST", "/v1/rooms", {"dir": str(h.ws), "vendor": "claude", "session_id": "S2"}, key=h.key())
     assert st == 409 and out["error"] == "room_exists"
     st, v = view(h, mt, "S-lead")
     assert st == 200 and v["me"] == {"kind": "member", "id": "lead"} and v["room"]["host"] == "lead"
