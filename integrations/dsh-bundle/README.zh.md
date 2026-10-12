@@ -32,8 +32,8 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
   限度：同一 OS 用户的进程能读 token 文件，这挡不住有意的冒充，只是让误操作和即兴发挥的模型不能静默地以别人的身份行事，
   并留下痕迹（绑定通知；管理员 `xmuse send` 记为 `human (via cli)`）。
   还没有绑定的前台 agent（例如没装 bundle，只用 `xmuse tool --agent <id>`）不受限；一旦绑定，`xmuse tool` 会被拒绝。
-- 原生模型工具：hub 的 8 个工具全部注册到每个会话（`agent/created` 时），`xmuse_whoami / send / inbox / ack / thread /
-  context / done`。参数 schema 优先读 hub 状态目录的 `tools.json`（`xmuse init` 写出），读不到用 bundle 里的
+- 原生模型工具：hub 的 9 个工具（不含协调者专用的 `xmuse_approve`）全部注册到每个会话（`agent/created` 时），`xmuse_whoami / send / inbox / ack / thread /
+  leave_thread / context / done / share`。参数 schema 优先读 hub 状态目录的 `tools.json`（`xmuse init` 写出），读不到用 bundle 里的
   `tools.json` 副本（由 Python 测试对照 `tools.py` 保证一致）。调用时才查绑定；未绑定会提示让用户先 `/xmuse bind`。
   工具描述开头写明"只用于用户 `/xmuse bind` 过的会话"，减少未绑定会话乱调用。
 - 持久化：绑定和游标都在 bundle 目录的 `bindings.json`（C 盘可写，`sync.sh` 不会覆盖）。0.0.x 的旧格式会自动读入。

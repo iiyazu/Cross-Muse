@@ -10,7 +10,7 @@ the task; consequential actions still go through the agent's own permission prom
 import json
 from types import SimpleNamespace
 
-from . import align, db
+from . import align, db, share
 from .config import HUMAN, alignment_on, info_on
 
 RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. "
@@ -41,7 +41,7 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                         roster={a["id"]: a for a in db.rows(conn.execute("select * from agents where removed=0"))},
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
-    parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive)) if p]
+    parts = [p for p in (f(x) for f in (relay, identity, alignment, messages, passive, share.hints)) if p]
     v = align.view(conn, {**cfg, "_mo": None}, agent["id"])  # entries in this agent's view now (curve data; recorded even when off)
     return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq,
                            view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
@@ -57,6 +57,7 @@ def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamesp
     seen = align.watermark(conn, session_id) if session_id is not None else None
     x = SimpleNamespace(conn=conn, cfg=cfg, agent=agent, msgs=msgs, seen=seen, mode="none", tokens=0)
     parts = [alignment(x)]
+    parts.append(share.hints(x))
     if msgs:
         lines, used = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0
         for i, m in enumerate(msgs):
