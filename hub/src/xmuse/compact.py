@@ -4,7 +4,8 @@ checks, and the orchestration around a vendor compacting a session.
 Principle 9 holds: the hub never swaps in a fresh session. Compaction is the only backstop: an idle
 member whose session passed 500k gets compacted once, with hub-written instructions; anything else is
 a manual panel action. Claude is never compacted by the hub (the mod hooks session.compact); dsh has no
-compression ability (adapters/dsh.py has no compact entry, the bundle no such command).
+compression ability (adapters/dsh.py has no compact entry, the bundle no such command); agy has
+none either (headless "-p" turns only, no compact entry): act=compact answers "unsupported" for both.
 """
 from . import align, db, mail
 from . import room as rooms
