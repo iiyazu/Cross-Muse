@@ -154,7 +154,10 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # T4 §8.7: duty-routed question (column is route_to: dispatch's routed_to return field keeps its name)
            ("messages", "route_to", "text"), ("messages", "route_reason", "text"),
            # T8a H9: the message this one replies to (a reply wakes whoever it answers)
-           ("messages", "reply_to", "integer")]
+           ("messages", "reply_to", "integer"),
+           # T8c H3: compaction state per session (auto-compact mark, in-flight flag)
+           ("sessions", "auto_compacted", "integer not null default 0"),
+           ("sessions", "compacting", "integer not null default 0")]
 
 
 def init(path) -> sqlite3.Connection:

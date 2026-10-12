@@ -41,6 +41,7 @@ DEFAULTS = {
     "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
     "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
     "route_by_duty": False,          # T8a H8: duty routing (route.pick, T4 §8.7) wakes unmentioned members; off by default
+    "auto_compact_tokens": 500000,   # T8c H3: an idle member's session past this context is compacted once, automatically
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",

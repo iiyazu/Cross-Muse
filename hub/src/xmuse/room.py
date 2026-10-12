@@ -28,7 +28,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark",
-        "member_add", "member_edit", "wake_host", "promote", "read", "brief"}
+        "member_add", "member_edit", "wake_host", "promote", "read", "brief", "compact", "stop"}
 ACTS |= groups.ACTS  # T2 private groups
 
 
@@ -194,7 +194,13 @@ def members(conn, cfg: dict) -> list[dict]:
                     # T8b H4: live progress of the running turn, null when idle
                     "progress": {"turn": running[0], "started_at": running[1], "tools": pe.get("tools", 0),
                                  "last_tool": pe.get("last_tool"), "text": pe.get("text", ""),
-                                 "updated_at": pe.get("updated_at", 0.0)} if pe else None})
+                                 "updated_at": pe.get("updated_at", 0.0)} if pe else None,
+                    # T8c H3: the latest turn's context size, and whether a compaction is running
+                    "context_tokens": (conn.execute(
+                        "select u.context from usage u join turns t on t.id=u.turn_id"
+                        " where t.agent_id=? order by t.id desc limit 1", (a["id"],)).fetchone() or [0])[0],
+                    "compacting": bool(conn.execute("select 1 from sessions where agent_id=? and state='current'"
+                                                    " and coalesce(compacting, 0)=1", (a["id"],)).fetchone())})
     return out
 
 

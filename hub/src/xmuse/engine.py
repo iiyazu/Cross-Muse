@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from . import align, db, dispatch, mail, stall, wakepack
+from . import compact
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
 from .config import HUMAN
@@ -115,6 +116,21 @@ class Engine:
                                           (db.now(),))):
             if mail.running_turn(conn, agent["id"]) is None:
                 self._admit(conn, agent)
+        self._compact_tick(conn)
+
+    def _compact_tick(self, conn) -> None:
+        """T8c H3 auto-compact: idle sessions past the threshold get one background compaction each.
+        Marks reset once the context drops back under, so a re-exceed triggers again. No new polling:
+        this runs on the existing kick path (sends, turn ends, sweeps)."""
+        compact.auto_reset(conn, self.cfg)
+        drv = self.drivers.get("opencode")
+        if drv is None:
+            return
+        for s in compact.auto_due(conn, self.cfg):
+            with db.tx(conn):
+                conn.execute("update sessions set auto_compacted=1 where id=?", (s["id"],))
+            compact.launch(self.db, drv, s["agent_id"], s["id"], s["vendor_session"],
+                                     compact.instructions(conn, self.cfg, s["agent_id"]))
 
     def _admit(self, conn, agent: dict) -> None:
         if db.polled(agent):
