@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .. import proc, registry
+from .. import db, proc, registry
 from ..config import SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
@@ -232,10 +232,11 @@ def instance_dir(state: Path, agent_id: str) -> Path:
     return state / "oc" / agent_id
 
 
-def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
+def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | None = None) -> list[Path]:
     """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
     v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
-    and carries only the permission rules."""
+    and carries only the permission rules. `compaction_prompt` (rewritten before every triggered compaction, T8c H3)
+    lands in agent.compaction.prompt, which the compact endpoint's summarizer uses."""
     from .dsh import extra_mcp
     d = instance_dir(state, agent["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -246,7 +247,9 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
     for x in extra:
         servers[x["name"]] = {"type": "local", "command": [x["command"], *x.get("args", [])],
                               "environment": x.get("env", {})}
-    inst = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
+    inst: dict = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
+    if compaction_prompt:
+        inst["agent"] = {"compaction": {"prompt": compaction_prompt}}
     (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n", encoding="utf-8")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
@@ -354,6 +357,7 @@ class OpenCodePrompt:
         self.human: dict[str, bool] = {}         # session -> a human input is executing
         self.known: set[str] = set()             # sessions this server has reported (routes approvals)
         self.lock = threading.Lock()
+        self.compact_waiters: dict[str, list] = {}  # session -> [[event, box]] waiting for compaction end/fail (T8c)
         self.ready = threading.Event()
         threading.Thread(target=self._listen, daemon=True).start()
 
@@ -437,8 +441,12 @@ class OpenCodePrompt:
                                      "session.step.ended"):
             self.sink.progress(t.spec.turn_id, {"tools": t.tools, "last_tool": t.last_tool,
                                                 "text": t.reply or ""})
-        elif typ == "session.compaction.ended":  # `failed` keeps the context, so the watermark stays
-            self.sink.compacted(sid)
+        elif typ in ("session.compaction.ended", "session.compaction.failed"):
+            for ev, box in self.compact_waiters.pop(sid, []):
+                box.append({"type": typ, "data": d})
+                ev.set()
+            if typ == "session.compaction.ended":  # `failed` keeps the context, so the watermark stays
+                self.sink.compacted(sid)
         elif typ == "permission.asked":
             self.sink.approval(self._agent(sid), sid, d)
         elif typ in END:
@@ -555,6 +563,31 @@ class OpenCodeDriver:
     def approve(self, session: str, request_id: str, decision: str, agent_id: str | None = None) -> None:
         self.server_for(session, agent_id).api("POST", f"/api/session/{session}/permission/{request_id}/reply",
                                      {"decision": decision})
+
+    def compact(self, agent_id: str, session_id: str, instructions: str, timeout: float = 300) -> dict:
+        """Rewrite the instance config with fresh instructions, POST compact, wait for the compaction
+        ended/failed event (T8c H3). Synchronous (up to `timeout`); callers that must not block run it
+        in a thread. The ended event also flows through the normal listener, so the watermark resets."""
+        conn = self.sink.db()
+        agent = db.row(conn.execute("select * from agents where id=?", (agent_id,)))
+        if agent is None:
+            return {"ok": False, "error": f"no agent {agent_id}"}
+        prompt = self.prompt_for(agent_id)
+        write_config(self.sink.ws, agent, self.sink.state, instructions)
+        ev, box = threading.Event(), []
+        prompt.compact_waiters.setdefault(session_id, []).append((ev, box))
+        try:
+            prompt.server.api("POST", f"/api/session/{session_id}/compact", {"delivery": "steer"})
+        except Exception as e:  # noqa: BLE001 - reported, not raised
+            prompt.compact_waiters.get(session_id, []).remove((ev, box))
+            return {"ok": False, "error": f"compact POST failed: {e}"}
+        if not ev.wait(timeout):
+            return {"ok": False, "error": f"no compaction end event within {timeout:g}s"}
+        typ = (box[0].get("type") if box else "")
+        if typ != "session.compaction.ended":
+            detail = ((box[0].get("data") or {}).get("error") if box else None) or typ
+            return {"ok": False, "error": f"compaction failed: {detail}"}
+        return {"ok": True}
 
     write_config = staticmethod(write_config)
 

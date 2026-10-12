@@ -204,6 +204,40 @@ class Hub:
                 **({"pushed": out["pushed"]} if out.get("pushed") else {}),
                 **({"routed_to": out["routed_to"]} if out.get("routed_to") else {})}
 
+    def act_stop(self, p: rooms.Principal, b: dict) -> dict:
+        """T8c panel stop button (operator only): cancel queued mail, interrupt running turns."""
+        a = self._member(b.get("member"))
+        thread = b.get("thread")
+        if thread is not None and not isinstance(thread, str):
+            raise rooms.ApiError(400, "bad_request", "thread must be a string")
+        out = self.engine.call(self.engine.stop, a["id"], thread)
+        return {"ok": True, "stopped": bool(out["canceled_deliveries"] or out["interrupted_turns"])}
+
+    def act_compact(self, p: rooms.Principal, b: dict) -> dict:
+        """T8c H3 manual compaction (operator only): opencode members only; async, returns at once."""
+        from . import compact as _compact_mod
+        a = self._member(b.get("member"))
+        if a["vendor"] != "opencode":
+            raise rooms.ApiError(400, "unsupported", f"{a['vendor']} has no hub-triggered compaction")
+        if self.db().execute("select 1 from turns where agent_id=? and state='running'",
+                             (a["id"],)).fetchone():
+            raise rooms.ApiError(409, "busy", f"{a['id']} is running a turn")
+        s = _compact_mod.current_session(self.db(), a["id"])
+        if s is None:
+            raise rooms.ApiError(400, "no_session", f"{a['id']} has no session to compact")
+        text = _compact_mod.instructions(self.db(), self.cfg, a["id"])
+        drv = self.engine.drivers.get("opencode")
+        if drv is None:
+            raise rooms.ApiError(400, "unsupported", "no opencode driver in this hub")
+        _compact_mod.launch(self.db, drv, a["id"], s["id"], s["vendor_session"], text)
+        return {"ok": True}
+
+    def compact_instructions(self, member: str) -> dict:
+        """GET /v1/compact_instructions (operator): the current summarization instruction for mod."""
+        from . import compact as _compact_mod
+        self._member(member)
+        return {"text": _compact_mod.instructions(self.db(), self.cfg, member)}
+
     def admin_stop(self, body: dict):
         return self.engine.call(self.engine.stop, body.get("agent"), body.get("thread"))
 
@@ -439,7 +473,7 @@ class Hub:
     SIDEBAR = {("GET", "/v1/view"), ("GET", "/v1/timeline"), ("POST", "/v1/act"), ("POST", "/v1/rooms"),
                ("GET", "/v1/rooms"), ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave"),
                ("GET", "/v1/agents"), ("POST", "/v1/agents/scan"), ("POST", "/v1/agents/trial"),
-               ("POST", "/v1/agents/model")}
+               ("POST", "/v1/agents/model"), ("GET", "/v1/compact_instructions")}
 
     def view_version(self) -> int:
         conn = self.db()
@@ -479,7 +513,7 @@ class Hub:
                 return 200, self.join_local(body) if keyed else self.join(body)
             return 200, self.create_room(body) if method == "POST" else self.list_rooms()
         if path in ("/v1/agents", "/v1/agents/scan", "/v1/agents/trial", "/v1/agents/model"):
-            # machine-local assistant registry: the sidebar key only, like GET /v1/rooms
+            # machine-local assistant registry: the sidebar key only. A member token never works here.
             p = rooms.principal(self.db(), self.admin, auth)
             if p is not None and p.kind == "member":
                 raise rooms.ApiError(403, "member_forbidden", f"{path} is for sidebars, not for members")
@@ -491,11 +525,16 @@ class Hub:
                 return 200, {"agents": agents.scan()}
             if path == "/v1/agents/trial":
                 return 200, self.agents_trial(body)
-            return 200, self.agents_model(body)
+            if path == "/v1/agents/model":
+                return 200, self.agents_model(body)
         conn = self.db()
         p = rooms.principal(conn, self.admin, auth)
         if p is None:
             raise rooms.ApiError(401, "unauthorized", "bad or missing token")
+        if path == "/v1/compact_instructions":  # the operator token (task book §4); a member token never works
+            if p.kind == "member":
+                raise rooms.ApiError(403, "member_forbidden", f"{path} is for the operator, not for members")
+            return 200, self.compact_instructions(query.get("member"))
         if p.kind == "member" and path != "/v1/rebind":
             self.check_bound(p.member, session)
         if path == "/v1/view":
@@ -953,7 +992,7 @@ class Hub:
         never runs them), OpenCode runs on a hub-owned server its TUI attaches to."""
         conn = self.db()
         old = db.row(conn.execute("select * from agents where id=?", (mid,)))
-        if old and (old["vendor"] != vendor or old["removed"] or old["bound_session"]):
+        if old and (old["vendor"] != vendor or old["removed"] or old["bound_session"] not in (None, "", session)):  # same session re-joins
             raise rooms.ApiError(409, "member_exists", f"{mid} is already a member; pick another name")
         if old is None:
             from .init import add_agent
