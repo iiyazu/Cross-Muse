@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from . import align, config, db, mail, share
+from . import align, config, db, evidence, mail, share
 from . import threads as groups
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
@@ -178,10 +178,13 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
     for_me = m["sender"] != reader and (
         reader in mentions or (m["thread_id"].startswith("dm:") and reader in to) or bool(conn.execute(
             "select 1 from deliveries where message_id=? and recipient=? and wake=1", (m["id"], reader)).fetchone()))
-    return {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
+    item = {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
             "at": m["created_at"], "for_me": for_me,
             **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {})}
+    if m["kind"] == "done":
+        item.update(evidence.view_fields(conn, m["id"]))
+    return item
 
 
 def _thread_members(conn) -> dict[str, list[str]]:

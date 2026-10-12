@@ -7,6 +7,7 @@ of steps consumed one per invocation (counter in $HOME/fake-claude/n). Step keys
   as        agent id whose token to use for tool calls (required when it sends)
   fixture   recorded stream to replay (default claude-chat.jsonl)
   calls     [[tool, args], ...] made through the hub before the result event
+  pause     seconds to wait after replaying the fixture, before the calls (the hub's log reader catches up)
   sleep     seconds to wait before finishing (interrupt tests)
   result    "success" (default) | "error" | "none" (exit without a result event)
   exit      exit code (default 0)
@@ -79,6 +80,7 @@ for i, o in enumerate(lines):
         o["message"]["usage"].update(input_tokens=0, cache_creation_input_tokens=0,
                                      cache_read_input_tokens=step["context"])
     print(json.dumps(o), flush=True)
+time.sleep(step.get("pause", 0))
 for name, args in step.get("calls", []):
     out = tool(name, args)
     with (home / "tool-results.jsonl").open("a", encoding="utf-8") as f:

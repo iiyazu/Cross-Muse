@@ -108,6 +108,10 @@ create table if not exists share_marks(      -- user DMs released for sharing (T
 create table if not exists share_hints(      -- T3: a user DM that may relate to a teammate's question, shown once to its holder
   dm_id integer not null, question_id integer not null, holder text not null, asker text not null,
   shown integer not null default 0, primary key(dm_id, question_id));
+create table if not exists evidence(         -- xmuse_done evidence and the hub's check of it (evidence.py)
+  message_id integer primary key, items text not null,  -- items: JSON [{kind, ref, result}]
+  status text not null,                      -- verified | unverified (no row: none)
+  problems text not null default '[]', checked_at real not null);
 """
 
 
