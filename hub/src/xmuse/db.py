@@ -102,6 +102,13 @@ create table if not exists invites(          -- one-time invitation codes (/v1/a
   code text primary key, vendor text not null, role text not null default '', description text not null default '',
   name text, created_by text, created_at real not null, expires_at real not null, used_at real, used_by text);
 create table if not exists meta(key text primary key, value text not null);  -- view_version
+create table if not exists dispatches(        -- host handoffs, one per assignee, until a result returns them (dispatch.py)
+  id integer primary key, message_id integer not null, entry_id integer, host text not null, member text not null,
+  notify text not null default 'batch',      -- batch | now (wake the host as soon as this one is back)
+  created_at real not null, returned_at real, result_id integer, unique(message_id, member));
+create table if not exists dispatch_holds(    -- results held back from the host (no delivery) until its batch is released
+  message_id integer not null, host text not null, created_at real not null, released_at real, why text,
+  primary key(message_id, host));
 """
 
 
@@ -127,7 +134,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("entries", "modules", "text"),
            ("messages", "stage", "text"),  # xmuse_done(stage=...): the plan-split-integrate phase it ends (T13)
            # D2: what a member is responsible for (shown to peers and in the sidebars); removed from the room
-           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0")]
+           ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0"),
+           # T0 outcome labels on done messages: the label in effect, member | hub (upgraded), why the hub upgraded it
+           ("messages", "outcome", "text"), ("messages", "outcome_by", "text"), ("messages", "outcome_reason", "text")]
 
 
 def init(path) -> sqlite3.Connection:
