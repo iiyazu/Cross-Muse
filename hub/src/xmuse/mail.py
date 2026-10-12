@@ -350,14 +350,20 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
     (review_gate on), a finished task (next none, outcome completed) is handed to the room's reviewer (evidence.py)."""
     turn = running_turn(conn, agent_id)
     evidence = evidence or None
-    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps(
-        [summary, nxt, declares, stage] + ([outcome] if outcome else []) + ([evidence] if evidence else []))
-        .encode()).hexdigest())
+    # one done per turn and report: a repeat with the same summary and next (an agent re-calling the tool with or
+    # without its declares) is the same done, whatever else differs
+    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, stage]).encode()).hexdigest())
     verdict = ev.check(conn, turn, evidence) if evidence else None
     with db.tx(conn):
         dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
                                           (agent_id, key)))
-        if dup:  # a retried done in the same turn: return the earlier result, declare nothing twice
+        if dup:  # a retried done in the same turn: return the earlier result; only declares not yet made are added
+            had = {r[0][:40] for r in conn.execute("select statement from entries where refs=?",
+                                                   (json.dumps([dup["id"]]),))}  # a prefix: long statements are cut
+            for d in declares or []:
+                if d["statement"][:40] not in had:
+                    align.declare(conn, agent_id, dup["thread_id"], dup["id"], d["kind"], d["statement"],
+                                  d.get("scope"), d.get("supersedes"))
             eids = [r[0] for r in conn.execute("select id from entries where refs=? order by id", (json.dumps([dup["id"]]),))]
             return {"recorded": True, "thread": dup["thread_id"], "duplicate": True,
                     **({"entries": [f"E{i}" for i in eids]} if eids else {})}

@@ -95,8 +95,9 @@ def alignment(x) -> str:
     """A snapshot when the session has no watermark (new session, handoff, compaction), else the changes since."""
     if not alignment_on(x.cfg):
         return ""
-    if x.seen is None:
-        text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs)), "snapshot"
+    if x.seen is None:  # a fresh session already read the brief in its own section (brief()): not twice
+        text, x.mode = snapshot(x.conn, x.cfg, x.agent["id"], " ".join(m["body"] for m in x.msgs),
+                                skip_brief=getattr(x, "fresh", False)), "snapshot"
     else:
         text, x.mode = delta(x.conn, x.cfg, x.agent["id"], x.seen), "delta"
     x.tokens = tokens(text)
@@ -158,8 +159,11 @@ def _line(e: dict) -> str:
     return out + f" (refs {','.join('#%d' % r for r in e['refs'])})"
 
 
-def snapshot(conn, cfg: dict, agent_id: str, query: str = "") -> str:
+def snapshot(conn, cfg: dict, agent_id: str, query: str = "", skip_brief: bool = False) -> str:
     v = align.view(conn, cfg, agent_id, query=query)  # query: the wake's message text, for MemoryOS ranking
+    if skip_brief:
+        v["layers"] = {s: [e for e in es if not (e["kind"] == "convention" and e["statement"].startswith("[brief]"))]
+                       for s, es in v["layers"].items()}
     role = conn.execute("select role from agents where id=?", (agent_id,)).fetchone()[0]
     titles = {"global": "Project-wide", f"role:{role}": f"Your role ({role})", f"agent:{agent_id}": "Yours"}
     sections = [("Assigned to you" + (f"; ready now: {', '.join(v['ready'])}" if v["ready"] else ""), v["assigned"])]
