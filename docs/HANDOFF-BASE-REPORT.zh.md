@@ -1539,3 +1539,34 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
 - 每格 10 次，P 组的失败率分别是 2/10、4/10（S2）和 1/10、2/10（DEP），没有做显著性检验，只能说方向。
 
 **下一步**：chain1 已经在跑 S3 冒烟（`1cf662b`，seed 11，X 组）；冒烟通过就跑 `batch1-s3`，之后是 R 试跑。
+
+## T17 第 7 步（10-12 11:40）：按 §13.2 补 S2'；改过措辞的 S3a 冒烟仍是 0
+
+**S2 的误读核实**（§13.2 第 2 点）：P 组的 S2 失败都是同一种误读。
+- S2-P-dm-18：e1 说"format v1 suffix 'u' is not a team rule per probe spec, so ignored"；e2 在 tick 1 也写了"ignoring format v1 (not a team rule)"，但后来改回去了。
+- S2-P-bc-16：e1 写的是"ignored non-team format rule"。
+- S2-P-dm-12：e1 只说"noted ... format v1"，之后一直没加后缀，没有明说理由。
+- 第 6 步表里 9 个"retire 前就没遵守"的成员都属于这一类。
+
+**S2'**（`adc1db1`）：场景名 `S2p`。格式规则改成 "[rule v1-format] Team rule: write every value with the suffix 'u', e.g. '3:42u'."，其他和 S2 完全相同（ticks、retire、`recent_n=4`）。judge 和 report 都认 S2p，测试守着。全量测试：`405 passed, 4 skipped, 1 warning in 336.27s (0:05:36)`。
+- **预注册**：
+  - 场景 S2p；
+  - 主要指标同 S2（tick 6–9 的 `violations_after_retire`），另列按成员拆分的"一直遵守 / retire 后丢失 / retire 前就没遵守"；
+  - seed 11–20、三组 X / P-dm / P-bc、名单按 seed 交替；
+  - 输出到 `~/probes/runs/batch1-s3/`，代码 `adc1db1`（hub 部分和 `e93aa28` 相同）。
+- **冒烟门槛**：seed 11 的 X 组跑一次，两个成员都"一直遵守"才放开。
+- **队列**：排在 r7 的 `chain2` 单元里，等 `chain1`（S3 冒烟加 R 试跑）结束后执行。
+
+**S3a 改过措辞后仍然触底**（`batch1-s3/S3a-X-11`，代码 `266f6a2`，含 `1cf662b` 的措辞）：
+- rule v1 里已经写了交接条款，k 的事实里也写了"share it"，但 e1 还是回绝了 e2 的 handoff：
+
+  > Decline E4: cannot maintain e. User rule v1 still in force (e1 maintains only a,b; team rules come from user only, no user rule defines e or k). k is undefined in ticks/context, and writing e would violate 'Never write a key you do not maintain'.
+
+- e2 随后撤回 handoff，还说"k remains held privately per dm:e2+human"，没有照"share it"的要求做。
+- 冒烟门槛按设计生效：chain1 不跑 S3 的 batch1-s3，直接进 R 试跑。S3b 的冒烟结果下一节补。
+- **原因判断**：PROCEDURE 里"Team rules come from the user"和"Never write a key you do not maintain"这两句的约束力，压过了 rule v1 末尾的附加条款；e2 的 handoff 里又只写了"k is a team parameter"、没给值，e1 把"k 未定义"当成了拒绝的又一条理由。
+- **建议 r7 二选一**（我不再自己迭代措辞）：
+  - (a) 直接改 PROCEDURE：把"Team rules come from the user"改成"Team rules come from the user; a teammate's handoff of a key also counts"。这会改变所有场景的共同前提，S1、S2、DEP 也要重跑才能比较。
+  - (b) S3a 里的交接也由用户在 #team 宣布："e2 will hand a new key to e1"，作为一条 rule v2，然后 e2 再发 handoff。这只改 S3a。
+- **DEP 天花板**（§13.2）：X 组 10/10 都是 1.0，P-dm 是 8/10，P-bc 是 9/10，没有完全触顶。`premature_e` 三组全是 0。P 组失败的机制见第 6 步。按 r7 的要求，报告里会另外给出"答复到 e 第一次写对之间的唤醒次数和 token"，这一项要在 report.py 里补上，还没做。
+- **fd 泄漏**（§13.2，测试在 systemd 单元里跑时超过 1024 个文件描述符）：按 r7 的说法，等 R 系列跑完有空再查。
