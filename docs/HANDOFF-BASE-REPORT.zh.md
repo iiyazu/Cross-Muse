@@ -1797,3 +1797,78 @@ exp/probes 里有三个 hub 提交，r7 都审过，可以用，但还没进 rc/
   - S1 支持"取代信息由 hub 主动送达"这个核心承诺，"成员几乎不自发转告"可以作为证据。
   - 但唤醒包的固定开销要正视：可以考虑对齐信息没变时压缩对齐区（只给条目号或摘要），让小任务的整体 token 不吃亏。这是产品侧的事，r7 coord 来定。
 
+## T17 收尾工单：S 系列收尾、R 系列后续（r7 coord，10-12 13:40，接手会话照此执行）
+
+**定位变了**：用户 10-12 判断，"协作层有用"的客观证据已经够了，coord 转去做多 agent 拓扑的新功能。实验这条线**收尾，不再扩大**：S 系列只把已排的跑完、补完报告；R 系列跑一批正式的 R1–R4，R5–R8 做小规模；最后交一页总结论。
+
+**冲突时以本节为准**，前面"交接补充"第 2 节的任务顺序作废。第 1 节的三个决定、第 3 节的坑、第 4 节的合并说明，以及"S 系列阶段分析"，都仍然有效。
+
+### 0. 接手先做
+
+1. `git -C ~/dev/xmuse2-rc fetch -q origin`。确认 exp/probes 是 `bb13106` 或更新，rc/portfolio 包含本节。
+2. 看队列：`systemctl --user list-units 'phb-*'`，`tail ~/bench/phb/logs/bg/chain3.out ~/bench/phb/logs/bg/chain4.out`，`tail ~/probes/runs/batch1-s3/series.log`。
+3. 看磁盘：`df -h /mnt/c`，13:00 时剩 14G。低于 5G 停下新的批次，写进本文件。
+
+### 1. S 系列收尾（不再加场景、不再加量）
+
+1. **chain3、chain4 照常跑完**，不改、不插队：
+   - chain3：S3b 剩下的，然后 rpilot2；
+   - chain4：S2p，seed 11–20、三组。
+
+   预计 chain3 约 15:00 结束，chain4 约 18:30 结束。
+2. **S3a：只再冒烟一次**。按 §13.3 的 (b)：用户先在 #team 宣布 rule v2，说明"e2 will hand a new key to e1"，handoff 里不给 k。
+   - 改 `scenarios.py`，加测试，提交到 exp/probes。
+   - 等 chain4 跑完再跑：seed 11、X 组、1 次。大于 0 就整批跑（seed 11–20、三组）；等于 0 就放弃 S3a，写一句原因，不再改措辞。
+3. **noTR 对照取消**。原因：用户决定收尾；S2p 已经能回答一半问题（措辞修好以后组间还剩多少差别）。总报告的效度限制里写明"没做 noTR 对照"。
+4. **DEP 补指标**：用 `run.py reprocess` 把 batch1 的 DEP 重算一遍，补上"答复到 e 第一次写对之间的唤醒次数和 token"（`dbf3aa0` 已实现）。只重算，不重跑。
+5. **重算和更新分析**：S3b、S2p（和 S3a，如果跑了）跑完后，跑 `python3 /mnt/c/Users/user/dsh-work/d12/s-analysis.py`（它已经读 batch1-s3 里的 S3b、S2p、S3a），再跑 `report.py ~/probes/runs/batch1-s3 --scenarios S3b,S2p`。用结果更新上面"S 系列阶段分析"的表和结论。重点回答：S2p 里 X 和 P 组还有没有差别。没有差别，结论 2 就降级为"主要来自措辞"。
+
+### 2. R 系列后续
+
+1. **rpilot2 检查**（chain3 末尾自动跑）：
+   - 回答器生效了没有：record.json 的 `answers`，judged.json 的 `user_actions`、`relays`、`answers`；
+   - R1 的 P 组还会不会卡在"等用户确认"；
+   - 归因（`bb13106` 之后按轮询快照）合不合理；
+   - 有问题就修，修完重跑 rpilot2，再往下走。
+2. **R 第一批（R1–R4）正式跑**：
+   - 开跑前在本文件写预注册，内容包括：
+     - 代码提交；
+     - 场景和各自的主要指标（`accepted`）；
+     - 次要指标（用户动作数、唤醒次数、token、空转回合、返工、失败归因）；
+     - 三组 X / P-dm / P-relay；seed 1–5，每格 5 次；名单按 seed 交替；
+     - 停止条件：C: 低于 5G；某个场景整组跑不起来；
+     - R4 预计到天花板，主要看过程指标。
+   - 命令：`bash experiments/probes/rbatch.sh rbatch1 "1 2 3 4 5" "R1 R2 R3 R4"`。用 `systemd-run --user --unit=phb-rbatch1-$(date +%H%M%S)` 起单元，不要占用前台。
+   - 排在 chain4 和 S3a 冒烟之后。同一时间只跑一个系列。
+3. **R5–R8 小规模**：
+   - 先试跑：seed 1、三组，检查机制。R7 用侧栏 say，R8 用 pause，这两个只用假 agent 测过，要重点看。
+   - 机制没问题，再正式跑 seed 1–3、三组，同样先写预注册。
+   - 机制有问题、一次修不好，就放弃那个场景，写原因。
+4. **跨厂商不做**：两边仍然用同一个模型。总报告里把它列为头号效度限制，不在收尾阶段补跑矩阵。
+
+### 3. 最终交付
+
+1. **一页总结论** `docs/design/XMUSE2-PROBES-RESULT.zh.md`，提交到 rc/portfolio，读者是用户：
+   - 结论：只写站得住的，每条带数字和显著性或确定性；
+   - S 和 R 的结果表；
+   - 效度限制：同一个模型；X 和 P 差了不止一处；措辞有交互；样本小；没做 noTR；
+   - 对产品的提示：取代信息由 hub 送达是核心承诺的证据；唤醒包对齐区的固定开销；成员几乎不自发转告；
+   - 运行目录和复现命令。
+
+   口径照"S 系列阶段分析"。不夸大，"X 更省"只在变更窗口成立。
+2. **本文件最后写"T17 收尾"一节**：做了什么、作废了什么、没做什么及原因。确认 `phb-*` 单元都已结束。
+
+### 4. 和 coord 的分工
+
+- coord 会话同时在 rc/portfolio 上做拓扑新功能（hub、侧栏）。**实验会话不改 rc 上的 hub**。实验需要 hub 改动的，提交到 exp/probes，写进本文件，等 coord 合。
+- 探针代码（`experiments/probes/`）只在 exp/probes 上改。报告和文档提交到 rc/portfolio，提交前先 `git fetch` 再 `git rebase origin/rc/portfolio`，避免和 coord 的提交冲突。
+- 需要用户定的事写进本文件，跳过它先干别的。
+
+### 5. 约束（不变）
+
+- 中文交流；
+- 不合 main，不往 GitHub 或公网推，不强推，不用 git stash，不读也不打印密钥；
+- 不停开发房间和沙盒的 hub；
+- 实验默认用 OpenCode 加 dsh，用 Claude 时只用 haiku 或 sonnet；
+- 不设 token 预算，只记录。
+
