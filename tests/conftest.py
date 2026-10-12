@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from fakes.fake_opencode import FakeOpenCode  # noqa: E402
-from xmuse import db, init as xinit  # noqa: E402
+from xmuse import db, init as xinit, registry  # noqa: E402
 from xmuse.config import MODELS, family  # noqa: E402
 from xmuse.server import Hub, digest  # noqa: E402
 
@@ -92,6 +92,10 @@ class Harness:
         except urllib.error.HTTPError as e:
             return {"status": e.code, **json.loads(e.read())}
 
+    def key(self):
+        """The sidebar key a local sidebar plugin would read from the registry dir."""
+        return sidebar_key()
+
     def token(self, who):
         return (self.state / "tokens" / ("_admin" if who == "human" else who)).read_text(encoding="utf-8").strip()
 
@@ -157,6 +161,13 @@ def wsl_host(tmp_path, monkeypatch):
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-Test")
     monkeypatch.delenv("XMUSE_WSL_DISTRO", raising=False)
     monkeypatch.setenv("XMUSE_WIN_HOME", str(tmp_path / "winhome"))
+    # hubs.json and sidebar.key (registry.py) live in the user's state dir: never the real one in tests
+    monkeypatch.setenv("XMUSE_REGISTRY_DIR", str(tmp_path / "registry"))
+
+
+def sidebar_key() -> str:
+    """The sidebar key of this test's registry dir (made by the first hub that started, or here)."""
+    return registry.ensure_key()
 
 
 def set_home(monkeypatch, path) -> None:

@@ -70,7 +70,7 @@ def hub_start(state: Path) -> None:
     log = (state / "logs" / "hub.log").open("a", encoding="utf-8")
     # host facts (host.py) and the experiment-only shell policy reach the hub; agents get clean_env() again from it
     extra = {k: os.environ[k] for k in ("XMUSE_SHELL_POLICY", "XMUSE_WSL_DISTRO", "XMUSE_WIN_HOME", "WSL_DISTRO_NAME",
-                                        "WSL_INTEROP") if k in os.environ}
+                                        "WSL_INTEROP", "XMUSE_REGISTRY_DIR") if k in os.environ}
     if proc.WINDOWS:
         extra["PYTHONUTF8"] = "1"  # files and pipes in UTF-8, whatever the ANSI code page
     p = proc.popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state), **extra}),
