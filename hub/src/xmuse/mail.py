@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 
-from . import align, db, dispatch, share, threads
+from . import align, db, dispatch, route, share, threads
 from . import evidence as ev
 from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
@@ -163,6 +163,11 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         routed = dispatch.route(conn, sender, via, kind, thread, mentions)  # the user's unaddressed words: host only
         if routed:
             wake = {routed}
+        picked = route.pick(conn, sender, kind, thread, mentions, body) if info_on(cfg) else {}  # T4 §8.7 (members)
+        if picked:  # the best-matching members, plus whoever handed the asker its work (as for any question)
+            wake = set(picked) | (_routed(conn, sender, kind, supersedes, resolves) & set(mem) & set(roster))
+            conn.execute("update messages set route_to=?, route_reason=? where id=?",
+                         (json.dumps(sorted(picked)), route.reason(picked), mid))
         for r in mem:
             if r in (sender, HUMAN, via) or r not in roster:
                 continue
@@ -195,7 +200,8 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         return {**db.row(conn.execute("select * from messages where id=?", (mid,))),
                 # the hub never wakes a coordinator or a foreground agent; the latter gets the message pushed
                 "woken": sorted(wake - set(_desktop_agents(conn)) - fg), "pushed": sorted(wake & fg),
-                "entries": [f"E{i}" for i in eids], **({"routed_to": routed} if routed else {}),
+                "entries": [f"E{i}" for i in eids], **({"routed_to": routed} if routed and not picked else {}),
+                **({"routed_to": sorted(picked)} if picked else {}),
                 **({"blocked": blocked} if blocked else {}), **({"released": released} if released else {})}
 
 
