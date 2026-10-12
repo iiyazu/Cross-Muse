@@ -252,6 +252,7 @@ class ClaudeResume:
         with spec.run_log.open("w", encoding="utf-8") as out:
             for line in p.stdout:
                 out.write(line)
+                out.flush()  # evidence.py reads this log while the turn still runs (at xmuse_done)
                 lines.append(line)
         p.wait()
         err.close()

@@ -102,6 +102,10 @@ create table if not exists invites(          -- one-time invitation codes (/v1/a
   code text primary key, vendor text not null, role text not null default '', description text not null default '',
   name text, created_by text, created_at real not null, expires_at real not null, used_at real, used_by text);
 create table if not exists meta(key text primary key, value text not null);  -- view_version
+create table if not exists evidence(         -- xmuse_done evidence and the hub's check of it (evidence.py)
+  message_id integer primary key, items text not null,  -- items: JSON [{kind, ref, result}]
+  status text not null,                      -- verified | unverified (no row: none)
+  problems text not null default '[]', checked_at real not null);
 """
 
 

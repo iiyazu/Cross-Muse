@@ -396,6 +396,7 @@ class OpenCodePrompt:
             t = self.turns.get(sid)
         if t is not None:
             t.log.write(json.dumps(ev) + "\n")
+            t.log.flush()  # evidence.py reads this log while the turn still runs (at xmuse_done)
         if typ == "session.inbox.enqueued":
             meta = ((d.get("item") or {}).get("payload") or {}).get("metadata") or {}
             if "xmuse" not in meta:

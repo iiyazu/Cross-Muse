@@ -15,7 +15,8 @@ DEFAULTS = {
     # T14 master switch (team group T-plain): off = only kind=message. No decision/assumption/question/handoff entries,
     # no injection, no scope or question routing, no dependency wake; tools and prompts no longer offer them.
     "info_layer": "on",
-    "preset_tick": 2.0,              # seconds between checks of a running orchestration preset (preset.py)
+    "review_gate": True,             # done next=none is handed to a member with role "reviewer" first (evidence.py)
+    "preset_tick": 2.0,             # seconds between checks of a running orchestration preset (preset.py)
     "max_chain_wakes": 12,           # wakes per causal chain started by one human message
     "max_chain_tokens": 20_000_000,  # processed tokens per chain
     "chat_warn_tokens": 50_000,      # chat wakes over this log a warning (M1c task 2)
