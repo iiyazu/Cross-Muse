@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from . import align, config, db, mail
+from . import align, config, db, mail, threads as groups
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
 
@@ -27,6 +27,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align"}
+ACTS |= groups.ACTS  # T2 private groups
 
 
 class ApiError(Exception):
@@ -187,32 +188,41 @@ def _thread_members(conn) -> dict[str, list[str]]:
     return out
 
 
-def timeline(conn, reader: str, before: int | None = None, limit: int = TIMELINE_N) -> dict:
+def timeline(conn, reader: str, before: int | None = None, limit: int = TIMELINE_N, restrict: bool = False) -> dict:
+    """`restrict` (a member token): only the threads the reader is in, plus #room and public groups (T2)."""
     limit = max(1, min(int(limit), 200))
-    sql, args = "select * from messages", []
+    where, args = [], []
     if before is not None:
-        sql, args = sql + " where id<?", [int(before)]
+        where, args = ["id<?"], [int(before)]
+    if restrict:
+        cond, a = groups.visible_sql("thread_id", reader)
+        where, args = where + [cond], args + a
+    sql = "select * from messages" + (" where " + " and ".join(where) if where else "")
     rs = db.rows(conn.execute(sql + " order by id desc limit ?", (*args, limit + 1)))
     more, rs = len(rs) > limit, list(reversed(rs[:limit]))
     mem, roster = _thread_members(conn), {r[0] for r in conn.execute("select id from agents")}
     return {"items": [_item(conn, m, reader, mem, roster) for m in rs], "has_more": more}
 
 
-def threads(conn, reader: str) -> list[dict]:
+def threads(conn, reader: str, restrict: bool = False) -> list[dict]:
     mem, out = _thread_members(conn), []
+    cond, args = groups.visible_sql("t.id", reader) if restrict else ("1", [])
     for t in db.rows(conn.execute("select t.*, (select max(created_at) from messages m where m.thread_id=t.id) last_at"
-                                  " from threads t order by last_at desc")):
+                                  f" from threads t where {cond} order by last_at desc", args)):
         ms = mem.get(t["id"], [])
         title = " ↔ ".join(t["id"][3:].split("+")) if t["kind"] == "dm" else t["id"]
+        title = t["title"] if t["private"] and t["title"] else title
         out.append({"id": t["id"], "kind": "dm" if t["kind"] == "dm" else "topic", "title": title, "members": ms,
-                    "last_at": t["last_at"], "unread": _unread(conn, reader, t["id"]) if reader != HUMAN else 0})
+                    "private": bool(t["private"]), "last_at": t["last_at"], "unread": _unread(conn, reader, t["id"]) if reader != HUMAN else 0})
     return out
 
 
 # ---- alignment, approvals, run ------------------------------------------------------------------------------
 
-def alignment(conn) -> list[dict]:
+def alignment(conn, hidden: list | None = None) -> list[dict]:
+    """`hidden`: entry scopes a member token may not see (thread entries of private groups it is not in)."""
     rs = db.rows(conn.execute("select * from entries where status in ('active','proposed') order by id desc limit 200"))
+    rs = [e for e in rs if e["scope"] not in (hidden or ())]
     return [{"id": f"E{e['id']}", "kind": e["kind"], "scope": e["scope"], "author": e["author"],
              "text": e["statement"], "supersedes": f"E{e['supersedes']}" if e["supersedes"] else None,
              "status": e["status"], "at": e["recorded_at"],
@@ -220,7 +230,7 @@ def alignment(conn) -> list[dict]:
             for e in reversed(rs)]
 
 
-def approvals(conn) -> list[dict]:
+def approvals(conn, hidden: list | None = None) -> list[dict]:
     out = []
     for a in db.rows(conn.execute("select * from approvals where state='pending' order by created_at")):
         res = a["resources"] or ""
@@ -232,6 +242,8 @@ def approvals(conn) -> list[dict]:
                     "summary": f"{a['action'] or 'shell'}: {summary}"[:200], "detail": res, "risk": "normal",
                     "at": a["created_at"]})
     for e in db.rows(conn.execute("select * from entries where status='proposed' order by id")):
+        if e["scope"] in (hidden or ()):
+            continue
         out.append({"id": f"E{e['id']}", "kind": "alignment", "member": e["author"],
                     "summary": f"{e['kind']}: {e['statement']}"[:200], "detail": e["statement"], "risk": "normal",
                     "at": e["recorded_at"]})
@@ -261,14 +273,16 @@ def run_view(conn) -> dict | None:
 
 def view(conn, cfg: dict, ws: Path, p: Principal, version: int) -> dict:
     room = room_row(conn, ws)
-    tl = timeline(conn, p.reader)
+    restrict = p.kind == "member"  # a member token sees its own threads, not everyone's (T2)
+    tl = timeline(conn, p.reader, restrict=restrict)
+    hidden = groups.hidden_scopes(conn, p.reader) if restrict else []
     return {"version": version,
             "room": {"id": room["id"], "name": room["name"], "dir": room["dir"], "host": room["host"],
                      "info_layer": "on" if config.info_on(cfg) else "off", "created_at": room["created_at"]},
             "me": {"kind": p.kind, "id": p.reader},
-            "members": members(conn, cfg), "threads": threads(conn, p.reader), "timeline": tl["items"],
+            "members": members(conn, cfg), "threads": threads(conn, p.reader, restrict), "timeline": tl["items"],
             "timeline_cursor": {"oldest": tl["items"][0]["id"] if tl["items"] else None, "has_more": tl["has_more"]},
-            "alignment": alignment(conn), "approvals": approvals(conn), "run": run_view(conn)}
+            "alignment": alignment(conn, hidden), "approvals": approvals(conn, hidden), "run": run_view(conn)}
 
 
 # ---- tokens, invitations ------------------------------------------------------------------------------------

@@ -45,6 +45,13 @@
      },
      "description": "peers to wake (groups)"
     },
+    "members": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "Only effective when this message creates a new '#group': makes it a private group of you, the user and these peers (others cannot see or write to it). Ignored if the group already exists."
+    },
     "scope": {
      "type": "string",
      "description": "entry scope: global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); kind=handoff: module:<name>[,<name>...] = the modules the assignee owns"
@@ -155,6 +162,22 @@
     "limit": {
      "type": "integer",
      "description": "default 20"
+    }
+   }
+  }
+ },
+ {
+  "name": "xmuse_leave_thread",
+  "description": "Leave a private group you are in (you cannot leave public groups).",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "thread"
+   ],
+   "properties": {
+    "thread": {
+     "type": "string",
+     "description": "private group id, e.g. '#x'"
     }
    }
   }

@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 
-from . import align, db
+from . import align, db, threads
 from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
 
@@ -33,20 +33,23 @@ def running_turn(conn, agent_id: str) -> dict | None:
         "select * from turns where agent_id=? and state='running' order by id desc limit 1", (agent_id,)))
 
 
-def _thread(conn, sender: str, to: str, roster: dict) -> dict:
+def _thread(conn, sender: str, to: str, roster: dict, new_members: list | None = None) -> dict:
     if to.startswith("#"):
         t = db.row(conn.execute("select * from threads where id=?", (to,)))
+        if t is None and new_members is not None:  # a member opens a private group (T2); the user is in it too
+            return threads.create(conn, to, sender, new_members, set(roster))
         if t is None:
             conn.execute("insert into threads(id, kind, title, created_at) values(?,?,?,?)",
                          (to, "group", to[1:], db.now()))
             for m in [HUMAN, *roster]:
                 conn.execute("insert into thread_members values(?,?)", (to, m))
             t = db.row(conn.execute("select * from threads where id=?", (to,)))
-        if conn.execute("insert or ignore into thread_members values(?,?)", (to, sender)).rowcount and conn.execute(
-                "select 1 from entries where scope=? and status='active'", (f"thread:{to}",)).fetchone():
-            # joined a thread that already has entries: deltas only cover changes after the watermark, so
-            # drop the sender's watermarks and the next wake injects a snapshot including this thread
-            conn.execute("delete from seen where session_id in (select id from sessions where agent_id=?)", (sender,))
+        if t["private"]:  # only its members write to it
+            if sender not in members(conn, to):
+                raise ToolError("not_a_member", f"{to} is a private group you are not in")
+            return t
+        if conn.execute("insert or ignore into thread_members values(?,?)", (to, sender)).rowcount:
+            threads.resync(conn, sender, to)  # joined: the next wake injects a snapshot including this thread
         return t
     if to != HUMAN and to not in roster:
         raise ToolError("unknown_recipient",
@@ -82,16 +85,18 @@ def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
     if sender == HUMAN or HUMAN not in members(conn, thread_id):
         return
     for a in _desktop_agents(conn):
-        if a != sender and not conn.execute("select 1 from deliveries where message_id=? and recipient=?",
-                                            (mid, a)).fetchone():
+        if a != sender and threads.can_see(conn, a, thread_id) and not conn.execute(
+                "select 1 from deliveries where message_id=? and recipient=?", (mid, a)).fetchone():
             conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
                          " values(?,?,0,'passive',?)", (mid, a, db.now()))
 
 
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
-         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None) -> dict:
-    """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag)."""
+         supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None,
+         new_members: list | None = None) -> dict:
+    """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag).
+    `new_members`: sending to a '#group' that does not exist yet makes it a private group of these members."""
     mentions = list(dict.fromkeys(mentions or []))
     if not info_on(cfg) and (kind != "message" or scope or supersedes or resolves or depends_on or why):
         # T-plain (T14): agents are not offered these (tools_for); refuse them from every other path too
@@ -118,7 +123,7 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             dup = db.row(conn.execute("select * from messages where sender=? and idem_key=?", (sender, idem)))
             if dup:
                 return {**dup, "duplicate": True}
-        thread = _thread(conn, sender, to, roster)
+        thread = _thread(conn, sender, to, roster, new_members)
         if idem is None and turn is not None:
             dup = db.row(conn.execute(
                 "select m.* from messages m left join turns t0 on t0.id = m.turn_id"
@@ -221,7 +226,8 @@ def notice(conn, thread_id: str, body: str, chain_id: int | None = None) -> None
         mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, created_at)"
                            " values(?,?,?,?,?,?)", (thread_id, HUB, "notice", body, chain_id, db.now())).lastrowid
         for a in db.rows(conn.execute("select id, settings from agents order by id")):
-            if db.settings(a).get("desktop"):  # the coordinator relays approvals/pauses to the user; never woken
+            # the coordinator relays approvals/pauses to the user; never woken; private groups: members only
+            if db.settings(a).get("desktop") and threads.can_see(conn, a["id"], thread_id):
                 conn.execute("insert or ignore into deliveries(message_id, recipient, wake, state, updated_at)"
                              " values(?,?,0,'passive',?)", (mid, a["id"], db.now()))
 
@@ -256,7 +262,8 @@ def ack(conn, agent_id: str, ids: list[int], outcome: str | None) -> int:
 
 
 def thread(conn, member: str, thread_id: str, query: str | None = None, limit: int = 20) -> dict:
-    desk = member in _desktop_agents(conn) and HUMAN in members(conn, thread_id)  # the user's interface reads the user's threads
+    desk = (member in _desktop_agents(conn) and HUMAN in members(conn, thread_id)  # the user's interface reads the user's threads
+            and not threads.is_private(conn, thread_id))
     if member != HUMAN and not desk and member not in members(conn, thread_id):
         mine = [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (member,))]
         raise ToolError("unknown_thread", f"id must be one of your threads: {', '.join(mine) or '(none)'}")

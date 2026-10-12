@@ -32,7 +32,7 @@ hub 里发给它的消息会自动出现在这个会话里，会话用 `xmuse_*`
   限度：同一 OS 用户的进程能读 token 文件，这挡不住有意的冒充，只是让误操作和即兴发挥的模型不能静默地以别人的身份行事，
   并留下痕迹（绑定通知；管理员 `xmuse send` 记为 `human (via cli)`）。
   还没有绑定的前台 agent（例如没装 bundle，只用 `xmuse tool --agent <id>`）不受限；一旦绑定，`xmuse tool` 会被拒绝。
-- 原生模型工具：hub 的 7 个工具全部注册到每个会话（`agent/created` 时），`xmuse_whoami / send / inbox / ack / thread /
+- 原生模型工具：hub 的 8 个工具全部注册到每个会话（`agent/created` 时），`xmuse_whoami / send / inbox / ack / thread /
   context / done`。参数 schema 优先读 hub 状态目录的 `tools.json`（`xmuse init` 写出），读不到用 bundle 里的
   `tools.json` 副本（由 Python 测试对照 `tools.py` 保证一致）。调用时才查绑定；未绑定会提示让用户先 `/xmuse bind`。
   工具描述开头写明"只用于用户 `/xmuse bind` 过的会话"，减少未绑定会话乱调用。
@@ -66,7 +66,7 @@ xmuse --ws /mnt/c/Users/<你>/xmuse-desk agent add dsh-1 --vendor dsh --desktop
 
 前置：hub 已按上面重启；dsh 已重启并加载 0.1.0；工作区（如 `C:\Users\<你>\xmuse-desk`）里开一个 dsh **新会话**（Standard 模式）。
 
-1. 在该会话输入 `/xmuse bind dsh-1`，然后 `/xmuse status`：应看到 `tools: 7 from hub state tools.json`，
+1. 在该会话输入 `/xmuse bind dsh-1`，然后 `/xmuse status`：应看到 `tools: 8 from hub state tools.json`，
    绑定表有 `<session> -> dsh-1`，`relay: polling`。（命令结果卡片要在会话有过第一条消息之后才会显示，这是 dsh UI 行为。）
    再确认：未绑定的另一个 dsh 会话里模型调用 `xmuse_*` 工具只会得到"This session is not bound"，
    终端 `xmuse tool --agent dsh-1 whoami` 返回 `not_bound_session`；`xmuse log` 里有 `dsh-1 is now bound to dsh session …` 的 hub 通知。
