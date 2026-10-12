@@ -52,7 +52,9 @@ def user_via(via: str | None) -> bool:
 
 
 def route(conn, sender: str, via: str | None, kind: str, thread: dict, mentions: list) -> str | None:
-    """The user's message to a public group (or #room) naming nobody wakes only the host. Returns the host."""
+    """The user's unaddressed words relayed by a coordinator (not a broadcast): only the host.
+    Plain broadcasts (sender == HUMAN straight from a sidebar/CLI) wake the whole group instead
+    and never reach here (mail.send). Returns the host."""
     if sender != HUMAN or kind != "message" or mentions or not user_via(via) or thread["kind"] == "dm" \
             or thread.get("private"):
         return None

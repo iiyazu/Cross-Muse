@@ -95,10 +95,11 @@ def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
          supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None,
-         new_members: list | None = None, notify: str | None = None) -> dict:
+         new_members: list | None = None, notify: str | None = None, reply_to: int | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag).
     `new_members`: sending to a '#group' that does not exist yet makes it a private group of these members.
-    `notify` (a host's handoff): batch | now, when the assignee's result wakes the host (dispatch.py)."""
+    `notify` (a host's handoff): batch | now, when the assignee's result wakes the host (dispatch.py).
+    `reply_to` (T8a H9): the message this one answers; whoever it mentioned, DM'd or handed work to wakes them."""
     mentions = list(dict.fromkeys(mentions or []))
     if notify is not None and (kind != "handoff" or notify not in ("batch", "now")):
         raise ToolError("invalid_arguments", "notify is batch or now, and needs kind=handoff")
@@ -145,14 +146,27 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
             raise ToolError("invalid_arguments", f"mentions must be members of {thread['id']}: "
                                                  f"{', '.join(m for m in mem if m not in (HUMAN, sender))}; got {bad}")
         chain, depth = _chain(conn, cfg, sender, thread["id"], turn)
+        orig = None
+        if reply_to is not None:
+            if isinstance(reply_to, bool) or not isinstance(reply_to, int):
+                raise ToolError("bad_request", "reply_to must be a message id")
+            orig = db.row(conn.execute("select * from messages where id=?", (reply_to,)))
+            if orig is None:
+                raise ToolError("bad_reply_to", f"no message {reply_to}")
         cur = conn.execute(
             "insert into messages(thread_id, sender, kind, body, why, mentions, chain_id, depth, turn_id,"
-            " idem_key, created_at, via) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+            " idem_key, created_at, via, reply_to) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (thread["id"], sender, kind, body, json.dumps(why) if why else None, json.dumps(mentions),
-             chain["id"], depth, turn and turn["id"], idem, db.now(), via))
+             chain["id"], depth, turn and turn["id"], idem, db.now(), via, reply_to))
         mid = cur.lastrowid
+        # T8a H8: a user's unaddressed group message is a broadcast (DMs are not).
+        broadcast = sender == HUMAN and kind == "message" and not mentions and thread["kind"] != "dm"
         if thread["kind"] == "dm":
             wake = {to} & set(roster)
+        elif broadcast:
+            # A broadcast wakes every agent member of the group (host included).
+            # A desktop host is never woken by the hub itself; it keeps a wake delivery the mod picks up.
+            wake = set(mem) & set(roster)
         elif cfg["wake"] == "all":
             wake = set(mem) & set(roster)
         else:
@@ -160,14 +174,18 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         wake |= _routed(conn, sender, kind, supersedes, resolves) & set(mem) & set(roster)
         wake.discard(sender)
         wake.discard(via)  # the relaying coordinator is not a recipient of its own message
-        routed = dispatch.route(conn, sender, via, kind, thread, mentions)  # the user's unaddressed words: host only
+        routed = None if broadcast \
+            else dispatch.route(conn, sender, via, kind, thread, mentions)  # the user's unaddressed words: host only
         if routed:
             wake = {routed}
-        picked = route.pick(conn, sender, kind, thread, mentions, body) if info_on(cfg) else {}  # T4 §8.7 (members)
+        picked = route.pick(conn, sender, kind, thread, mentions, body) \
+            if info_on(cfg) and cfg.get("route_by_duty", False) else {}  # T8a H8: duty routing is opt-in
         if picked:  # the best-matching members, plus whoever handed the asker its work (as for any question)
             wake = set(picked) | (_routed(conn, sender, kind, supersedes, resolves) & set(mem) & set(roster))
             conn.execute("update messages set route_to=?, route_reason=? where id=?",
                          (json.dumps(sorted(picked)), route.reason(picked), mid))
+        if orig is not None:
+            wake |= _reply_wake(conn, sender, orig)  # a reply also wakes whoever it answers
         for r in mem:
             if r in (sender, HUMAN, via) or r not in roster:
                 continue
@@ -203,6 +221,28 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
                 "entries": [f"E{i}" for i in eids], **({"routed_to": routed} if routed and not picked else {}),
                 **({"routed_to": sorted(picked)} if picked else {}),
                 **({"blocked": blocked} if blocked else {}), **({"released": released} if released else {})}
+
+
+def _reply_wake(conn, sender: str, orig: dict) -> set[str]:
+    """T8a H9: a reply wakes whoever the answered message was for. Eligible when it mentioned the replier,
+    was DM'd to the replier, or is a handoff assigned to the replier. A reply to the user's own message wakes
+    nobody (there is no delivery to the user); the view marks it for_me for the human reader instead."""
+    om = json.loads(orig["mentions"] or "[]")
+    eligible = sender in om or _dm_with(conn, orig, sender) or _assigned_to(conn, orig["id"], sender)
+    if not eligible:
+        return set()
+    return set() if orig["sender"] == HUMAN else {orig["sender"]}
+
+
+def _dm_with(conn, orig: dict, sender: str) -> bool:
+    t = db.row(conn.execute("select * from threads where id=?", (orig["thread_id"],)))
+    return bool(t) and t["kind"] == "dm" and orig["sender"] != sender and \
+        sender in members(conn, t["id"])
+
+
+def _assigned_to(conn, mid: int, sender: str) -> bool:
+    return bool(conn.execute("select 1 from entries where kind='assignment' and assignee=? and refs=?"
+                            " and status='active'", (sender, json.dumps([mid]))).fetchone())
 
 
 def _routed(conn, sender: str, kind: str, supersedes: str | None, resolves: list | None) -> set[str]:

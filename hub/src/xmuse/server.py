@@ -122,7 +122,7 @@ class Hub:
             out = mail.send(conn, self.cfg, sender, args["to"], args["body"], args.get("kind", "message"),
                             args.get("mentions"), args.get("why"), None, args.get("scope"), args.get("supersedes"),
                             args.get("resolves"), args.get("depends_on"), via, new_members=args.get("members"),
-                            notify=args.get("notify"))
+                            notify=args.get("notify"), reply_to=args.get("reply_to"))
             self.curator.kick(out["thread_id"])
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
@@ -551,7 +551,8 @@ class Hub:
             to = ends[0] if ends[1] == sender else ends[1]
         if p.kind == "member" and len(text) > self.cfg["body_limit"]:
             raise ToolError("body_too_long", f"text is {len(text)} chars, the limit is {self.cfg['body_limit']}")
-        out = mail.send(self.db(), self.cfg, sender, to, text, "message", mentions, via=via)
+        out = mail.send(self.db(), self.cfg, sender, to, text, "message", mentions, via=via,
+                          reply_to=b.get("reply_to"))
         self.curator.kick(out["thread_id"])
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], **({"routed_to": out["routed_to"]} if out.get("routed_to")
@@ -707,6 +708,42 @@ class Hub:
         changes = ", ".join(f"{k} = {short(v)}" for k, v in new.items() if v is not None)
         rooms.notice(conn, f"{a['id']} was edited: {changes}")
         return {"ok": True}
+
+    def act_promote(self, p: rooms.Principal, b: dict) -> dict:
+        """T8a H10: turn a bus message into a decision entry (operator only)."""
+        mid = b.get("message_id")
+        if isinstance(mid, bool) or not isinstance(mid, int):
+            raise rooms.ApiError(400, "bad_request", "promote needs message_id (integer)")
+        scope = b.get("scope") or "global"
+        if not isinstance(scope, str):
+            raise rooms.ApiError(400, "bad_request", "scope must be a string")
+        conn = self.db()
+        m = db.row(conn.execute("select * from messages where id=?", (mid,)))
+        if m is None:
+            raise rooms.ApiError(404, "unknown_message", f"no message {mid}")
+        with db.tx(conn):
+            eid = align.declare(conn, m["sender"], m["thread_id"], mid, "decision", m["body"],
+                                scope, via=config.HUMAN)  # promoted by the user
+        rooms.notice(conn, f"#{mid} 已设为决定 E{eid}")
+        return {"entry": f"E{eid}"}
+
+    def act_read(self, p: rooms.Principal, b: dict) -> dict:
+        """T8a H6: move the user's read cursor for a thread forward (operator only)."""
+        thread = b.get("thread")
+        if not isinstance(thread, str) or not thread:
+            raise rooms.ApiError(400, "bad_request", "read needs thread (string)")
+        upto = b.get("upto")
+        if upto is not None and (isinstance(upto, bool) or not isinstance(upto, int)):
+            raise rooms.ApiError(400, "bad_request", "upto must be a message id")
+        conn = self.db()
+        if upto is None:
+            upto = conn.execute("select coalesce(max(id), 0) from messages where thread_id=?",
+                               (thread,)).fetchone()[0]
+        with db.tx(conn):
+            conn.execute("insert into human_reads values(?, ?) on conflict(thread_id) do update"
+                         " set last_read_id=max(last_read_id, excluded.last_read_id)", (thread, upto))
+            cur = conn.execute("select last_read_id from human_reads where thread_id=?", (thread,)).fetchone()[0]
+        return {"ok": True, "thread": thread, "last_read_id": cur}
 
     def list_rooms(self) -> dict:
         """GET /v1/rooms (sidebar key): this hub's room and who is in it, for the sidebar's room list."""

@@ -28,7 +28,7 @@ TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
 ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align", "share_mark",
-        "member_add", "member_edit", "wake_host"}
+        "member_add", "member_edit", "wake_host", "promote", "read"}
 ACTS |= groups.ACTS  # T2 private groups
 
 
@@ -104,7 +104,8 @@ def fingerprint(conn) -> tuple:
             one("select name, host from room"),
             one("select count(*), max(used_at) from invites"),
             one("select max(id), max(phase_at), group_concat(state) from preset_runs"),
-            one("select max(id) from preset_events"), dispatch.fingerprint(conn))
+            one("select max(id) from preset_events"), dispatch.fingerprint(conn),
+            one("select total(last_read_id) from human_reads"))  # T8a H6: the user's read cursors (unread badges)
 
 
 def stored_version(conn) -> int:
@@ -140,6 +141,27 @@ def _unread(conn, member: str, thread: str | None = None) -> int:
     return conn.execute(sql, args).fetchone()[0]
 
 
+def _human_unread(conn, thread: str) -> int:
+    """T8a H6: the user's unread in a thread: past its read cursor, not its own words, no notices."""
+    cur = conn.execute("select last_read_id from human_reads where thread_id=?", (thread,)).fetchone()
+    return conn.execute("select count(*) from messages where thread_id=? and id>? and sender!=? and kind != 'notice'",
+                        (thread, cur[0] if cur else 0, HUMAN)).fetchone()[0]
+
+
+def mentions_me(conn) -> int:
+    """T8a H6: unread messages that @ the user or answer one of the user's messages."""
+    cursors = dict(conn.execute("select thread_id, last_read_id from human_reads").fetchall())
+    user_msgs = {r[0] for r in conn.execute("select id from messages where sender=?", (HUMAN,))}
+    n = 0
+    for m in db.rows(conn.execute("select id, thread_id, mentions, reply_to from messages"
+                                  " where kind != 'notice' and sender != ?", (HUMAN,))):
+        if m["id"] <= cursors.get(m["thread_id"], 0):
+            continue
+        if HUMAN in json.loads(m["mentions"] or "[]") or m["reply_to"] in user_msgs:
+            n += 1
+    return n
+
+
 def _status(conn, a: dict, online: bool) -> str:
     if a["paused"]:
         return "paused"
@@ -160,7 +182,10 @@ def members(conn, cfg: dict) -> list[dict]:
                     "description": a["description"], "status": _status(conn, a, online), "online": online,
                     "paused": bool(a["paused"]), "unread": _unread(conn, a["id"]), "tokens_hour": tokens,
                     "tokens_hour_cap": int(cfg.get("agent_hourly_tokens") or 0),
-                    "wakes_hour": dispatch.wakes_hour(conn, a, since)})
+                    "wakes_hour": dispatch.wakes_hour(conn, a, since),
+                    # T8a H5: deliveries asking for a wake that it has not taken yet
+                    "queued": conn.execute("select count(*) from deliveries where recipient=? and wake=1"
+                                           " and state in ('queued','held')", (a["id"],)).fetchone()[0]})
     return out
 
 
@@ -180,9 +205,14 @@ def _item(conn, m: dict, reader: str, mem: dict, roster: set) -> dict:
         reader in mentions or (m["thread_id"].startswith("dm:") and reader in to) or bool(conn.execute(
             "select 1 from deliveries where message_id=? and recipient=? and wake=1", (m["id"], reader)).fetchone()))
     for_me = dispatch.for_me(conn, m, reader, for_me)  # a result held for the host's batch is not for it yet
+    if not for_me and reader == HUMAN and m.get("reply_to"):
+        # T8a H9: a reply to the user's own message is marked for the human reader (it wakes nobody).
+        om = conn.execute("select sender from messages where id=?", (m["reply_to"],)).fetchone()
+        for_me = bool(om and om[0] == HUMAN)
     item = {"id": m["id"], "thread": m["thread_id"], "from": m["sender"], "via": _via(m["via"], roster), "to": to,
             "mentions": mentions, "kind": "system" if m["kind"] == "notice" else m["kind"], "text": m["body"],
             "at": m["created_at"], "for_me": for_me, **dispatch.item(m),
+            **({"reply_to": m["reply_to"]} if m.get("reply_to") else {}),
             **({"shared_from": json.loads(m["shared_from"])} if m.get("shared_from") else {}),
             **({"routed_to": json.loads(m["route_to"])} if m.get("route_to") else {}),
             **({"route_reason": m["route_reason"]} if m.get("route_reason") else {})}
@@ -223,7 +253,9 @@ def threads(conn, reader: str, restrict: bool = False) -> list[dict]:
         title = " ↔ ".join(t["id"][3:].split("+")) if t["kind"] == "dm" else t["id"]
         title = t["title"] if t["private"] and t["title"] else title
         out.append({"id": t["id"], "kind": "dm" if t["kind"] == "dm" else "topic", "title": title, "members": ms,
-                    "private": bool(t["private"]), "last_at": t["last_at"], "unread": _unread(conn, reader, t["id"]) if reader != HUMAN else 0})
+                    "private": bool(t["private"]), "last_at": t["last_at"],
+                    # T8a H6: the user's own cursor; members keep delivery-based unread.
+                    "unread": _human_unread(conn, t["id"]) if reader == HUMAN else _unread(conn, reader, t["id"])})
     return out
 
 
@@ -297,7 +329,7 @@ def view(conn, cfg: dict, ws: Path, p: Principal, version: int) -> dict:
             "members": members(conn, cfg), "threads": threads(conn, p.reader, restrict), "timeline": tl["items"],
             "timeline_cursor": {"oldest": tl["items"][0]["id"] if tl["items"] else None, "has_more": tl["has_more"]},
             "alignment": alignment(conn, hidden), "approvals": pending, "run": run_view(conn),
-            "host_wait": dispatch.host_wait(conn, cfg, room["host"])}
+            "host_wait": dispatch.host_wait(conn, cfg, room["host"]), "mentions_me": mentions_me(conn)}
 
 
 # ---- tokens, invitations ------------------------------------------------------------------------------------

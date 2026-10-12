@@ -55,21 +55,21 @@ def held(h):
     return [r["message_id"] for r in h.q("select message_id from dispatch_holds where released_at is null")]
 
 
-# ---- the user's words go to the host --------------------------------------------------------------------------------
+# ---- the user's words: broadcasts wake the group -------------------------------------------------------------------
 
-def test_unaddressed_user_words_wake_only_the_host(make):
+def test_user_broadcast_wakes_every_member_and_routes_nothing(make):
     h = team(make, wake="all")  # wake=all: a group message would otherwise wake every member
     st, out = act(h, h.ot, act="say", to="#team", text="build the parser")
-    assert st == 200 and out["routed_to"] == "coord"
+    assert st == 200 and "routed_to" not in out  # T8a H8: a broadcast, not host-routed
     assert {r["recipient"]: (r["wake"], r["state"]) for r in h.q(
         "select recipient, wake, state from deliveries where message_id=?", out["id"])} == {
-        "coord": (1, "queued"), "e1": (0, "passive"), "e2": (0, "passive")}
+        "coord": (1, "queued"), "e1": (1, "queued"), "e2": (1, "queued")}
     quiet(h)
-    assert host_turns(h) == 1
+    assert host_turns(h) == 1  # the hub-run host runs; desktop members never do
     st, out = act(h, h.ot, act="say", text="no to: the room")  # no `to` at all
-    assert out["thread"] == "#room" and out["routed_to"] == "coord"
+    assert out["thread"] == "#room" and "routed_to" not in out
     out = h.send("#team", "from the terminal")  # the CLI is the user too
-    assert out["routed_to"] == "coord" and out["woken"] == ["coord"]
+    assert "routed_to" not in out and out["woken"] == ["coord"]  # desktop members keep wake deliveries, no turns
     # named: as before
     st, out = act(h, h.ot, act="say", to="#team", text="e1, this one is yours", mentions=["e1"])
     assert "routed_to" not in out
@@ -96,7 +96,8 @@ def test_private_group_words_are_not_routed_to_the_host(make):
 def test_no_room_no_routing(make):
     h = make([("coord", "claude"), ("e1", "claude", {"desktop": True})])
     out = h.send("#team", "nobody hosts")
-    assert "routed_to" not in out and out["woken"] == []
+    # T8a H8: a user message with no @ is a broadcast, so both agents wake; but nothing is routed by duty
+    assert "routed_to" not in out and out["woken"] == ["coord"]  # (e1 is a desktop member: the hub never wakes it)
 
 
 # ---- the host's identity -------------------------------------------------------------------------------------------

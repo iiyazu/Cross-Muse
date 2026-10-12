@@ -7,6 +7,13 @@ import urllib.error
 import urllib.request
 
 from test_trust import OC, held_approval
+from xmuse import db
+
+
+def pause(h, agent):
+    """Keep the engine from admitting (and so marking read) the agent's mail while a test reads it."""
+    with db.tx(h.conn()) as c:
+        c.execute("update agents set paused=1 where id=?", (agent,))
 
 
 def call(h, method, path, body=None, token=None, session=None, timeout=40, key=None):
@@ -68,7 +75,8 @@ def test_member_token_says_and_acks_only(make):
     room = open_room(h)
     mt, ot = room["member_token"], room["operator_token"]
     for name, extra in (("invite", {"vendor": "claude"}), ("approve", {"id": "x", "decision": "once"}),
-                        ("pause", {"member": "claude-1"}), ("align", {"id": "E1", "decision": "confirm"})):
+                        ("pause", {"member": "claude-1"}), ("align", {"id": "E1", "decision": "confirm"}),
+                        ("promote", {"message_id": 1}), ("read", {"thread": "#room"})):
         st, out = act(h, mt, "S-lead", act=name, **extra)
         assert st == 403 and out["error"] == "operator_only", name
     st, out = act(h, mt, "S-lead", act="say", to="#plan", text="as the member")
@@ -109,6 +117,7 @@ def test_unread_leaves_out_hub_notices_for_every_vendor(make):
     """Hub notices are delivered to desktop (Claude) members only; a sidebar's unread must not count them."""
     h = make()
     ot = open_room(h)["operator_token"]  # lead: a Claude desktop member
+    pause(h, "claude-1")  # hub-run: keep its wake deliveries unread while the test reads them
     _, inv = act(h, ot, act="invite", vendor="claude")
     _, j = call(h, "POST", "/v1/join", {"code": inv["code"], "vendor": "claude", "session_id": "S2"})
     assert h.q("select count(*) n from deliveries d join messages m on m.id=d.message_id"
@@ -191,8 +200,9 @@ def test_operator_say_is_the_users_via_the_sidebar_and_wakes(make):
 def test_timeline_pages_back(make):
     h = make()
     ot = open_room(h)["operator_token"]
+    pause(h, "claude-1")  # broadcasts wake it; keep the engine out so paging stays about content
     for i in range(60):
-        h.send("#log", f"m{i}")  # a group with no mentions: nobody is woken
+        h.send("#log", f"m{i}")  # broadcasts: everyone is woken, nobody runs (paused)
     _, v = view(h, ot)
     assert len(v["timeline"]) == 50 and v["timeline_cursor"]["has_more"]
     assert v["timeline"][-1]["text"] == "m59" and v["timeline_cursor"]["oldest"] == v["timeline"][0]["id"]
@@ -265,3 +275,76 @@ def test_align_from_the_sidebar(make):
     _, v = view(h, ot)
     assert [x["status"] for x in v["alignment"]] == ["active"] and v["alignment"][0]["text"] == "use tabs"
     assert v["alignment"][0]["author"] == "human"
+
+
+def test_members_show_queued_wake_deliveries(make):
+    """T8a H5: queued counts wake deliveries the member has not taken yet."""
+    h = make()
+    room = open_room(h)
+    h.plan_claude({"sleep": 30})
+    h.send("claude-1", "first")  # a DM wakes it; the turn sleeps
+    h.wait(lambda: h.q("select 1 from turns where state='running'"), what="running")
+    h.send("claude-1", "second")
+    h.send("claude-1", "third")
+    _, v = view(h, room["operator_token"])
+    assert next(m for m in v["members"] if m["id"] == "claude-1")["queued"] == 2
+    assert next(m for m in v["members"] if m["id"] == "lead")["queued"] == 0
+
+
+def test_human_read_cursor_drives_thread_unread_and_mentions_me(make):
+    """T8a H6: threads[].unread for the human reader counts past its cursor (not its own words, no notices);
+    mentions_me counts unread @user and replies to the user's messages; the cursor only moves forward."""
+    h = make()
+    ot = open_room(h)["operator_token"]
+    pause(h, "claude-1")
+    m1 = h.tool("lead", "xmuse_send", to="#room", body="one")["result"]["id"]  # the user's reader counts others' words
+    m2 = h.tool("lead", "xmuse_send", to="#room", body="two")["result"]["id"]
+    m3 = h.tool("lead", "xmuse_send", to="#room", body="three")["result"]["id"]
+    own = h.send("#room", "mine")["id"]  # the user's own message: never unread for the user
+    admin = h.token("human")
+    _, v = view(h, admin)
+    assert next(t for t in v["threads"] if t["id"] == "#room")["unread"] == 3
+    assert v["mentions_me"] == 0
+    ver = v["version"]
+    st, out = act(h, ot, act="read", thread="#room", upto=m2)
+    assert (st, out) == (200, {"ok": True, "thread": "#room", "last_read_id": m2})
+    _, v = view(h, admin)
+    assert v["version"] > ver  # a read moves the view on, so a long-polling panel clears its badge
+    assert next(t for t in v["threads"] if t["id"] == "#room")["unread"] == 1
+    st, out = act(h, ot, act="read", thread="#room", upto=m1)  # backward: stays
+    assert out["last_read_id"] == m2
+    _, v = view(h, admin)
+    assert next(t for t in v["threads"] if t["id"] == "#room")["unread"] == 1
+    st, out = act(h, ot, act="read", thread="#room")  # default upto: the newest
+    assert out["last_read_id"] == own
+    assert act(h, ot, act="read", thread="")[0] == 400
+    # a reply to the user's message: mentions_me + for_me for the human reader, no member woken
+    r = h.tool("lead", "xmuse_send", to="#room", body="on it", reply_to=own)["result"]
+    _, v = view(h, admin)
+    assert v["mentions_me"] == 1
+    assert next(t for t in v["timeline"] if t["id"] == r["id"])["for_me"] is True
+    assert next(t for t in v["threads"] if t["id"] == "#room")["unread"] == 1
+    # the room view carries reply_to on every item that has one
+    assert next(t for t in v["timeline"] if t["id"] == r["id"])["reply_to"] == own
+    assert all("reply_to" not in t for t in v["timeline"] if t["id"] != r["id"])
+
+
+def test_promote_turns_a_message_into_a_decision(make):
+    """T8a H10: promote records a decision by the original sender, notices #room, shows in snapshots."""
+    from xmuse import wakepack
+    h = make()
+    ot = open_room(h)["operator_token"]
+    mid = h.send("#room", "use tabs everywhere")["id"]
+    st, out = act(h, ot, act="promote", message_id=mid)
+    assert st == 200 and out["entry"].startswith("E")
+    eid = int(out["entry"][1:])
+    e = h.q("select * from entries where id=?", eid)[0]
+    assert (e["kind"], e["scope"], e["author"]) == ("decision", "global", "human") and e["via"] == "human"
+    assert any(t["kind"] == "system" and f"#{mid} 已设为决定 E{eid}" in t["text"] for t in view(h, ot)[1]["timeline"])
+    conn = h.conn()
+    a = db.row(conn.execute("select * from agents where id='claude-1'"))
+    assert f"E{eid}" in wakepack.inject(conn, h.hub.cfg, a, None).text  # the next wake carries it
+    st, out = act(h, ot, act="promote", message_id=mid, scope="role:reviewer")
+    assert st == 200 and h.q("select scope from entries where id=?", int(out["entry"][1:]))[0]["scope"] == "role:reviewer"
+    assert act(h, ot, act="promote", message_id=9999)[1]["error"] == "unknown_message"
+    assert act(h, ot, act="promote", message_id="x")[0] == 400

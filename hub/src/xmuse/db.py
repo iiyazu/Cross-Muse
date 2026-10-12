@@ -108,6 +108,8 @@ create table if not exists share_marks(      -- user DMs released for sharing (T
 create table if not exists share_hints(      -- T3: a user DM that may relate to a teammate's question, shown once to its holder
   dm_id integer not null, question_id integer not null, holder text not null, asker text not null,
   shown integer not null default 0, primary key(dm_id, question_id));
+create table if not exists human_reads(      -- T8a H6: the user's read cursor per thread (operator act `read` moves it)
+  thread_id text primary key, last_read_id integer not null);
 create table if not exists evidence(         -- xmuse_done evidence and the hub's check of it (evidence.py)
   message_id integer primary key, items text not null,  -- items: JSON [{kind, ref, result}]
   status text not null,                      -- verified | unverified (no row: none)
@@ -150,7 +152,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # T0 outcome labels on done messages: the label in effect, member | hub (upgraded), why the hub upgraded it
            ("messages", "outcome", "text"), ("messages", "outcome_by", "text"), ("messages", "outcome_reason", "text"),
            # T4 §8.7: duty-routed question (column is route_to: dispatch's routed_to return field keeps its name)
-           ("messages", "route_to", "text"), ("messages", "route_reason", "text")]
+           ("messages", "route_to", "text"), ("messages", "route_reason", "text"),
+           # T8a H9: the message this one replies to (a reply wakes whoever it answers)
+           ("messages", "reply_to", "integer")]
 
 
 def init(path) -> sqlite3.Connection:

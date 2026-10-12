@@ -12,7 +12,7 @@ from xmuse.config import DEFAULTS
 def team(make, **cfg):
     h = make([("coord", "claude", {"desktop": True}), ("e1", "claude", {"desktop": True}),
               ("e2", "claude", {"desktop": True}), ("e3", "claude", {"desktop": True})],
-             wake="all", **cfg)
+             wake="all", route_by_duty=True, **cfg)  # T4 tests run with the duty switch on (default off, T8a H8)
     with h.conn() as c:
         c.execute("insert into room(id, name, dir, host, created_at) values('r-t', 'dev', ?, 'coord', ?)",
                   (str(h.ws), time.time()))
@@ -125,6 +125,23 @@ def test_user_question_does_not_take_this_path(make):
     assert woken(h, out["id"]) == {"coord", "e1", "e2", "e3"}
 
 
+def test_duty_routing_defaults_off(make):
+    """T8a H8: without route_by_duty, an unaddressed member question wakes the group, not the best match."""
+    from xmuse.config import DEFAULTS
+    assert DEFAULTS["route_by_duty"] is False
+    h = make([("coord", "claude", {"desktop": True}), ("e1", "claude", {"desktop": True}),
+              ("e2", "claude", {"desktop": True}), ("e3", "claude", {"desktop": True})], wake="all")
+    with h.conn() as c:
+        c.execute("insert into room(id, name, dir, host, created_at) values('r-t', 'dev', ?, 'coord', ?)",
+                  (str(h.ws), time.time()))
+    describe(h, e1=("executor", "sidebar drawer plugin"))
+    out = ask(h, "e3", "how do I render the sidebar drawer?")
+    assert "routed_to" not in out
+    assert woken(h, out["id"]) == {"coord", "e1", "e2"}  # wake=all baseline, sender excluded
+    row = h.q("select route_to from messages where id=?", out["id"])[0]
+    assert row["route_to"] is None
+
+
 def test_chinese_description_matches(make):
     h = team(make)
     describe(h, e1=("executor", "负责侧栏抽屉界面"), e2=("reviewer", "approvals evidence"))
@@ -171,7 +188,8 @@ def test_old_library_opens(tmp_path):
     raw.close()
     conn = db.init(str(p))
     cols = {r[1] for r in conn.execute("pragma table_info(messages)")}
-    assert {"route_to", "route_reason"} <= cols
+    assert {"route_to", "route_reason", "reply_to"} <= cols  # T4 + T8a H9 reply_to migrate old libraries too
+    assert "human_reads" in {r[0] for r in conn.execute("select name from sqlite_master where type='table'")}
     conn.execute("insert into messages(thread_id, sender, kind, body, mentions, chain_id, created_at)"
                  " values('#room', 'e1', 'message', 'hi', '[]', 1, 0)")
     conn.commit()

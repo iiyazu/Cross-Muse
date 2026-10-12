@@ -45,6 +45,10 @@
      },
      "description": "peers to wake (groups)"
     },
+    "reply_to": {
+     "type": "integer",
+     "description": "answer this message id: whoever it mentioned, DM'd or handed work to is woken (a reply to the user's own message marks it for_me instead)"
+    },
     "members": {
      "type": "array",
      "items": {
