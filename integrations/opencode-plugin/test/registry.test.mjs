@@ -78,3 +78,17 @@ test("the sidebar credential goes to loopback hubs only (contract 8.1)", async (
   assert.equal(new HubClient({ baseUrl: "http://10.0.0.5:1", sidebarKey: "k" }).sidebarKey, "")
   assert.equal(new HubClient({ baseUrl: "http://127.0.0.1:1", sidebarKey: "k" }).sidebarKey, "k")
 })
+
+test("room new finds the hub serving the current directory through the registry", async () => {
+  const { hubBaseUrl } = await import("../lib/store.mjs")
+  const reg = fs.mkdtempSync(path.join(os.tmpdir(), "xreg-"))
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "xws-"))
+  const write = (hubs) => fs.writeFileSync(path.join(reg, "hubs.json"), JSON.stringify({ hubs }))
+  const env = { XMUSE_REGISTRY_DIR: reg, XDG_STATE_HOME: reg }
+  write([{ room_id: "r1", name: "t", dir: ws + "/", url: "http://127.0.0.1:44471", pid: process.pid }])
+  assert.equal(hubBaseUrl(env, ws), "http://127.0.0.1:44471")
+  assert.equal(hubBaseUrl({ ...env, XMUSE_HUB_URL: "http://127.0.0.1:5" }, ws), "http://127.0.0.1:5")
+  write([{ room_id: "r1", name: "t", dir: ws, url: "http://10.0.0.5:44471", pid: process.pid }])
+  assert.equal(hubBaseUrl(env, ws), "http://127.0.0.1:43117") // not loopback: ignored
+  assert.equal(hubBaseUrl(env, os.tmpdir()), "http://127.0.0.1:43117") // another directory
+})
