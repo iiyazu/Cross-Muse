@@ -414,3 +414,13 @@ def test_reviewer_is_woken_by_the_hub_when_it_runs_in_the_background(make):
     assert t["agent_id"] == "rev" and t["state"] == "succeeded"
     assert "REVIEW REQUEST" in h.claude_calls()[0]["prompt"]
     assert len(handoffs(h)) == 1  # the reviewer's done did not start another review
+
+
+def test_zero_count_failure_lines_are_not_failures():
+    # dev room 10-12: dsh's log of node --test has no exit code and ends with "ℹ fail 0"; that run passed
+    from xmuse.evidence import Call, _mismatch
+    it = {"kind": "test", "ref": "npm test", "result": "pass 34 / fail 0"}
+    for out in ("ℹ tests 34\nℹ pass 34\nℹ fail 0\n", "Tests: 12 passed, 0 failed", "failures: 0, errors: 0"):
+        assert _mismatch(Call("shell", "npm test", None, False, out), it) is None, out
+    for out in ("ℹ tests 34\nℹ pass 33\nℹ fail 1\n", "FAIL src/a.test.js", "1 failed, 11 passed"):
+        assert _mismatch(Call("shell", "npm test", None, False, out), it), out
