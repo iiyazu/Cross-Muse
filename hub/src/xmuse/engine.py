@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import align, db, mail, wakepack
+from . import align, db, dispatch, mail, wakepack
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
 from .config import HUMAN
@@ -88,6 +88,7 @@ class Engine:
     # ---- admission -----------------------------------------------------------------
     def _on_kick(self) -> None:
         conn = self.db()
+        dispatch.tick(conn, self.cfg)  # the host's batches that are due (timeouts included: sweeps kick too)
         for agent in db.rows(conn.execute("select * from agents where paused=0 and coalesce(paused_until, 0)<=? order by id",
                                           (db.now(),))):
             if mail.running_turn(conn, agent["id"]) is None:

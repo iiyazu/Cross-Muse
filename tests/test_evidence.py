@@ -312,20 +312,40 @@ def test_done_next_none_goes_to_the_reviewer(make):
     h = make([("dev", "dsh", FG), ("rev", "dsh", FG)])
     roster(h, rev="reviewer")
     running_turn(h, "dev", lines=CLAUDE)
-    out = done(h, "dev", summary="added a.py", evidence=[{"kind": "diff", "ref": "src/a.py", "result": "created"},
-                                                       {"kind": "test", "ref": "pytest nothing", "result": "passed"}])
+    out = done(h, "dev", summary="added a.py", evidence=[{"kind": "diff", "ref": "src/a.py", "result": "created"}])
     assert out["review"] == "rev"
     [m] = handoffs(h)
     assert (m["recipient"], m["wake"], m["thread_id"]) == ("rev", 1, "dm:hub+rev")
     assert m["body"].startswith("REVIEW REQUEST")
     done_id = h.q("select id from messages where kind='done'")[0]["id"]
-    for needle in (f"#{done_id}", "dev", "added a.py", "diff src/a.py -> created", "hub check: unverified",
-                   "not run in this turn: 'pytest nothing'", "xmuse_done"):
+    for needle in (f"#{done_id}", "dev", "added a.py", "diff src/a.py -> created", "xmuse_done"):
         assert needle in m["body"], needle
     assert json.loads(m["why"])["what"].startswith("Review dev's")
     [e] = h.q("select * from entries where kind='assignment'")
     assert (e["assignee"], e["author"]) == ("rev", "hub")
     assert h.tool("rev", "xmuse_inbox")["result"][0]["body"].startswith("REVIEW REQUEST")
+
+
+def test_an_unverified_claim_is_relabelled_blocked_and_not_reviewed(make):
+    # integration of 8.4 and 8.5: a claim the turn log does not back makes the hub relabel the done blocked, and
+    # only finished (completed) work goes to the reviewer
+    h = make([("dev", "dsh", FG), ("rev", "dsh", FG)])
+    roster(h, rev="reviewer")
+    running_turn(h, "dev", lines=CLAUDE)
+    out = done(h, "dev", summary="added a.py", evidence=[{"kind": "diff", "ref": "src/a.py", "result": "created"},
+                                                       {"kind": "test", "ref": "pytest nothing", "result": "passed"}])
+    assert (out["evidence_status"], out["outcome"], out["outcome_by"]) == ("unverified", "blocked", "hub")
+    assert "not run in this turn: 'pytest nothing'" in out["outcome_reason"]
+    assert "review" not in out and not handoffs(h)
+
+
+def test_no_transcript_does_not_relabel(make):
+    # a polled member has no turn log: "transcript unavailable" is not counted against it
+    h = make([("dev", "dsh", FG), ("rev", "dsh", FG)])
+    roster(h, rev="reviewer")
+    out = done(h, "dev", summary="ran it", evidence=[{"kind": "test", "ref": "pytest", "result": "passed"}])
+    assert out["evidence_status"] == "unverified" and "outcome" not in out
+    assert out["review"] == "rev"
 
 
 def test_the_reviewers_own_done_ends_the_chain(make):

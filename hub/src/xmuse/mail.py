@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 
-from . import align, db, share, threads
+from . import align, db, dispatch, share, threads
 from . import evidence as ev
 from .config import HUB, HUMAN, info_on
 from .tools import DECLARE, WHY_FIELDS, ToolError
@@ -95,10 +95,13 @@ def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
          supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None,
-         new_members: list | None = None) -> dict:
+         new_members: list | None = None, notify: str | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag).
-    `new_members`: sending to a '#group' that does not exist yet makes it a private group of these members."""
+    `new_members`: sending to a '#group' that does not exist yet makes it a private group of these members.
+    `notify` (a host's handoff): batch | now, when the assignee's result wakes the host (dispatch.py)."""
     mentions = list(dict.fromkeys(mentions or []))
+    if notify is not None and (kind != "handoff" or notify not in ("batch", "now")):
+        raise ToolError("invalid_arguments", "notify is batch or now, and needs kind=handoff")
     if not info_on(cfg) and (kind != "message" or scope or supersedes or resolves or depends_on or why):
         # T-plain (T14): agents are not offered these (tools_for); refuse them from every other path too
         raise ToolError("invalid_arguments", "the information layer is off in this workspace: plain messages only "
@@ -157,6 +160,9 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         wake |= _routed(conn, sender, kind, supersedes, resolves) & set(mem) & set(roster)
         wake.discard(sender)
         wake.discard(via)  # the relaying coordinator is not a recipient of its own message
+        routed = dispatch.route(conn, sender, via, kind, thread, mentions)  # the user's unaddressed words: host only
+        if routed:
+            wake = {routed}
         for r in mem:
             if r in (sender, HUMAN, via) or r not in roster:
                 continue
@@ -182,13 +188,14 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
                         "update deliveries set state='blocked', updated_at=? where message_id=? and recipient=?"
                         " and state in ('queued','held')", (db.now(), mid, e["assignee"])).rowcount:
                     blocked.append(e["assignee"])
+        held = dispatch.on_send(conn, cfg, mid, sender, kind, wake - set(blocked), eids, notify)
         released = align.release(conn) if info_on(cfg) else []
         fg = set(_foreground_agents(conn))
-        wake = wake - set(blocked)
+        wake = wake - set(blocked) - held
         return {**db.row(conn.execute("select * from messages where id=?", (mid,))),
                 # the hub never wakes a coordinator or a foreground agent; the latter gets the message pushed
                 "woken": sorted(wake - set(_desktop_agents(conn)) - fg), "pushed": sorted(wake & fg),
-                "entries": [f"E{i}" for i in eids],
+                "entries": [f"E{i}" for i in eids], **({"routed_to": routed} if routed else {}),
                 **({"blocked": blocked} if blocked else {}), **({"released": released} if released else {})}
 
 
@@ -289,15 +296,17 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
 
 
 def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None, stage: str | None = None,
-         evidence: list | None = None, cfg: dict | None = None) -> dict:
-    """Exit check: record it on the running turn and post it to the chain's thread (no wake). `stage`: the
+         outcome: str | None = None, evidence: list | None = None, cfg: dict | None = None) -> dict:
+    """Exit check: record it on the running turn and post it to the chain's thread. It wakes no one, except that a
+    result for the room's host reaches the host by its outcome label (dispatch.on_done). `stage`: the
     plan-split-integrate phase this ends (preset.py reads it from messages.stage). `evidence` is checked against the
-    turn's log and stored with the message; with `cfg` (review_gate on), a finished task (next none) is handed to the
-    room's reviewer (evidence.py)."""
+    turn's log and stored with the message; an unverified claim makes the hub relabel the done blocked. With `cfg`
+    (review_gate on), a finished task (next none, outcome completed) is handed to the room's reviewer (evidence.py)."""
     turn = running_turn(conn, agent_id)
     evidence = evidence or None
     key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps(
-        [summary, nxt, declares, stage] + ([evidence] if evidence else [])).encode()).hexdigest())
+        [summary, nxt, declares, stage] + ([outcome] if outcome else []) + ([evidence] if evidence else []))
+        .encode()).hexdigest())
     verdict = ev.check(conn, turn, evidence) if evidence else None
     with db.tx(conn):
         dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
@@ -331,10 +340,13 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
             align.release(conn)
         if verdict:
             ev.record(conn, mid, evidence, *verdict)
-    reviewer = cfg and ev.request_review(conn, cfg, agent_id, mid, summary, nxt)
+        labelled = dispatch.on_done(conn, cfg, mid, agent_id, nxt, outcome, declares, *(verdict or (None, None)))
+        final = conn.execute("select outcome from messages where id=?", (mid,)).fetchone()[0]
+    # only finished work goes to review: a done the member or the hub labelled otherwise is not finished
+    reviewer = cfg and final == "completed" and ev.request_review(conn, cfg, agent_id, mid, summary, nxt)
     return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {}),
             **({"evidence_status": verdict[0], "evidence_problems": verdict[1]} if verdict else {}),
-            **({"review": reviewer} if reviewer else {})}
+            **({"review": reviewer} if reviewer else {}), **labelled}
 
 
 def _public(r: dict) -> dict:

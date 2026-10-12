@@ -112,6 +112,13 @@ create table if not exists evidence(         -- xmuse_done evidence and the hub'
   message_id integer primary key, items text not null,  -- items: JSON [{kind, ref, result}]
   status text not null,                      -- verified | unverified (no row: none)
   problems text not null default '[]', checked_at real not null);
+create table if not exists dispatches(        -- host handoffs, one per assignee, until a result returns them (dispatch.py)
+  id integer primary key, message_id integer not null, entry_id integer, host text not null, member text not null,
+  notify text not null default 'batch',      -- batch | now (wake the host as soon as this one is back)
+  created_at real not null, returned_at real, result_id integer, unique(message_id, member));
+create table if not exists dispatch_holds(    -- results held back from the host (no delivery) until its batch is released
+  message_id integer not null, host text not null, created_at real not null, released_at real, why text,
+  primary key(message_id, host));
 """
 
 
@@ -139,7 +146,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # D2: what a member is responsible for (shown to peers and in the sidebars); removed from the room
            ("agents", "description", "text not null default ''"), ("agents", "removed", "integer not null default 0"),
            ("threads", "private", "integer not null default 0"),  # T2: a private group is for its members only
-           ("messages", "shared_from", "text")]  # T3: JSON {member, message_id} of a shared user DM (via "shared")
+           ("messages", "shared_from", "text"),  # T3: JSON {member, message_id} of a shared user DM (via "shared")
+           # T0 outcome labels on done messages: the label in effect, member | hub (upgraded), why the hub upgraded it
+           ("messages", "outcome", "text"), ("messages", "outcome_by", "text"), ("messages", "outcome_reason", "text")]
 
 
 def init(path) -> sqlite3.Connection:
