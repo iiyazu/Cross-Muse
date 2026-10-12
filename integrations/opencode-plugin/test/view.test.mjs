@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { parseSlash, dedupeTimeline, newMentions, formatSidebar, buildSayArgs, memberLine, threadLine, formatRooms, formatShareApproval, formatDone, formatHostWait } from "../lib/view.mjs"
+import { parseSlash, dedupeTimeline, newMentions, formatSidebar, buildSayArgs, memberRow, msgRow, doneTag, threadShort, formatGroups, formatHeader, formatHostLine, roleText, statusText, formatRooms, formatShareApproval } from "../lib/view.mjs"
+import { COMMANDS, compatHelp, COMPAT_SUBS } from "../lib/commands.mjs"
 
 test("parseSlash 基本", () => {
   assert.deepEqual(parseSlash("room new demo"), { cmd: "room", args: ["new", "demo"] })
@@ -25,25 +26,43 @@ test("newMentions 只返回 for_me 且更新的", () => {
 
 test("formatSidebar 未加入时提示命令", () => {
   const L = formatSidebar(null)
-  assert.ok(L[0].includes("/xmuse"))
+  assert.ok(L.join("\n").includes("/xmuse-join"))
 })
 
 test("formatSidebar 全量快照", () => {
   const view = {
     version: 5,
-    room: { id: "r-1", name: "demo" },
+    room: { id: "r-1", name: "demo", host: "coord" },
     me: { kind: "member", id: "oc-1" },
-    members: [{ id: "oc-1", role: "executor", status: "running", online: true, unread: 2, description: "侧栏" }],
-    threads: [],
+    members: [
+      { id: "coord", role: "coordinator", status: "idle", online: true, unread: 0 },
+      { id: "oc-1", role: "executor", status: "running", online: true, unread: 2, description: "侧栏" },
+    ],
+    threads: [{ id: "#d", members: ["coord", "oc-1"] }],
     timeline: [{ id: 1, thread: "#d", from: "coord", via: null, to: ["oc-1"], mentions: ["oc-1"], text: "hi", at: 1791726500, for_me: true }],
     timeline_cursor: { oldest: 1, has_more: false },
     alignment: [{ id: "E1", kind: "decision", scope: "room", author: "coord", text: "按 v0" }],
     approvals: [{ id: "A1", kind: "shell", member: "oc-1", summary: "npm i", risk: "normal" }],
+    host_wait: { waiting_on: [], results_held: 0, wake_at: null },
   }
   const L = formatSidebar(view)
-  assert.ok(L.some((x) => x.includes("oc-1")))
-  assert.ok(L.some((x) => x.includes("A1")))
-  assert.ok(L.some((x) => x.includes("E1")))
+  assert.ok(L[0].includes("demo") && L[0].includes("oc-1") && !L[0].includes("v5"))
+  assert.ok(L.some((x) => x.includes("★ coord")))
+  assert.ok(L.some((x) => x.includes("oc-1 executor · 运行中")))
+  assert.ok(L.some((x) => x.includes("⚠ 待审批 1 条")))
+  assert.ok(L.some((x) => x.includes("#d coord→oc-1 hi")))
+  assert.ok(L.some((x) => x.includes("E1 decision")))
+})
+
+test("formatSidebar 空区块隐藏", () => {
+  const view = {
+    version: 1, room: { id: "r-1", name: "demo", host: "c" }, me: { kind: "member", id: "c" },
+    members: [{ id: "c", role: "", status: "idle", online: true, unread: 0 }],
+    threads: [], timeline: [], timeline_cursor: { oldest: 0, has_more: false },
+    alignment: [], approvals: [], host_wait: { waiting_on: [], results_held: 0, wake_at: null },
+  }
+  const L = formatSidebar(view)
+  assert.ok(!L.some((x) => x.includes("— 群 —") || x.includes("— 消息 —") || x.includes("待审批") || x.includes("主控在等")))
 })
 
 test("buildSayArgs", () => {
@@ -51,42 +70,8 @@ test("buildSayArgs", () => {
   assert.equal(buildSayArgs(["say", "#d"]), null)
 })
 
-test("formatSidebar 审批兼容 alignment/resume（无 member/summary）", () => {
-  const view = {
-    version: 1,
-    room: { id: "r-1", name: "demo" },
-    me: { kind: "operator", id: "oc-1" },
-    members: [],
-    timeline: [],
-    timeline_cursor: { oldest: 0, has_more: false },
-    alignment: [],
-    approvals: [
-      { id: "E12", kind: "alignment", text: "按 v0 对接" },
-      { id: "resume:oc-1", kind: "resume", member: "oc-1", text: "恢复成员" },
-    ],
-  }
-  const L = formatSidebar(view)
-  assert.ok(L.some((x) => x.includes("E12")))
-  assert.ok(L.some((x) => x.includes("resume:oc-1")))
-})
-
-test("memberLine 离线/未读", () => {
-  assert.ok(memberLine({ id: "a", role: "executor", status: "offline", online: false, unread: 0, description: "" }).startsWith("○"))
-})
-
-test("memberLine 显示 wakes_hour（无则不显示）", () => {
-  const l = memberLine({ id: "a", role: "executor", status: "idle", online: true, unread: 0, description: "", wakes_hour: 3 })
-  assert.ok(l.includes("~3/h"))
-  assert.ok(!memberLine({ id: "a", role: "executor", status: "idle", online: true, unread: 0 }).includes("/h"))
-})
-
-test("threadLine 私有群锁标记", () => {
-  assert.ok(threadLine({ id: "#g1", private: true, members: ["a", "b"], unread: 0 }).startsWith("🔒#g1"))
-  assert.ok(!threadLine({ id: "#room", members: [], unread: 0 }).startsWith("🔒"))
-})
-
 test("formatRooms 房间列表行", () => {
-  assert.deepEqual(formatRooms([], {}), ["本机没有房间（/xmuse room new <名> 开一个）"])
+  assert.deepEqual(formatRooms([], {}), ["本机没有房间（/xmuse-new-room 开一个）"])
   const entries = [
     { room_id: "r-1", name: "dev", dir: "/x", url: "http://h1", host: "c" },
     { room_id: "r-2", name: "t", dir: "/y", url: "http://h2", host: "c" },
@@ -103,29 +88,93 @@ test("formatShareApproval 显示摘要和摘录", () => {
   assert.ok(l.includes("share:1") && l.includes("秘密计划") && l.includes("once/always/reject"))
 })
 
-test("formatDone 结果标签/改判/未核实/分享/路由", () => {
-  assert.deepEqual(formatDone({ kind: "done", outcome: "completed" }), ["结果: completed"])
-  assert.deepEqual(
-    formatDone({ kind: "done", outcome: "needs_alignment", outcome_by: "hub", outcome_reason: "declares question" }),
-    ["结果: needs_alignment（hub 改判: declares question）"],
-  )
-  assert.deepEqual(
-    formatDone({ kind: "done", outcome: "blocked", evidence_status: "unverified", evidence_problems: ["no such test"] }),
-    ["结果: blocked", "未核实: no such test"],
-  )
-  assert.deepEqual(formatDone({ kind: "message", shared_from: { member: "e1", message_id: 5 } }), ["分享自 e1"])
-  assert.deepEqual(
-    formatDone({ kind: "question", routed_to: ["e1", "e2"], route_reason: "e1: drawer" }),
-    ["已路由给 e1, e2（e1: drawer）"],
-  )
-  assert.deepEqual(formatDone({ kind: "message", text: "hi" }), [])
+test("memberRow 说明示例格式", () => {
+  assert.equal(memberRow({ id: "lead", role: "coordinator", status: "idle", online: true, unread: 0 }, "lead", "lead"), "★ lead 主控 · 在线 · 我")
+  assert.equal(
+    memberRow({ id: "oc-exec", role: "executor", status: "running", online: true, unread: 0, description: "负责实现" }, "lead", "lead"),
+    "  oc-exec executor · 运行中 · 负责实现")
+  assert.equal(
+    memberRow({ id: "e", role: "", status: "idle", online: true, unread: 0, wakes_hour: 0 }, "x", "lead"),
+    "  e 成员 · 在线")
+  assert.equal(
+    memberRow({ id: "e", role: "executor", status: "paused", online: true, unread: 2, wakes_hour: 3 }, "x", "lead"),
+    "  e executor · 暂停 · 本小时唤醒 3 次 · 2未读")
+  assert.ok(memberRow({ id: "e", status: "offline", online: false }, "x", "y").includes("离线"))
 })
 
-test("formatHostWait 等谁/压住/倒计时", () => {
-  assert.deepEqual(formatHostWait(null), [])
-  assert.deepEqual(formatHostWait({ waiting_on: [], results_held: 0, wake_at: null }, 1000),
-    ["主控没在等谁", "压住结果 0 条", "自动唤醒: 无"])
-  assert.deepEqual(
-    formatHostWait({ waiting_on: [{ member: "e1", handoff_id: 7, since: 900 }], results_held: 2, wake_at: 1120 }, 1000),
-    ["主控在等: e1", "压住结果 2 条", "自动唤醒: 还剩约 120 秒"])
+test("roleText/statusText", () => {
+  assert.equal(roleText("coordinator", false), "负责人")
+  assert.equal(roleText("", false), "成员")
+  assert.equal(roleText("executor", true), "主控")
+  assert.equal(statusText({ online: true, status: "running" }), "运行中")
+  assert.equal(statusText({ online: true, status: "idle" }), "在线")
+  assert.equal(statusText({ online: false, status: "idle" }), "离线")
+})
+
+test("msgRow 说明示例格式", () => {
+  assert.equal(msgRow({ thread: "#room", from: "human", to: [], mentions: [], text: "做个 hello.py" }), "#room 用户→全体 做个 hello.py")
+  assert.equal(
+    msgRow({ thread: "dm:lead+oc-exec", from: "oc-exec", to: ["lead"], mentions: [], kind: "done", outcome: "completed", evidence_status: "verified", text: "hello.py 已写好" }),
+    "dm oc-exec→lead [完成·已核实] hello.py 已写好")
+  assert.equal(msgRow({ thread: "#room", kind: "system", from: "hub", text: "dsh 加入了房间" }), "#room 系统→全体 dsh 加入了房间")
+  assert.equal(msgRow({ thread: "#r", from: "a", to: [], mentions: ["b"], kind: "done", outcome: "blocked", outcome_by: "hub", text: "x" }), "#r a→b [阻塞·hub改判] x")
+  assert.equal(msgRow({ thread: "#r", from: "a", text: "x", kind: "done", evidence_status: "unverified" }), "#r a→全体 [未核实] x")
+  assert.equal(threadShort("dm:a+b"), "dm")
+  assert.equal(threadShort("#room"), "#room")
+})
+
+test("doneTag 标签", () => {
+  assert.equal(doneTag({ kind: "done", outcome: "completed", evidence_status: "verified" }), "[完成·已核实]")
+  assert.equal(doneTag({ kind: "done", outcome: "blocked", outcome_by: "hub" }), "[阻塞·hub改判]")
+  assert.equal(doneTag({ kind: "done", evidence_status: "unverified" }), "[未核实]")
+  assert.equal(doneTag({ kind: "done", outcome: "progress" }), "[进展]")
+  assert.equal(doneTag({ kind: "message" }), "")
+})
+
+test("formatHeader/formatGroups/formatHostLine", () => {
+  const view = {
+    room: { name: "t0", host: "lead" }, me: { id: "lead" },
+    members: [{ id: "lead", role: "coordinator" }],
+  }
+  assert.equal(formatHeader(view), "xmuse · t0（我：负责人 lead ★主控）")
+  assert.equal(formatGroups([{ id: "#room", members: ["human", "lead", "a", "b", "c", "d"] }, { id: "#trio", private: true, members: ["human", "lead", "a", "b"] }], "lead"), "#room 4名成员 + 你 · #trio 🔒2名成员 + 你")
+  assert.equal(formatGroups([{ id: "#trio", private: true, members: ["human", "a", "b", "c"] }], "lead"), "#trio 🔒3名成员")
+  assert.equal(formatGroups([]), "")
+  assert.equal(formatHostLine(null), "")
+  assert.equal(formatHostLine({ waiting_on: [], results_held: 0, wake_at: null }), "")
+  assert.equal(
+    formatHostLine({ waiting_on: [{ member: "a" }, { member: "b" }], results_held: 3, wake_at: 1600 }, 1000),
+    "主控在等：a、b · 压住 3 条 · 10 分钟后自动叫醒 · /xmuse-wake")
+})
+
+test("formatSidebar 新布局（审批置顶、空区块隐藏）", () => {
+  const view = {
+    version: 9, room: { id: "r-1", name: "t0", host: "lead" }, me: { kind: "member", id: "lead" },
+    members: [{ id: "lead", role: "coordinator", status: "idle", online: true, unread: 0 }],
+    threads: [{ id: "#room", members: ["lead"] }],
+    timeline: [{ id: 1, thread: "#room", from: "human", to: [], mentions: [], text: "hi", kind: "message" }],
+    timeline_cursor: { oldest: 1, has_more: false },
+    alignment: [],
+    approvals: [{ id: "A1", kind: "shell", member: "e", summary: "run", risk: "normal" }],
+    host_wait: { waiting_on: [], results_held: 0, wake_at: null },
+  }
+  const L = formatSidebar(view)
+  assert.equal(L[0], "xmuse · t0（我：负责人 lead ★主控）")
+  assert.equal(L[1], "⚠ 待审批 1 条：/xmuse-approve")
+  assert.ok(!L.some((x) => x.includes("v9")))
+  assert.ok(L.some((x) => x.includes("★ lead")))
+})
+
+test("命令表：人人有标题和说明；兼容入口列出命令", () => {
+  const names = COMMANDS.map((c) => c.name)
+  for (const n of ["xmuse-status", "xmuse-rooms", "xmuse-join", "xmuse-new-room", "xmuse-add", "xmuse-host", "xmuse-edit", "xmuse-dm", "xmuse-say", "xmuse-group", "xmuse-approve", "xmuse-wake", "xmuse-leave"]) {
+    assert.ok(names.includes(n), n)
+  }
+  for (const c of COMMANDS) {
+    assert.ok(c.title && c.description, c.name)
+    assert.ok(c.name.startsWith("xmuse-"), c.name)
+  }
+  const help = compatHelp()
+  for (const n of names) assert.ok(help.includes("/" + n), n)
+  assert.ok(COMPAT_SUBS.includes("approve") && COMPAT_SUBS.includes("wake"))
 })
