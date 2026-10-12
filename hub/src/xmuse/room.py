@@ -23,7 +23,7 @@ from . import threads as groups
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
 
-VENDORS = ("claude", "opencode", "dsh")
+VENDORS = ("claude", "opencode", "dsh", "agy")
 TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}

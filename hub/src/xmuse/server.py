@@ -14,6 +14,7 @@ import shutil
 import signal
 import threading
 import time
+import urllib.error
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -87,6 +88,7 @@ class Hub:
             self.engine.drivers["dsh"] = DshDriver(self.engine, state, self.cfg)
         if self.db().execute("select 1 from agents where vendor='agy'").fetchone():
             self.engine.drivers["agy"] = AgyDriver(self.engine, state, self.cfg)
+        self.expire_stale_approvals()
 
     def precheck(self) -> list[str]:
         """Each agent's explicit model must exist before anything is delivered (dsh: about 10 s per model)."""
@@ -292,7 +294,17 @@ class Hub:
             raise ToolError("unknown_approval", f"no approval {body['id']}")
         if a["state"] == "decided":
             raise ToolError("invalid_arguments", f"approval {a['id']} was already decided ({a['decision']})")
-        self.engine.drivers["opencode"].approve(a["vendor_session"], a["id"], body["decision"], a["agent_id"])
+        drv = self.engine.drivers.get("opencode")
+        try:
+            if drv is None:
+                raise ConnectionError("no opencode driver in this hub")
+            drv.approve(a["vendor_session"], a["id"], body["decision"], a["agent_id"])
+        except urllib.error.HTTPError as e:
+            if e.code != 404:  # a real refusal from opencode: a JSON error, never a dropped connection
+                raise ToolError("approval_failed", f"opencode answered HTTP {e.code} for approval {a['id']}")
+            return self._expire_approval(conn, a)  # the request no longer exists on its side
+        except (urllib.error.URLError, ConnectionError, TimeoutError):  # its server is gone (hub or machine restart)
+            return self._expire_approval(conn, a)
         with db.tx(conn):
             conn.execute("update approvals set state='decided', decision=?, decided_at=? where id=?",
                          (body["decision"], db.now(), a["id"]))
@@ -300,6 +312,24 @@ class Hub:
         mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
                     f"approval {a['id']} ({a['action']} {a['resources']}): {body['decision']}, decided by {who}")
         return {"ok": True}
+
+    def _expire_approval(self, conn, a: dict) -> dict:
+        """The assistant no longer has this request: close the card (decision 'expired') and say so in its DM."""
+        with db.tx(conn):
+            conn.execute("update approvals set state='decided', decision='expired', decided_at=? where id=?"
+                         " and state='pending'", (db.now(), a["id"]))
+        mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
+                    f"审批 {a['id']} 已过期（助手那边的请求已不存在）")
+        return {"ok": True, "expired": True}
+
+    def expire_stale_approvals(self) -> int:
+        """Startup: opencode serve is this hub's child, so after a restart no earlier pending permission request
+        can be answered any more. share: rows are DM share requests, not opencode's: left alone."""
+        conn = self.db()
+        rows = db.rows(conn.execute("select * from approvals where state='pending' and id not like 'share:%'"))
+        for a in rows:
+            self._expire_approval(conn, a)
+        return len(rows)
 
     def approve_share(self, aid: str, decision: str, via: str | None = None, user_said: str | None = None):
         out = share.decide(self.db(), self.cfg, aid, decision)
@@ -525,7 +555,7 @@ class Hub:
             if path == "/v1/agents":
                 return 200, {"agents": agents.entries()}
             if path == "/v1/agents/scan":
-                return 200, {"agents": agents.scan()}
+                return 200, {"agents": agents.scan(self.cfg)}
             if path == "/v1/agents/trial":
                 return 200, self.agents_trial(body)
             if path == "/v1/agents/model":
@@ -644,7 +674,8 @@ class Hub:
         else:
             if "opencode" not in self.engine.drivers:
                 raise rooms.ApiError(404, "unknown_approval", f"no approval {aid}")
-            self.admin_approve({"id": aid, "decision": decision}, via=self._via(p))
+            return {"ok": True, **{k: v for k, v in (self.admin_approve(
+                {"id": aid, "decision": decision}, via=self._via(p)) or {}).items() if k == "expired"}}
         return {"ok": True}
 
     def act_invite(self, p: rooms.Principal, b: dict) -> dict:
@@ -940,7 +971,7 @@ class Hub:
             raise rooms.ApiError(409, "room_exists", "this hub already has a room: join it with an invitation code")
         vendor, sid, d = b.get("vendor"), b.get("session_id"), b.get("dir")
         if vendor not in rooms.VENDORS or not isinstance(sid, str) or not sid or not isinstance(d, str):
-            raise rooms.ApiError(400, "bad_request", "rooms needs dir, vendor (claude|opencode|dsh) and session_id")
+            raise rooms.ApiError(400, "bad_request", "rooms needs dir, vendor (claude|opencode|dsh|agy) and session_id")
         if not rooms.same_dir(d, self.ws):
             raise rooms.ApiError(400, "wrong_dir", f"this hub serves {self.ws}, not {d}")
         mid = b.get("member_id") or vendor
@@ -1030,6 +1061,8 @@ class Hub:
                 self.engine.drivers[vendor] = OpenCodeDriver(self.engine, {})
             elif vendor == "dsh":
                 self.engine.drivers[vendor] = DshDriver(self.engine, self.state, self.cfg)
+            elif vendor == "agy":
+                self.engine.drivers[vendor] = AgyDriver(self.engine, self.state, self.cfg)
         self.engine.call(add)
 
     def _token_of(self, mid: str) -> str:
@@ -1061,6 +1094,9 @@ class Hub:
                     status, out = 400, {"error": e.code, "message": e.message}
                 except (KeyError, TypeError, ValueError) as e:
                     status, out = 400, {"error": "bad_request", "message": repr(e)}
+                except Exception as e:  # noqa: BLE001 - never drop the connection: the sidebar needs a JSON answer
+                    log.exception("unhandled error in %s %s", method, path)
+                    status, out = 500, {"error": "internal_error", "message": f"{type(e).__name__}: {e}"}
                 if status == 204:
                     self.send_response(204)
                     self.end_headers()
@@ -1100,6 +1136,9 @@ class Hub:
                     self._send(200, {"error": {"code": e.code, "message": e.message}})
                 except (KeyError, TypeError, ValueError) as e:
                     self._send(400, {"error": {"code": "bad_request", "message": repr(e)}})
+                except Exception as e:  # noqa: BLE001 - never drop the connection: answer 500 with JSON
+                    log.exception("unhandled error in POST %s", self.path)
+                    self._send(500, {"error": {"code": "internal_error", "message": f"{type(e).__name__}: {e}"}})
 
             def _send(self, code, obj):
                 raw = json.dumps(obj, ensure_ascii=False).encode()

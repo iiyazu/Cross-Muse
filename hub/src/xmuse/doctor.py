@@ -78,6 +78,23 @@ def dsh_candidate(cfg: dict) -> Path:
                 / "DeepSeek Harness.exe")
 
 
+def agy_path(cfg: dict) -> str | None:
+    """The Antigravity CLI: config agy_bin, then PATH, then ~/.local/bin/agy, then the Windows app install."""
+    if cfg.get("agy_bin"):
+        return str(cfg["agy_bin"])
+    found = shutil.which("agy")
+    if found:
+        return found
+    local = Path.home() / ".local/bin/agy"
+    if local.exists():
+        return str(local)
+    try:
+        win = host.win_home() / "AppData/Local/agy/bin/agy.exe"
+        return str(win) if win.exists() else None
+    except host.HostError:
+        return None
+
+
 def cli_paths(cfg: dict) -> dict[str, str | None]:
     """CLI paths per vendor (shared with agents.scan): lookup only, no checks."""
     try:
@@ -87,7 +104,8 @@ def cli_paths(cfg: dict) -> dict[str, str | None]:
         dsh = None
     oc = shutil.which("opencode") or (str(Path.home() / ".opencode/bin/opencode")
                                       if (Path.home() / ".opencode/bin/opencode").exists() else None)
-    return {"claude": cfg.get("claude_bin") or shutil.which("claude"), "opencode": oc, "dsh": dsh}
+    return {"claude": cfg.get("claude_bin") or shutil.which("claude"), "opencode": oc, "dsh": dsh,
+            "agy": agy_path(cfg)}
 
 
 def vendor_clis(vendors: set[str], cfg: dict) -> list[Check]:

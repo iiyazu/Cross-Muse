@@ -17,9 +17,10 @@ from pathlib import Path
 
 from . import config, registry
 from .doctor import cli_paths
+from .env import clean_env
 from .tools import ToolError
 
-VENDORS = ("opencode", "dsh", "claude")
+VENDORS = ("opencode", "dsh", "claude", "agy")
 CLAUDE_BILLING_NOTE = "claude -p 从 2026-06-15 起单独计费"
 TRIAL_PROMPT = "Reply with exactly: OK"
 TRIAL_TIMEOUT_S = 120
@@ -77,7 +78,7 @@ def _version_of(cli: str, timeout: float = 10) -> str:
 
 def scan(cfg: dict | None = None, paths: dict[str, str | None] | None = None,
          version_of=None) -> list[dict]:
-    """Rescan the three vendors. `paths` ({vendor: path|None}) and `version_of(path)` may be injected
+    """Rescan every vendor. `paths` ({vendor: path|None}) and `version_of(path)` may be injected
     (tests); by default the real machine is inspected. An entry keeps its model, and an `ok` status with
     its check time, while its path does not change."""
     if paths is None:
@@ -143,10 +144,10 @@ def _replace(entries: list[dict], entry: dict) -> list[dict]:
     return out
 
 
-def _run_cmd(argv: list[str], cwd: str, timeout: float) -> tuple[int, str]:
+def _run_cmd(argv: list[str], cwd: str, timeout: float, env: dict | None = None) -> tuple[int, str]:
     """Run an external trial command in an empty directory; (returncode, combined output)."""
     try:
-        out = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     except FileNotFoundError as e:
         return 127, f"not found: {e.filename}"
     except subprocess.TimeoutExpired:
@@ -158,7 +159,7 @@ def _run_cmd(argv: list[str], cwd: str, timeout: float) -> tuple[int, str]:
 
 def trial(vendor: str, model: str | None = None, run=None, dsh_run=None) -> dict:
     """One minimal round with the default (or given) model; records ok/failed on the entry.
-    `run(argv, cwd, timeout)` executes the opencode trial (injected in tests); `dsh_run(agent, ws)`
+    `run(argv, cwd, timeout)` executes the opencode and agy trials (injected in tests); `dsh_run(agent, ws)`
     returns None when a dsh trial round works, else an error string. Without a dsh runner, dsh trials
     are reported installed/trial-unsupported (there is no bare dsh one-shot command)."""
     if vendor not in VENDORS:
@@ -172,11 +173,17 @@ def trial(vendor: str, model: str | None = None, run=None, dsh_run=None) -> dict
         raise ToolError("not_installed", f"{vendor} is not installed")
     model = model or default_model(vendor)
     err: str | None
-    if vendor == "opencode":
-        run = run or _run_cmd
+    if vendor in ("opencode", "agy"):
+        if vendor == "opencode":
+            run = run or _run_cmd
+            argv = [by[vendor]["path"], "run", "-m", model, TRIAL_PROMPT]
+        else:  # agy: a headless -p round, the model through the env override the adapter uses
+            env = clean_env({"CASCADE_DEFAULT_MODEL_OVERRIDE": model})
+            run = run or (lambda a, c, t: _run_cmd(a, c, t, env))
+            argv = [by[vendor]["path"], "--dangerously-skip-permissions", "-p", TRIAL_PROMPT]
         cwd = tempfile.mkdtemp(prefix="xmuse-trial-")
         try:
-            rc, text = run([by[vendor]["path"], "run", "-m", model, TRIAL_PROMPT], cwd, TRIAL_TIMEOUT_S)
+            rc, text = run(argv, cwd, TRIAL_TIMEOUT_S)
         finally:
             shutil.rmtree(cwd, ignore_errors=True)
         err = None if rc == 0 and "OK" in text else f"exit {rc}: {text.strip()[:200]}" if text.strip() \

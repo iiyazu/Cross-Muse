@@ -26,7 +26,7 @@ def test_scan_records_installed_missing_and_versions():
     assert by["claude"]["billing_note"] == agents.CLAUDE_BILLING_NOTE
     assert by["opencode"]["model"] == config.MODELS["opencode"]
     stored = json.loads(regfile().read_text(encoding="utf-8"))["agents"]
-    assert {e["vendor"] for e in stored} == {"opencode", "dsh", "claude"}
+    assert {e["vendor"] for e in stored} == {"opencode", "dsh", "claude", "agy"}
 
 
 def test_scan_keeps_model_and_ok_when_the_path_does_not_change():
@@ -127,7 +127,7 @@ def test_agents_scan_trial_model_round_trip(make, monkeypatch):
     monkeypatch.setattr("xmuse.agents.cli_paths", lambda cfg: {"opencode": "/x/oc", "dsh": None, "claude": None})
     monkeypatch.setattr("xmuse.agents._version_of", lambda p, timeout=10: "opencode 9.9")
     st, out = ag(h, "POST", "/v1/agents/scan", None, key=key)
-    assert st == 200 and [e["vendor"] for e in out["agents"]] == ["opencode", "dsh", "claude"]
+    assert st == 200 and [e["vendor"] for e in out["agents"]] == ["opencode", "dsh", "claude", "agy"]
     assert out["agents"][0]["version"] == "opencode 9.9"
     monkeypatch.setattr("xmuse.agents._run_cmd", lambda argv, cwd, timeout: (0, "OK"))
     st, out = ag(h, "POST", "/v1/agents/trial", {"vendor": "opencode"}, key=key)

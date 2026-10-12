@@ -28,6 +28,10 @@ if "-p" in argv:
     if idx + 1 < len(argv):
         prompt = argv[idx + 1]
 
+if "--version" in argv:  # the registry probe: no turn, no counter
+    print("agy 0.0-fake")
+    sys.exit(0)
+
 n_file = home / "n"
 n = int(n_file.read_text(encoding="utf-8")) if n_file.exists() else 0
 n_file.write_text(str(n + 1), encoding="utf-8")
