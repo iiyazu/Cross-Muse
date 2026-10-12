@@ -211,6 +211,8 @@ def _same_file(a: str, b: str) -> bool:
 _FAIL_OUT = re.compile(r"(?i)\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|^FAILED\b|\bFAIL\b|Traceback \(most"
                        r" recent call last\)|\bAssertionError\b|npm ERR!|Command not found|is not recognized as", re.M)
 _FAILN = re.compile(r"(?i)\b[1-9]\d*\s+(?:failed|failures?|errors?)\b")
+# zero-count summary lines: node's "ℹ fail 0", "failures: 0", "0 failed" (dev room 10-12: a passing run read as failed)
+_ZERO_OUT = re.compile(r"(?i)\b(?:fail(?:ed|ures?)?|errors?)\b\s*[:=]?\s*0\b|\b0\s+(?:failed|failures?|errors?)\b")
 _ZERO_FAIL = re.compile(r"(?i)\b(?:0|no|zero|without)\s+(?:failed|failures?|errors?)\b")
 _PASS = re.compile(r"(?i)\b(?:pass(?:ed|es|ing)?|ok|success(?:ful(?:ly)?)?|succeeded|green|clean)\b")
 _FAILW = re.compile(r"(?i)\b(?:fail(?:ed|s|ing|ure|ures)?|errors?|non-?zero|red|broken)\b")
@@ -244,7 +246,7 @@ def _mismatch(c: Call, it: dict) -> str | None:
             return f"{shown} but exited {c.exit}"
         if c.failed:
             return f"{shown} but the tool reported an error"
-        if c.exit is None and _FAIL_OUT.search(c.output):
+        if c.exit is None and _FAIL_OUT.search(_ZERO_OUT.sub("", c.output)):
             return f"{shown} but its output shows failures"
     elif c.exit == 0 and not c.failed:
         return f"{shown} but exited 0"
