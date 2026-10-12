@@ -74,6 +74,8 @@ class TurnEnd:
     retry_at: float | None = None  # vendor refused the turn for quota: requeue and pause the agent until then
     requeue: str | None = None     # messages were not handled: 'fresh' = vendor lost the session, retry in a new
                                    # one; 'hold' = session stays busy (lease refused), pause the agent for the human
+    reply: str | None = None       # the turn's last assistant text (H13): forwarded to the waking thread when the
+                                   # turn sent nothing itself
 
 
 @dataclass
@@ -88,6 +90,9 @@ class Sink(Protocol):
     def turn_ended(self, end: TurnEnd) -> None: ...
     def kick(self) -> None: ...
     def approval(self, agent_id: str, session: str, request: dict) -> None: ...
+    def progress(self, turn_id: int, update: dict) -> None:
+        """Live turn progress (H4): tools run so far, last tool name, latest text fragment. ..."""
+    def compacted(self, vendor_session: str) -> None: ...
 
 
 class Adapter(Protocol):

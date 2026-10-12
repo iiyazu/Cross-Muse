@@ -25,6 +25,9 @@ class Engine:
         self.q: queue.Queue = queue.Queue()
         self.adapters = {}  # turn id -> adapter that runs it
         self.shell_policy = "allowlist"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
+        self.progress_state = cfg["_progress"] = {}  # H4: turn_id -> {tools, last_tool, text}; memory only
+        self._progress_lock = threading.Lock()
+        self._progress_tick = 0.0
         self._recover()
 
     # ---- events from other threads -------------------------------------------------
@@ -36,6 +39,25 @@ class Engine:
 
     def approval(self, agent_id, session: str, request: dict) -> None:
         self.q.put(("approval", agent_id, session, request))
+
+    def progress(self, turn_id: int, update: dict) -> None:
+        """Live turn progress from an adapter thread (H4). Memory only; the DB fingerprint moves at most once a
+        second so long-polling sidebars refresh without a storm."""
+        now = db.now()
+        with self._progress_lock:
+            e = self.progress_state.setdefault(turn_id, {"tools": 0, "last_tool": None, "text": ""})
+            if "tools" in update:
+                e["tools"] = update["tools"]
+            if "last_tool" in update:
+                e["last_tool"] = update["last_tool"]
+            if "text" in update and isinstance(update["text"], str):
+                e["text"] = update["text"][:400]
+            e["updated_at"] = now
+            if now - self._progress_tick >= 1.0:
+                self._progress_tick = now
+                conn = self.db()
+                conn.execute("insert into meta(key, value) values('progress_tick', '1')"
+                             " on conflict(key) do update set value=cast(value as integer)+1")
 
     def compacted(self, vendor_session: str) -> None:
         """The vendor compacted this session: its next wake gets a full alignment snapshot."""
@@ -237,6 +259,8 @@ class Engine:
             if turn["chain_id"]:
                 conn.execute("update chains set tokens=tokens+? where id=?", (u.total, turn["chain_id"]))
         self.adapters.pop(turn["id"], None)
+        with self._progress_lock:
+            self.progress_state.pop(turn["id"], None)
         stall.on_turn_end(conn, self.cfg, turn, end)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
@@ -257,8 +281,20 @@ class Engine:
                                                               f" are requeued and it resumes at {until}.")
         elif thread and end.status == "succeeded" and not end.note and conn.execute(
                 "select 1 from messages where turn_id=?", (turn["id"],)).fetchone() is None:
-            mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} ended without xmuse_send or xmuse_done;"
-                                      " its reply, if any, reached no one", turn["chain_id"])
+            reply = (end.reply or "").strip()
+            if reply:
+                limit = self.cfg["body_limit"]
+                body = reply if len(reply) <= limit else reply[:limit] + "\n…（正文过长，已截断）"
+                to = thread
+                if thread.startswith("dm:"):  # back to the same DM: address its other side, not the thread id
+                    to = next((x for x in thread[3:].split("+") if x != agent["id"]), HUMAN)
+                mid = mail.send(conn, self.cfg, agent["id"], to, body, via="auto_reply")["id"]
+                with db.tx(conn):
+                    conn.execute("update deliveries set wake=0, updated_at=? where message_id=?",
+                                 (db.now(), mid))
+            else:
+                mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} ended without xmuse_send or xmuse_done;"
+                                          " its reply, if any, reached no one", turn["chain_id"])
         elif thread and (end.status == "failed" or end.note):
             mail.notice(conn, thread, f"turn {turn['id']} of {agent['id']} {end.status}"
                                       f"{': ' + end.error if end.status == 'failed' else ''}"

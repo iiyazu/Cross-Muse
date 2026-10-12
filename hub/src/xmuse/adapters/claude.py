@@ -75,11 +75,35 @@ def parse_stream(lines) -> tuple[dict, Usage]:
             info.update(session=o.get("session_id"), ok=o.get("subtype") == "success" and not o.get("is_error"),
                         error=None if o.get("subtype") == "success" else o.get("subtype"),
                         denied=[d.get("tool_name") for d in o.get("permission_denials") or []])
+            if isinstance(o.get("result"), str):
+                info["reply"] = o["result"]  # H13: the run's final assistant text
     if last:
         u.context = last.get("input_tokens", 0) + last.get("cache_read_input_tokens", 0) + \
             last.get("cache_creation_input_tokens", 0)
     u.calls = len(seen)
     return info, u
+
+
+def scan_claude_line(acc: dict, line: str) -> bool:
+    """Fold one stream-json line into a live progress accumulator (H4). True when tools or text changed."""
+    if not line.startswith("{"):
+        return False
+    try:
+        o = json.loads(line)
+    except ValueError:
+        return False
+    if o.get("type") != "assistant":
+        return False
+    changed = False
+    for c in (o.get("message") or {}).get("content") or []:
+        if c.get("type") == "tool_use":
+            acc["tools"] = acc.get("tools", 0) + 1
+            acc["last_tool"] = c.get("name", acc.get("last_tool"))
+            changed = True
+        elif c.get("type") == "text" and isinstance(c.get("text"), str):
+            acc["text"] = c["text"]
+            changed = True
+    return changed
 
 
 def transcript_usage(path: Path, after_uuid: str | None = None, since: float = 0) -> Usage:
@@ -249,11 +273,14 @@ class ClaudeResume:
 
     def _watch(self, spec: TurnSpec, p, sid: str, before: int, err):
         lines = []
+        prog = {"tools": 0, "last_tool": None, "text": ""}
         with spec.run_log.open("w", encoding="utf-8") as out:
             for line in p.stdout:
                 out.write(line)
                 out.flush()  # evidence.py reads this log while the turn still runs (at xmuse_done)
                 lines.append(line)
+                if scan_claude_line(prog, line):
+                    self.sink.progress(spec.turn_id, dict(prog))
         p.wait()
         err.close()
         info, usage = parse_stream(lines)
@@ -274,7 +301,8 @@ class ClaudeResume:
             error = "usage limit reached"
         if info.get("denied"):
             note = (note + "; " if note else "") + "permission_denied: " + ", ".join(info["denied"])
-        self.sink.turn_ended(TurnEnd(spec.turn_id, status, sid, usage, error, note, retry_at))
+        self.sink.turn_ended(TurnEnd(spec.turn_id, status, sid, usage, error, note, retry_at,
+                                     reply=info.get("reply")))
 
     def interrupt(self, turn_id: int) -> None:
         st = self.procs.get(turn_id)

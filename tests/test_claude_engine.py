@@ -81,6 +81,7 @@ def test_usage_limit_requeues_and_pauses_until_reset(make):
     d = h.q("select * from deliveries where message_id=?", m["id"])[0]
     assert d["state"] == "queued" and d["turn_id"] is None
     assert h.q("select wakes from chains")[0]["wakes"] == 0
+    h.wait(lambda: h.q("select 1 from messages where kind='notice'"), what="usage-limit notice")  # posted just after paused_until
     [n] = h.q("select * from messages where kind='notice'")
     assert "usage limit" in n["body"] and n["thread_id"] == "dm:claude-1+human"
     time.sleep(2.1)
@@ -140,7 +141,12 @@ def test_member_group_message_wakes_only_mentions_and_owner(make):
     h.wait_quiet()
     assert [t["agent_id"] for t in h.turns()] == ["claude-2", "claude-3"]
     passive = h.q("select recipient from deliveries where state='passive' order by id")
-    assert [p["recipient"] for p in passive] == ["claude-3", "claude-2"]  # the sender (claude-1) gets no delivery of its own words
+    from collections import Counter
+    assert Counter(p["recipient"] for p in passive) == Counter(
+        {"claude-3": 2, "claude-2": 2, "claude-1": 2})  # + H13 auto-forwards (passive, wake nobody)
+    assert h.q("select count(*) n from deliveries where wake=1 and state not in ('canceled','done')")[0]["n"] == 0
+    assert {m["via"] for m in h.q("select distinct via from messages where sender in ('claude-2','claude-3')"
+                                  " and kind='message'")} == {"auto_reply"}
 
 
 def test_user_broadcast_wakes_every_member(make):
@@ -340,16 +346,21 @@ def test_start_failure_fails_the_turn(make):
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "failed"
 
 
-def test_turn_that_reaches_no_one_is_flagged(make):
+def test_turn_with_only_a_reply_forwards_it_instead_of_a_notice(make):
     h = make()
     h.plan_claude({}, {"as": "claude-1", "calls": [["xmuse_send", {"to": "human", "body": "hi"}]]})
     h.send("claude-1", "one")
     h.wait_quiet()
-    [n] = h.q("select * from messages where kind='notice'")
-    assert "ended without xmuse_send or xmuse_done" in n["body"] and n["thread_id"] == "dm:claude-1+human"
+    # H13: the turn's reply goes to the waking DM as the member, waking nobody — no notice
+    [m] = h.q("select thread_id, sender, kind, body, via from messages where sender='claude-1'")
+    assert (m["thread_id"], m["kind"], m["via"]) == ("dm:claude-1+human", "message", "auto_reply")
+    assert "ok-cost-opus-1" in m["body"]
+    mid = h.q("select id from messages where sender='claude-1'")[0]["id"]
+    assert h.q("select * from deliveries where message_id=? and wake=1", mid) == []
+    assert h.q("select * from messages where kind='notice'") == []
     h.send("claude-1", "two")
     h.wait_quiet()
-    assert len(h.q("select * from messages where kind='notice'")) == 1
+    assert h.q("select * from messages where kind='notice'") == []
 
 
 def _paused(h):

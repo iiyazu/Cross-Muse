@@ -342,6 +342,7 @@ def _free_port() -> int:
 class Tracked:
     def __init__(self, spec: TurnSpec):
         self.spec, self.usage, self.seen, self.delivered, self.log = spec, Usage(), set(), False, spec.run_log.open("w", encoding="utf-8")
+        self.tools, self.last_tool, self.reply = 0, None, None  # H4 progress, H13 last assistant text
 
 
 class OpenCodePrompt:
@@ -424,8 +425,18 @@ class OpenCodePrompt:
                 u.mode = "code"
         elif typ == "session.step.started" and t is not None:
             t.usage.model = (d.get("model") or {}).get("id", t.usage.model)
-        elif typ == "session.tool.input.started" and t is not None and d.get("name") in CODE_TOOLS:
-            t.usage.mode = "code"
+        elif typ == "session.tool.input.started" and t is not None:
+            if d.get("name") in CODE_TOOLS:
+                t.usage.mode = "code"
+            t.last_tool = d.get("name") or t.last_tool
+        elif typ == "session.tool.called" and t is not None:
+            t.tools += 1
+        elif typ == "session.text.ended" and t is not None and isinstance(d.get("text"), str):
+            t.reply = d["text"]
+        if t is not None and typ in ("session.tool.called", "session.tool.input.started", "session.text.ended",
+                                     "session.step.ended"):
+            self.sink.progress(t.spec.turn_id, {"tools": t.tools, "last_tool": t.last_tool,
+                                                "text": t.reply or ""})
         elif typ == "session.compaction.ended":  # `failed` keeps the context, so the watermark stays
             self.sink.compacted(sid)
         elif typ == "permission.asked":
@@ -437,7 +448,7 @@ class OpenCodePrompt:
                     self.turns.pop(sid, None)
                 t.log.close()
                 err = json.dumps(d.get("error"))[:300] if d.get("error") else None
-                self.sink.turn_ended(TurnEnd(t.spec.turn_id, END[typ], sid, t.usage, err))
+                self.sink.turn_ended(TurnEnd(t.spec.turn_id, END[typ], sid, t.usage, err, reply=t.reply))
             elif was_human:
                 self.sink.kick()
 

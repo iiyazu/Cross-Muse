@@ -105,7 +105,8 @@ def fingerprint(conn) -> tuple:
             one("select count(*), max(used_at) from invites"),
             one("select max(id), max(phase_at), group_concat(state) from preset_runs"),
             one("select max(id) from preset_events"), dispatch.fingerprint(conn),
-            one("select total(last_read_id) from human_reads"))  # T8a H6: the user's read cursors (unread badges)
+            one("select total(last_read_id) from human_reads"),  # T8a H6: the user's read cursors (unread badges)
+            one("select coalesce(max(cast(value as integer)), 0) from meta where key='progress_tick'"))
 
 
 def stored_version(conn) -> int:
@@ -174,10 +175,14 @@ def _status(conn, a: dict, online: bool) -> str:
 
 def members(conn, cfg: dict) -> list[dict]:
     since, out = db.now() - 3600, []
+    prog = cfg.get("_progress") or {}
     for a in db.rows(conn.execute("select * from agents where removed=0 order by created_at, id")):
         online = _online(conn, a)
         tokens = conn.execute("select coalesce(sum(input+cache_read+cache_write+output), 0) from usage"
                               " where agent_id=? and created_at>?", (a["id"], since)).fetchone()[0]
+        running = conn.execute("select id, started_at from turns where agent_id=? and state='running'"
+                               " order by id desc limit 1", (a["id"],)).fetchone()
+        pe = running and prog.get(running[0])
         out.append({"id": a["id"], "vendor": a["vendor"], "model": a["model"], "role": a["role"],
                     "description": a["description"], "status": _status(conn, a, online), "online": online,
                     "paused": bool(a["paused"]), "unread": _unread(conn, a["id"]), "tokens_hour": tokens,
@@ -185,7 +190,11 @@ def members(conn, cfg: dict) -> list[dict]:
                     "wakes_hour": dispatch.wakes_hour(conn, a, since),
                     # T8a H5: deliveries asking for a wake that it has not taken yet
                     "queued": conn.execute("select count(*) from deliveries where recipient=? and wake=1"
-                                           " and state in ('queued','held')", (a["id"],)).fetchone()[0]})
+                                           " and state in ('queued','held')", (a["id"],)).fetchone()[0],
+                    # T8b H4: live progress of the running turn, null when idle
+                    "progress": {"turn": running[0], "started_at": running[1], "tools": pe.get("tools", 0),
+                                 "last_tool": pe.get("last_tool"), "text": pe.get("text", ""),
+                                 "updated_at": pe.get("updated_at", 0.0)} if pe else None})
     return out
 
 
