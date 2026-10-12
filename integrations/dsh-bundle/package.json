@@ -1,8 +1,8 @@
 {
   "name": "xmuse-dsh-bundle",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
-  "description": "xmuse 2 dsh bundle: sidebar drawer (XMUSE2-VIEW-API v0) + /xmuse join|room new|bind|unbind|status, 9 native xmuse_* tools, long-poll relay of hub messages into the bound session",
+  "description": "xmuse 2 dsh bundle: sidebar drawer (XMUSE2-VIEW-API v0+v0.1: room list one-click join, member menu, private groups) + /xmuse join|room new|bind|unbind|status, 9 native xmuse_* tools, long-poll relay of hub messages into the bound session",
   "private": true,
   "type": "module",
   "exports": {
