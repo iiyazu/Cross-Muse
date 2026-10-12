@@ -287,3 +287,27 @@ def test_hint_reaches_the_holder_in_a_real_wake(make):
     [call] = h.claude_calls()
     assert "New for you:" in call["prompt"] and f"你有一条用户私信（#{mid}）可能与 b 的问题有关" in call["prompt"]
     assert h.q("select count(*) n from turns")[0]["n"] == 1  # a's own wake only: the hint woke nobody
+
+
+# ---- member tokens, private groups -----------------------------------------------------------------------------------
+
+def test_member_token_view_does_not_show_share_approvals(make):
+    h = room(make)
+    mid = user_dm(h, "a", SECRET)
+    assert result(share(h, "a", mid, "b"))["approval"] == "share:1"
+    assert [x["id"] for x in pending(h)] == ["share:1"]  # the operator token sees it, excerpt and all
+    for who in ("a", "b"):  # the requester and the peer: a member token never gets another member's DM excerpt
+        st, v = view(h, h.token(who))
+        assert st == 200 and v["me"]["id"] == who
+        assert [x for x in v["approvals"] if x["kind"] == "share"] == []
+        assert "MAX_RETRY" not in json.dumps(v["approvals"])
+
+
+def test_share_to_a_private_group_needs_the_requester_to_be_in_it(make):
+    h = room(make)
+    assert admin(h, act="thread_new", id="#p", members=["b", "c"])[0] == 200
+    mid = user_dm(h, "a")
+    assert error(share(h, "a", mid, "#p")) == "unknown_recipient"  # a is not in #p
+    assert pending(h) == [] and shared(h) == []
+    mid_b = user_dm(h, "b", "the port is 8080")
+    assert result(share(h, "b", mid_b, "#p"))["status"] == "pending_approval"  # b is in #p

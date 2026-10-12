@@ -283,13 +283,16 @@ def view(conn, cfg: dict, ws: Path, p: Principal, version: int) -> dict:
     restrict = p.kind == "member"  # a member token sees its own threads, not everyone's (T2)
     tl = timeline(conn, p.reader, restrict=restrict)
     hidden = groups.hidden_scopes(conn, p.reader) if restrict else []
+    pending = approvals(conn, hidden)
+    if restrict:  # share requests quote the user's DMs and only the operator can decide them: not for member tokens
+        pending = [x for x in pending if x["kind"] != "share"]
     return {"version": version,
             "room": {"id": room["id"], "name": room["name"], "dir": room["dir"], "host": room["host"],
                      "info_layer": "on" if config.info_on(cfg) else "off", "created_at": room["created_at"]},
             "me": {"kind": p.kind, "id": p.reader},
             "members": members(conn, cfg), "threads": threads(conn, p.reader, restrict), "timeline": tl["items"],
             "timeline_cursor": {"oldest": tl["items"][0]["id"] if tl["items"] else None, "has_more": tl["has_more"]},
-            "alignment": alignment(conn, hidden), "approvals": approvals(conn, hidden), "run": run_view(conn)}
+            "alignment": alignment(conn, hidden), "approvals": pending, "run": run_view(conn)}
 
 
 # ---- tokens, invitations ------------------------------------------------------------------------------------
