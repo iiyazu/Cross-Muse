@@ -123,7 +123,18 @@ Claude 桌面 App（主控） ── Claude mod 面板 ──┐
 
 验收标准：全量测试通过（`pytest -q tests`）；真机探针成功；调研清单里每项都有证据，做不到的写明"不支持"，并说明退路。
 
-## 10. 参考文件
+## 10. 在哪里工作
+
+- **代码**：从 r7 的裸仓库克隆一份独立副本，建自己的分支（`<厂商>` 换成你的厂商名，例如 agy）：
+  ```bash
+  git clone -b dev/topo2 ~/git/xmuse2.git /mnt/c/Users/user/xmuse-adapter-<厂商> && cd /mnt/c/Users/user/xmuse-adapter-<厂商> && git switch -c adapter/<厂商>
+  ```
+  放在 C 盘下（`/mnt/c/...`），Windows 和 WSL 两边都能读写。Windows 侧的 agent 只能可靠地写这种路径。
+- **不要碰的目录**：`xmuse-dev`（开发房间的成员在里面改代码）、`~/dev/xmuse2-rc`（发布线）、`~/dev/xmuse2-run`（正在运行的房间 hub）。
+- **真机探针**：另开一个空的测试工作区，例如 `C:\Users\user\dsh-work\<厂商>-trial`，在那里起测试 hub、加你的助手。不要接入任何已有的房间。
+- **交付**：提交推到 r7 的 `adapter/<厂商>` 分支，由 xmuse 的主控审阅后合并。不要推到 dev/topo2、rc/portfolio、main。
+
+## 11. 参考文件
 
 | 文件 | 内容 |
 |---|---|
