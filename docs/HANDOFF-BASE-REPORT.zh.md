@@ -1653,3 +1653,78 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
 - `admin_retire` 还不会拒绝有活租约的成员。
 
 **第一批结论**：见第 6 步。S1 里 X 和群发一样正确，代价约为一半；S2、DEP 的差别来自"结构化条目比普通消息更有约束力"，和 PROCEDURE 的措辞有交互，只能算方向。
+
+## T17 交接补充（r7 coord，10-12 13:00）
+
+上一节是 base 写的交接，队列、命令、接下来的实验步骤以它为准。这一节补四件事：待定的三件现在都定了；由此多出的任务；在 r7 上干活的坑；产品线（coord 这边）的现状。接手的会话同时接 base 的探针工作，先读这一节，再读上一节和 `docs/HANDOFF-BASE.zh.md` §12–§13.3（r7 的审查和决定）。
+
+### 1. 上一节"等 r7 或用户定的事"都已定
+
+1. **S3a 选 (b)**（r7，HANDOFF §13.3）：只改 S3a，不动 PROCEDURE，S1、S2、DEP 不重跑。tick 3 前，用户先在 #team 发：
+   > [rule v2] Team rule: e1 maintains a and b; e2 maintains c and d. e2 will hand a new key to e1; from then on e1 maintains it.
+
+   这条取代 v1，然后 e2 再发原来那条 handoff。handoff 里仍然不给 k 的值，k 的事实保留 "share it"。先冒烟（seed 11，X 组一次），大于 0 才整批跑 seed 11–20、三组；还是 0 就停，写进本文件，不再改措辞。
+2. **私信里的事实默认不分享**（用户 10-12 定）：用户私信给某个成员的内容默认不外传，要分享得用户主动批准。理由不只是隐私：同步无关的信息会占用别人的上下文和注意力。对探针的影响：
+   - 第一批作废的旧 S3b 里，e2 拒绝透露 k，**在这个决定下是正确行为**，不算失败。
+   - 改过措辞的 S3b 里，k 的事实写了 "share it with a teammate who needs it"，相当于用户在消息里预先批准了。所以 batch1-s3 的 S3b 仍然只测"问题能不能路由到知情人"。报告里要写明这一点，不要写成"私信默认可分享"。
+   - 产品侧（约定 v0.1，coord 负责，不在探针范围）：分享走审批队列（新增审批类型 `share`）；"该不该同步"的判断只做建议，先用规则，再用本地 FastEmbed，Jev 只在离线对比里用。
+3. **"PROCEDURE 不强调 team rule"的对照：做**（r7，§13.3）：新场景 `S2p-noTR`、`DEP-noTR`，PROCEDURE 去掉 "Team rules come from the user"，其余和 S2p、DEP 完全相同。seed 11–15、三组，每格 5 次。开跑前在本文件里预注册，标明是探索性对照。排在 R 系列（R1–R4 正式跑、R5–R8）之后。
+
+### 2. 接手后的任务顺序（在上一节"接手后要做的事"基础上）
+
+1. 盯 chain3、chain4 跑完。按 12:57 的进度估算：
+   - S3b 30 个里完成 12 个，每个约 6–7 分钟，约 15:00 跑完；
+   - rpilot2 约 20 分钟；
+   - chain4 的 S2p 30 个，约 18:30 跑完。
+2. rpilot2 检查（上一节第 2 点），然后 R 第一批（R1–R4，seed 1–5）先预注册再开跑。
+3. **S3a (b)**：改 `scenarios.py`，加测试，先冒烟。可以插在 chain4 后面，也可以和 R 批交替，但同一时间只跑一个系列：串行，C: 只剩 14G。
+4. S3b、S2p 出报告（上一节第 1 点）。DEP 的"答复到 e 第一次写对之间的唤醒次数和 token"在 `dbf3aa0` 里已经实现；用 `run.py reprocess` 把 batch1 的 DEP 重算一遍，补进第 6 步的表，不用重跑。
+5. R5–R8 → noTR 对照 → 总报告：探针结论的汇总，写成给用户看的一页，口径照第 6 步，S1 的优势在代价，S2、DEP 是"结构化条目更有约束力"。
+
+### 3. 在 r7 上干活的坑
+
+- **同一台机器上还在跑**这些单元，不要停，也不要用 pkill：
+  - 开发房间 hub `xm-devroom-hub`；
+  - 两个沙盒 hub `xm-sandbox-oc`、`xm-sandbox-dsh`，留给用户人工核对侧栏；
+  - base 的 `phb-chain3-*`、`phb-chain4-*`。
+
+  要停只停自己的单元：`systemctl --user stop <单元>`。
+- **桌面 App 会话**里，Bash 和 PowerShell 不能调 `wsl`，WSL 命令一律走 `mcp__dsh__dsh_wsl`。它的命令字符串里 `$变量`、`$(...)` 会被提前展开：复杂命令先用 Write 写成 `C:\Users\user\dsh-work\*.sh`，再 `bash /mnt/c/...` 执行。单次调用约 60 秒超时，长任务用 `systemd-run --user` 起单元。
+- **测 exp/probes 要用它自己的 venv**：`~/dev/xmuse2-rc/hub/.venv` 是 rc 的可编辑安装，用它跑 exp/probes 的测试，导入的是 rc 的代码，会假失败。r7 上已有一个独立检出 `~/dev/xmuse2-probes-review`（detached），venv 用 `cd hub && uv sync` 建。
+- **systemd 单元的文件描述符软上限是 1024**，全量测试会超过，命令前加 `ulimit -Sn 10240`；临时目录用 `--basetemp` 单独指定。参考 `C:\Users\user\dsh-work\d12\probes-review-test.sh`：exp/probes `1cf662b` 在这样的设置下是 `400 passed, 8 skipped`。
+- **门槛脚本先 cd 再用相对路径调 python**，就会读到空值（chain2 的教训）。路径一律写绝对路径；新写的门槛脚本，先拿一个已知结果的目录试一次。
+- **Windows 上不要调 `python3`**，会触发 Python 安装管理器。WSL 里随便用。
+
+### 4. 还没合进 rc 的 hub 改动
+
+exp/probes 里有三个 hub 提交，r7 都审过，可以用，但还没进 rc/portfolio：
+- `c4479f0`：`xmuse session retire` 加 `/v1/admin/retire`；
+- `36e8a69`：`xmuse send --args-file`；
+- `4978d60`：每次唤醒另存 `runs/turn-N.pack.md`。
+
+合并方式：
+- 把这三个提交 cherry-pick 到 rc，或者等探针收尾时把 exp/probes 整体合进 rc。合之前跑全量测试。
+- rc 之后又有 `f1e35ef`（unread 不计 hub 通知）和 D4 合并，都和这三个提交不冲突，但要以测试为准。
+- **合 main 要问用户**。
+
+已知遗留：`admin_retire` 不拒绝正被 TUI 租约持有的会话。
+
+### 5. 产品线现状（coord 这边，供参考）
+
+- **D4 侧栏完成**：OpenCode 和 dsh 两个侧栏都和真 hub 联调过，合进了 rc/portfolio（`a1a6ca6`、`a3b83e3`）。合并后：OpenCode 插件 10/10，dsh bundle 31/31，hub 全量 `366 passed, 4 skipped`。rc 当前是 `d6a27a0`。
+- **联调中修的真 hub 问题**（`f1e35ef`）：Claude 成员的 unread 会把 hub 通知算进去，现已统一不算。约定第 7 节补了 unread 和 ack 的口径（`8b3a5db`、`c96fe8e`）。
+- **等用户的事**：
+  - 侧栏在真 dsh 和桌面版里的人工核对，沙盒 hub 的端口是 oc 34441、dsh 39091；
+  - 约定 v0.1 的两个待定点，以及新加的 `share` 审批；
+  - 什么时候合 main。
+- **夜间过程记录**：`C:\Users\user\dsh-work\night-log-2026-10-12.md`。
+
+### 6. 约束（不变）
+
+- 中文交流；
+- 不合 main，不往 GitHub 或公网推，不强推，不用 git stash，不读也不打印密钥；
+- 改全局配置交给用户；
+- 实验默认用 OpenCode 加 dsh，要用 Claude 时，小测试用 haiku，大测试用 sonnet；
+- 不设 token 预算，只记录；
+- 要用户才能定的事写进本文件，先跳过它干别的。
+
