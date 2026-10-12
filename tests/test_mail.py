@@ -131,7 +131,7 @@ def test_whoami(make):
 def test_done_outside_a_turn_goes_to_the_human_dm(make):
     h = three(make)
     r = h.tool("claude-1", "xmuse_done", summary="finished", next="none")["result"]
-    assert r == {"recorded": True, "thread": "dm:claude-1+human"}
+    assert r.pop("note").startswith("Recorded.") and r == {"recorded": True, "thread": "dm:claude-1+human"}
     assert h.q("select kind, body from messages")[0] == {"kind": "done", "body": "finished\nnext: none"}
 
 

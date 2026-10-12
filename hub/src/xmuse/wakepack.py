@@ -206,9 +206,10 @@ def delta(conn, cfg: dict, agent_id: str, since: int) -> str:
     own = dict(d["own"])
     for e, by in d["superseded"]:
         lines.append(f"superseded {e['id']} (by {by}): was \"{e['statement']}\"")
+        new = by.split(":")[0]
         for oid, st in own.get(e["id"], []):  # the agent's own entry in that scope may restate the old one
-            lines.append(f"  your {oid} is in the same scope: \"{_short(st, 80)}\". If it restates {e['id']}, "
-                         f"replace it now (xmuse_done declares with supersedes: {oid}).")
+            lines.append(f"  your {oid} is in the same scope: \"{_short(st, 80)}\". If it restates an older rule or "
+                         f"conflicts with {new}, replace it now (xmuse_done declares with supersedes: {oid}).")
     lines += [f"resolved {e['id']}" for e in d["resolved"]]
     lines += [f"archived: thread {t}, {n} entries" if t else f"archived: {n} entries" for t, n in d["archived"]]
     if not lines:

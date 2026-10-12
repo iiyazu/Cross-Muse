@@ -341,6 +341,14 @@ def whoami(conn, agent_id: str, workspace: str) -> dict:
             "threads": [r[0] for r in conn.execute("select thread_id from thread_members where member=?", (agent_id,))]}
 
 
+# Said with every recorded done: the agent's turn is over. A relabel or an unverified evidence item read as an error
+# made agy call xmuse_done again (probe 10-13).
+DONE_NOTE = "Recorded. Your exit check is done: do not call xmuse_done again this turn; end now."
+RELABEL_NOTE = (" The hub relabelled the outcome so the user or host reviews it; that is not an error and needs nothing"
+                " more from you.")
+UNCHECKED_NOTE = " Your evidence could not be checked here (no readable log for your vendor); that is not an error."
+
+
 def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = None, stage: str | None = None,
          outcome: str | None = None, evidence: list | None = None, cfg: dict | None = None) -> dict:
     """Exit check: record it on the running turn and post it to the chain's thread. It wakes no one, except that a
@@ -350,9 +358,11 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
     (review_gate on), a finished task (next none, outcome completed) is handed to the room's reviewer (evidence.py)."""
     turn = running_turn(conn, agent_id)
     evidence = evidence or None
-    # one done per turn and report: a repeat with the same summary and next (an agent re-calling the tool with or
-    # without its declares) is the same done, whatever else differs
-    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([summary, nxt, stage]).encode()).hexdigest())
+    # one final done per turn (and preset stage): an agent that re-calls the tool, reworded or without its declares,
+    # because the result looked like a failure (agy probe 10-13), gets the first one back. Interim progress reports
+    # stay one per text.
+    which = summary if outcome == "progress" else "final"
+    key = turn and "done:%d:%s" % (turn["id"], hashlib.sha1(json.dumps([which, stage]).encode()).hexdigest())
     verdict = ev.check(conn, turn, evidence) if evidence else None
     with db.tx(conn):
         dup = key and db.row(conn.execute("select id, thread_id from messages where sender=? and idem_key=?",
@@ -362,10 +372,13 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
                                                    (json.dumps([dup["id"]]),))}  # a prefix: long statements are cut
             for d in declares or []:
                 if d["statement"][:40] not in had:
-                    align.declare(conn, agent_id, dup["thread_id"], dup["id"], d["kind"], d["statement"],
-                                  d.get("scope"), d.get("supersedes"))
+                    try:
+                        align.declare(conn, agent_id, dup["thread_id"], dup["id"], d["kind"], d["statement"],
+                                      d.get("scope"), d.get("supersedes"))
+                    except ToolError:  # e.g. supersedes an entry the first call already replaced
+                        pass
             eids = [r[0] for r in conn.execute("select id from entries where refs=? order by id", (json.dumps([dup["id"]]),))]
-            return {"recorded": True, "thread": dup["thread_id"], "duplicate": True,
+            return {"recorded": True, "thread": dup["thread_id"], "duplicate": True, "note": DONE_NOTE,
                     **({"entries": [f"E{i}" for i in eids]} if eids else {})}
         if turn is None or turn["chain_id"] is None:
             tid = dm_id(agent_id, HUMAN)
@@ -396,7 +409,10 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
         final = conn.execute("select outcome from messages where id=?", (mid,)).fetchone()[0]
     # only finished work goes to review: a done the member or the hub labelled otherwise is not finished
     reviewer = cfg and final == "completed" and ev.request_review(conn, cfg, agent_id, mid, summary, nxt)
-    return {"recorded": True, "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {}),
+    note = DONE_NOTE + (RELABEL_NOTE if labelled.get("outcome_by") == "hub" else "") + (
+        UNCHECKED_NOTE if verdict and verdict[1] == [ev.UNAVAILABLE] else "")
+    return {"recorded": True, "note": note,
+            "thread": tid, **({"entries": [f"E{i}" for i in eids]} if eids else {}),
             **({"evidence_status": verdict[0], "evidence_problems": verdict[1]} if verdict else {}),
             **({"review": reviewer} if reviewer else {}), **labelled}
 
