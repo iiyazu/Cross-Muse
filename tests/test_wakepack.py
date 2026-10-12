@@ -65,9 +65,9 @@ def test_delta_text_is_stable_and_complete(make):
     text = wakepack.delta(h.conn(), h.hub.cfg, "claude-1", since)
     assert text == "\n".join([
         "[alignment update since your last wake]",
-        "+ E5 [decision] float64 (refs #5)",
-        "+ E6 [decision] new plan (refs #6)",
-        "+ E8 [decision] gone sooner (refs #8)",
+        "+ E5 [decision] float64 (refs #5) · claude-2",
+        "+ E6 [decision] new plan (refs #6) · claude-2",
+        "+ E8 [decision] gone sooner (refs #8) · claude-2",
         'superseded E3 (by E6): was "old plan"',
         "resolved E2"])
     assert text == wakepack.delta(h.conn(), h.hub.cfg, "claude-1", since)
@@ -87,7 +87,7 @@ def test_over_budget_delta_lists_counts_and_snapshot_truncates(make):
     assert d.endswith("6 new, 0 superseded, 0 resolved, 0 archived; too many to list, call xmuse_context")
     s = wakepack.snapshot(h.conn(), h.hub.cfg, "claude-1")
     assert 0 < s.count("\nE") < 6 and "more not shown (call xmuse_context)" in s
-    assert wakepack.tokens(s) < 60 + 60
+    assert wakepack.tokens(s) < 60 + 60 + wakepack.tokens(wakepack.PRECEDENCE)  # the header carries the rule
 
 
 def test_snapshot_budget_keeps_assigned_work_first(make):
@@ -292,8 +292,10 @@ def test_retried_done_in_the_same_turn_declares_once(make):
     assert a["entries"] == b["entries"] == ["E1"] and b["duplicate"] is True and "duplicate" not in a
     assert conn.execute("select count(*) from entries").fetchone()[0] == 1
     assert conn.execute("select count(*) from messages where kind='done'").fetchone()[0] == 1
+    # the same report re-sent with one more declare is still the one done: only the new declare is added
     c = mail.done(conn, "claude-1", "parsed", "none", decl + [{"kind": "assumption", "statement": "utf-8"}])
-    assert c["entries"] == ["E2", "E3"] and "duplicate" not in c
+    assert c["entries"] == ["E1", "E2"] and c["duplicate"] is True
+    assert conn.execute("select count(*) from messages where kind='done'").fetchone()[0] == 1
     assert b["thread"] == "#g"
 
 

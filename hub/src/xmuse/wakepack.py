@@ -152,11 +152,21 @@ def wip(x) -> str:
     return "\n".join(out)
 
 
-def _line(e: dict) -> str:
+PRECEDENCE = ("on a conflict the user's entry (· user) or the host's (· host) prevails over a member's, "
+              "else the newer one")
+
+
+def _who(e: dict, host: str | None) -> str:
+    """Who wrote an entry, for precedence: user, host, or the member's id."""
+    a = e.get("author") or "?"
+    return "user" if a == HUMAN else "host" if host and a == host else a
+
+
+def _line(e: dict, host: str | None = None) -> str:
     out = f"{e['id']} [{e['kind']}] {e['statement']}"
     if e.get("assignee"):
         out += f" -> {e['assignee']}" + (f" (needs {','.join(e['depends_on'])})" if e["depends_on"] else "")
-    return out + f" (refs {','.join('#%d' % r for r in e['refs'])})"
+    return out + f" (refs {','.join('#%d' % r for r in e['refs'])}) · {_who(e, host)}"
 
 
 def snapshot(conn, cfg: dict, agent_id: str, query: str = "", skip_brief: bool = False) -> str:
@@ -170,12 +180,13 @@ def snapshot(conn, cfg: dict, agent_id: str, query: str = "", skip_brief: bool =
     sections += [(titles.get(s) or (f"Module {s[7:]}" if s.startswith("module:") else f"Thread {s[7:]}"), es)
                  for s, es in v["layers"].items()]
     budget, used, out = cfg["align_snapshot_tokens"], 0, []
+    host = dispatch.host(conn)
     for title, es in sections:
         if not es:
             continue
         lines, dropped = [f"{title}:"], 0
         for e in es:
-            line = _line(e)
+            line = _line(e, host)
             if used + tokens(line) + 1 > budget:
                 dropped += 1
                 continue
@@ -184,13 +195,20 @@ def snapshot(conn, cfg: dict, agent_id: str, query: str = "", skip_brief: bool =
         out += lines + ([f"+{dropped} more not shown (call xmuse_context)"] if dropped else [])
     if v["truncated"]:
         out.append(f"Older entries omitted (layer caps): {', '.join(v['truncated'])}")
-    return "[alignment: current shared decisions; a newer entry replaces what it supersedes]\n" + "\n".join(out) if out else ""
+    return (f"[alignment: current shared decisions; a newer entry replaces what it supersedes; {PRECEDENCE}]\n"
+            + "\n".join(out)) if out else ""
 
 
 def delta(conn, cfg: dict, agent_id: str, since: int) -> str:
     d = align.delta(conn, agent_id, since)
-    lines = [f"+ {_line(e)}" for e in d["added"]]
-    lines += [f"superseded {e['id']} (by {by}): was \"{e['statement']}\"" for e, by in d["superseded"]]
+    host = dispatch.host(conn)
+    lines = [f"+ {_line(e, host)}" for e in d["added"]]
+    own = dict(d["own"])
+    for e, by in d["superseded"]:
+        lines.append(f"superseded {e['id']} (by {by}): was \"{e['statement']}\"")
+        for oid, st in own.get(e["id"], []):  # the agent's own entry in that scope may restate the old one
+            lines.append(f"  your {oid} is in the same scope: \"{_short(st, 80)}\". If it restates {e['id']}, "
+                         f"replace it now (xmuse_done declares with supersedes: {oid}).")
     lines += [f"resolved {e['id']}" for e in d["resolved"]]
     lines += [f"archived: thread {t}, {n} entries" if t else f"archived: {n} entries" for t, n in d["archived"]]
     if not lines:

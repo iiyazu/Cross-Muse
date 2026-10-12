@@ -213,7 +213,8 @@ def delta(conn, agent_id: str, since: int) -> dict:
     for r in rs:
         ops.setdefault(r["id"], []).append(r["op"])
         ents[r["id"]] = {**_pub(r), "status": r["status"], "scope": r["scope"]}
-    out = {"added": [], "superseded": [], "resolved": [], "archived": {}}
+    # own: per replaced entry, the agent's own live entries in its scope, which may restate it (T8 probe 10-13)
+    out = {"added": [], "superseded": [], "resolved": [], "archived": {}, "own": []}
     for eid in sorted(ops):
         e, last = ents[eid], ops[eid][-1]
         if "add" in ops[eid] or "confirm" in ops[eid]:
@@ -224,6 +225,13 @@ def delta(conn, agent_id: str, since: int) -> dict:
                               " ('proposed','rejected') order by id desc limit 1", (eid,)).fetchone()
             label = "E?" if by is None else f"E{by[0]}" if by[0] in ents else f'E{by[0]}: "{by[1]}"'
             out["superseded"].append((e, label))
+            # the agent is asked to check these itself: it knows what it meant, the hub does not guess similarity
+            own = conn.execute(
+                "select id, statement from entries where author=? and status='active' and scope=? and kind in"
+                " ('decision','assumption','convention') and id not in (?, ?) order by id",
+                (agent_id, e["scope"], by[0] if by else -1, eid)).fetchall()
+            if own:
+                out["own"].append((e["id"], [(f"E{o[0]}", o[1]) for o in own]))
         elif last == "resolve":
             out["resolved"].append(e)
         elif last == "archive":
