@@ -473,16 +473,16 @@ class Orchestrator:
         c = self.commit(self.ws, "xmuse: final")
         self.snapshot(run, "F", c)
         self.pause(executors, False)
+        self.event(run["id"], "F", state, {"commit": c})  # event first: a poller seeing the end state sees every event
         self.update(run["id"], state=state, ended_at=db.now())
-        self.event(run["id"], "F", state, {"commit": c})
 
     def fail(self, run: dict) -> None:
         run = self.go(run, "F")
         executors = json.loads(run["executors"])
         self.stop([run["planner"], *executors])
         self.pause(executors, False)
-        self.update(run["id"], state="failed", ended_at=db.now())
         self.event(run["id"], "F", "failed", {})
+        self.update(run["id"], state="failed", ended_at=db.now())
 
     # ---- status ------------------------------------------------------------------------------------------------
     def status(self, rid: int | None = None) -> dict:

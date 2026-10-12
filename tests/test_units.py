@@ -116,6 +116,7 @@ def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
     class Sink:
         def __init__(self): self.ended, self.done = [], threading.Event()
         def turn_ended(self, e): self.ended.append(e); self.done.set()
+        def progress(self, *a): pass
 
     sink, p = Sink(), tmp_path / "t.jsonl"
     p.write_text("", encoding="utf-8")
@@ -132,11 +133,12 @@ def test_channel_stop_waits_for_late_transcript_flush(tmp_path):
 
 def test_opencode_event_accounting_dedupes_and_flags_code(tmp_path):
     class Sink:
-        ended, kicked = [], 0
+        ended, kicked, prog = [], 0, []
 
         def turn_ended(self, e): self.ended.append(e)
         def kick(self): Sink.kicked += 1
         def approval(self, *a): pass
+        def progress(self, turn_id, update): Sink.prog.append((turn_id, update))
 
     p = OpenCodePrompt.__new__(OpenCodePrompt)
     p.sink, p.turns, p.human, p.known = Sink(), {}, {}, set()

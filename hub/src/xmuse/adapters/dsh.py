@@ -161,8 +161,28 @@ def overlay(agent: dict, state: Path, mcp: bool = True) -> str:
     return json.dumps(rows, indent=1)
 
 
+def scan_line(line: str):
+    """One NDJSON line -> (kind, text) for live progress: ("tool", name), ("text", fragment) or ("final", text).
+    None for anything else. Pure: unit-tested, reused by the run loop below."""
+    if not line.startswith("{"):
+        return None
+    try:
+        o = json.loads(line)
+    except ValueError:
+        return None
+    typ = o.get("type")
+    if typ == "tool_call" and isinstance(o.get("tool"), str):
+        return ("tool", o["tool"])
+    if typ == "text" and isinstance(o.get("text"), str):
+        return ("text", o["text"])
+    if typ == "final" and isinstance(o.get("text"), str):
+        return ("final", o["text"])
+    return None
+
+
 def parse(lines) -> tuple[dict, Usage]:
-    """--json NDJSON of one run -> (info, usage). step_end usage is per step; dsh never reports cache writes."""
+    """--json NDJSON of one run -> (info, usage). step_end usage is per step; dsh never reports cache writes.
+    info["reply"] is the run's last assistant text (H13)."""
     info, u = {}, Usage()
     for line in lines:
         if not line.startswith("{"):
@@ -180,6 +200,8 @@ def parse(lines) -> tuple[dict, Usage]:
             info["active"] = True
         elif typ in ("tool_call", "tool_result", "text", "final"):
             info["active"] = True  # the agent already acted or spoke: a failure now is not a failed launch
+            if typ in ("text", "final") and isinstance(o.get("text"), str):
+                info["reply"] = o["text"]
         elif typ == "status" and o.get("phase") == "step_end" and o.get("usage"):
             s = o["usage"]
             u.input += s.get("inputTokens", 0)
@@ -258,13 +280,13 @@ class DshHeadless:
                 and "INVALID_REQUEST" not in info.get("error", ""))
 
     def run(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None = None,
-            retry: bool = True, limit: float | None = None):
+            retry: bool = True, limit: float | None = None, turn_id: int | None = None):
         """One headless process; a failed launch is retried once, in place, with the same arguments.
 
         The retry lives here (below the engine) so the turn is still one turn: one prompt delivery, one turn
         record. Nothing the agent could have seen or done was lost, because `active` is still false.
         `limit` (seconds) kills a run that does not finish in time; only the precheck uses it."""
-        info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit)
+        info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit, turn_id)
         if retry and self.launch_failed(info) and not (st and st["stop"].is_set()):
             log_ = logging.getLogger(__name__)
             log_.warning("dsh launch failed (%s); retrying once", info.get("error") or f"exit {info.get('rc')}")
@@ -273,11 +295,11 @@ class DshHeadless:
                     return info, usage
             else:
                 time.sleep(self.retry_wait)
-            info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit)
+            info, usage = self._run_once(cwd, patch, session, prompt, log, st, limit, turn_id)
         return info, usage
 
     def _run_once(self, cwd: Path, patch: Path, session: str | None, prompt: str, log: Path, st: dict | None,
-                  limit: float | None = None):
+                  limit: float | None = None, turn_id: int | None = None):
         got, hung, late = threading.Event(), threading.Event(), threading.Event()
         with log.open("a", encoding="utf-8") as out, log.with_suffix(".err").open("a", encoding="utf-8") as err:
             p = proc.popen(self.command(patch, session), cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -306,11 +328,21 @@ class DshHeadless:
             except OSError:  # died before reading its stdin (BrokenPipe): the exit code tells the story
                 pass
             lines = []
+            tools, last_tool, last_text = 0, None, ""
             for line in p.stdout:
                 got.set()
                 out.write(line)
                 out.flush()
                 lines.append(line)
+                if turn_id is not None:
+                    hit = scan_line(line)
+                    if hit is not None:
+                        if hit[0] == "tool":
+                            tools += 1
+                            last_tool = hit[1]
+                        else:
+                            last_text = hit[1]
+                        self.sink.progress(turn_id, {"tools": tools, "last_tool": last_tool, "text": last_text})
             got.set()
         p.wait()
         if timer:
@@ -334,7 +366,8 @@ class DshHeadless:
         delay, total = self.backoff, Usage()
         for attempt in range(self.refusals + 1):
             try:
-                info, usage = self.run(spec.cwd, patch, spec.session, spec.prompt, spec.run_log, st)
+                info, usage = self.run(spec.cwd, patch, spec.session, spec.prompt, spec.run_log, st,
+                                    turn_id=spec.turn_id)
             except Exception as e:
                 info, usage = {"error": f"start failed: {e}"}, Usage()
             total = usage if usage.calls else total
@@ -351,7 +384,7 @@ class DshHeadless:
         elif info.get("unknown"):
             end = TurnEnd(spec.turn_id, "failed", sid, total, info["error"], requeue="fresh")
         elif info.get("ok") and info.get("rc") == 0:
-            end = TurnEnd(spec.turn_id, "succeeded", sid, total)
+            end = TurnEnd(spec.turn_id, "succeeded", sid, total, reply=info.get("reply"))
         else:
             tail = spec.run_log.with_suffix(".err").read_text(encoding="utf-8")[-300:].strip() if spec.run_log.with_suffix(
                 ".err").exists() else ""
