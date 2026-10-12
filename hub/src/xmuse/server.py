@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, preset, wakepack
+from . import align, config, db, mail, memoryos, peer, preset, registry, wakepack
 from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
@@ -59,6 +59,7 @@ class Hub:
         self.done = threading.Event()  # serve() returns when set (signal, or /v1/admin/shutdown)
         self.admin = digest((state / "tokens" / "_admin").read_text(encoding="utf-8").strip())
         self.view_lock, self.view_fp = threading.Lock(), None  # sidebar view version (room.fingerprint)
+        self.join_lock, self.started_at = threading.Lock(), time.time()
         self.version = rooms.stored_version(self.db())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
         policy = os.environ.get("XMUSE_SHELL_POLICY") or "allowlist"
@@ -417,7 +418,7 @@ class Hub:
 
     # ---- sidebars (D2, contract XMUSE2-VIEW-API v0): own error format and HTTP statuses ----------------------
     SIDEBAR = {("GET", "/v1/view"), ("GET", "/v1/timeline"), ("POST", "/v1/act"), ("POST", "/v1/rooms"),
-               ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave")}
+               ("GET", "/v1/rooms"), ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave")}
 
     def view_version(self) -> int:
         conn = self.db()
@@ -443,13 +444,19 @@ class Hub:
         return v
 
     def sidebar(self, method: str, path: str, query: dict, body: dict, auth: str | None,
-                session: str | None) -> tuple[int, dict | None]:
+                session: str | None, key: str | None = None) -> tuple[int, dict | None]:
         if not isinstance(body, dict):
             raise rooms.ApiError(400, "bad_request", "the body must be a JSON object")
-        if path == "/v1/rooms":
-            return 200, self.create_room(body)
-        if path == "/v1/join":
-            return 200, self.join(body)
+        if path in ("/v1/rooms", "/v1/join"):  # local sidebars: the sidebar key; an agent's member token never works
+            p = rooms.principal(self.db(), self.admin, auth)
+            if p is not None and p.kind == "member":
+                raise rooms.ApiError(403, "member_forbidden", f"{path} is for sidebars, not for members")
+            keyed = path == "/v1/rooms" or not str(body.get("code") or "").strip()
+            if keyed and not registry.check_key(key):
+                raise rooms.ApiError(401, "bad_sidebar_key", "missing or wrong x-xmuse-sidebar key")
+            if path == "/v1/join":
+                return 200, self.join_local(body) if keyed else self.join(body)
+            return 200, self.create_room(body) if method == "POST" else self.list_rooms()
         conn = self.db()
         p = rooms.principal(conn, self.admin, auth)
         if p is None:
@@ -593,6 +600,7 @@ class Hub:
         with db.tx(conn):
             conn.execute("update room set host=?", (a["id"],))
         rooms.notice(conn, f"{a['id']} now hosts the room")
+        self.reg_sync()
         return {"ok": True}
 
     def act_align(self, p: rooms.Principal, b: dict) -> dict:
@@ -600,6 +608,104 @@ class Hub:
             raise rooms.ApiError(400, "bad_request", "decision must be confirm or reject")
         self.admin_align({"op": b["decision"], "id": str(b.get("id") or "")})
         return {"ok": True}
+
+    def _text(self, b: dict, key: str) -> str | None:
+        v = b.get(key)
+        if v is not None and not isinstance(v, str):
+            raise rooms.ApiError(400, "bad_request", f"{key} must be a string")
+        return v
+
+    def _model_ok(self, vendor: str, model: str) -> None:
+        if not model.strip() or vendor == "opencode" and "/" not in model:
+            raise rooms.ApiError(400, "bad_request", "model: a non-empty name (opencode: <provider>/<model>)")
+
+    def act_member_add(self, p: rooms.Principal, b: dict) -> dict:
+        """Register a member the hub runs turns for: `xmuse agent add` without --desktop (the same add_agent)."""
+        vendor, name = b.get("vendor"), self._text(b, "name") or None
+        if vendor not in rooms.VENDORS:
+            raise rooms.ApiError(400, "bad_vendor", f"vendor must be one of: {', '.join(rooms.VENDORS)}")
+        role, desc, model = self._text(b, "role"), self._text(b, "description"), self._text(b, "model") or None
+        if name is not None and not rooms.valid_id(name):
+            raise rooms.ApiError(400, "bad_request", "name: letters, digits and '-', not 'human' or 'hub'")
+        if model:
+            self._model_ok(vendor, model)
+        conn = self.db()
+        mid = name or rooms.free_id(conn, vendor)
+        if conn.execute("select 1 from agents where id=?", (mid,)).fetchone():
+            raise rooms.ApiError(409, "member_exists", f"{mid} is already a member; pick another name")
+        from .init import add_agent
+        try:
+            add_agent(self.state, mid, vendor, model, role or "", None, desc or "")
+        except SystemExit as e:
+            raise rooms.ApiError(400, "cannot_add", str(e))
+        self.ensure_driver(vendor)
+        rooms.notice(conn, f"{mid} was added to the room ({vendor}{', ' + role if role else ''}"
+                           f"{', ' + model if model else ''}){': ' + desc if desc else ''}")
+        self.engine.kick()
+        return {"member_id": mid}
+
+    def act_member_edit(self, p: rooms.Principal, b: dict) -> dict:
+        a, conn = self._member(b.get("member")), self.db()
+        new = {k: self._text(b, k) for k in ("role", "description", "model")}
+        if all(v is None for v in new.values()):
+            raise rooms.ApiError(400, "bad_request", "member_edit needs role, description or model")
+        if new["model"] is not None:
+            self._model_ok(a["vendor"], new["model"])
+        with db.tx(conn):
+            for k, v in new.items():
+                if v is not None:
+                    conn.execute(f"update agents set {k}=? where id=?", (v, a["id"]))
+            if new["model"] is not None:
+                fam = config.family(a["vendor"], new["model"])
+                conn.execute("update agents set family=? where id=?", (fam, a["id"]))
+        short = lambda s: s if len(s) <= 80 else s[:79] + "…"  # noqa: E731
+        changes = ", ".join(f"{k} = {short(v)}" for k, v in new.items() if v is not None)
+        rooms.notice(conn, f"{a['id']} was edited: {changes}")
+        return {"ok": True}
+
+    def list_rooms(self) -> dict:
+        """GET /v1/rooms (sidebar key): this hub's room and who is in it, for the sidebar's room list."""
+        conn = self.db()
+        r = db.row(conn.execute("select * from room"))
+        return {"room": r and {k: r[k] for k in ("id", "name", "dir", "host", "created_at")},
+                "members": [{k: m[k] for k in ("id", "vendor", "role", "online")}
+                            for m in rooms.members(conn, self.cfg)]}
+
+    def join_local(self, b: dict) -> dict:
+        """POST /v1/join without a code (sidebar key checked): a sidebar on this machine joins by directory or room
+        id. A named member that exists, has the same vendor and no session is taken over; bound or other: 409."""
+        conn, vendor, sid = self.db(), b.get("vendor"), b.get("session_id")
+        d, rid, name = b.get("dir"), b.get("room_id"), self._text(b, "name") or None
+        role, desc = self._text(b, "role") or "", self._text(b, "description") or ""
+        if vendor not in rooms.VENDORS or not isinstance(sid, str) or not sid:
+            raise rooms.ApiError(400, "bad_request", "join needs dir or room_id, vendor and session_id")
+        if d is None and rid is None:
+            raise rooms.ApiError(400, "bad_request", "join needs dir or room_id")
+        if d is not None and not isinstance(d, str):
+            raise rooms.ApiError(400, "bad_request", "dir must be a string")
+        if d is not None and not rooms.same_dir(d, self.ws):
+            raise rooms.ApiError(400, "wrong_dir", f"this hub serves {self.ws}, not {d}")
+        if rid is not None and rid != rooms.room_id(self.ws):
+            raise rooms.ApiError(404, "unknown_room", f"this hub serves room {rooms.room_id(self.ws)}, not {rid!r}")
+        if name is not None and not rooms.valid_id(name):
+            raise rooms.ApiError(400, "bad_request", "name: letters, digits and '-', not 'human' or 'hub'")
+        desktops = db.rows(conn.execute("select settings from agents where removed=0"))
+        has_desktop = any(db.settings(a).get("desktop") for a in desktops)
+        if not has_desktop and not conn.execute("select 1 from room").fetchone():
+            raise rooms.ApiError(404, "no_room", "this hub has no room yet: open it with POST /v1/rooms")
+        with self.join_lock:  # name checks and the insert in add_member must not interleave with another join
+            rooms.room_row(conn, self.ws)
+            mid = name or rooms.free_id(conn, vendor)
+            self.add_member(mid, vendor, role, desc, sid)
+            if role:
+                with db.tx(conn):
+                    conn.execute("update agents set role=? where id=?", (role, mid))
+        rooms.notice(conn, f"{mid} joined the room ({vendor}{', ' + role if role else ''})"
+                           + (f": {desc}" if desc else ""))
+        r = rooms.room_row(conn, self.ws)
+        return {"member_id": mid, "member_token": self._token_of(mid),
+                "operator_token": rooms.operator_token(conn, mid),
+                "room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}}
 
     # rooms and invitations: no token (the caller has none yet)
     def create_room(self, b: dict) -> dict:
@@ -619,6 +725,7 @@ class Hub:
             conn.execute("insert into room(id, name, dir, host, created_at) values(?,?,?,?,?)",
                          (rooms.room_id(self.ws), str(b.get("name") or self.ws.name), str(self.ws), mid, db.now()))
         rooms.notice(conn, f"{mid} opened the room ({vendor} sidebar)")
+        self.reg_sync()
         r = rooms.room_row(conn, self.ws)
         return {"room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}, "member_id": mid,
                 "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid)}
@@ -700,6 +807,16 @@ class Hub:
         return (self.state / "tokens" / mid).read_text(encoding="utf-8").strip()
 
     # ---- process -----------------------------------------------------------------------
+    def reg_sync(self) -> None:
+        """This hub's entry in the machine registry (section 8.1); a registry we cannot write never stops the hub."""
+        try:
+            r = db.row(self.db().execute("select * from room"))
+            registry.register({"room_id": rooms.room_id(self.ws), "name": r["name"] if r else self.ws.name,
+                               "dir": str(self.ws), "url": f"http://127.0.0.1:{self.httpd.server_address[1]}",
+                               "host": r["host"] if r else None, "pid": os.getpid(), "started_at": self.started_at})
+        except (OSError, ValueError):
+            log.warning("cannot write the hub registry in %s", registry.directory(), exc_info=True)
+
     def start(self) -> None:
         hub = self
 
@@ -707,7 +824,8 @@ class Hub:
             def _sidebar(self, method: str, path: str, query: dict, body):
                 try:
                     status, out = hub.sidebar(method, path, query, body, self.headers.get("authorization"),
-                                              self.headers.get("x-xmuse-session") or None)
+                                              self.headers.get("x-xmuse-session") or None,
+                                              self.headers.get("x-xmuse-sidebar"))
                 except rooms.ApiError as e:
                     status, out = e.status, {"error": e.code, "message": e.message}
                 except ToolError as e:
@@ -773,9 +891,18 @@ class Hub:
                          daemon=True).start()
         (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
                                                          "shell_policy": self.engine.shell_policy}), encoding="utf-8")
+        try:
+            registry.ensure_key()
+        except OSError:
+            log.warning("cannot create the sidebar key in %s", registry.directory(), exc_info=True)
+        self.reg_sync()
         self.engine.kick()
 
     def shutdown(self) -> None:
+        try:  # first: sidebars stop finding a hub that is going away (hub.json goes last: `hub stop` waits for it)
+            registry.unregister(rooms.room_id(self.ws))
+        except OSError:
+            log.warning("cannot update the hub registry", exc_info=True)
         self.stopping.set()
         self.engine.q.put(("stop",))
         self.loop.join(10)
