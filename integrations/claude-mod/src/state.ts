@@ -15,6 +15,18 @@ export const INITIAL_UI: XmuseUi = {
   target: '',
   lastInvite: null,
   notice: '',
+  addVendor: 'opencode',
+  addModel: '',
+  addRole: 'executor',
+  addDesc: '',
+  addName: '',
+  editRole: '',
+  editDesc: '',
+  editModel: '',
+  grpPick: '',
+  grpId: '',
+  grpTitle: '',
+  grpMembers: '',
 }
 
 export const INITIAL_CONN: XmuseConn = {

@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 import { INITIAL_CONN, INITIAL_UI, PANE } from '../src/state'
-import { bannerText, clip, isPendingEntry, pickFresh, recipientOptions, renderAlignment, renderMembers, renderTimeline, wakePrompt } from '../src/format'
+import { bannerText, clip, isPendingEntry, pickFresh, recipientOptions, renderAlignment, renderHostWait, renderMembers, renderTimeline, wakePrompt } from '../src/format'
+import { findRoom, isKeyShape, isLoopbackUrl, parseHubs, registryDirFrom } from '../src/registry'
+import type { RegistryEntry } from '../src/registry'
 import type { XmuseMessage, XmuseMore, XmuseUi, XmuseView } from '../types/index'
 
 // The validator follows `$` only into functions declared in this file, never
@@ -123,10 +125,14 @@ async function hubCall(
   body?: unknown,
   token?: string,
   session?: string,
+  key?: string,
 ): Promise<HubReply> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (token) headers.authorization = 'Bearer ' + token
   if (session) headers['x-xmuse-session'] = session
+  // 侧栏凭据（约定 8.1）：只在插件进程里出现，绝不进模型上下文和渲染；只发给回环地址的 hub
+  // （hubUrl 配置项不做回环检查，这里兜底）。
+  if (key && isLoopbackUrl(hub)) headers['x-xmuse-sidebar'] = key
   try {
     const r = await $.http.fetch(hub + path, {
       method,
@@ -158,6 +164,83 @@ async function actCall($: any, b: Binding, payload: Record<string, unknown>, as:
   const hub = await resolveHub($, b)
   const tok = as === 'operator' ? b.operatorToken : b.memberToken
   return hubCall($, hub, 'POST', '/v1/act', payload, tok, b.sessionId)
+}
+
+// ---- local registry and sidebar key (8.1) ------------------------------------
+// Both are read here in the plugin process. The key goes into the
+// x-xmuse-sidebar header only; it never reaches $.state, the model, prompts,
+// pane rendering, command output, or logs.
+
+function procEnv(): Record<string, string | undefined> {
+  try {
+    if (typeof process !== 'undefined' && process && (process as any).env) return (process as any).env as Record<string, string | undefined>
+  } catch {
+    // no process in this host
+  }
+  return {}
+}
+
+function procPlatform(): string {
+  try {
+    if (typeof process !== 'undefined' && process && (process as any).platform) return String((process as any).platform)
+  } catch {
+    // ignore
+  }
+  return ''
+}
+
+function homeDir(): string {
+  const e = procEnv()
+  if (typeof e.HOME === 'string' && e.HOME) return e.HOME
+  if (typeof e.USERPROFILE === 'string' && e.USERPROFILE) return e.USERPROFILE
+  return ''
+}
+
+async function fsRead($: any, p: string): Promise<string> {
+  try {
+    const v = await $.fs.read(p)
+    return typeof v === 'string' ? v : ''
+  } catch {
+    return ''
+  }
+}
+
+function joinPath(dir: string, file: string): string {
+  const sep = dir.includes('\\') && !dir.includes('/') ? '\\' : '/'
+  return dir.replace(/[\\/]+$/, '') + sep + file
+}
+
+async function resolveRegistryDir($: any): Promise<string> {
+  const cfg = option('registryDir')
+  if (typeof cfg === 'string' && cfg) return cfg
+  return registryDirFrom(procEnv(), procPlatform(), homeDir())
+}
+
+async function readSidebarKey($: any): Promise<string> {
+  const d = await resolveRegistryDir($)
+  if (!d) return ''
+  const k = (await fsRead($, joinPath(d, 'sidebar.key'))).trim()
+  return isKeyShape(k) ? k : ''
+}
+
+function pidAliveHere(pid: number): boolean {
+  try {
+    if (typeof process !== 'undefined' && process && typeof (process as any).kill === 'function') {
+      ;(process as any).kill(pid, 0)
+      return true
+    }
+  } catch (e) {
+    return (e as any) && (e as any).code === 'EPERM'
+  }
+  return true // cannot check in this host: keep the entry, a failed join surfaces it
+}
+
+async function listLocalRooms($: any): Promise<{ dir: string; rooms: RegistryEntry[] }> {
+  const d = await resolveRegistryDir($)
+  if (!d) return { dir: '', rooms: [] }
+  const text = await fsRead($, joinPath(d, 'hubs.json'))
+  if (!text) return { dir: d, rooms: [] }
+  return { dir: d, rooms: parseHubs(text, pidAliveHere) }
 }
 
 // ---- state helpers --------------------------------------------------------
@@ -200,7 +283,8 @@ async function createRoom($: any, name: string, memberId?: string, description?:
   const payload: Record<string, unknown> = { dir: cwd, name, vendor: 'claude', session_id: sid }
   if (memberId) payload.member_id = memberId
   if (description) payload.description = description
-  const r = await hubCall($, hub, 'POST', '/v1/rooms', payload)
+  const key = await readSidebarKey($)
+  const r = await hubCall($, hub, 'POST', '/v1/rooms', payload, undefined, undefined, key || undefined)
   if (!r.ok) {
     return { ok: false, text: '开房间失败：' + errText(r) + (r.status === 0 ? '。hub 没有运行？可用 /xmuse hub <url> 指定地址。' : '') }
   }
@@ -236,7 +320,7 @@ async function joinRoom($: any, code: string): Promise<FlowResult> {
     vendor: 'claude',
     session_id: sid,
     client_info: { client: 'claude-mod', mod: 'xmuse', version: ver },
-  })
+  }, undefined, undefined, (await readSidebarKey($)) || undefined)
   if (!r.ok) {
     return { ok: false, text: '加入失败：' + errText(r) + (r.status === 0 ? '。hub 没有运行？可用 /xmuse hub <url> 指定地址。' : '') }
   }
@@ -253,6 +337,61 @@ async function joinRoom($: any, code: string): Promise<FlowResult> {
   await resetView($)
   await setConn($, 'ok', '', b)
   return { ok: true, text: `已绑定为成员 ${b.memberId}` }
+}
+
+// One-click join of a local room (8.1): match by room_id or name in the
+// registry, talk to that hub's own url with the sidebar key, save the binding.
+async function joinLocalRoom(
+  $: any,
+  arg: string,
+  extra?: { name?: string; role?: string; description?: string },
+): Promise<FlowResult> {
+  if (!arg) return { ok: false, text: '用法：/xmuse join-local <房间名或 room_id>' }
+  const existing = await loadBinding($)
+  if (existing) return { ok: false, text: '这个会话已经在房间里了，先 /xmuse leave' }
+  const { rooms } = await listLocalRooms($)
+  if (!rooms.length) return { ok: false, text: '本机没有登记的房间（hub 没启动？登记表目录对吗）' }
+  let found = findRoom(rooms, { roomId: arg })
+  if (found.error) found = findRoom(rooms, { name: arg })
+  if (found.error || !found.entry) return { ok: false, text: '加入失败：' + (found.error || '找不到房间') }
+  const entry = found.entry
+  if (!isLoopbackUrl(entry.url)) return { ok: false, text: '加入失败：登记表里的 hub 地址不是本机回环地址，拒绝连接' }
+  const key = await readSidebarKey($)
+  if (!key) return { ok: false, text: '加入失败：读不到 sidebar.key（hub 还没生成？登记表目录对吗）' }
+  const sid = String(await $.session.id())
+  let ver = ''
+  try {
+    ver = String(await $.session.version())
+  } catch {
+    ver = ''
+  }
+  const hub = entry.url.replace(/\/$/, '')
+  const body: Record<string, unknown> = {
+    room_id: entry.room_id,
+    vendor: 'claude',
+    session_id: sid,
+    client_info: { client: 'claude-mod', mod: 'xmuse', version: ver },
+  }
+  if (extra) {
+    if (extra.name) body.name = extra.name
+    if (extra.role) body.role = extra.role
+    if (extra.description) body.description = extra.description
+  }
+  const r = await hubCall($, hub, 'POST', '/v1/join', body, undefined, undefined, key)
+  if (!r.ok) return { ok: false, text: '加入失败：' + errText(r) }
+  const b: Binding = {
+    hub,
+    memberId: r.body.member_id,
+    memberToken: r.body.member_token,
+    operatorToken: r.body.operator_token,
+    sessionId: sid,
+    roomId: (r.body.room && r.body.room.id) || entry.room_id,
+  }
+  await saveBinding($, b)
+  setOwned(sid)
+  await resetView($)
+  await setConn($, 'ok', '', b)
+  return { ok: true, text: `已加入房间「${entry.name}」，绑定为成员 ${b.memberId}` }
 }
 
 async function leaveRoom($: any): Promise<FlowResult> {
@@ -512,6 +651,107 @@ async function makeInvite($: any): Promise<void> {
   }
 }
 
+// Room list for the pane: re-read at most every 15 s (rooms come and go).
+let roomsCache: { at: number; rooms: RegistryEntry[] } = { at: 0, rooms: [] }
+
+async function cachedRooms($: any, force?: boolean): Promise<RegistryEntry[]> {
+  let now = 0
+  try {
+    now = await $.clock.now()
+  } catch {
+    now = Date.now() / 1000
+  }
+  if (!force && now - roomsCache.at < 15) return roomsCache.rooms
+  const { rooms } = await listLocalRooms($)
+  roomsCache = { at: now, rooms }
+  return rooms
+}
+
+async function joinLocalFromPane($: any, roomId: string): Promise<void> {
+  const r = await joinLocalRoom($, roomId)
+  await setNotice($, r.ok ? '' : r.text)
+  if (r.ok) {
+    roomsCache = { at: 0, rooms: [] }
+    void pollOnce($, 0)
+  }
+}
+
+async function addFromPane($: any): Promise<void> {
+  const ui = await read($, uiAtom)
+  const b = await loadBinding($)
+  if (!b) return setNotice($, '还没有绑定房间')
+  if (!ui.addDesc.trim()) return setNotice($, '添加成员需要填一段职责描述')
+  const body: Record<string, unknown> = { act: 'member_add', vendor: ui.addVendor, role: ui.addRole, description: ui.addDesc.trim() }
+  if (ui.addModel.trim()) body.model = ui.addModel.trim()
+  if (ui.addName.trim()) body.name = ui.addName.trim()
+  const r = await actCall($, b, body, 'operator')
+  if (!r.ok) return setNotice($, '添加成员失败：' + errText(r))
+  await update($, uiAtom, u => ({ ...u, addDesc: '', addName: '', addModel: '', notice: `已添加成员 ${r.body.member_id}` }))
+}
+
+async function memberEditFromPane($: any): Promise<void> {
+  const ui = await read($, uiAtom)
+  const b = await loadBinding($)
+  if (!b) return
+  if (!ui.target) return setNotice($, '先选一个成员')
+  const body: Record<string, unknown> = { act: 'member_edit', member: ui.target }
+  if (ui.editRole) body.role = ui.editRole
+  if (ui.editDesc.trim()) body.description = ui.editDesc.trim()
+  if (ui.editModel.trim()) body.model = ui.editModel.trim()
+  if (!body.role && !body.description && !body.model) return setNotice($, '至少改一项（角色/描述/模型）')
+  const r = await actCall($, b, body, 'operator')
+  if (!r.ok) await setNotice($, `改成员失败：` + errText(r))
+  else await update($, uiAtom, u => ({ ...u, editRole: '', editDesc: '', editModel: '', notice: '' }))
+}
+
+async function dmFromPane($: any): Promise<void> {
+  const ui = await read($, uiAtom)
+  const view = (await read($, viewAtom)) as XmuseView | null
+  if (!view) return
+  if (!ui.target) return setNotice($, '先选一个成员')
+  const id = 'dm:' + [view.me.id, ui.target].sort().join('+')
+  await setUi($, { thread: id, section: 'timeline' })
+}
+
+async function groupAddFromPane($: any): Promise<void> {
+  const ui = await read($, uiAtom)
+  const b = await loadBinding($)
+  if (!b) return
+  if (!ui.target) return setNotice($, '先选一个成员')
+  if (!ui.grpPick) return setNotice($, '先选一个私有群')
+  const r = await actCall($, b, { act: 'thread_add', thread: ui.grpPick, member: ui.target }, 'operator')
+  if (!r.ok) await setNotice($, `拉进群失败：` + errText(r))
+  else await setNotice($, '')
+}
+
+async function groupNewFromPane($: any): Promise<void> {
+  const ui = await read($, uiAtom)
+  const b = await loadBinding($)
+  if (!b) return setNotice($, '还没有绑定房间')
+  const id = ui.grpId.trim()
+  if (!id || id.charAt(0) !== '#') return setNotice($, '群 id 形如 #名字')
+  const members = ui.grpMembers.split(/[\s,]+/).filter(Boolean)
+  const r = await actCall($, b, { act: 'thread_new', id, members, title: ui.grpTitle.trim() || id }, 'operator')
+  if (!r.ok) return setNotice($, '新建群失败：' + errText(r))
+  await update($, uiAtom, u => ({ ...u, grpId: '', grpTitle: '', grpMembers: '', notice: `已建私有群 ${r.body.thread}` }))
+}
+
+async function groupRemoveFromPane($: any, thread: string, member: string): Promise<void> {
+  const b = await loadBinding($)
+  if (!b) return
+  const r = await actCall($, b, { act: 'thread_remove', thread, member }, 'operator')
+  if (!r.ok) await setNotice($, `移出失败：` + errText(r))
+  else await setNotice($, '')
+}
+
+async function wakeHostFromPane($: any): Promise<void> {
+  const b = await loadBinding($)
+  if (!b) return setNotice($, '还没有绑定房间')
+  const r = await actCall($, b, { act: 'wake_host' }, 'operator')
+  if (!r.ok) return setNotice($, '叫醒失败：' + errText(r))
+  await setNotice($, `已叫醒主控，放出 ${r.body && r.body.released !== undefined ? r.body.released : '?'} 条结果`)
+}
+
 async function newRoomFromPane($: any): Promise<void> {
   const ui = await read($, uiAtom)
   const r = await createRoom($, ui.newRoom.trim())
@@ -551,6 +791,11 @@ const USAGE = [
   '/xmuse room new <名字>        开房间（本会话成为主控）',
   '/xmuse invite <provider> <角色> <职责描述>   生成邀请码（码显示在侧栏里）',
   '/xmuse join <邀请码>          把本会话绑定为房间成员',
+  '/xmuse rooms                  列出本机房间（一键加入不用邀请码）',
+  '/xmuse join-local <房间名或 room_id>   一键加入本机房间',
+  '/xmuse add <厂商> <模型|-> <角色> <描述>   添加成员（hub 起回合）',
+  '/xmuse group new #id [成员 …]  新建私有群',
+  '/xmuse wake-host               现在叫醒主控',
   '/xmuse status | open | leave | rebind',
   '/xmuse hub <url>             指定 hub 地址（hub clear 清除）',
 ].join('\n')
@@ -579,6 +824,53 @@ async function runCommand($: any, args: string): Promise<{ text: string; exitCod
       void pollOnce($, 0)
     }
     return { text: r.text, exitCode: r.ok ? 0 : 1 }
+  }
+
+  if (sub === 'rooms') {
+    const { rooms } = await listLocalRooms($)
+    if (!rooms.length) return { text: '本机没有登记的房间（hub 没启动？登记表目录对吗）。也可以 /xmuse room new 开一间。' }
+    const lines = rooms.map(r => `- ${r.name} \`${r.room_id}\` · 目录 ${r.dir} · 主控 ${r.host || '?'}`)
+    return { text: `本机房间（${rooms.length}）：\n${lines.join('\n')}\n用 /xmuse join-local <房间名或 room_id> 一键加入` }
+  }
+
+  if (sub === 'join-local') {
+    const r = await joinLocalRoom($, rest[0] || '')
+    if (r.ok) {
+      await openPane($)
+      void pollOnce($, 0)
+    }
+    return { text: r.text, exitCode: r.ok ? 0 : 1 }
+  }
+
+  if (sub === 'add') {
+    if (rest.length < 4) return { text: '用法：/xmuse add <厂商> <模型|-> <角色> <描述…>', exitCode: 2 }
+    const b = await loadBinding($)
+    if (!b) return { text: '这个会话还没有加入房间（/xmuse room new 或 /xmuse join）', exitCode: 1 }
+    const [vendor, model, role, ...desc] = rest
+    const body: Record<string, unknown> = { act: 'member_add', vendor, role, description: desc.join(' ') }
+    if (model && model !== '-') body.model = model
+    const r = await actCall($, b, body, 'operator')
+    if (!r.ok) return { text: '添加成员失败：' + errText(r), exitCode: 1 }
+    return { text: `已添加成员 ${r.body.member_id}（${vendor}/${role}），hub 会起它的回合` }
+  }
+
+  if (sub === 'group') {
+    if ((rest[0] || '').toLowerCase() !== 'new' || rest.length < 2) return { text: '用法：/xmuse group new #id [成员 …]', exitCode: 2 }
+    const b = await loadBinding($)
+    if (!b) return { text: '这个会话还没有加入房间（/xmuse room new 或 /xmuse join）', exitCode: 1 }
+    const id = rest[1]
+    const members = rest.slice(2)
+    const r = await actCall($, b, { act: 'thread_new', id, members, title: id }, 'operator')
+    if (!r.ok) return { text: '新建群失败：' + errText(r), exitCode: 1 }
+    return { text: `私有群 ${r.body.thread} 已建${members.length ? '，成员：' + members.join('、') : ''}（你自动在内）` }
+  }
+
+  if (sub === 'wake-host') {
+    const b = await loadBinding($)
+    if (!b) return { text: '这个会话还没有加入房间（/xmuse room new 或 /xmuse join）', exitCode: 1 }
+    const r = await actCall($, b, { act: 'wake_host' }, 'operator')
+    if (!r.ok) return { text: '叫醒失败：' + errText(r), exitCode: 1 }
+    return { text: `已叫醒主控，放出 ${r.body && r.body.released !== undefined ? r.body.released : '?'} 条结果` }
   }
 
   if (sub === 'invite') {
@@ -657,6 +949,8 @@ async function runCommand($: any, args: string): Promise<{ text: string; exitCod
 const SECTIONS: { id: string; label: string }[] = [
   { id: 'timeline', label: '时间线' },
   { id: 'members', label: '成员' },
+  { id: 'groups', label: '群组' },
+  { id: 'host', label: '主控' },
   { id: 'approvals', label: '审批' },
   { id: 'alignment', label: '对齐' },
   { id: 'room', label: '房间' },
@@ -678,6 +972,27 @@ function setUi($: any, patch: Partial<XmuseUi>) {
   return update($, uiAtom, (u: XmuseUi) => ({ ...u, ...patch }))
 }
 
+// ---- room list (shared by the unbound box and the room section) --------------
+
+function roomsList($: any, rooms: RegistryEntry[], current: string) {
+  if (!rooms.length) return <Text dimColor>本机没有登记的房间（hub 没启动？登记表目录对吗）</Text>
+  return (
+    <Box flexDirection="column" gap={1}>
+      {rooms.map(r => (
+        <Box key={'rl-row-' + r.room_id}>
+          <Text>
+            {r.room_id === current ? '● ' : ''}{r.name}（{r.room_id}）· {r.dir} · 主控 {r.host || '?'}
+            {r.room_id === current ? '（当前）' : ''}{' '}
+          </Text>
+          {r.room_id === current ? null : (
+            <Button key={'rl-go-' + r.room_id} label="加入" variant="primary" onPress={() => joinLocalFromPane($, r.room_id)} />
+          )}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
 // ---- the sidebar pane -----------------------------------------------------
 
 async function renderPane($: any, e: any) {
@@ -689,11 +1004,15 @@ async function renderPane($: any, e: any) {
 
   const notice = ui.notice ? <Text color="red">{ui.notice}</Text> : null
 
-  // --- not in a room: open / join forms ---
+  // --- not in a room: rooms / open / join forms ---
+  const preRooms = await cachedRooms($)
   if (conn.status === 'none') {
     return (
       <Box flexDirection="column" gap={1}>
         <Text bold>xmuse：这个会话还没有加入房间</Text>
+        <Text bold>本机房间（一键加入，不用邀请码）</Text>
+        {roomsList($, preRooms, '')}
+        <Button key="rl-refresh" label="刷新房间列表" onPress={() => cachedRooms($, true).then(() => setNotice($, '房间列表已刷新'))} />
         <Text dimColor>开房间：当前会话成为主控（也是房间里的一个成员）。</Text>
         <Input
           key="new-room"
@@ -809,20 +1128,122 @@ async function renderPane($: any, e: any) {
   } else if (ui.section === 'members') {
     const others = view.members.map(m => ({ value: m.id, label: m.id }))
     const target = others.some(o => o.value === ui.target) ? ui.target : others.length ? others[0].value : ''
+    const privates = view.threads.filter(t => t.private)
+    const grpPick = privates.some(t => t.id === ui.grpPick) ? ui.grpPick : privates.length ? privates[0].id : ''
     body = (
       <Box flexDirection="column" gap={1}>
         <Markdown text={renderMembers(view, meId)} />
-        {isHost && target ? (
+        {target ? (
           <Box flexDirection="column">
-            <Select key="target" label="管理成员" value={target} options={others} onSelect={(v: string) => setUi($, { target: v })} />
+            <Select key="target" label="成员菜单" value={target} options={others} onSelect={(v: string) => setUi($, { target: v })} />
             <Box>
               <Button key="m-pause" label="暂停" onPress={() => setUi($, { target }).then(() => memberAct($, 'pause'))} />
               <Button key="m-resume" label="恢复" onPress={() => setUi($, { target }).then(() => memberAct($, 'resume'))} />
               <Button key="m-host" label="设为主控" onPress={() => setUi($, { target }).then(() => memberAct($, 'transfer_host'))} />
               <Button key="m-remove" label="移出" onPress={() => setUi($, { target }).then(() => memberAct($, 'remove'))} />
+              <Button key="m-dm" label="私聊" onPress={() => setUi($, { target }).then(() => dmFromPane($))} />
             </Box>
+            <Box>
+              <Select
+                key="m-edit-role"
+                label="改角色"
+                value={ui.editRole}
+                options={[{ value: '', label: '不改' }].concat(ROLES)}
+                onSelect={(v: string) => setUi($, { editRole: v })}
+              />
+              <Input
+                key="m-edit-desc"
+                label="改描述"
+                placeholder="职责描述（空=不改）"
+                value={ui.editDesc}
+                submitLabel="保存修改"
+                onInput={(v: string) => setUi($, { editDesc: v })}
+                onSubmit={() => memberEditFromPane($)}
+              />
+              <Input
+                key="m-edit-model"
+                label="改模型"
+                placeholder="模型（空=不改）"
+                value={ui.editModel}
+                submitLabel="保存修改"
+                onInput={(v: string) => setUi($, { editModel: v })}
+                onSubmit={() => memberEditFromPane($)}
+              />
+              <Button key="m-edit-go" label="保存修改" variant="primary" onPress={() => memberEditFromPane($)} />
+            </Box>
+            {privates.length ? (
+              <Box>
+                <Select
+                  key="m-grp"
+                  label="拉进群"
+                  value={grpPick}
+                  options={privates.map(t => ({ value: t.id, label: t.title || t.id }))}
+                  onSelect={(v: string) => setUi($, { grpPick: v })}
+                />
+                <Button key="m-grp-go" label="拉进群" onPress={() => setUi($, { grpPick }).then(() => groupAddFromPane($))} />
+              </Box>
+            ) : null}
           </Box>
         ) : null}
+      </Box>
+    )
+  } else if (ui.section === 'groups') {
+    const privates = view.threads.filter(t => t.private)
+    body = (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>新建私有群（你自动在内）</Text>
+        <Input
+          key="grp-id"
+          label="群 id"
+          placeholder="#g1"
+          value={ui.grpId}
+          submitLabel="新建群"
+          onInput={(v: string) => setUi($, { grpId: v })}
+          onSubmit={() => groupNewFromPane($)}
+        />
+        <Input
+          key="grp-title"
+          label="标题"
+          placeholder="可空，默认同 id"
+          value={ui.grpTitle}
+          submitLabel="新建群"
+          onInput={(v: string) => setUi($, { grpTitle: v })}
+          onSubmit={() => groupNewFromPane($)}
+        />
+        <Input
+          key="grp-members"
+          label="成员"
+          placeholder="空格分隔，如 dsh-1 claude-2"
+          value={ui.grpMembers}
+          submitLabel="新建群"
+          onInput={(v: string) => setUi($, { grpMembers: v })}
+          onSubmit={() => groupNewFromPane($)}
+        />
+        <Button key="grp-go" label="新建群" variant="primary" onPress={() => groupNewFromPane($)} />
+        {privates.length ? (
+          <Box flexDirection="column" gap={1}>
+            {privates.map(t => (
+              <Box key={'grp-' + t.id} flexDirection="column">
+                <Text bold>🔒{t.title || t.id}（{t.id}）</Text>
+                <Text dimColor>{t.members.join('、')}</Text>
+                <Box>
+                  {t.members.filter(mid => mid !== 'human').map(mid => (
+                    <Button key={`grm-${t.id}-${mid}`} label={`移出 ${mid}`} onPress={() => groupRemoveFromPane($, t.id, mid)} />
+                  ))}
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Text dimColor>还没有私有群</Text>
+        )}
+      </Box>
+    )
+  } else if (ui.section === 'host') {
+    body = (
+      <Box flexDirection="column" gap={1}>
+        <Markdown text={renderHostWait(view)} />
+        <Button key="wake-go" label="现在叫醒主控" variant="primary" onPress={() => wakeHostFromPane($)} />
       </Box>
     )
   } else if (ui.section === 'approvals') {
@@ -838,7 +1259,24 @@ async function renderPane($: any, e: any) {
                 {a.risk === 'high' ? '（高风险：hub 会弹 Windows Hello）' : ''}
               </Text>
               <Text>{clip(a.summary, 200)}</Text>
-              {a.detail ? <Text dimColor>{clip(a.detail, 300)}</Text> : null}
+              {(() => {
+                const d = a.detail as any
+                if (d && typeof d === 'object') {
+                  // share 审批的 detail 是对象（8.6）：显示摘录、目标和原因。
+                  const bits = [
+                    d.message_id !== undefined ? '#' + d.message_id : '',
+                    d.to ? '给 ' + d.to : '',
+                    d.why ? '原因 ' + d.why : '',
+                  ].filter(Boolean)
+                  return (
+                    <Box flexDirection="column">
+                      {d.excerpt ? <Text>{clip(String(d.excerpt), 300)}</Text> : null}
+                      {bits.length ? <Text dimColor>{bits.join(' · ')}</Text> : null}
+                    </Box>
+                  )
+                }
+                return d ? <Text dimColor>{clip(d, 300)}</Text> : null
+              })()}
               <Box>
                 <Button key={`ap-${a.id}-once`} label="批准一次" variant="primary" onPress={() => decide($, a.id, 'once')} />
                 <Button key={`ap-${a.id}-always`} label="总是批准" onPress={() => decide($, a.id, 'always')} />
@@ -872,6 +1310,9 @@ async function renderPane($: any, e: any) {
             `- 工作目录：${view.room.dir}\n- 主控：${view.room.host}${isHost ? '（本会话）' : ''}\n- 我是：${meId}（${view.me.kind}）\n- 信息层：${view.room.info_layer}\n- hub：${conn.hub}（版本 ${view.version}）`
           }
         />
+        <Text bold>本机房间（一键加入，不用邀请码）</Text>
+        {roomsList($, await cachedRooms($), view.room.id)}
+        <Button key="rl-refresh" label="刷新房间列表" onPress={() => cachedRooms($, true).then(() => setNotice($, '房间列表已刷新'))} />
         <Text bold>邀请新成员</Text>
         <Select key="inv-vendor" label="provider" value={ui.invVendor} options={VENDORS} onSelect={(v: string) => setUi($, { invVendor: v })} />
         <Select key="inv-role" label="角色" value={ui.invRole} options={ROLES} onSelect={(v: string) => setUi($, { invRole: v })} />
@@ -890,6 +1331,37 @@ async function renderPane($: any, e: any) {
             text={`**邀请码 \`${inv.code}\`**（${inv.vendor}/${inv.role}，10 分钟内有效，只能用一次）\n\n在目标会话里运行：\n\n\`\`\`\n${inv.command}\n\`\`\``}
           />
         ) : null}
+        <Text bold>添加成员（hub 起它的回合，不用邀请码）</Text>
+        <Select key="add-vendor" label="provider" value={ui.addVendor} options={VENDORS} onSelect={(v: string) => setUi($, { addVendor: v })} />
+        <Input
+          key="add-model"
+          label="模型"
+          placeholder="可空"
+          value={ui.addModel}
+          submitLabel="添加成员"
+          onInput={(v: string) => setUi($, { addModel: v })}
+          onSubmit={() => addFromPane($)}
+        />
+        <Select key="add-role" label="角色" value={ui.addRole} options={ROLES} onSelect={(v: string) => setUi($, { addRole: v })} />
+        <Input
+          key="add-desc"
+          label="职责描述"
+          placeholder="负责什么、擅长什么"
+          value={ui.addDesc}
+          submitLabel="添加成员"
+          onInput={(v: string) => setUi($, { addDesc: v })}
+          onSubmit={() => addFromPane($)}
+        />
+        <Input
+          key="add-name"
+          label="名字"
+          placeholder="可空"
+          value={ui.addName}
+          submitLabel="添加成员"
+          onInput={(v: string) => setUi($, { addName: v })}
+          onSubmit={() => addFromPane($)}
+        />
+        <Button key="add-go" label="添加成员" variant="primary" onPress={() => addFromPane($)} />
         <Button key="leave" label="离开房间" onPress={() => leaveFromPane($)} />
       </Box>
     )
@@ -979,8 +1451,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'xmuse',
-      description: 'xmuse room: room new | invite | join | status | open | leave | rebind | hub',
-      argumentHint: 'room new <name> | invite <provider> <role> <description> | join <code> | status | open | leave',
+      description: 'xmuse room: room new | invite | join | join-local | rooms | add | group | wake-host | status | open | leave | rebind | hub',
+      argumentHint: 'room new <name> | invite <provider> <role> <description> | join <code> | join-local <room> | status | open | leave',
     })
     await registerTools($)
     // long-poll loop; overlapping ticks are skipped inside pollOnce
@@ -991,7 +1463,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'xmuse' }, async ($, e) => {
     const r = await runCommand($, e.args)
     // the tool appears the moment this session joins a room
-    if (/^(room|join)$/i.test(e.args.trim().split(/\s+/)[0] || '')) {
+    if (/^(room|join|join-local)$/i.test(e.args.trim().split(/\s+/)[0] || '')) {
       try {
         await registerTools($)
       } catch {

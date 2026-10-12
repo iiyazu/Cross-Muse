@@ -31,11 +31,33 @@ export function sender(m: XmuseMessage): string {
 }
 
 export function messageMd(m: XmuseMessage): string {
-  if (m.kind !== 'message') return `*${clock(m.at)} ${clip(m.text, 200)}*`
+  if (m.kind === 'done') return doneMd(m)
+  if (m.kind !== 'message' && m.kind !== 'question') return `*${clock(m.at)} ${clip(m.text, 200)}*`
   const head = `**${sender(m)}** → ${m.to.length ? m.to.join(', ') : '全体'} · ${clock(m.at)}`
   const body = clip(m.text, MAX_MSG)
-  if (m.for_me) return `**▶ @我** ${head}\n${quote(body)}`
-  return `${head}\n${body}`
+  const extra: string[] = []
+  if (m.kind === 'question' && m.routed_to && (Array.isArray(m.routed_to) ? m.routed_to.length : true)) {
+    const to = Array.isArray(m.routed_to) ? m.routed_to.join('、') : m.routed_to
+    extra.push(`→ 已路由给 ${to}${m.route_reason ? `（${m.route_reason}）` : ''}`)
+  }
+  if (m.shared_from && m.shared_from.member) extra.push(`分享自 ${m.shared_from.member}（#${m.shared_from.message_id}）`)
+  const tail = extra.length ? '\n' + extra.join('\n') : ''
+  if (m.for_me) return `**▶ @我** ${head}\n${quote(body)}${tail}`
+  return `${head}\n${body}${tail}`
+}
+
+// done 结果标签（8.4）：outcome + hub 改判 + 证据状态。
+export function doneMd(m: XmuseMessage): string {
+  const head = `**${sender(m)}** 的结果 · ${clock(m.at)}`
+  const tags: string[] = []
+  if (m.outcome) tags.push(`结果：${m.outcome}`)
+  if (m.outcome_by === 'hub') tags.push(`hub 改判${m.outcome_reason ? '：' + m.outcome_reason : ''}`)
+  const lines = [head + (tags.length ? '\n' + tags.map(t => `\`${t}\``).join(' ') : '')]
+  lines.push(quote(clip(m.text, MAX_MSG)))
+  if (m.evidence_status === 'unverified') {
+    lines.push(`⚠ 未核实${m.evidence_problems && m.evidence_problems.length ? '：' + m.evidence_problems.join('；') : ''}`)
+  }
+  return lines.join('\n')
 }
 
 export function allMessages(view: XmuseView, older: XmuseMessage[]): XmuseMessage[] {
@@ -88,8 +110,9 @@ export function renderMembers(view: XmuseView, meId: string): string {
       if (m.id === meId) tags.push('我')
       const model = m.model ? ` · ${m.model}` : ''
       const un = m.unread ? ` · 未读 ${m.unread}` : ''
+      const wh = m.wakes_hour === undefined || m.wakes_hour === null ? '' : ` · 唤醒${m.wakes_hour}/h`
       return (
-        `**${m.id}** ${tags.length ? '[' + tags.join('/') + '] ' : ''}— ${m.vendor}${model} · ${m.role} · ${statusLabel(m)}${un}\n` +
+        `**${m.id}** ${tags.length ? '[' + tags.join('/') + '] ' : ''}— ${m.vendor}${model} · ${m.role} · ${statusLabel(m)}${un}${wh}\n` +
         (m.description ? `> ${clip(m.description, 160)}` : '> （没有职责描述）')
       )
     })
@@ -110,6 +133,19 @@ export function renderAlignment(view: XmuseView): string {
 
 export function isPendingEntry(status: string): boolean {
   return status === 'proposed' || status === 'pending'
+}
+
+// 主控在等谁（8.4）：等哪几个成员、压住几条结果、多久后自动唤醒。
+export function renderHostWait(view: XmuseView): string {
+  const hw = view.host_wait
+  if (!hw || (hw.waiting_on.length === 0 && !(hw.results_held > 0))) return '*主控暂无等待*'
+  const lines = hw.waiting_on.map(w => `- 等 **${w.member}**（任务 ${w.handoff_id}，自 ${clock(w.since)}）`)
+  if (hw.results_held > 0) lines.push(`- 压住了 ${hw.results_held} 条结果`)
+  if (hw.wake_at) {
+    const left = Math.max(0, Math.round(hw.wake_at - Date.now() / 1000))
+    lines.push(`- 约 ${left} 秒后自动唤醒`)
+  }
+  return lines.join('\n')
 }
 
 export function myUnread(view: XmuseView | null, meId: string): number {
