@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from conftest import sidebar_key
+from xmuse import db
 from test_init_cli import run, ws  # noqa: F401  (ws: fixture)
 from test_room import act, call, open_room, view
 from test_trust import OC
@@ -387,10 +388,14 @@ def test_member_add_registers_a_hub_run_member_like_agent_add(make):
     m = next(m for m in v["members"] if m["id"] == "oc-new")
     assert (m["vendor"], m["role"], m["description"], m["model"], m["paused"]) == (
         "opencode", "executor", "writes the parser", "opencode-go/other-model", False)
-    ev = [t for t in v["timeline"] if t["thread"] == "#room" and "oc-new was added" in t["text"]]
-    assert len(ev) == 1 and ev[0]["from"] == "hub" and "executor" in ev[0]["text"] and ev[0]["kind"] == "system"
+    ev = [t for t in v["timeline"] if t["thread"] == "#room" and "oc-new 已加入" in t["text"]]
+    assert len(ev) == 1 and ev[0]["from"] == "hub" and "opencode · opencode-go/other-model" in ev[0]["text"] \
+        and ev[0]["kind"] == "system"
     assert not h.q("select 1 from deliveries d join messages m on m.id=d.message_id"
-                   " where m.body like '%oc-new was added%' and d.recipient='oc-new' and d.wake=1")  # event, no wake
+                   " where m.body like '%oc-new 已加入%' and d.recipient='oc-new' and d.wake=1")  # event, no wake
+    assert h.q("select wake, state from deliveries d join messages m on m.id=d.message_id"
+               " where m.body like '%oc-new 已加入%' and d.recipient='lead'") == [
+               {"wake": 1, "state": "queued"}]  # the host gets a wake delivery and can hand work out at once
     # no name: the vendor's name, then numbered
     assert act(h, ot, act="member_add", vendor="opencode")[1] == {"member_id": "opencode"}
     assert act(h, ot, act="member_add", vendor="opencode")[1] == {"member_id": "opencode-2"}
@@ -429,6 +434,9 @@ def test_member_added_claude_gets_its_turns_from_the_hub(make, monkeypatch):
     monkeypatch.setattr("xmuse.init._dsh_ws_ok", lambda ws: True)
     h = make(agents=())
     ot = open_room(h, vendor="dsh", member_id="lead")["operator_token"]  # a dsh host leaves the root to a claude
+    # the join notice wakes the host (T8a2); this dsh host runs no turns here, so park it to let the hub go quiet
+    with db.tx(h.conn()) as c:
+        c.execute("update agents set paused=1 where id='lead'")
     assert act(h, ot, act="member_add", vendor="claude", name="worker", role="executor")[1] == {"member_id": "worker"}
     h.plan_claude({})
     assert act(h, ot, act="say", to="worker", text="please build the parser")[0] == 200

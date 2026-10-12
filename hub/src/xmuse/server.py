@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import threading
 import time
@@ -17,7 +18,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
+from . import agents, align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
 from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
@@ -436,7 +437,9 @@ class Hub:
 
     # ---- sidebars (D2, contract XMUSE2-VIEW-API v0): own error format and HTTP statuses ----------------------
     SIDEBAR = {("GET", "/v1/view"), ("GET", "/v1/timeline"), ("POST", "/v1/act"), ("POST", "/v1/rooms"),
-               ("GET", "/v1/rooms"), ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave")}
+               ("GET", "/v1/rooms"), ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave"),
+               ("GET", "/v1/agents"), ("POST", "/v1/agents/scan"), ("POST", "/v1/agents/trial"),
+               ("POST", "/v1/agents/model")}
 
     def view_version(self) -> int:
         conn = self.db()
@@ -475,6 +478,20 @@ class Hub:
             if path == "/v1/join":
                 return 200, self.join_local(body) if keyed else self.join(body)
             return 200, self.create_room(body) if method == "POST" else self.list_rooms()
+        if path in ("/v1/agents", "/v1/agents/scan", "/v1/agents/trial", "/v1/agents/model"):
+            # machine-local assistant registry: the sidebar key only, like GET /v1/rooms
+            p = rooms.principal(self.db(), self.admin, auth)
+            if p is not None and p.kind == "member":
+                raise rooms.ApiError(403, "member_forbidden", f"{path} is for sidebars, not for members")
+            if not registry.check_key(key):
+                raise rooms.ApiError(401, "bad_sidebar_key", "missing or wrong x-xmuse-sidebar key")
+            if path == "/v1/agents":
+                return 200, {"agents": agents.entries()}
+            if path == "/v1/agents/scan":
+                return 200, {"agents": agents.scan()}
+            if path == "/v1/agents/trial":
+                return 200, self.agents_trial(body)
+            return 200, self.agents_model(body)
         conn = self.db()
         p = rooms.principal(conn, self.admin, auth)
         if p is None:
@@ -531,7 +548,9 @@ class Hub:
         name = body.get("act")
         if name not in rooms.ACTS:
             raise rooms.ApiError(400, "unknown_act", f"act must be one of: {', '.join(sorted(rooms.ACTS))}")
-        if p.kind == "member" and name not in rooms.MEMBER_ACTS:
+        if p.kind == "member" and name not in rooms.MEMBER_ACTS and not (
+                name == "brief" and dispatch.host(self.db()) == p.member):
+            # T8a2 H12: brief is the operator's, but the host may also (re)write it with its own token
             raise rooms.ApiError(403, "operator_only", f"{name} needs the operator token (the user, from a sidebar)")
         try:
             return getattr(self, "act_" + name)(p, body)
@@ -655,6 +674,24 @@ class Hub:
                 raise rooms.ApiError(403, e.code, e.message)
             raise
 
+    def act_brief(self, p: rooms.Principal, b: dict) -> dict:
+        """T8a2 H12: the project brief as a global convention entry (operator, or the host itself).
+        Replaces the previous brief; the panel writes it, newcomers read it in their entry pack."""
+        text = b.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise rooms.ApiError(400, "bad_request", "brief needs text (string)")
+        text = text.strip()
+        statement = text if text.startswith("[brief]") else "[brief] " + text
+        author = p.member or config.HUMAN  # the acting sidebar's member (admin: the user)
+        conn = self.db()
+        with db.tx(conn):
+            old = conn.execute("select id from entries where kind='convention' and scope='global'"
+                               " and status='active' and statement like '[brief]%' order by id desc limit 1").fetchone()
+            eid = align.declare(conn, author, "#room", [], "convention", statement, "global",
+                                old[0] if old else None)
+        rooms.notice(conn, f"项目简介已更新 E{eid}")
+        return {"entry": f"E{eid}"}
+
     def _text(self, b: dict, key: str) -> str | None:
         v = b.get(key)
         if v is not None and not isinstance(v, str):
@@ -675,6 +712,8 @@ class Hub:
             raise rooms.ApiError(400, "bad_request", "name: letters, digits and '-', not 'human' or 'hub'")
         if model:
             self._model_ok(vendor, model)
+        else:
+            model = agents.default_model(vendor)  # T8a2 H11: the registry's model, else the config default
         conn = self.db()
         mid = name or rooms.free_id(conn, vendor)
         if conn.execute("select 1 from agents where id=?", (mid,)).fetchone():
@@ -685,10 +724,73 @@ class Hub:
         except SystemExit as e:
             raise rooms.ApiError(400, "cannot_add", str(e))
         self.ensure_driver(vendor)
-        rooms.notice(conn, f"{mid} was added to the room ({vendor}{', ' + role if role else ''}"
-                           f"{', ' + model if model else ''}){': ' + desc if desc else ''}")
+        self._member_joined(conn, mid, vendor, model)
         self.engine.kick()
         return {"member_id": mid}
+
+    def _member_joined(self, conn, mid: str, vendor: str, model: str | None) -> None:
+        """T8a2 H12: one join event in #room (no repeats) plus a wake delivery for the host, which can
+        hand work out at once. A desktop host is never woken by the hub itself; it keeps the delivery."""
+        text = f"{mid} 已加入（{vendor} · {model or '?'}）"
+        if conn.execute("select 1 from messages where thread_id='#room' and kind='notice' and body=?",
+                        (text,)).fetchone():
+            return
+        rooms.notice(conn, text)
+        host = dispatch.host(conn)
+        if host and host != mid:
+            mid_ = conn.execute("select id from messages where thread_id='#room' and kind='notice' and body=?"
+                                " order by id desc limit 1", (text,)).fetchone()[0]
+            # The notice itself leaves a passive row for desktop members: upgrade it, don't duplicate it.
+            conn.execute("insert into deliveries(message_id, recipient, wake, state, updated_at)"
+                         " values(?,?,1,'queued',?) on conflict(message_id, recipient) do update set wake=1,"
+                         " state='queued', updated_at=excluded.updated_at", (mid_, host, db.now()))
+
+    def agents_trial(self, b: dict) -> dict:
+        """POST /v1/agents/trial (sidebar key): one minimal round with the default (or given) model."""
+        from .tools import ToolError
+        vendor, model = b.get("vendor"), b.get("model") or None
+        if model is not None and not isinstance(model, str):
+            raise rooms.ApiError(400, "bad_request", "model must be a string")
+        try:
+            if vendor == "dsh":
+                return self._trial_dsh(model)
+            return agents.trial(vendor, model)
+        except ToolError as e:
+            raise rooms.ApiError(threads.STATUS.get(e.code) or 400, e.code, e.message)
+
+    def _trial_dsh(self, model: str | None) -> dict:
+        """A dsh trial through the adapter's minimal no-tools round (precheck). No bare dsh one-shot exists."""
+        import tempfile
+        from .tools import ToolError
+        by = {e["vendor"]: e for e in agents.entries()}
+        if not (by.get("dsh") or {}).get("path"):
+            raise ToolError("not_installed", "dsh is not installed")
+        try:
+            self.ensure_driver("dsh")
+            precheck = getattr(self.engine.drivers.get("dsh"), "precheck", None)
+            if precheck is None:
+                return agents.trial("dsh", model, dsh_run=None)
+            ws = tempfile.mkdtemp(prefix="xmuse-trial-")
+            try:
+                err = precheck({"id": "trial-dsh", "model": model or agents.default_model("dsh"),
+                                "settings": {}}, Path(ws))
+            finally:
+                shutil.rmtree(ws, ignore_errors=True)
+        except ToolError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a trial records instead of failing the request
+            err = f"{type(e).__name__}: {e}"
+        return agents.trial("dsh", model, dsh_run=lambda _a, _w: err)
+
+    def agents_model(self, b: dict) -> dict:
+        """POST /v1/agents/model (sidebar key): an explicit default model (trial re-verifies it)."""
+        vendor, model = b.get("vendor"), b.get("model")
+        if vendor not in rooms.VENDORS:
+            raise rooms.ApiError(400, "bad_vendor", f"vendor must be one of: {', '.join(rooms.VENDORS)}")
+        if not isinstance(model, str) or not model.strip():
+            raise rooms.ApiError(400, "bad_request", "model must be a non-empty name")
+        self._model_ok(vendor, model)
+        return agents.set_model(vendor, model)
 
     def act_member_edit(self, p: rooms.Principal, b: dict) -> dict:
         a, conn = self._member(b.get("member")), self.db()
@@ -809,8 +911,11 @@ class Hub:
         rooms.notice(conn, f"{mid} opened the room ({vendor} sidebar)")
         self.reg_sync()
         r = rooms.room_row(conn, self.ws)
+        brief_missing = conn.execute("select 1 from entries where kind='convention' and scope='global'"
+                                     " and status='active' and statement like '[brief]%'").fetchone() is None
         return {"room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}, "member_id": mid,
-                "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid)}
+                "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid),
+                "brief_missing": brief_missing}
 
     def join(self, b: dict) -> dict:
         conn, code, vendor, sid = self.db(), str(b.get("code") or "").strip().upper(), b.get("vendor"), b.get("session_id")
