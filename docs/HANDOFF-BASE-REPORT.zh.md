@@ -1570,3 +1570,43 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
   - (b) S3a 里的交接也由用户在 #team 宣布："e2 will hand a new key to e1"，作为一条 rule v2，然后 e2 再发 handoff。这只改 S3a。
 - **DEP 天花板**（§13.2）：X 组 10/10 都是 1.0，P-dm 是 8/10，P-bc 是 9/10，没有完全触顶。`premature_e` 三组全是 0。P 组失败的机制见第 6 步。按 r7 的要求，报告里会另外给出"答复到 e 第一次写对之间的唤醒次数和 token"，这一项要在 report.py 里补上，还没做。
 - **fd 泄漏**（§13.2，测试在 systemd 单元里跑时超过 1024 个文件描述符）：按 r7 的说法，等 R 系列跑完有空再查。
+
+## T17 第 8 步（10-12 12:00）：R 试跑（R1、R4，seed 1），补"用户回答提问"；S3b 冒烟通过，S2' 冒烟通过
+
+**R 试跑**（`~/probes/runs/rpilot`，代码 `266f6a2`，名单 a=OpenCode、b=dsh，shell 策略 blocklist-experiment）：
+
+| run | 验收 | 用户动作 | 唤醒 a/b | token a/b（千） | 成员写的条目 | 归因 |
+|---|---|---|---|---|---|---|
+| R1-X-1 | 通过 | 0 | 2/3 | 248/229 | decision 3、assumption 1 | — |
+| R1-P-dm-1 | 失败 | 0 | 2/2 | 207/128 | — | a: not_applied |
+| R1-P-relay-1 | 失败 | 7 次转发 | 7/5 | 1019/276 | — | a: not_applied |
+| R4-X-1 | 通过 | 0 | 2/3 | 244/253 | decision 2 | — |
+| R4-P-dm-1 | 通过 | 0 | 2/2 | 207/177 | — | — |
+| R4-P-relay-1 | 通过 | 2 次转发 | 2/2 | 246/152 | — | — |
+
+**机制检查**：
+- 事件：R1 的 `change` 都在 a 第一次 done 之后触发。
+- 结束：6 个 run 都以 quiet 结束，每个约 2–4 分钟。
+- P-relay：done 都转发了，用户动作数计上了。
+- 判定和归因：结果和失败原因对得上。
+- **dsh 能跑测试**：b（dsh）在 R1-P-dm 报"python3 -m unittest passes: 3 tests OK"，回合日志里有 unittest 调用。
+- X 组的成员会主动写条目（R1：3 条 decision、1 条 assumption；R4：2 条 decision）。
+
+**R1 P 组失败的原因：用户不回答**：
+- 用户私信 a 改用分以后，a 回复"Can't switch get_price to fen int yet — conflicts with #team spec ... Please confirm in #team if you want the contract changed for both a and b"，然后一直等。脚本里的用户不回答，api.py 就一直没改（验收 `12.5 != 1250`）。
+- X 组里 a 直接改了，并记成 decision。
+- 设计稿 §0.3 写了用户会"回答被问到的问题"，执行器漏了这一项。
+- **修正** `f59e08a`：成员在和用户的私信里发消息，或在 #team 点名用户，用户就回复同一句话："Yes, go ahead as I asked. Agree the details with your teammates directly; you do not need my confirmation for that."。三组完全相同，每个成员最多 3 次，计入用户动作（转发和回答分开列）。有测试；全量测试 `405 passed, 4 skipped, 1 warning in 330.64s (0:05:30)`。
+- 这批试跑作废，改后重跑为 `rpilot2`（R1、R4，seed 1，三组）。
+
+**试跑发现的其他问题**：
+1. **R4 测不出差别**：三组都通过。b 也都没有在 a 完成之前动手，第一次改文件都在 a 第一次 done 之后（X：a done 后 1 秒；P-relay：之后 23 秒）。说"等 A 好了再接"时把接口签名一起给了，b 不需要等任何信息。R4 很可能三组都接近 100%，这一点写进预注册，主要看过程指标。
+2. **文件改动算到谁头上不准**：文件快照在每个回合结束时拍，两个成员的回合重叠时，先结束的那个回合会把对方的改动也算到自己名下（R4-P-dm 里 b 的改动没有记到 b）。返工和覆盖次数（R5）受影响。要准确，得按回合日志里的写文件工具调用来归属；先在报告里注明这个限制，R5 之前再改。
+
+**S 系列**：
+- S3b 冒烟（`batch1-s3/S3b-X-11`）：1.0，正式跑在 r7 的 `chain3` 里，已经开始（S3b-P-dm-11：1.0）。
+- S3a 冒烟仍是 0，见第 7 步，等 r7 定。
+- S2' 冒烟（`batch1-s3/S2p-X-11`）：主要指标 0，两个成员 retire 前后都遵守。
+  - `chain2` 的门槛脚本有路径错误：先 `cd` 进了目录，又用相对路径调 python，所以门槛读到空值，没有放开批次。
+  - 我手动核实冒烟结果后，把 S2' 正式跑排进 `chain4`。代码会是 `chain4` 拉取时的最新提交，hub 部分仍和 `e93aa28` 相同。
+- **r7 上的队列**：chain3（S3b 正式跑 → rpilot2）→ chain4（S2' 正式跑）。
