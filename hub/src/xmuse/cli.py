@@ -280,7 +280,7 @@ def main(argv=None) -> None:
     p = sub.add_parser("agent")
     p.add_argument("action", choices=["add", "list"])
     p.add_argument("id", nargs="?")
-    p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
+    p.add_argument("--vendor", choices=["claude", "opencode", "dsh", "agy"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
