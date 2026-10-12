@@ -129,18 +129,29 @@ def test_queued_messages_merge_into_one_turn(make):
     assert {d["turn_id"] for d in h.q("select turn_id from deliveries where message_id>1")} == {2}
 
 
-def test_group_wakes_only_mentions_and_owner(make):
+def test_member_group_message_wakes_only_mentions_and_owner(make):
     h = make([("claude-1", "claude"), ("claude-2", "claude"), ("claude-3", "claude")])
     h.plan_claude({}, {})
-    h.send("#task", "kickoff", mentions=["claude-2"])
+    h.tool("claude-1", "xmuse_send", to="#task", body="kickoff", mentions=["claude-2"])
     h.wait_quiet()
     assert [t["agent_id"] for t in h.turns()] == ["claude-2"]
     assert h.admin("thread", id="#task", owner="claude-3")["result"]["ok"]
-    h.send("#task", "fyi")
+    h.tool("claude-1", "xmuse_send", to="#task", body="fyi")
     h.wait_quiet()
     assert [t["agent_id"] for t in h.turns()] == ["claude-2", "claude-3"]
     passive = h.q("select recipient from deliveries where state='passive' order by id")
-    assert [p["recipient"] for p in passive] == ["claude-1", "claude-3", "claude-1", "claude-2"]
+    assert [p["recipient"] for p in passive] == ["claude-3", "claude-2"]  # the sender (claude-1) gets no delivery of its own words
+
+
+def test_user_broadcast_wakes_every_member(make):
+    h = make([("claude-1", "claude"), ("claude-2", "claude"), ("claude-3", "claude")])
+    h.plan_claude({}, {}, {})
+    h.send("#task", "all hands")  # T8a H8: no mentions, so everyone
+    h.wait_quiet()
+    assert sorted(t["agent_id"] for t in h.turns()) == ["claude-1", "claude-2", "claude-3"]
+    assert {r["recipient"]: r["wake"] for r in h.q(
+        "select recipient, wake from deliveries where message_id=1")} == {
+        "claude-1": 1, "claude-2": 1, "claude-3": 1}
 
 
 def test_peer_reply_continues_the_chain_and_wakes_the_peer(make):

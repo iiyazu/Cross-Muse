@@ -77,7 +77,7 @@ def test_handoff_keeps_why_first_fields(make):
 def test_inbox_orders_mentions_first_and_marks_read(make):
     h = three(make)
     pause(h, "claude-2")
-    h.send("#g", "fyi for all")
+    h.tool("claude-1", "xmuse_send", to="#g", body="fyi for all")  # an agent's unaddressed words: passive
     h.send("#g", "claude-2 act", mentions=["claude-2"])
     first = h.tool("claude-2", "xmuse_inbox")["result"]
     assert [m["body"] for m in first] == ["claude-2 act", "fyi for all"]
@@ -97,6 +97,8 @@ def test_ack_with_outcome(make):
 
 def test_thread_read_search_and_membership(make):
     h = three(make)
+    for a in ("claude-1", "claude-2", "claude-3"):
+        pause(h, a)  # T8a H8: the user's broadcasts would wake everyone, and their failed turns post notices here
     h.send("#g", "alpha decision")
     h.send("#g", "beta")
     h.tool("claude-1", "xmuse_send", to="claude-2", body="private")
@@ -222,3 +224,53 @@ def test_context_without_alignment_returns_recent_messages(make):
     v = h.tool("claude-2", "xmuse_context")["result"]
     assert [m["body"] for t in v["threads"] for m in t["messages"]] == ["use snake_case"] and "layers" not in v
     assert h.tool("claude-2", "xmuse_context", topic="#g")["result"]["threads"][0]["thread"] == "#g"
+
+
+def _wakes(h, mid):
+    return {r["recipient"]: r["wake"] for r in h.q("select recipient, wake from deliveries where message_id=?", mid)}
+
+
+def test_reply_to_a_mention_wakes_its_sender_without_naming_it(make):
+    h = three(make)
+    pause(h, "claude-1"), pause(h, "claude-2"), pause(h, "claude-3")
+    m1 = h.tool("claude-1", "xmuse_send", to="#g", body="hey @claude-2", mentions=["claude-2"])["result"]["id"]
+    r = h.tool("claude-2", "xmuse_send", to="#g", body="on it", reply_to=m1)["result"]
+    assert _wakes(h, r["id"]) == {"claude-1": 1, "claude-3": 0}
+    assert h.q("select reply_to from messages where id=?", r["id"]) == [{"reply_to": m1}]
+
+
+def test_reply_to_an_unrelated_message_wakes_nobody_extra(make):
+    h = three(make)
+    pause(h, "claude-1"), pause(h, "claude-2"), pause(h, "claude-3")
+    m1 = h.tool("claude-1", "xmuse_send", to="#g", body="notes")["result"]["id"]
+    r = h.tool("claude-2", "xmuse_send", to="#g", body="also notes", reply_to=m1)["result"]
+    assert _wakes(h, r["id"]) == {"claude-1": 0, "claude-3": 0}
+    e = h.tool("claude-2", "xmuse_send", to="#g", body="x", reply_to=9999)["error"]
+    assert e["code"] == "bad_reply_to"
+    e = h.tool("claude-2", "xmuse_send", to="#g", body="x", reply_to="3")["error"]
+    assert "integer" in e["message"]
+
+
+def test_reply_to_a_dm_wakes_the_peer_in_any_thread(make):
+    h = three(make)
+    pause(h, "claude-1"), pause(h, "claude-2"), pause(h, "claude-3")
+    dm = h.tool("claude-1", "xmuse_send", to="claude-2", body="review this")["result"]["id"]
+    r = h.tool("claude-2", "xmuse_send", to="#g", body="reviewed", reply_to=dm)["result"]
+    assert _wakes(h, r["id"]) == {"claude-1": 1, "claude-3": 0}
+
+
+def test_reply_to_a_handoff_wakes_the_assigner(make):
+    h = three(make)
+    pause(h, "claude-1"), pause(h, "claude-2"), pause(h, "claude-3")
+    why = {"what": "w", "why": "y", "tradeoff": "t", "open_questions": "none", "next_action": "n"}
+    task = h.tool("claude-1", "xmuse_send", to="claude-2", body="build it", kind="handoff", why=why)["result"]["id"]
+    r = h.tool("claude-2", "xmuse_send", to="#g", body="built", reply_to=task)["result"]
+    assert _wakes(h, r["id"]) == {"claude-1": 1, "claude-3": 0}
+
+
+def test_reply_to_the_users_message_wakes_nobody(make):
+    h = three(make)
+    pause(h, "claude-1"), pause(h, "claude-2"), pause(h, "claude-3")
+    m1 = h.send("#g", "take out the trash")["id"]
+    r = h.tool("claude-2", "xmuse_send", to="#g", body="done", reply_to=m1)["result"]
+    assert _wakes(h, r["id"]) == {"claude-1": 0, "claude-3": 0}

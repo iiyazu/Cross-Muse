@@ -6,7 +6,7 @@ import time
 import pytest
 
 from fakes.fake_memoryos import FakeMemoryOS
-from xmuse import align, wakepack
+from xmuse import align, db, wakepack
 
 WHY = {k: "x" for k in ("what", "why", "tradeoff", "open_questions", "next_action")}
 
@@ -25,7 +25,9 @@ def mo():
 
 def hub(make, url="", **cfg):
     h = make([("claude-1", "claude"), ("claude-2", "claude"), ("claude-3", "claude")], memoryos_url=url, **cfg)
-    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"  # nobody is mentioned, so no turn runs anyway
+    h.hub.engine.drivers["claude"].headless.bin = "/bin/true"  # a mentioned peer's turn fails fast
+    with db.tx(h.conn()) as c:  # T8a H8: a user message with no @ wakes everyone; a woken turn would /recall and
+        c.execute("update agents set paused=1")  # disturb the call counts these tests are about, so nobody runs
     return h
 
 

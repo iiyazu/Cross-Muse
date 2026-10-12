@@ -31,6 +31,8 @@ TOOLS = [
          "kind": {"type": "string", "enum": KINDS, "description": "default message; decision/assumption/question "
                                                                   "also record a shared entry"},
          "mentions": {"type": "array", "items": {"type": "string"}, "description": "peers to wake (groups)"},
+          "reply_to": {"type": "integer", "description": "answer this message id: whoever it mentioned, DM'd or "
+                       "handed work to is woken (a reply to the user's own message marks it for_me instead)"},
          "members": {"type": "array", "items": {"type": "string"},
                      "description": "Only effective when this message creates a new '#group': makes it a private group "
                                     "of you, the user and these peers (others cannot see or write to it). Ignored if "
