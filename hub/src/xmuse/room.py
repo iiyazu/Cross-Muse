@@ -26,7 +26,8 @@ VENDORS = ("claude", "opencode", "dsh")
 TIMELINE_N = 50
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L: read aloud and typed by hand
 MEMBER_ACTS = {"say", "ack"}
-ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align"}
+ACTS = {"say", "ack", "approve", "invite", "remove", "pause", "resume", "transfer_host", "align",
+        "member_add", "member_edit"}
 
 
 class ApiError(Exception):
@@ -91,7 +92,7 @@ def fingerprint(conn) -> tuple:
     return (one("select max(id) from messages"),
             one("select count(*), max(updated_at), total(read_at), total(acked_at) from deliveries"),
             one("select group_concat(id || ':' || paused || ':' || removed || ':' || coalesce(bound_session, '')"
-                " || ':' || role || ':' || description, '|') from agents"),
+                " || ':' || role || ':' || description || ':' || model, '|') from agents"),
             one("select max(id), group_concat(agent_id) from turns where state='running'"),
             one("select count(*), max(id) from turns"),
             one("select group_concat(agent_id || ':' || online, '|') from sessions where state='current'"),

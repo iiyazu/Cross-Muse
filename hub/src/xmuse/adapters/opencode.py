@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .. import proc
+from .. import proc, registry
 from ..config import SHIM
 from ..env import clean_env
 from .base import Presence, TurnEnd, TurnSpec, Usage
@@ -201,10 +201,14 @@ def blocklist_ok(cmd: str) -> bool:
     return safe_rm_f(c) or loopback_curl(c) or not any(fnmatch.fnmatchcase(c, p) for p in ASK_SHELL)
 
 
+def names_key(resources) -> bool:
+    return isinstance(resources, list) and any(isinstance(r, str) and registry.mentions_key(r) for r in resources)
+
+
 def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> bool:
     """True when every shell command in a permission request passes the policy's check (env prefixes removed
     first: `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs)."""
-    if action != "shell" or not isinstance(resources, list) or not resources:
+    if action != "shell" or not isinstance(resources, list) or not resources or names_key(resources):
         return False
     ok = blocklist_ok if policy == "blocklist-experiment" else command_auto_ok
     return all(isinstance(r, str) and ok(r) for r in resources)
@@ -218,6 +222,8 @@ def auto_decision(action: str | None, resources, policy: str = "allowlist") -> s
     """The hub's own answer to a permission request ('once' or 'reject'), or None: the human decides."""
     if policy == "open-experiment":
         return "once"
+    if action == "shell" and names_key(resources):  # the sidebar key (contract 8.1): agents do not join by themselves
+        return "reject"
     return "once" if shell_auto_ok(action, resources, policy) else None
 
 
