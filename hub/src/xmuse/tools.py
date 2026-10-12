@@ -11,7 +11,8 @@ DECLARE = ["decision", "assumption", "question"]  # kinds that create an active 
 KINDS = ["message", "handoff", "review_request", *DECLARE]
 SCOPE = ("global (or all) | role:<role> | module:<name> (only agents working on that module see it) | thread (default); "
          "kind=handoff: module:<name>[,<name>...] = the modules the assignee owns")
-WHY_FIELDS = ["what", "why", "tradeoff", "open_questions", "next_action"]
+EVIDENCE = ["test", "diff", "command"]  # kinds of xmuse_done evidence (evidence.py checks them)
+WHY_FIELDS =["what", "why", "tradeoff", "open_questions", "next_action"]
 
 
 def _s(desc):
@@ -65,7 +66,14 @@ TOOLS = [
          "declares": {"type": "array", "description": "decisions/assumptions/questions others will depend on; one decision per cross-module convention (representation, units, errors, ordering, output format)",
                       "items": {"type": "object", "additionalProperties": False, "required": ["kind", "statement"],
                                 "properties": {"kind": {"type": "string", "enum": DECLARE}, "statement": _s("one sentence"),
-                                               "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}}}}},
+                                               "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}},
+         "evidence": {"type": "array", "description": "what backs your claim of success; the hub checks it against "
+                                                      "this turn's log (a test or command must have run here, a diff "
+                                                      "file must have been written here)",
+                      "items": {"type": "object", "additionalProperties": False, "required": ["kind", "ref"],
+                                "properties": {"kind": {"type": "string", "enum": EVIDENCE},
+                                               "ref": _s("the command line (test, command) or the file path (diff)"),
+                                               "result": _s("the result you claim, e.g. 'passed', 'exit 0'")}}}}}},
     {"name": "xmuse_approve", "description": "Coordinator (desktop) sessions only: relay the user's decision on a "
                                              "held command (the hub's 'asks permission' notice). Only after the user "
                                              "said so in this conversation; quote their words in user_said.",
