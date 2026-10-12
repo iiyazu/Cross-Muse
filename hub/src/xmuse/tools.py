@@ -72,6 +72,11 @@ TOOLS = [
                       "items": {"type": "object", "additionalProperties": False, "required": ["kind", "statement"],
                                 "properties": {"kind": {"type": "string", "enum": DECLARE}, "statement": _s("one sentence"),
                                                "scope": _s(SCOPE), "supersedes": _s("entry id (E7) replaced")}}}}}},
+    {"name": "xmuse_share", "description": "Share a private message the user sent you with a peer or thread. Needs the "
+                                           "user's approval unless they already allowed it.",
+     "inputSchema": {"type": "object", "required": ["message_id", "to", "why"], "properties": {
+         "message_id": {"type": "integer", "description": "id of the user's DM to you"},
+         "to": _s("peer id or '#thread'"), "why": _s("why they need it")}}},
     {"name": "xmuse_approve", "description": "Coordinator (desktop) sessions only: relay the user's decision on a "
                                              "held command (the hub's 'asks permission' notice). Only after the user "
                                              "said so in this conversation; quote their words in user_said.",

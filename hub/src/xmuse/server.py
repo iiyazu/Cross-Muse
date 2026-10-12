@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import align, config, db, mail, memoryos, peer, preset, threads, wakepack
+from . import align, config, db, mail, memoryos, peer, preset, share, threads, wakepack
 from . import room as rooms
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
@@ -144,6 +144,10 @@ class Hub:
             return align.view(conn, self.cfg, agent, args.get("topic"), args.get("topic") or "")
         if name == "xmuse_done":
             return mail.done(conn, agent, args["summary"], args["next"], args.get("declares"), args.get("stage"))
+        if name == "xmuse_share":
+            out = share.request(conn, self.cfg, agent, args)
+            self.engine.kick()
+            return out
         if name == "xmuse_approve":  # the user's decision, relayed by the coordinator; recorded with its words
             a = db.row(conn.execute("select * from agents where id=?", (agent,)))
             if not db.settings(a).get("desktop"):
@@ -237,6 +241,8 @@ class Hub:
 
     def admin_approve(self, body: dict, via: str | None = None, user_said: str | None = None):
         conn = self.db()
+        if str(body["id"]).startswith("share:"):  # a DM share request (T3), not an OpenCode permission
+            return self.approve_share(body["id"], body["decision"], via, user_said)
         a = db.row(conn.execute("select * from approvals where id=?", (body["id"],)))
         if a is None:
             raise ToolError("unknown_approval", f"no approval {body['id']}")
@@ -250,6 +256,11 @@ class Hub:
         mail.notice(conn, mail.dm_id(a["agent_id"] or "unknown", config.HUMAN),
                     f"approval {a['id']} ({a['action']} {a['resources']}): {body['decision']}, decided by {who}")
         return {"ok": True}
+
+    def approve_share(self, aid: str, decision: str, via: str | None = None, user_said: str | None = None):
+        out = share.decide(self.db(), self.cfg, aid, decision)
+        self.engine.kick()  # a delivered share may wake its target
+        return {"ok": True, **out}
 
     def admin_run(self, body: dict):
         """Start an orchestration preset run (`xmuse run --preset plan-split-integrate`)."""
@@ -548,6 +559,8 @@ class Hub:
         elif aid.startswith("resume:"):  # a paused member (approvals[].kind resume)
             if decision != "reject":
                 self.admin_resume({"agent": self._member(aid[7:])["id"]})
+        elif aid.startswith("share:"):  # a member asks to share a user DM (approvals[].kind share)
+            return self.approve_share(aid, decision)
         else:
             if "opencode" not in self.engine.drivers:
                 raise rooms.ApiError(404, "unknown_approval", f"no approval {aid}")
@@ -613,6 +626,14 @@ class Hub:
             raise rooms.ApiError(400, "bad_request", "decision must be confirm or reject")
         self.admin_align({"op": b["decision"], "id": str(b.get("id") or "")})
         return {"ok": True}
+
+    def act_share_mark(self, p: rooms.Principal, b: dict) -> dict:
+        try:
+            return share.mark(self.db(), b.get("message_id"), b.get("to") or None)
+        except ToolError as e:
+            if e.code == "not_shareable":
+                raise rooms.ApiError(403, e.code, e.message)
+            raise
 
     # rooms and invitations: no token (the caller has none yet)
     def create_room(self, b: dict) -> dict:
