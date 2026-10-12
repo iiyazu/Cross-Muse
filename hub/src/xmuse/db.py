@@ -157,7 +157,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("messages", "reply_to", "integer"),
            # T8c H3: compaction state per session (auto-compact mark, in-flight flag)
            ("sessions", "auto_compacted", "integer not null default 0"),
-           ("sessions", "compacting", "integer not null default 0")]
+           ("sessions", "compacting", "integer not null default 0"),
+           # the user took a message back (panel "撤回"): its body is replaced, this is when
+           ("messages", "retracted_at", "real")]
 
 
 def init(path) -> sqlite3.Connection:

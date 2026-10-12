@@ -379,6 +379,18 @@ class Engine:
                 self._on_end(TurnEnd(t["id"], "interrupted", None, error="no live adapter"))
         return {"canceled_deliveries": n, "interrupted_turns": [t["id"] for t in running]}
 
+    def interrupt_turns(self, turn_ids: list[int]) -> list[int]:
+        """Interrupt these turns if still running (a retracted message was in them); returns the ones that were."""
+        conn = self.db()
+        out = []
+        for tid in turn_ids:
+            if not conn.execute("select 1 from turns where id=? and state='running'", (tid,)).fetchone():
+                continue
+            self.adapters[tid].interrupt(tid) if tid in self.adapters else \
+                self._on_end(TurnEnd(tid, "interrupted", None, error="no live adapter"))
+            out.append(tid)
+        return out
+
     def sweep(self) -> None:
         conn = self.db()
         old = db.rows(conn.execute("select * from turns where state='running' and started_at<?",
