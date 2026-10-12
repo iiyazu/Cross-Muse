@@ -4,6 +4,7 @@ One directory per OS user (Windows: %LOCALAPPDATA%\\xmuse, elsewhere ${XDG_STATE
 XMUSE_REGISTRY_DIR overrides, tests always set it):
   - hubs.json    {"hubs": [{room_id, name, dir, url, host, pid, started_at}]}: every running hub writes its own entry
                  on start and removes it on exit; readers drop entries whose pid is gone (a killed hub leaves one).
+  - install.json {python, distro, os}: how to start a hub here; the panel reads it when no hub is running
   - sidebar.key  32 random bytes as hex, mode 600, made by the first hub that starts. A sidebar plugin reads it and
                  sends it as x-xmuse-sidebar; agent processes are not given it and the shell policy refuses commands
                  that name the file. Same OS user, so this keeps agents from joining on their own, nothing more.
@@ -16,6 +17,7 @@ import re
 import secrets
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -123,6 +125,28 @@ def unregister(room_id: str, pid: int | None = None) -> None:
     pid = os.getpid() if pid is None else pid
     with _Lock():
         _store([e for e in _live(_load()) if not (e.get("room_id") == room_id and e.get("pid") == pid)])
+
+
+# ---- install.json -------------------------------------------------------------------------------------------
+
+def install_path() -> Path:
+    return directory() / "install.json"
+
+
+def write_install() -> None:
+    """How to start a hub on this machine, for a panel that finds no running one (after a reboot): the interpreter
+    this hub runs on and, inside WSL, the distro. Kept after the hub exits; rewritten only when it changed."""
+    data = {"python": sys.executable, "distro": os.environ.get("WSL_DISTRO_NAME", ""), "os": os.name}
+    p = install_path()
+    try:
+        if json.loads(p.read_text(encoding="utf-8")) == data:
+            return
+    except (OSError, ValueError):
+        pass
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, p)
 
 
 # ---- sidebar.key --------------------------------------------------------------------------------------------
