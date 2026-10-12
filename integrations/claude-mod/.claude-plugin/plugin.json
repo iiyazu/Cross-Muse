@@ -1,6 +1,6 @@
 {
   "name": "xmuse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "xmuse 2 sidebar for Claude Code: room members, timeline, approvals and @-wake-up for a local multi-agent room",
   "author": { "name": "xmuse" },
   "types": "./types/index.d.ts",
@@ -22,6 +22,12 @@
       "title": "long-poll wait (seconds)",
       "description": "How long one /v1/view long poll may hang (1-30).",
       "default": 15
+    },
+    "registryDir": {
+      "type": "string",
+      "title": "local registry directory",
+      "description": "Directory holding the room registry (hubs.json) and the sidebar key (sidebar.key). Empty means XMUSE_REGISTRY_DIR, then the platform default (%LOCALAPPDATA%\\xmuse on Windows).",
+      "default": ""
     }
   }
 }

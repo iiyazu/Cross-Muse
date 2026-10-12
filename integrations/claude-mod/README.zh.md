@@ -36,6 +36,7 @@ claude --plugin-dir /path/to/xmuse/integrations/claude-mod
 | `hubUrl` | hub 地址 | 空：先找 `stateDir/hub.json`，再找 `<项目>/.xmuse/hub.json`，都没有就用 `http://127.0.0.1:43117` |
 | `stateDir` | 房间状态目录（里面有 `hub.json`，内容是 `{"port": ...}`） | 空 |
 | `pollWaitSeconds` | 一次 `/v1/view` 长轮询最多挂多久（1–30 秒） | 15 |
+| `registryDir` | 本机登记表目录（里面有 `hubs.json` 和 `sidebar.key`） | 空：先找 `XMUSE_REGISTRY_DIR`，再按平台默认（Windows 是 `%LOCALAPPDATA%\xmuse`） |
 
 `/xmuse hub <url>` 可以在本机覆盖 hub 地址，只接受回环地址（`127.0.0.1`、`localhost`、`[::1]`）；`/xmuse hub clear` 清除覆盖。
 
@@ -46,6 +47,11 @@ claude --plugin-dir /path/to/xmuse/integrations/claude-mod
 | `/xmuse room new <名字>` | 开房间，本会话成为主控，打开侧栏 |
 | `/xmuse invite <provider> <角色> <职责描述>` | 生成邀请码（10 分钟有效），码和可复制的命令显示在侧栏「房间」和提示条里，不进对话 |
 | `/xmuse join <邀请码>` | 把本会话绑定为房间成员 |
+| `/xmuse rooms` | 列出本机登记表里的房间 |
+| `/xmuse join-local <房间名或 room_id>` | 一键加入本机房间（不用邀请码，`sidebar.key` 只在插件进程里读） |
+| `/xmuse add <厂商> <模型\|-> <角色> <描述>` | 添加成员（hub 起它的回合） |
+| `/xmuse group new #id [成员 …]` | 新建私有群 |
+| `/xmuse wake-host` | 现在叫醒主控（不等合并） |
 | `/xmuse status` | 房间名、我是谁、是否主控、成员和在线数、未读和待审批 |
 | `/xmuse open` | 打开侧栏 |
 | `/xmuse leave` | 离开房间，删除本目录的绑定 |
@@ -59,7 +65,7 @@ claude --plugin-dir /path/to/xmuse/integrations/claude-mod
 - **刷新**：会话开始后用 `$.clock.every` 长轮询 `/v1/view?since=<version>&wait=<秒>`。
 - **唤醒**：发现新的、发给我的消息，且会话空闲时，从定时器回调里 `$.prompt.submit` 起一个回合（按消息 id 去重）。提示里写明发送者、话题和原文，让 agent 用 xmuse 工具回复。（D0 实测：从定时器提交能唤醒空闲会话，从命令处理函数里提交不能。）
 - **横幅**：有 @ 我的未读或待审批时，输入框上方显示 `@ 我的未读 N · 待审批 M`，带打开侧栏的按钮；都没有就不显示。
-- **侧栏分区**：时间线、成员、审批、对齐、房间（开房间和邀请表单、邀请码、主控标识）。桌面版没有表格和标签页，时间线和成员列表用 Markdown 渲染，分区用顶部一排按钮切换（审批、时间线带数字角标），话题用下拉框选。
+- **侧栏分区**：时间线、成员、群组、主控、审批、对齐、房间（开房间和邀请表单、邀请码、主控标识）。桌面版没有表格和标签页，时间线和成员列表用 Markdown 渲染，分区用顶部一排按钮切换（审批、时间线带数字角标），话题用下拉框选。成员分区里有成员菜单（暂停/恢复/设为主控/移出/私聊/改角色描述/拉进群）；群组分区新建私有群（锁标记）并可移出群成员；主控分区显示在等谁、压住几条结果和自动唤醒倒计时，加"现在叫醒主控"按钮；时间线里 done 显示结果标签（hub 改判/未核实/分享自）；分享审批显示私信摘录。
 
 ## 测试
 

@@ -14,6 +14,7 @@ export type XmuseMember = {
   unread: number
   tokens_hour?: number
   tokens_hour_cap?: number
+  wakes_hour?: number | null
 }
 
 export type XmuseThread = {
@@ -23,6 +24,7 @@ export type XmuseThread = {
   members: string[]
   last_at: number
   unread: number
+  private?: boolean
 }
 
 export type XmuseMessage = {
@@ -36,6 +38,14 @@ export type XmuseMessage = {
   text: string
   at: number
   for_me: boolean
+  outcome?: string
+  outcome_by?: string
+  outcome_reason?: string
+  evidence_status?: string
+  evidence_problems?: string[]
+  shared_from?: { member: string; message_id: number }
+  routed_to?: string | string[]
+  route_reason?: string
 }
 
 export type XmuseAlignEntry = {
@@ -54,9 +64,15 @@ export type XmuseApproval = {
   kind: string
   member: string
   summary: string
-  detail: string
+  detail: string | { message_id?: number; to?: string; why?: string; excerpt?: string }
   risk: string
   at: number
+}
+
+export type XmuseHostWait = {
+  waiting_on: { member: string; handoff_id: string; since: number }[]
+  results_held: number
+  wake_at: number | null
 }
 
 export type XmuseView = {
@@ -70,6 +86,7 @@ export type XmuseView = {
   alignment: XmuseAlignEntry[]
   approvals: XmuseApproval[]
   run: unknown
+  host_wait?: XmuseHostWait | null
 }
 
 export type XmuseInvite = {
@@ -93,6 +110,18 @@ export type XmuseUi = {
   target: string
   lastInvite: XmuseInvite | null
   notice: string
+  addVendor: string
+  addModel: string
+  addRole: string
+  addDesc: string
+  addName: string
+  editRole: string
+  editDesc: string
+  editModel: string
+  grpPick: string
+  grpId: string
+  grpTitle: string
+  grpMembers: string
 }
 
 export type XmuseConn = {
