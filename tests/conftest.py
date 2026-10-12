@@ -17,6 +17,7 @@ from xmuse.server import Hub, digest  # noqa: E402
 
 FAKE_CLAUDE = Path(__file__).parent / "fakes" / "fake_claude.py"
 FAKE_DSH = Path(__file__).parent / "fakes" / "fake_dsh.py"
+FAKE_AGY = Path(__file__).parent / "fakes" / "fake_agy.py"
 FAKE_OC_SERVE = Path(__file__).parent / "fakes" / "fake_opencode_serve.py"
 
 
@@ -39,6 +40,7 @@ class Harness:
         c = json.loads((self.state / "config.json").read_text(encoding="utf-8"))
         (self.state / "config.json").write_text(json.dumps({**c, "sweep_interval": 3600, "dsh_exe": str(FAKE_DSH),
                                                             "dsh_backoff": 0.1, "dsh_home": str(tmp / "dsh-home"),
+                                                            "agy_bin": str(FAKE_AGY),
                                                             **cfg}), encoding="utf-8")
         for i, (aid, vendor, *rest) in enumerate(agents):
             settings = rest[0] if rest else {}
@@ -49,6 +51,7 @@ class Harness:
                 xinit.add_agent(self.state, aid, vendor, settings=settings)
         (self.home / "fake-claude").mkdir(parents=True, exist_ok=True)
         (self.home / "fake-dsh").mkdir(parents=True, exist_ok=True)
+        (self.home / "fake-agy").mkdir(parents=True, exist_ok=True)
         self.oc = FakeOpenCode(self.state) if not oc_serve and any(v == "opencode" for _, v, *_ in agents) else None
         # the human-only admin check (peer.py) is exercised in test_trust.py; elsewhere tests drive admin calls
         self.hub = Hub(self.state, claude_bin=str(FAKE_CLAUDE), oc_base=self.oc and self.oc.base,
@@ -128,6 +131,14 @@ class Harness:
     def dsh_calls(self):
         f = self.home / "fake-dsh" / "calls.jsonl"
         return [json.loads(x) for x in f.open(encoding="utf-8")] if f.exists() else []
+
+    def plan_agy(self, *steps):
+        (self.home / "fake-agy" / "plan.json").write_text(json.dumps(list(steps)))
+        (self.home / "fake-agy" / "n").write_text("0")
+
+    def agy_calls(self):
+        f = self.home / "fake-agy" / "calls.jsonl"
+        return [json.loads(x) for x in f.open()] if f.exists() else []
 
     def claude_calls(self):
         f = self.home / "fake-claude" / "calls.jsonl"

@@ -310,7 +310,7 @@ def main(argv=None) -> None:
     p = sub.add_parser("agent")
     p.add_argument("action", choices=["add", "list"])
     p.add_argument("id", nargs="?")
-    p.add_argument("--vendor", choices=["claude", "opencode", "dsh"])
+    p.add_argument("--vendor", choices=["claude", "opencode", "dsh", "agy"])
     p.add_argument("--model")
     p.add_argument("--role", default="")
     p.add_argument("--description", help="what this member is responsible for (peers and the sidebars see it)")

@@ -45,8 +45,8 @@ DEFAULTS = {
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
-          "dsh": "opencode-go/muse-spark-1.3-contributor"}
-FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek"}  # fallback when the model says nothing
+          "dsh": "opencode-go/muse-spark-1.3-contributor", "agy": "gemini-3.8-flash-high"}
+FAMILIES = {"claude": "anthropic", "opencode": "opencode", "dsh": "deepseek", "agy": "google"}  # fallback when the model says nothing
 # The family a peer sees is the model's, not the shell's (audit C; T8): dsh running muse-spark is not "deepseek".
 MODEL_FAMILIES = [("claude", "anthropic"), ("deepseek", "deepseek"), ("muse-spark", "opencode"), ("gpt-", "openai"),
                   ("gemini", "google"), ("qwen", "qwen"), ("glm", "zhipu"), ("kimi", "moonshot")]
