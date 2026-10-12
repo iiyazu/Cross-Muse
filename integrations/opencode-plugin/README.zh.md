@@ -1,7 +1,7 @@
 # xmuse 侧栏：OpenCode TUI 插件
 
 OpenCode 2.x 的 TUI 插件，在会话页右侧栏显示 xmuse 房间。接口约定见
-`docs/design/XMUSE2-VIEW-API.zh.md`（v0，§7 真 hub 实现说明为准）。
+`docs/design/XMUSE2-VIEW-API.zh.md`（v0 第 7 节、v0.1 第 8 节；8.8 与前文不一致时以 8.8 为准）。
 
 ## 安装
 
@@ -21,9 +21,13 @@ OpenCode 2.x 的 TUI 插件，在会话页右侧栏显示 xmuse 房间。接口�
 ## 配置
 
 - hub 地址：环境变量 `XMUSE_HUB_URL`，否则读 `<房间>/.xmuse/hub.json` 的端口，默认 `http://127.0.0.1:43117`。
+  加入房间后记住该 hub，下次直连。
 - 令牌：开房间/加入成功后存在插件自己的 durable 存储（`ctx.storage.store("xmuse-auth")`，
   另备份一份到 `$XDG_STATE_HOME/xmuse-opencode/xmuse.json`，模式 600）。
   **不进模型上下文，不写进工作区，不打印。**
+- 本机凭据：读登记目录（`XMUSE_REGISTRY_DIR`，否则按平台默认）里的凭据文件，
+  只在插件进程里读，随 `x-xmuse-sidebar` 头发出。**绝不显示、不记日志、
+  不放进给模型看的任何文本。**
 
 ## 命令（输入框里 `/xmuse …`，带参数，不会发给模型）
 
@@ -35,9 +39,25 @@ OpenCode 2.x 的 TUI 插件，在会话页右侧栏显示 xmuse 房间。接口�
 | `/xmuse join <码>` | 用邀请码加入，绑定当前会话 |
 | `/xmuse leave` | 离开房间，清掉本地令牌 |
 | `/xmuse say <to> <文字>` | 发消息（to：成员 id、`#话题`、线程 id 如 `dm:a+b`） |
-| `/xmuse approve [id] [once\|always\|reject]` | 审批：不带参数时对话框选条目再选决定 |
+| `/xmuse approve [id] [once\|always\|reject]` | 审批：不带参数时对话框选条目再选决定（share 审批显示私信摘录） |
 | `/xmuse more` | 加载 20 条更早的时间线 |
-| `/xmuse ack` | 确认所有 @ 我的消息（清未读） |
+| `/xmuse ack` | 确认所有 @ 我的消息（清未读，显示 hub 生效条数） |
+| `/xmuse wake` | 现在叫醒主控（`wake_host`，放出压住的结果） |
+| `/xmuse rooms` | 本机房间列表（登记表 + 在线情况） |
+| `/xmuse join-local [序号\|room_id]` | 一键加入本机房间（不带参数时对话框选） |
+| `/xmuse add [厂商 角色 描述]` | 添加成员（`member_add`，缺的走对话框问） |
+| `/xmuse edit <成员> [role\|desc] [值]` | 改角色/职责描述（`member_edit`） |
+| `/xmuse host <成员>` | 设为主控（`transfer_host`） |
+| `/xmuse pause\|resume\|remove <成员>` | 暂停 / 恢复 / 移出 |
+| `/xmuse dm <成员> <文字>` | 打开私聊（发一条私信） |
+| `/xmuse new-group [#群] [成员..]` | 新建私有群（`thread_new`） |
+| `/xmuse group-add <群> <成员>` | 把成员拉进私有群（`thread_add`） |
+| `/xmuse group-rm <群> <成员>` | 把成员移出私有群（`thread_remove`） |
+
+侧栏显示：成员列表（在线/状态/未读/近1小时唤醒数/职责）、群列表（私有群🔒）、
+最新 8 条时间线（@ 我的打 `▶`）、done 的结果标签（hub 改判、未核实、分享自、已路由）、
+主控等待（在等谁、压住几条、何时自动唤醒）、
+审批队列（`[id] 摘要`，分享审批另分区并显示私信摘录）、对齐条目摘要。被 @ 时弹 toast（`xmuse @我`）。
 
 侧栏显示：成员列表（在线/状态/未读/职责）、最新 8 条时间线（@ 我的打 `▶`）、
 审批队列（`[id] 摘要`）、对齐条目摘要。被 @ 时弹 toast（`xmuse @我`）。
@@ -68,13 +88,18 @@ npm test               # node --test：lib 单元测试 + 对 mock-hub 的端到
 
 `test/hub.test.mjs` 自己起 `tools/mock-hub` 子进程（端口 43992），覆盖：
 开房间→视图→邀请→加入→@→未读→成员令牌不能审批→审批→ack清零→长轮询唤醒/超时。
+`test/hub-v01.test.mjs` 起带登记目录的 mock（端口随机）：凭据头 401/403、
+一键加入与 wrong_dir、member_add/edit、host/pause/resume/remove、
+thread_new/add/remove 与错误码、wake_host、share_mark 参数校验。
+`test/registry.test.mjs`：登记目录规则、死 pid 过滤、凭据形状校验。
 TUI 真机验证见上文清单（已在 opencode v2.0.26 + 临时 XDG 目录验证：
 插件 setup 成功、侧栏渲染、`/xmuse status` toast）。
 
 ## 文件
 
 - `tui.tsx`：插件入口（侧栏槽、斜杠命令、长轮询、toast/对话框）
-- `lib/hub.mjs`：hub HTTP 客户端（可注入 fetch，便于测试）
-- `lib/view.mjs`：纯函数（解析视图、去重、@检测、侧栏文本）
+- `lib/hub.mjs`：hub HTTP 客户端（可注入 fetch，便于测试；v0.1 本机入口与新增 act）
+- `lib/view.mjs`：纯函数（解析视图、去重、@检测、侧栏文本、房间/群/分享审批格式化）
 - `lib/store.mjs`：令牌文件存储（600 权限，只放插件自己目录）
-- `test/`：`view.test.mjs`、`hub.test.mjs`
+- `lib/registry.mjs`：登记表读取与侧栏凭据读取（只在插件进程里，绝不打印）
+- `test/`：`view.test.mjs`、`hub.test.mjs`、`hub-v01.test.mjs`、`registry.test.mjs`
