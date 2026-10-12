@@ -112,6 +112,21 @@ def vendor_clis(vendors: set[str], cfg: dict) -> list[Check]:
             else:
                 out.append(Check("FAIL", "dsh", exe,
                                  "install DeepSeek Harness on Windows, or set dsh_exe in the hub config.json"))
+    if "agy" in vendors or cfg.get("agy_bin"):
+        try:
+            agy = cfg.get("agy_bin") or shutil.which("agy")
+            if not agy:
+                candidate = host.win_home() / "AppData/Local/agy/bin/agy.exe"
+                if candidate.exists():
+                    agy = str(candidate)
+            if agy:
+                v = _run([str(agy), "--version"]) or "?"
+                out.append(Check("ok", "agy", f"{agy} {v}"))
+            else:
+                out.append(Check("FAIL" if "agy" in vendors else "warn", "agy", "not found",
+                                 "install Antigravity CLI (agy) or set agy_bin in config.json"))
+        except host.HostError as e:
+            out.append(Check("FAIL", "agy", str(e), "set XMUSE_WIN_HOME or agy_bin"))
     return out
 
 
