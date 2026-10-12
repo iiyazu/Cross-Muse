@@ -153,6 +153,18 @@ def test_mentions_key_sees_the_name_quoting_and_globs():
         assert not registry.mentions_key(c), c
 
 
+def test_mentions_key_lets_a_search_for_the_name_through():
+    # a member reading the hub's source (dev room, 10-12): searching for the name is not opening the file, and a
+    # refused command ends the member's turn
+    for c in ('grep -n "def \\|hubs.json\\|sidebar.key\\|sidebar_key" hub/src/xmuse/registry.py',
+              "grep -n sidebar.key hub/src/xmuse/registry.py", "rg 'sidebar\\.key' hub", "git grep -n sidebar.key",
+              "grep -rn -e sidebar.key integrations"):
+        assert not registry.mentions_key(c), c
+    for c in ("grep . ~/.local/state/xmuse/sidebar.key", "grep -e x /a/sidebar.key", "rg x /a/side*",
+              "ls; cat /a/sidebar.key", "grep foo x && cat 'side'bar.key", "cat \"unbalanced /a/sidebar.key"):
+        assert registry.mentions_key(c), c
+
+
 # ---- the hub registers itself -------------------------------------------------------------------------------------
 
 def test_hub_registers_on_start_follows_the_room_and_leaves_on_shutdown(make, monkeypatch):
