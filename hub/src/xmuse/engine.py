@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import align, db, dispatch, mail, wakepack
+from . import align, db, dispatch, mail, stall, wakepack
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
 from .config import HUMAN
@@ -237,13 +237,14 @@ class Engine:
             if turn["chain_id"]:
                 conn.execute("update chains set tokens=tokens+? where id=?", (u.total, turn["chain_id"]))
         self.adapters.pop(turn["id"], None)
+        stall.on_turn_end(conn, self.cfg, turn, end)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
         if turn["session_id"] and u.context >= self.cfg["session_notice_tokens"] and conn.execute(
                 "update sessions set notified=1 where id=? and notified=0", (turn["session_id"],)).rowcount:
             mail.notice(conn, thread or mail.dm_id(agent["id"], HUMAN),
                         f"{agent['id']} session holds about {u.context // 1000}k tokens; one wake now costs about "
-                        f"{u.total // 1000}k. A new session would start from the maintained alignment view "
+                        f"{u.context // 1000}k. A new session would start from the maintained alignment view "
                         "(handover pack ready) if you want one.", turn["chain_id"])
         if end.requeue == "hold":
             mail.notice(conn, mail.dm_id(agent["id"], HUMAN), f"{agent['id']} paused: {end.error}. Its messages are"
