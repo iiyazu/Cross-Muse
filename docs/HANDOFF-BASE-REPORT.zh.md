@@ -1610,3 +1610,46 @@ tick 4: a=73, b=71, c=36, d=99. Apply the team rule in force, then call xmuse_do
   - `chain2` 的门槛脚本有路径错误：先 `cd` 进了目录，又用相对路径调 python，所以门槛读到空值，没有放开批次。
   - 我手动核实冒烟结果后，把 S2' 正式跑排进 `chain4`。代码会是 `chain4` 拉取时的最新提交，hub 部分仍和 `e93aa28` 相同。
 - **r7 上的队列**：chain3（S3b 正式跑 → rpilot2）→ chain4（S2' 正式跑）。
+
+## T17 交接给 r7（10-12 14:00，base 额度不足）
+
+**代码**：分支 `exp/probes`，最新是 `bb13106`，没有合进 rc/portfolio。r7 上的检出在 `~/bench/phb/xmuse2`，chain 单元会自动拉取；python 用 `hub/.venv/bin/python`。
+
+**r7 上正在跑的队列**（systemd 用户单元，输出在 `~/bench/phb/logs/bg/<名>.out`）：
+1. `chain3`：
+   - `batch1-s3` 里的 S3b，seed 11–20，三组，约 2.5 小时；
+   - 接着跑 `rpilot2`，即 R1、R4 的 seed 1，三组，带"用户回答提问"。
+2. `chain4`：等 chain3 写出 `chain3 done`，再跑 `batch1-s3` 里的 S2p，seed 11–20，三组，约 2.5 小时。
+
+- 查看进度：`tail ~/probes/runs/<批次名>/series.log`。
+- 停止：`systemctl --user stop phb-<名>-*`。**不要用 pkill**，以免误杀开发房间的 hub。
+- 补跑：`batch.sh` 和 `rbatch.sh` 会跳过已有 `judged.json` 的 run，重新执行同一条命令即可。
+
+**接手后要做的事**：
+1. **S3b、S2p 跑完后出报告**：
+
+   ```
+   hub/.venv/bin/python experiments/probes/report.py ~/probes/runs/batch1-s3 --scenarios S3b,S2p
+   ```
+
+   S2p 看"一直遵守 / retire 后丢失 / retire 前就没遵守"这张表；S3b 看三组的 `e_correct_share`。
+2. **rpilot2 检查**：
+   - 回答器有没有生效：record.json 里的 `answers`、judged.json 里的 `user_actions`、`relays`、`answers`；
+   - R1 的 P 组是否不再卡在"等用户确认"；
+   - 归因（attribution）是否合理。
+3. **R 第一批预注册并开跑**：R1–R4，每格 5 次，seed 1–5，三组，名单按 seed 交替（rworld.roster 里已实现）。
+   - 命令：`bash experiments/probes/rbatch.sh rbatch1 "1 2 3 4 5" "R1 R2 R3 R4"`
+   - R4 预计会到天花板，主要看过程指标。
+   - 代码用 `bb13106` 或更新的提交。文件改动按轮询快照，记到正在运行的回合；两个回合重叠时，记到回合日志里提到该文件的那个回合，否则标为 ambiguous。
+4. **之后**：R5–R8 第二批（同一命令，场景改为 "R5 R6 R7 R8"）。R7 用侧栏 say，R8 用 pause，这两个场景只用假 agent 测过。
+
+**等 r7 或用户定的事**：
+1. S3a 改过措辞后冒烟仍是 0，二选一：改 PROCEDURE（S1、S2、DEP 要重跑），或者由用户在 #team 宣布交接（只影响 S3a）。见第 7 步。
+2. 私信里的事实默认能不能分享给队友（S3b 里 e2 拒绝透露 k），这是产品问题，要用户定。
+3. 是否给 S1、S2、DEP 加一个"PROCEDURE 不强调 team rule"的对照组，见第 6 步。
+
+**已知小问题**：
+- 测试在 systemd 单元里跑时，会超过 1024 个文件描述符的上限（§13.2），以后再查。
+- `admin_retire` 还不会拒绝有活租约的成员。
+
+**第一批结论**：见第 6 步。S1 里 X 和群发一样正确，代价约为一半；S2、DEP 的差别来自"结构化条目比普通消息更有约束力"，和 PROCEDURE 的措辞有交互，只能算方向。
