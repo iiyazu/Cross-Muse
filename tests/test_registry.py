@@ -486,6 +486,40 @@ def test_member_edit_changes_role_description_and_model(make):
     assert "claude-sonnet-x" in h.claude_calls()[-1]["argv"]
 
 
+def test_models_lists_what_a_member_can_switch_to(make, monkeypatch):
+    """The panel's model picker: the current model first, the defaults, OpenCode's own catalog, Claude's aliases;
+    operator only. A pick is a member_edit, which the next turn uses (above)."""
+    h = make(OC + [("claude-1", "claude")])
+    ot = open_room(h)["operator_token"]
+
+    class Srv:
+        def api(self, method, path):
+            assert (method, path) == ("GET", "/api/model")
+            return {"data": [{"providerID": "zai", "id": "glm-9", "name": "GLM 9"}, {"providerID": "oc", "id": "m2"}]}
+
+    class Drv:
+        def prompt_for(self, aid):
+            return type("P", (), {"server": Srv()})()
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(h.hub.engine.drivers, "opencode", Drv())
+    st, out = act(h, ot, act="models", member="opencode-1")
+    cur = h.q("select model from agents where id='opencode-1'")[0]["model"]
+    vals = [o["value"] for o in out["options"]]
+    assert st == 200 and out["current"] == cur and vals[0] == cur and out["free"] is True
+    assert "zai/glm-9" in vals and "oc/m2" in vals and out["format"] == "<provider>/<model>"
+    assert next(o for o in out["options"] if o["value"] == "zai/glm-9")["label"] == "zai/GLM 9"
+    st, out = act(h, ot, act="models", member="claude-1")
+    assert {"sonnet", "haiku", "opus"} <= {o["value"] for o in out["options"]} and out["format"] == ""
+    monkeypatch.delitem(h.hub.engine.drivers, "opencode")  # no catalog: still the known ones
+    st, out = act(h, ot, act="models", member="opencode-1")
+    assert st == 200 and out["options"][0]["value"] == cur
+    tok = (h.state / "tokens" / "claude-1").read_text(encoding="utf-8").strip()
+    assert act(h, tok, "S-x", act="models", member="opencode-1")[0] == 403
+
+
 def test_member_edit_errors(make):
     h = make(OC + [("claude-1", "claude")])
     ot = open_room(h)["operator_token"]
@@ -498,6 +532,8 @@ def test_member_edit_errors(make):
         st, out = act(h, ot, act="member_edit", **body)
         assert (st, out["error"]) == (status, code), body
     assert h.q("select role from agents where id='claude-1'")[0]["role"] == ""
+    st, out = act(h, ot, act="member_add", vendor="dsh", model="no-slash")  # dsh splits at "/" too
+    assert (st, out["error"]) == (400, "bad_request")
     act(h, ot, act="remove", member="claude-1")
     assert act(h, ot, act="member_edit", member="claude-1", role="x")[0] == 404  # removed members are gone
 
