@@ -192,6 +192,7 @@ def test_hub_start_gives_up_after_the_deadline_and_stops_the_hub(tmp_path, monke
 
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(cli, "HUB_START_TIMEOUT_S", 1)
+    monkeypatch.setattr(cli.preflight, "run", lambda st: ([], []))  # a bare state dir: no workspace to check
     with pytest.raises(SystemExit) as e:
         cli.hub_start(state)
     assert "did not start" in str(e.value) and "stopped it" in str(e.value)

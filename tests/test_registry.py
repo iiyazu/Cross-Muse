@@ -211,7 +211,7 @@ def test_two_hubs_have_separate_entries_and_one_key(make, tmp_path):
 
 def test_hub_cli_start_registers_and_stop_unregisters(ws):  # noqa: F811  a real hub process, stopped by SIGTERM
     run(ws, "init", ".")
-    run(ws, "agent", "add", "claude-1", "--vendor", "claude")
+    run(ws, "agent", "add", "claude-1", "--vendor", "claude", "--desktop")
     state = config.find_state(ws)
     try:
         assert "hub started" in run(ws, "hub", "start").stdout
