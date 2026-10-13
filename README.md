@@ -149,6 +149,7 @@ Claude 桌面版当协调者、dsh 前台模式和插件包的配置，见 [hub/
 |---|---|
 | `hub/` | hub 和 CLI（`xmuse`），Python；`src/xmuse/adapters/` 是各厂商适配器 |
 | `shim/` | MCP stdio 垫片（TS），转发到 hub，负责 Claude channel 推送 |
+| `integrations/xmuse-panel/` | 协作面板（Claude Code mod，T8）：Claude 主控，其余 agent 当助手 |
 | `integrations/dsh-bundle/` | dsh 桌面端插件包（JS） |
 | `skill/`、`templates/` | 写进工作区的协作技能和 AGENTS.md 段落 |
 | `tests/` | hub 测试（pytest，假 agent 回放真实录制的输出），约 3 分钟 |
@@ -156,7 +157,7 @@ Claude 桌面版当协调者、dsh 前台模式和插件包的配置，见 [hub/
 | `docs/design/` | 设计稿、预注册、实验报告、审计 |
 | `docs/HANDOFF-BASE-REPORT.zh.md` | 各任务的汇报：做了什么、测试结果原文、没做和拿不准的地方 |
 | `scripts/bootstrap.sh` | 一键准备环境 |
-| `archive/` | 早期探针（`spikes/`）和 M1 端到端记录（`e2e/`），只留作历史，不再维护 |
+| `archive/` | 早期探针（`spikes/`）、M1 端到端记录（`e2e/`）、10-11 的各家侧栏（`claude-mod-t0/`、`opencode-plugin-t0/`），只留作历史，不再维护 |
 
 ## 开发
 

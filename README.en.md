@@ -149,6 +149,7 @@ Where this leaves us: **there is no data yet that the info layer helps**, and on
 |---|---|
 | `hub/` | Hub and CLI (`xmuse`), Python; `src/xmuse/adapters/` holds the vendor adapters |
 | `shim/` | MCP stdio shim (TS): forwards to the hub and handles Claude channel push |
+| `integrations/xmuse-panel/` | Collaboration panel (Claude Code mod, T8): one Claude session coordinates, the other agents assist |
 | `integrations/dsh-bundle/` | dsh desktop plugin bundle (JS) |
 | `skill/`, `templates/` | Collaboration skill and AGENTS.md section written into workspaces |
 | `tests/` | Hub tests (pytest; fake agents replay real recorded output), about 3 minutes |
@@ -156,7 +157,7 @@ Where this leaves us: **there is no data yet that the info layer helps**, and on
 | `docs/design/` | Design notes, pre-registrations, experiment report, audit (Chinese) |
 | `docs/HANDOFF-BASE-REPORT.zh.md` | Per-task reports: what was done, raw test output, what was left open (Chinese) |
 | `scripts/bootstrap.sh` | One-step environment setup |
-| `archive/` | Early probes (`spikes/`) and M1 end-to-end records (`e2e/`), kept for history, not maintained |
+| `archive/` | Early probes (`spikes/`), M1 end-to-end records (`e2e/`), the per-vendor sidebars of 10-11 (`claude-mod-t0/`, `opencode-plugin-t0/`), kept for history, not maintained |
 
 ## Development
 

@@ -1,0 +1,1 @@
+{ "name": "xmuse", "version": "0.1.0", "description": "xmuse collaboration panel: assistants, threads and messages from the project's hub, in a right-side pane (T8)", "types": "./types/index.d.ts" }
