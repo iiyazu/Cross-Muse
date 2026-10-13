@@ -52,7 +52,7 @@ class Engine:
             if "last_tool" in update:
                 e["last_tool"] = update["last_tool"]
             if "text" in update and isinstance(update["text"], str):
-                e["text"] = update["text"][:400]
+                e["text"] = update["text"][-400:]  # the latest part: the panel draws it as the member's live draft
             e["updated_at"] = now
             if now - self._progress_tick >= 1.0:
                 self._progress_tick = now
