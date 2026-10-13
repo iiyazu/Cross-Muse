@@ -70,9 +70,10 @@ def test_register_updates_by_room_and_unregister_removes_only_its_own():
 def test_install_record_says_how_to_start_a_hub(monkeypatch):
     """The panel starts a hub after a reboot from this record: the interpreter and the WSL distro; kept, not churned."""
     monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu-X")
+    monkeypatch.setenv("PATH", "/opt/agents/bin" + os.pathsep + os.environ["PATH"])
     registry.write_install()
     got = json.loads(registry.install_path().read_text(encoding="utf-8"))
-    assert got == {"python": sys.executable, "distro": "Ubuntu-X", "os": os.name}
+    assert got == {"python": sys.executable, "distro": "Ubuntu-X", "os": os.name, "path": os.environ["PATH"]}
     before = registry.install_path().stat().st_mtime_ns
     registry.write_install()  # unchanged: not rewritten
     assert registry.install_path().stat().st_mtime_ns == before
