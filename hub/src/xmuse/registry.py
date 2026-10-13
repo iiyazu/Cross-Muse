@@ -4,7 +4,7 @@ One directory per OS user (Windows: %LOCALAPPDATA%\\xmuse, elsewhere ${XDG_STATE
 XMUSE_REGISTRY_DIR overrides, tests always set it):
   - hubs.json    {"hubs": [{room_id, name, dir, url, host, pid, started_at}]}: every running hub writes its own entry
                  on start and removes it on exit; readers drop entries whose pid is gone (a killed hub leaves one).
-  - install.json {python, distro, os}: how to start a hub here; the panel reads it when no hub is running
+  - install.json {python, distro, os, path}: how to start a hub here; the panel reads it when no hub is running
   - sidebar.key  32 random bytes as hex, mode 600, made by the first hub that starts. A sidebar plugin reads it and
                  sends it as x-xmuse-sidebar; agent processes are not given it and the shell policy refuses commands
                  that name the file. Same OS user, so this keeps agents from joining on their own, nothing more.
@@ -135,8 +135,10 @@ def install_path() -> Path:
 
 def write_install() -> None:
     """How to start a hub on this machine, for a panel that finds no running one (after a reboot): the interpreter
-    this hub runs on and, inside WSL, the distro. Kept after the hub exits; rewritten only when it changed."""
-    data = {"python": sys.executable, "distro": os.environ.get("WSL_DISTRO_NAME", ""), "os": os.name}
+    this hub runs on, inside WSL the distro, and the PATH it found the agent CLIs on (a login shell started from the
+    panel may lack ~/.opencode/bin and the like). Kept after the hub exits; rewritten only when it changed."""
+    data = {"python": sys.executable, "distro": os.environ.get("WSL_DISTRO_NAME", ""), "os": os.name,
+            "path": os.environ.get("PATH", "")}
     p = install_path()
     try:
         if json.loads(p.read_text(encoding="utf-8")) == data:
