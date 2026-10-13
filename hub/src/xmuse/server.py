@@ -759,6 +759,17 @@ class Hub:
         rooms.notice(conn, f"{a['id']} was removed from the room")
         return {"ok": True}
 
+    def admin_remove(self, b: dict) -> dict:
+        """CLI `xmuse agent remove <id>`: the room's remove act, for a member the sidebar cannot take out."""
+        return self.act_remove(None, {"member": b.get("agent")})
+
+    def admin_release(self, b: dict) -> dict:
+        """CLI `xmuse agent release <id>`: free the member's session binding, so the next join takes it over."""
+        a, conn = self._member(b.get("agent")), self.db()
+        with db.tx(conn):
+            conn.execute("update agents set bound_session=null where id=?", (a["id"],))
+        return {"ok": True, "member": a["id"]}
+
     def act_pause(self, p: rooms.Principal, b: dict) -> dict:
         a = self._member(b.get("member"))
         with db.tx(self.db()) as c:
@@ -1044,12 +1055,15 @@ class Hub:
         with self.join_lock:  # name checks and the insert in add_member must not interleave with another join
             rooms.room_row(conn, self.ws)
             mid = name or rooms.free_id(conn, vendor)
+            prev = db.row(conn.execute("select bound_session, removed from agents where id=?", (mid,)))
+            was_bound_here = bool(prev) and not prev["removed"] and prev["bound_session"] == sid
             self.add_member(mid, vendor, role, desc, sid)
             if role:
                 with db.tx(conn):
                     conn.execute("update agents set role=? where id=?", (role, mid))
-        rooms.notice(conn, f"{mid} joined the room ({vendor}{', ' + role if role else ''})"
-                           + (f": {desc}" if desc else ""))
+        if not was_bound_here:  # a sidebar re-joining as the member it already is posts nothing new
+            rooms.notice(conn, f"{mid} joined the room ({vendor}{', ' + role if role else ''})"
+                               + (f": {desc}" if desc else ""))
         r = rooms.room_row(conn, self.ws)
         return {"member_id": mid, "member_token": self._token_of(mid),
                 "operator_token": rooms.operator_token(conn, mid),
