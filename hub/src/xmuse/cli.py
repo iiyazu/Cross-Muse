@@ -4,6 +4,7 @@ import codecs
 import json
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -13,7 +14,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, mail, proc
+from . import config, db, mail, preflight, proc
 from .env import clean_env
 
 HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
@@ -60,34 +61,62 @@ def act(state: Path, body: dict) -> dict:
         raise SystemExit(f"error: {err.get('error')}: {err.get('message')}")
 
 
-def hub_start(state: Path) -> None:
+def hub_start(state: Path, unit: str | None = None) -> None:
+    """Start the hub after the preflight (preflight.py): detached, or as the systemd user unit `unit` (a unit outlives
+    the wsl.exe call that started it; a detached child does not)."""
     if (state / "hub.json").exists():
         pid = json.loads((state / "hub.json").read_text(encoding="utf-8"))["pid"]
         if proc.alive(pid):
             print(f"hub already running (pid {pid})")
             return
         (state / "hub.json").unlink()
-    log = (state / "logs" / "hub.log").open("a", encoding="utf-8")
-    # host facts (host.py) and the experiment-only shell policy reach the hub; agents get clean_env() again from it
-    extra = {k: os.environ[k] for k in ("XMUSE_SHELL_POLICY", "XMUSE_WSL_DISTRO", "XMUSE_WIN_HOME", "WSL_DISTRO_NAME",
-                                        "WSL_INTEROP", "XMUSE_REGISTRY_DIR") if k in os.environ}
+    checks, fixed = preflight.run(state)
+    for line in fixed:
+        print(f"fixed: {line}")
+    for c in checks:
+        if c.level != "ok":
+            print(f"{c.level:4} {c.name}: {c.detail}" + (f"\n     fix: {c.fix}" if c.fix else ""))
+    if any(c.level == "FAIL" for c in checks):
+        raise SystemExit("hub not started: fix the FAIL lines above (xmuse doctor shows them all)")
+    log_path = state / "logs" / "hub.log"
+    env = preflight.host_env(state)
     if proc.WINDOWS:
-        extra["PYTHONUTF8"] = "1"  # files and pipes in UTF-8, whatever the ANSI code page
-    p = proc.popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env({"XMUSE_STATE": str(state), **extra}),
-                   stdin=subprocess.DEVNULL, stdout=log, stderr=log, detach=True)
+        env["PYTHONUTF8"] = "1"  # files and pipes in UTF-8, whatever the ANSI code page
+    if unit:
+        subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)  # a previous run of this unit
+        subprocess.run(["systemctl", "--user", "reset-failed", unit], capture_output=True)
+        cmd = ["systemd-run", "--user", f"--unit={unit}", "--collect",
+               f"--working-directory={config.load(state)['workspace']}"]
+        cmd += [f"--setenv={k}={v}" for k, v in env.items()]
+        cmd += ["bash", "-c", f"exec {shlex.quote(sys.executable)} -m xmuse hub run >> {shlex.quote(str(log_path))} 2>&1"]
+        subprocess.run(cmd, check=True)
+
+        def gone() -> bool:
+            return subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True,
+                                  text=True).stdout.strip() != "active"
+    else:
+        with log_path.open("a", encoding="utf-8") as log:  # the child keeps its own copy of the descriptor
+            p = proc.popen([sys.executable, "-m", "xmuse", "hub", "run"], env=clean_env(env),
+                           stdin=subprocess.DEVNULL, stdout=log, stderr=log, detach=True)
+
+        def gone() -> bool:
+            return p.poll() is not None
     # model prechecks run first: dsh about 10 s, but a cold start may be retried once after the 180 s first-event
     # watchdog, so allow 600 s
     deadline = time.time() + HUB_START_TIMEOUT_S
     while time.time() < deadline:
         if (state / "hub.json").exists():
-            print(f"hub started: {json.loads((state / 'hub.json').read_text(encoding="utf-8"))}")
+            print(f"hub started: {json.loads((state / 'hub.json').read_text(encoding='utf-8'))}")
             return
-        if p.poll() is not None:
-            tail = (state / "logs" / "hub.log").read_text(encoding="utf-8").strip().splitlines()[-6:]
+        if gone():
+            tail = log_path.read_text(encoding="utf-8").strip().splitlines()[-6:]
             raise SystemExit("hub exited:\n" + "\n".join(tail))
         time.sleep(0.25)
-    proc.kill_tree(p, "term")  # never leave a hub running that its caller has given up on
-    raise SystemExit(f"hub did not start in {HUB_START_TIMEOUT_S} s (stopped it); see {state / 'logs' / 'hub.log'}")
+    if unit:
+        subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True)
+    else:
+        proc.kill_tree(p, "term")  # never leave a hub running that its caller has given up on
+    raise SystemExit(f"hub did not start in {HUB_START_TIMEOUT_S} s (stopped it); see {log_path}")
 
 
 def hub_stop(state: Path) -> None:
@@ -326,6 +355,7 @@ def main(argv=None) -> None:
                                                   "opencode instance config)")
     p = sub.add_parser("hub")
     p.add_argument("action", choices=["start", "stop", "status", "run"])
+    p.add_argument("--unit", help="start: run the hub as this systemd --user unit (survives the caller)")
     p = sub.add_parser("invite", help="an invitation code for a sidebar to join this room (/xmuse join <code>)")
     p.add_argument("vendor", choices=["claude", "opencode", "dsh"])
     p.add_argument("--role", default="")
@@ -445,7 +475,7 @@ def main(argv=None) -> None:
                 conn.execute("update agents set settings=? where id=?", (json.dumps(st), a.id))
         print(f"agent {a.id} ({a.vendor}, {agent['model']}) added; restart the hub to pick up a new vendor")
     elif a.cmd == "hub":
-        {"start": hub_start, "stop": hub_stop,
+        {"start": lambda s: hub_start(s, a.unit), "stop": hub_stop,
          "status": lambda s: print(json.dumps(status(s), indent=1))}[a.action](state)
     elif a.cmd == "invite":  # the sidebar API: no {"result": ...} envelope
         print(json.dumps(act(state, {"act": "invite", "vendor": a.vendor, "role": a.role,

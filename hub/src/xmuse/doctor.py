@@ -108,17 +108,21 @@ def cli_paths(cfg: dict) -> dict[str, str | None]:
             "agy": agy_path(cfg)}
 
 
-def vendor_clis(vendors: set[str], cfg: dict) -> list[Check]:
-    """Each vendor CLI: FAIL when a configured agent needs it, warn when it is merely absent."""
+def vendor_clis(vendors: set[str], cfg: dict, headless: set[str] | None = None) -> list[Check]:
+    """Each vendor CLI: FAIL when a headless agent needs it (the hub runs the CLI), warn when it is merely absent.
+
+    headless: the vendors with a member the hub runs itself (None: every configured vendor). A desktop Claude runs on
+    Windows, so its absence in WSL is no FAIL."""
     out = []
     paths = cli_paths(cfg)
+    need = vendors if headless is None else headless
     for name, how in (("claude", "install Claude Code (https://docs.anthropic.com/claude-code)"),
                       ("opencode", "install OpenCode (https://opencode.ai)")):
         found = paths[name]
         if found:
             out.append(Check("ok", f"{name} cli", found))
         else:
-            out.append(Check("FAIL" if name in vendors else "warn", f"{name} cli", "not found", how))
+            out.append(Check("FAIL" if name in need else "warn", f"{name} cli", "not found", how))
     if "dsh" in vendors or cfg.get("dsh_exe"):
         if paths["dsh"] is not None:
             out.append(Check("ok", "dsh", paths["dsh"], ""))
@@ -171,7 +175,7 @@ def _same(path: Path, text: str) -> bool:
 
 
 def workspace(state: Path) -> list[Check]:
-    from .init import SKILL_DIRS, agents_section, skill_text
+    from .init import SKILL_DIRS, _dsh_ws_ok, agents_section, skill_text
     from .tools import tools_for
     cfg = config.load(state)
     ws = Path(cfg["workspace"])
@@ -204,13 +208,19 @@ def workspace(state: Path) -> list[Check]:
                      "" if section.strip() in agents_md else fix_init))
     # per agent
     conn = db.connect(state / "hub.db")
-    agents = db.rows(conn.execute("select * from agents order by id"))
+    try:
+        agents = db.rows(conn.execute("select * from agents order by id"))
+    finally:
+        conn.close()
     if not agents:
         out.append(Check("warn", "agents", "none yet", f"xmuse --ws {ws} agent add <id> --vendor claude|opencode|dsh"))
     else:
         out.append(_instances(ws, agents))
     for a in agents:
         out += _agent_files(ws, state, a)
+    if any(a["vendor"] == "dsh" for a in agents) and not _dsh_ws_ok(ws):
+        out.append(Check("warn", "dsh workspace", f"{ws} is not on a Windows drive: dsh cannot write there",
+                         "move the workspace under /mnt/<drive>/ (dsh members need it)"))
     if any(db.settings(a).get("foreground") for a in agents):
         try:
             out.append(Check("ok", "dsh bundle config.state", _bundle_state(state)))
@@ -314,11 +324,17 @@ def _instances(ws: Path, agents: list[dict]) -> Check:
 
 def run(state: Path | None) -> list[Check]:
     checks = python_env() + node_env() + wsl()
-    vendors, cfg = set(), {}
+    vendors, headless, cfg = set(), set(), {}
     if state is not None:
         cfg = config.load(state)
-        vendors = {r[0] for r in db.connect(state / "hub.db").execute("select distinct vendor from agents")}
-    checks += vendor_clis(vendors, cfg)
+        conn = db.connect(state / "hub.db")
+        try:
+            agents = db.rows(conn.execute("select * from agents"))
+        finally:
+            conn.close()
+        vendors = {a["vendor"] for a in agents}
+        headless = {a["vendor"] for a in agents if not db.polled(a)}
+    checks += vendor_clis(vendors, cfg, headless)
     if state is None:
         checks.append(Check("warn", "workspace", "no xmuse workspace here (no .xmuse.json above the cwd)",
                             "xmuse init <workspace>"))

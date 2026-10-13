@@ -307,6 +307,7 @@ def test_hub_start_passes_host_facts_and_policy(monkeypatch, tmp_path):
     monkeypatch.setenv("SECRET_THING", "x")
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "hub.log").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli.preflight, "run", lambda st: ([], []))  # a bare state dir: no workspace to check
     with __import__("pytest").raises(SystemExit):  # the fake process "exits" at once
         cli.hub_start(tmp_path)
     env = seen["env"]
