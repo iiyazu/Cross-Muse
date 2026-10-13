@@ -339,7 +339,8 @@ def main(argv=None) -> None:
     p = sub.add_parser("init")
     p.add_argument("workspace", type=Path)
     p = sub.add_parser("agent")
-    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("action", choices=["add", "list", "remove", "release"])  # remove: take a member out of the room;
+    # release: free its session binding so the next join (the coordinator's sidebar) can take the member over
     p.add_argument("id", nargs="?")
     p.add_argument("--vendor", choices=["claude", "opencode", "dsh", "agy"])
     p.add_argument("--model")
@@ -458,6 +459,11 @@ def main(argv=None) -> None:
     if a.cmd == "agent":
         if a.action == "list":
             print(json.dumps(status(state)["agents"], indent=1))
+            return
+        if a.action in ("remove", "release"):
+            if not a.id:
+                raise SystemExit(f"agent {a.action}: give the member id")
+            print(json.dumps(call(state, f"/v1/admin/{a.action}", {"agent": a.id})))
             return
         from .init import add_agent
         st = {("foreground" if a.vendor == "dsh" else "desktop"): True} if a.desktop else {}
