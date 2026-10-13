@@ -466,6 +466,9 @@ class ClaudeDriver:
     def _adopt(self, agent_id: str, sid: str, origin: str = "tui") -> None:
         """A TUI opened for this agent becomes its current session: the hub continues it after.
         Room-less only (v1): thread-bound hub sessions are never adopted or retired here."""
+        if origin == "desktop":  # the sidebar member follows the desktop session, so its next join from here is not refused
+            self.db().execute("update agents set bound_session=? where id=? and removed=0 and bound_session is not null"
+                              " and bound_session!=?", (sid, agent_id, sid))  # callers hold the transaction
         cur = db.row(self.db().execute(
             "select * from sessions where agent_id=? and state='current' and thread_id is null", (agent_id,)))
         if cur and cur["vendor_session"] == sid:
