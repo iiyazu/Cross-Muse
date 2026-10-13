@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from xmuse import cli, doctor, init as xinit, preflight
+from xmuse import cli, db, doctor, init as xinit, preflight
 
 
 @pytest.fixture
@@ -52,6 +52,21 @@ def test_stale_member_config_is_rewritten_at_start(ws):
     assert any(line.startswith("agent c1") for line in fixed)
     assert by_name(checks)["agent c1"].level == "ok"
     assert str(state) in (ws / ".mcp.json").read_text(encoding="utf-8")
+
+
+def test_a_removed_member_is_not_checked_or_rewritten(ws):
+    state = xinit.init(ws)
+    xinit.add_agent(state, "c1", "claude")
+    conn = db.connect(state / "hub.db")  # a removed member that shares the workspace root with c1 (a FAIL if counted)
+    conn.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at, description,"
+                 " removed, paused) values('c2','claude','opus','anthropic','','{}','x',0,'',1,1)")
+    conn.close()
+    before = (ws / ".mcp.json").read_bytes()
+    checks, fixed = preflight.run(state)
+    assert "agent c2" not in by_name(checks)
+    assert by_name(checks)["instances"].level == "ok"  # one claude left in the directory
+    assert not any("c2" in line for line in fixed)
+    assert (ws / ".mcp.json").read_bytes() == before  # the shared file still carries c1's identity
 
 
 def test_stale_workspace_files_are_regenerated_at_start(ws):

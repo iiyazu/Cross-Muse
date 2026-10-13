@@ -209,7 +209,7 @@ def workspace(state: Path) -> list[Check]:
     # per agent
     conn = db.connect(state / "hub.db")
     try:
-        agents = db.rows(conn.execute("select * from agents order by id"))
+        agents = db.rows(conn.execute("select * from agents where removed=0 order by id"))  # removed members are gone
     finally:
         conn.close()
     if not agents:
@@ -329,7 +329,7 @@ def run(state: Path | None) -> list[Check]:
         cfg = config.load(state)
         conn = db.connect(state / "hub.db")
         try:
-            agents = db.rows(conn.execute("select * from agents"))
+            agents = db.rows(conn.execute("select * from agents where removed=0"))
         finally:
             conn.close()
         vendors = {a["vendor"] for a in agents}
