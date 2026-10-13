@@ -804,8 +804,8 @@ class Hub:
         return v
 
     def _model_ok(self, vendor: str, model: str) -> None:
-        if not model.strip() or vendor == "opencode" and "/" not in model:
-            raise rooms.ApiError(400, "bad_request", "model: a non-empty name (opencode: <provider>/<model>)")
+        if not model.strip() or vendor in ("opencode", "dsh") and "/" not in model:  # both split it at "/"
+            raise rooms.ApiError(400, "bad_request", "model: a non-empty name (opencode, dsh: <provider>/<model>)")
 
     def act_member_add(self, p: rooms.Principal, b: dict) -> dict:
         """Register a member the hub runs turns for: `xmuse agent add` without --desktop (the same add_agent)."""
@@ -896,6 +896,44 @@ class Hub:
             raise rooms.ApiError(400, "bad_request", "model must be a non-empty name")
         self._model_ok(vendor, model)
         return agents.set_model(vendor, model)
+
+    CLAUDE_ALIASES = ("sonnet", "haiku", "opus")  # what `claude --model` takes besides full ids
+
+    def act_models(self, p: rooms.Principal, b: dict) -> dict:
+        """The models a member can be switched to (operator only, read-only), for the panel's picker: OpenCode's own
+        catalog when its server answers; for every vendor the member's model, the vendor default and the models
+        this room has run it on; Claude's aliases. `free` says another name may be typed in (member_edit checks it).
+        A switch takes effect at the member's next turn: every adapter reads the model when it starts one."""
+        a, conn = self._member(b.get("member")), self.db()
+        vendor, opts, note = a["vendor"], [], ""
+
+        def add(value, label=None):
+            if isinstance(value, str) and value.strip() and all(o["value"] != value for o in opts):
+                opts.append({"value": value, "label": label or value})
+
+        add(a["model"])
+        add(agents.default_model(vendor))
+        add(config.MODELS.get(vendor))
+        if vendor == "claude":
+            for m in self.CLAUDE_ALIASES:
+                add(m)
+        if vendor == "opencode":
+            drv = self.engine.drivers.get("opencode")
+            try:
+                catalog = drv.prompt_for(a["id"]).server.api("GET", "/api/model")["data"] if drv else []
+                for m in sorted(catalog, key=lambda m: (str(m.get("providerID")), str(m.get("id")))):
+                    if m.get("providerID") and m.get("id"):
+                        add(f"{m['providerID']}/{m['id']}", f"{m['providerID']}/{m.get('name') or m['id']}")
+            except Exception:  # noqa: BLE001 - the picker still offers what is known
+                note = "OpenCode 的模型目录暂时读不到，只列出已知的模型"
+        # used in this room: usage records the provider's model id; opencode/dsh keep provider/model, which usage
+        # does not carry, so only the vendors that take a bare id get these
+        if vendor in ("claude", "agy"):
+            for (m,) in conn.execute("select distinct model from usage where vendor=? and model<>'' order by model",
+                                     (vendor,)):
+                add(m)
+        return {"member": a["id"], "vendor": vendor, "current": a["model"], "options": opts, "free": True,
+                "format": "<provider>/<model>" if vendor in ("opencode", "dsh") else "", "note": note}
 
     def act_member_edit(self, p: rooms.Principal, b: dict) -> dict:
         a, conn = self._member(b.get("member")), self.db()
