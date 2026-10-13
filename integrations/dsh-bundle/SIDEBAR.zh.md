@@ -1,5 +1,7 @@
 # xmuse dsh 侧栏（抽屉）0.3.0
 
+> **已停止（2026-10-13）**：10-12 方向调整为"Claude 主控 + mod 面板"（`integrations/xmuse-panel/`），各家侧栏这条路线停止。抽屉的代码（`sidebar-host.js`、`client.js`）和插件包的其余部分交织在一起，所以先留在原处、测试照跑，不再扩展；拆分留作后续。同一路线的 Claude、OpenCode 侧栏已移到 `archive/`。
+
 dsh 桌面版里的 xmuse 侧栏：页面右缘一个可收起的抽屉，直连 hub 的视图模型
 （`docs/design/XMUSE2-VIEW-API.zh.md` v0 + v0.1 第 8 节），成员、时间线、发消息、审批、
 对齐条目、开房间和邀请都在这里做。在哪家侧栏开房间哪家就是主控；

@@ -1,0 +1,5 @@
+{
+  "name": "xmuse-marketplace",
+  "owner": { "name": "user" },
+  "plugins": [{ "name": "xmuse", "source": "./" }]
+}

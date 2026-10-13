@@ -173,7 +173,7 @@ hub 手里有每个助手的同步信息，用它拼出一段压缩指令，等�
 | T8f | mod：流式显示、H7 回原生 | T8b、T8e | Sonnet 子代理 |
 | T8g | 验收：用户按第 1 节走一遍 | 全部 | 用户 |
 
-mod 的切片要在桌面 App 里热加载实测，所以由本会话（或 Sonnet 子代理）写在 mod 目录里。测完再搬回仓库的 `integrations/claude-mod`。
+mod 的切片要在桌面 App 里热加载实测，所以由本会话（或 Sonnet 子代理）写在 mod 目录里。测完再搬回仓库。（10-13 更新：面板放在 `integrations/xmuse-panel/`，开发开关单独放在 `hooks/dev.ts`；旧的 `integrations/claude-mod` 已移到 `archive/claude-mod-t0/`。）
 
 ## 8. 风险
 

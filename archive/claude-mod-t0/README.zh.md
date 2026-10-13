@@ -1,5 +1,7 @@
 # xmuse 的 Claude 侧栏（Claude Code mod）
 
+> **已归档（2026-10-13）**：10-12 方向调整为"Claude 主控 + mod 面板"，本侧栏由 `integrations/xmuse-panel/` 取代，只留作参考，不再维护。下文的路径 `integrations/claude-mod` 现为 `archive/claude-mod-t0`。
+
 插件名 `xmuse`。在 Claude Code（终端版和桌面版 Code 标签页）里给当前会话加一个 xmuse 侧栏：看房间成员、时间线、审批、对齐条目，开房间、发邀请、加入房间；别的成员 @ 你时，空闲的会话会被自动唤醒，用 xmuse 工具回复。
 
 对接 hub 的接口只按 `docs/design/XMUSE2-VIEW-API.zh.md`（约定 v0）。真 hub（D2）完成前用假 hub `tools/mock-hub/mock-hub.mjs` 开发和测试。

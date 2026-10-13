@@ -1,5 +1,7 @@
 # xmuse 侧栏：OpenCode TUI 插件
 
+> **已归档（2026-10-13）**：10-12 方向调整为"Claude 主控 + mod 面板"，OpenCode 改为由 hub 驱动的助手，各家侧栏这条路线停止，只留作参考，不再维护。下文的路径 `integrations/opencode-plugin` 现为 `archive/opencode-plugin-t0`。
+
 OpenCode 2.x 的 TUI 插件，在会话页右侧栏显示 xmuse 房间。接口约定见
 `docs/design/XMUSE2-VIEW-API.zh.md`（v0 第 7 节、v0.1 第 8 节；8.8 与前文不一致时以 8.8 为准）。
 
