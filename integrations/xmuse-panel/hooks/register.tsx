@@ -270,41 +270,52 @@ async function getConn($: any): Promise<HubConn> {
   if (!/^[0-9a-f]{64}$/.test(key)) throw new Error('读不到侧栏凭据（sidebar.key）')
 
   const sid: string = await $.session.id()
-  const member = ((await $.store.get(STORE_MEMBER)) as string | undefined) || undefined
+  // the room's coordinator is the sidebar's Claude: a stored claude-N from an earlier join is not reused
+  let member: string | undefined = 'claude'
   let last = '没有可用的 hub'
   let unreachable = 0
-  for (const e of cands) {
-    const url = String(e.url).replace(/\/$/, '')
-    try {
-      const body: Record<string, unknown> = { dir: roomDir, vendor: 'claude', session_id: sid }
-      if (member) body.name = member
-      const r = await $.http.fetch(`${url}/v1/join`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-xmuse-sidebar': key },
-        body: JSON.stringify(body),
-      })
-      let data: any = null
-      try { data = JSON.parse(r.text) } catch { /* not JSON */ }
-      if (r.status === 200 && data && typeof data.operator_token === 'string') {
-        const conn: HubConn = { url, dir: roomDir, token: data.operator_token, member: String(data.member_id ?? ''),
-          memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
-        await $.store.set(STORE_CONN, conn)
-        if (conn.member) await $.store.set(STORE_MEMBER, conn.member)
-        await addKnown($, roomDir)
-        return conn
+  for (let pass = 0; pass < 2; pass++) { // a stored member that blocks the join is replaced by the coordinator once
+    let restart = false
+    for (const e of cands) {
+      const url = String(e.url).replace(/\/$/, '')
+      try {
+        const body: Record<string, unknown> = { dir: roomDir, vendor: 'claude', session_id: sid }
+        body.name = member ?? 'claude' // the sidebar's Claude is the coordinator; without a name the hub adds claude-N
+        const r = await $.http.fetch(`${url}/v1/join`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-xmuse-sidebar': key },
+          body: JSON.stringify(body),
+        })
+        let data: any = null
+        try { data = JSON.parse(r.text) } catch { /* not JSON */ }
+        if (r.status === 200 && data && typeof data.operator_token === 'string') {
+          const conn: HubConn = { url, dir: roomDir, token: data.operator_token, member: String(data.member_id ?? ''),
+            memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
+          await $.store.set(STORE_CONN, conn)
+          if (conn.member) await $.store.set(STORE_MEMBER, conn.member)
+          await addKnown($, roomDir)
+          return conn
+        }
+        if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
+        if (r.status === 409 && data?.error === 'member_exists') {
+          if (member && member !== 'claude') { // the stored member (a removed one, say) blocks: take the coordinator instead
+            await $.store.delete(STORE_MEMBER)
+            member = 'claude'
+            restart = true
+            break
+          }
+          last = `成员 ${member ?? ''} 还绑定在另一个（可能已关闭的）会话上，面板这里没有它的令牌，接管不了：`
+            + `在原会话里打开面板一次，或让 hub 解除绑定`
+          continue
+        }
+        last = `join 失败 ${r.status}: ${String(data?.message ?? data?.error ?? '').slice(0, 120)}`
+      } catch (err) {
+        if (err instanceof NoRoomError) throw err
+        last = `连不上 ${url}: ${errText(err)}`
+        unreachable++
       }
-      if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
-      if (r.status === 409 && data?.error === 'member_exists') {
-        last = `成员 ${member ?? ''} 还绑定在另一个（可能已关闭的）会话上，面板这里没有它的令牌，接管不了：`
-          + `在原会话里打开面板一次，或让 hub 解除绑定`
-        continue
-      }
-      last = `join 失败 ${r.status}: ${String(data?.message ?? data?.error ?? '').slice(0, 120)}`
-    } catch (err) {
-      if (err instanceof NoRoomError) throw err
-      last = `连不上 ${url}: ${errText(err)}`
-      unreachable++
     }
+    if (!restart) break
   }
   // every registered address is dead (entries a killed hub left behind, as after a reboot)
   if (known && unreachable === cands.length) throw new HubDownError(last)
