@@ -134,6 +134,17 @@ def current_session(conn, agent_id: str) -> dict | None:
                                " order by id desc limit 1", (agent_id,)))
 
 
+def session_for(conn, agent_id: str, thread: str | None = None) -> dict | None:
+    """The session a thread-scoped action (compact, attach) targets: the thread's bound session
+    when one exists, else the latest current session (pre-binding behavior)."""
+    if thread is not None:
+        s = db.row(conn.execute("select * from sessions where agent_id=? and state='current' and thread_id=?",
+                                (agent_id, thread)))
+        if s is not None:
+            return s
+    return current_session(conn, agent_id)
+
+
 def launch(db_factory, driver, agent_id: str, session_id: int, vendor_session: str,
            instructions: str):
     """Run a compaction in a daemon thread: flag the session compacting now, wait for the vendor's

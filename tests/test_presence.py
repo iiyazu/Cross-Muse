@@ -150,15 +150,17 @@ def test_tui_new_session_is_adopted(make, tui):
     h = make()
     sid = first_session(h)
     h.hook("claude-1", "SessionStart", pid=tui.pid, entrypoint="cli", session_id="tui-new-session", source="startup")
+    # room binding (v1): a TUI session is adopted for room-less turns only; the thread-bound hub session stays
+    # current and keeps resuming its own room
     rows = h.q("select vendor_session, origin, state from sessions order by id")
-    assert rows == [{"vendor_session": sid, "origin": "hub", "state": "retired"},
+    assert rows == [{"vendor_session": sid, "origin": "hub", "state": "current"},
                     {"vendor_session": "tui-new-session", "origin": "tui", "state": "current"}]
     h.plan_claude({})
     h.hook("claude-1", "SessionEnd", pid=tui.pid, entrypoint="cli", session_id="tui-new-session")
     h.send("claude-1", "continue where the human left off")
     h.wait_quiet()
     c = h.claude_calls()[-1]
-    assert c["argv"][c["argv"].index("--resume") + 1] == "tui-new-session"
+    assert c["argv"][c["argv"].index("--resume") + 1] == sid
 
 
 def test_headless_hooks_are_ignored(make):
