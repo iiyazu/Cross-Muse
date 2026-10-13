@@ -91,6 +91,8 @@ def mark_compacting(conn, session_id: int, on: bool) -> None:
 def notice_text(member: str, before_k: int | None = None, after_k: int | None = None) -> str:
     if before_k is not None and after_k is not None:
         return f"{member} 已压缩（约 {before_k}k → {after_k}k）"
+    if before_k:
+        return f"{member} 已压缩（压缩前约 {before_k}k；压缩后的大小在它下次回复后显示）"
     return f"{member} 已压缩"
 
 
@@ -147,10 +149,13 @@ def launch(db_factory, driver, agent_id: str, session_id: int, vendor_session: s
                 else {"ok": False, "error": "driver gone"}
         except Exception:  # noqa: BLE001 - recorded below as silence would confuse; flag still clears
             out = {"ok": False, "error": "crashed"}
+        before = context_of(conn, agent_id)
         with db.tx(conn):
             conn.execute("update sessions set compacting=0 where id=?", (session_id,))
+            if out.get("ok"):  # the last turn's size no longer holds; the next turn measures the compacted session
+                conn.execute("update sessions set compacted_at=? where id=?", (db.now(), session_id))
         if out.get("ok"):
-            notify_compacted(conn, agent_id)
+            notify_compacted(conn, agent_id, before // 1000 or None)
 
     t = threading.Thread(target=job, daemon=True)
     t.start()

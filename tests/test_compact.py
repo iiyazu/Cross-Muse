@@ -137,6 +137,7 @@ def test_manual_compact_ok_busy_unsupported_and_auth(make, monkeypatch):
            what="flag cleared")
     assert any("opencode-1 已压缩" in m["body"] for m in
                h.q("select body from messages where kind='notice'"))  # the notice
+    assert h.q("select compacted_at is not null c from sessions where vendor_session='ses-oc'") == [{"c": 1}]
     assert calls and calls[0][1] == "ses-oc"
     with db.tx(h.conn()) as c:  # busy: a running turn
         c.execute("insert into turns(agent_id, adapter, state, started_at) values('opencode-1','opencode','running',?)",
@@ -218,8 +219,23 @@ def test_view_fields_and_instructions_endpoint(make):
                   " values('opencode-1','ses-1','hub','current',1,?)", (db.now(),))
     _, v = view(h, ot)
     m = next(m for m in v["members"] if m["id"] == "opencode-1")
-    assert (m["context_tokens"], m["compacting"]) == (123456, True)
+    assert (m["context_tokens"], m["compacting"], m["compacted"]) == (123456, True, False)
     assert next(m for m in v["members"] if m["id"] == "lead")["context_tokens"] == 0
+    with db.tx(h.conn()) as c:  # compacted after that turn: the old size no longer holds
+        c.execute("update sessions set compacting=0, compacted_at=? where vendor_session='ses-1'", (db.now() + 1,))
+    _, v = view(h, ot)
+    m = next(m for m in v["members"] if m["id"] == "opencode-1")
+    assert (m["context_tokens"], m["compacting"], m["compacted"]) == (0, False, True)
+    with db.tx(h.conn()) as c:  # the next turn measures the compacted session
+        c.execute("insert into turns(agent_id, adapter, state, started_at) values('opencode-1','opencode','succeeded',?)",
+                  (db.now() + 2,))
+        tid2 = c.execute("select max(id) from turns").fetchone()[0]
+        c.execute("insert into usage(turn_id, agent_id, vendor, model, mode, input, cache_read, cache_write,"
+                  " output, context, calls, created_at) values(?, 'opencode-1','opencode','m','chat',"
+                  " 1,2,3,4,35000,1,?)", (tid2, db.now()))
+    _, v = view(h, ot)
+    m = next(m for m in v["members"] if m["id"] == "opencode-1")
+    assert (m["context_tokens"], m["compacted"]) == (35000, False)
     st, out = call(h, "GET", "/v1/compact_instructions?member=opencode-1", None, ot)
     assert st == 200 and "当前任务和进度" in out["text"]
     lead_tok = (h.state / "tokens" / "lead").read_text(encoding="utf-8").strip()
