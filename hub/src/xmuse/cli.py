@@ -299,7 +299,8 @@ def usage(state: Path, as_json: bool) -> None:
               f" {r['cache_read']:11,} {r['output']:8,} {r['max_context']:8,}")
 
 
-def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 2000) -> str:
+def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 2000,
+               thread: str | None = None) -> str:
     """An agent's current session as readable text (read-only; see transcript.py)."""
     from . import transcript as tr
     if path is not None:  # an explicit file: a Claude JSONL transcript or a dsh session log
@@ -308,9 +309,10 @@ def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 20
     a = db.row(conn.execute("select * from agents where id=?", (agent,)))
     if a is None:
         raise SystemExit(f"no agent {agent}")
-    s = db.row(conn.execute("select * from sessions where agent_id=? and state='current'", (agent,)))
+    from . import compact as _compact_mod
+    s = _compact_mod.session_for(conn, agent, thread)
     if s is None or not s["vendor_session"]:
-        raise SystemExit(f"{agent} has no current session yet")
+        raise SystemExit(f"{agent} has no current session yet" + (f" for {thread}" if thread else ""))
     sid, cfg = s["vendor_session"], config.load(state)
     if a["vendor"] == "claude":
         from .adapters.claude import transcript as claude_path
@@ -395,6 +397,10 @@ def main(argv=None) -> None:
     p.add_argument("decision", choices=["once", "always", "reject"])
     p = sub.add_parser("attach")
     p.add_argument("agent")
+    p.add_argument("--thread", help="the thread whose bound session to attach (default: latest current session)")
+    p = sub.add_parser("new-session", help="retire a thread's session so its next wake starts fresh")
+    p.add_argument("--agent", required=True)
+    p.add_argument("--thread", required=True)
     p = sub.add_parser("watch", help="print a line per batch of new messages for an agent (read-only; for Monitor)")
     p.add_argument("--agent", required=True)
     p.add_argument("--interval", type=float, default=5)
@@ -406,6 +412,7 @@ def main(argv=None) -> None:
     sub.add_parser("doctor", help="check the install and this workspace; prints a fix for each problem (read-only)")
     p = sub.add_parser("transcript", help="an agent's current session as readable text (read-only)")
     p.add_argument("agent")
+    p.add_argument("--thread", help="the thread whose bound session to read (default: latest current session)")
     p.add_argument("--path", type=Path, help="read this Claude .jsonl or dsh .jsonl.zstd file instead")
     p.add_argument("--clip", type=int, default=2000, help="max characters per entry (0: no limit)")
     p = sub.add_parser("run", help="start an orchestration preset: --preset plan-split-integrate --planner P "
@@ -522,9 +529,11 @@ def main(argv=None) -> None:
         print(json.dumps(call(state, "/v1/tools/" + name, {"args": read_args(a.args_file)}, a.agent),
                          indent=2, ensure_ascii=False))
     elif a.cmd == "transcript":
-        print(transcript(state, a.agent, a.path, a.clip))
+        print(transcript(state, a.agent, a.path, a.clip, a.thread))
     elif a.cmd == "attach":
-        print(call(state, "/v1/admin/attach", {"agent": a.agent})["command"])
+        print(call(state, "/v1/admin/attach", {"agent": a.agent, "thread": a.thread})["command"])
+    elif a.cmd == "new-session":
+        print(json.dumps(call(state, "/v1/admin/new_session", {"agent": a.agent, "thread": a.thread})))
     elif a.cmd == "run":
         print(json.dumps(call(state, "/v1/admin/run", {
             "preset": a.preset, "planner": a.planner, "executors": [x for x in a.executors.split(",") if x],

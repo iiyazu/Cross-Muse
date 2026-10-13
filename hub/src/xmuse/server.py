@@ -184,7 +184,10 @@ class Hub:
         """Alignment snapshot/delta plus unread list for a desktop coordinator's prompt; advances the session
         watermark (a turn-less wake). Nothing is marked read."""
         conn = self.db()
-        s = db.row(conn.execute("select id from sessions where agent_id=? and state='current'", (agent["id"],)))
+        s = db.row(conn.execute("select id from sessions where agent_id=? and state='current' and thread_id is null",
+                                (agent["id"],))) or \
+            db.row(conn.execute("select id from sessions where agent_id=? and state='current' order by id desc limit 1",
+                                (agent["id"],)))
         inj = wakepack.inject(conn, self.cfg, agent, s and s["id"])
         if s:
             with db.tx(conn):
@@ -259,7 +262,7 @@ class Hub:
         if self.db().execute("select 1 from turns where agent_id=? and state='running'",
                              (a["id"],)).fetchone():
             raise rooms.ApiError(409, "busy", f"{a['id']} is running a turn")
-        s = _compact_mod.current_session(self.db(), a["id"])
+        s = _compact_mod.session_for(self.db(), a["id"], b.get("thread"))
         if s is None:
             raise rooms.ApiError(400, "no_session", f"{a['id']} has no session to compact")
         text = _compact_mod.instructions(self.db(), self.cfg, a["id"])
@@ -377,10 +380,27 @@ class Hub:
         return self.preset.status(body.get("id"))
 
     def admin_attach(self, body: dict):
+        from . import compact as _compact_mod
         a = db.row(self.db().execute("select * from agents where id=?", (body["agent"],)))
-        s = self.db().execute("select vendor_session from sessions where agent_id=? and state='current'",
-                              (a["id"],)).fetchone()
-        return {"command": self.engine.drivers[a["vendor"]].attach_command(a, s and s[0])}
+        s = _compact_mod.session_for(self.db(), a["id"], body.get("thread"))
+        return {"command": self.engine.drivers[a["vendor"]].attach_command(a, s and s["vendor_session"])}
+
+    def admin_new_session(self, body: dict):
+        """Retire a thread's session so its next wake starts fresh (the alignment snapshot bootstraps
+        the new session). Without a bound row, legacy room-less hub sessions are retired instead so the
+        next wake cannot claim them. Room-less TUI/desktop/relay rows are never touched."""
+        agent, tname = body.get("agent"), body.get("thread")
+        if not agent or not tname:
+            raise ToolError("invalid_arguments", "new_session needs agent and thread")
+        conn = self.db()
+        with db.tx(conn):
+            n = conn.execute("update sessions set state='retired', retired_at=? where agent_id=? and state='current'"
+                             " and thread_id=?", (db.now(), agent, tname)).rowcount
+            if n == 0:
+                n = conn.execute("update sessions set state='retired', retired_at=? where agent_id=?"
+                                 " and state='current' and thread_id is null and origin='hub'",
+                                 (db.now(), agent)).rowcount
+        return {"ok": True, "retired": n}
 
     def admin_oc_messages(self, body: dict):
         """`xmuse transcript` for an OpenCode agent: its session's messages from the hub-owned server (read-only)."""
@@ -488,8 +508,9 @@ class Hub:
                     for i in ids)
             cur = db.row(conn.execute("select * from sessions where agent_id=? and state='current'", (agent,)))
             if cur is None or cur["vendor_session"] != sid:  # the bundle's bound dsh session; the engine never runs it
-                conn.execute("update sessions set state='retired', retired_at=? where agent_id=? and state='current'",
-                             (t, agent))
+                # room binding: only room-less rows are retired here; thread-bound hub sessions survive.
+                conn.execute("update sessions set state='retired', retired_at=? where agent_id=? and state='current'"
+                             " and thread_id is null", (t, agent))
                 conn.execute("insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
                              (agent, sid, str(self.ws), "relay", t))
             conn.execute("update sessions set wakes=wakes+1 where agent_id=? and state='current'", (agent,))

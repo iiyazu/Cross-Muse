@@ -474,17 +474,20 @@ class DshDriver:
         return False
 
     def _adopt(self, agent_id: str, sid: str, cwd: str | None) -> None:
-        """A desktop-opened session becomes the agent's current one: the hub continues it after."""
+        """A desktop-opened session becomes the agent's current one: the hub continues it after.
+        Room-less only (v1): thread-bound hub sessions are never adopted or retired here."""
         with db.tx(self.db()):
-            cur = db.row(self.db().execute("select * from sessions where agent_id=? and state='current'",
-                                           (agent_id,)))
+            cur = db.row(self.db().execute(
+                "select * from sessions where agent_id=? and state='current' and thread_id is null",
+                (agent_id,)))
             if cur and cur["vendor_session"] == sid:
                 return
             if cur:
                 self.db().execute("update sessions set state='retired', retired_at=? where id=?",
                                   (db.now(), cur["id"]))
-            old = db.row(self.db().execute("select * from sessions where agent_id=? and vendor_session=?",
-                                           (agent_id, sid)))
+            old = db.row(self.db().execute(
+                "select * from sessions where agent_id=? and vendor_session=? and thread_id is null",
+                (agent_id, sid)))
             if old:
                 self.db().execute("update sessions set state='current', retired_at=null where id=?", (old["id"],))
             else:

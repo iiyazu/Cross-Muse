@@ -159,8 +159,9 @@ def test_woken_agy_gets_the_same_entry_pack_as_other_vendors(make):
     assert "You are agy-new" in prompt
     assert "[brief] Build a parser." in prompt and "[decision] ids are int" in prompt
     assert "[assignment] parse this file -> agy-new" in prompt
-    # a re-wake in the same conversation is a delta: no identity or brief again
-    h.send("agy-new", "again")
+    # a re-wake in the same thread is a delta: no identity or brief again. (Sessions are
+    # bound per thread: the follow-up goes to the handoff's DM thread, not the human's.)
+    h.tool("lead", "xmuse_send", to="agy-new", body="again", _session="S-lead")
     h.wait(lambda: len(h.q("select 1 from turns where state='succeeded'")) == 2, what="second agy turn")
     second = h.agy_calls()[1]["prompt"]
     assert "You are agy-new" not in second and "Project brief:" not in second

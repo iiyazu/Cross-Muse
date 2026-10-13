@@ -428,8 +428,9 @@ class ClaudeDriver:
         """Claude desktop app: its pid is a Windows pid (never probe /proc), no TUI lease, no push, no headless
         resume. SessionStart makes the session current; SessionEnd only marks it offline."""
         sid = p.get("session_id")
-        cur = db.row(self.db().execute("select vendor_session from sessions where agent_id=? and state='current'",
-                                       (agent["id"],)))
+        cur = db.row(self.db().execute(
+            "select vendor_session from sessions where agent_id=? and state='current' and thread_id is null",
+            (agent["id"],)))
         if sid and event in ("SessionStart", "SessionEnd", "UserPromptSubmit"):
             with db.tx(self.db()):
                 if event == "SessionStart" or (event == "UserPromptSubmit" and (cur or {}).get("vendor_session") != sid):
@@ -463,14 +464,17 @@ class ClaudeDriver:
         return db.settings(a).get("cwd") if a else None  # None: the workspace (transcript falls back to it)
 
     def _adopt(self, agent_id: str, sid: str, origin: str = "tui") -> None:
-        """A TUI opened for this agent becomes its current session: the hub continues it after."""
-        cur = db.row(self.db().execute("select * from sessions where agent_id=? and state='current'", (agent_id,)))
+        """A TUI opened for this agent becomes its current session: the hub continues it after.
+        Room-less only (v1): thread-bound hub sessions are never adopted or retired here."""
+        cur = db.row(self.db().execute(
+            "select * from sessions where agent_id=? and state='current' and thread_id is null", (agent_id,)))
         if cur and cur["vendor_session"] == sid:
             return
         if cur:
             self.db().execute("update sessions set state='retired', retired_at=?, online=0 where id=?",
                               (db.now(), cur["id"]))
-        old = db.row(self.db().execute("select * from sessions where agent_id=? and vendor_session=?", (agent_id, sid)))
+        old = db.row(self.db().execute(
+            "select * from sessions where agent_id=? and vendor_session=? and thread_id is null", (agent_id, sid)))
         if old:
             self.db().execute("update sessions set state='current', retired_at=null where id=?", (old["id"],))
         else:

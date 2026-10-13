@@ -205,7 +205,8 @@ def test_session_start_hook_adopts_a_desktop_session(make):
     old = h.q("select vendor_session from sessions")[0]["vendor_session"]
     h.hook_dsh("dsh-1", "SessionStart", session_id="desktop-new", source="desktop", cwd="C:\\ws")
     rows = h.q("select vendor_session, origin, state from sessions order by id")
-    assert rows == [{"vendor_session": old, "origin": "hub", "state": "retired"},
+    # room binding (v1): the desktop session is adopted for room-less turns; the thread-bound hub session stays
+    assert rows == [{"vendor_session": old, "origin": "hub", "state": "current"},
                     {"vendor_session": "desktop-new", "origin": "tui", "state": "current"}]
     h.hook_dsh("dsh-1", "SessionStart", session_id="desktop-new", source="desktop", cwd="C:\\ws")
     assert len(h.q("select * from sessions")) == 2  # adopting the current session is a no-op

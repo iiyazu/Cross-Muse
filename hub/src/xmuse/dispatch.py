@@ -110,6 +110,29 @@ def release(conn, cfg: dict | None, h: str, why: str) -> int:
     return n
 
 
+def batch_thread(conn, host: str, pending: list[dict]) -> dict[int, str]:
+    """Where a released batch of host results is answered (room binding: one batch, one turn, one session).
+
+    Maps each pending message that came out of a released batch to one thread: the host's group thread when it is
+    in one (the room), else the thread of the batch's first result. Other pending messages keep their own thread,
+    so {} when no pending message belongs to a released batch."""
+    ids = {p["id"] for p in pending}
+    released = [r[0] for r in conn.execute(
+        "select message_id from dispatch_holds where host=? and released_at is not null order by message_id",
+        (host,)).fetchall() if r[0] in ids]
+    if not released:
+        return {}
+    # the host's own work comes back as wakes from its assignees (a question, a block) in the same admission: same thread
+    assignees = {r[0] for r in conn.execute(
+        "select d.member from dispatches d join messages hm on hm.id=d.message_id where hm.sender=?", (host,))}
+    batch = sorted(released + [p["id"] for p in pending if p["sender"] in assignees])
+    group = conn.execute(
+        "select t.id from threads t join thread_members m on m.thread_id=t.id"
+        " where m.member=? and t.kind!='dm' order by t.id desc limit 1", (host,)).fetchone()
+    target = group[0] if group else next(p["thread_id"] for p in pending if p["id"] == batch[0])
+    return {mid: target for mid in batch}
+
+
 def settle(conn, cfg: dict | None, h: str, force: str | None = None, woke: bool = False) -> int:
     """Release the host's held results when their batch is due. `woke`: the host wakes now anyway, so they go along.
     Caller's transaction."""

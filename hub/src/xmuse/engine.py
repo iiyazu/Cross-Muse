@@ -158,8 +158,39 @@ class Engine:
         if not pending or self._agent_capped(conn, agent):
             return
         driver = self.drivers[agent["vendor"]]
-        session = db.row(conn.execute("select * from sessions where agent_id=? and state='current'", (agent["id"],)))
-        pres = driver.presence(agent, session and session["vendor_session"])
+        # room binding: one turn serves one thread (the earliest pending one); each (agent, thread)
+        # pair resumes its own vendor session, so opening a thread pulls that thread's session.
+        # A released host batch is answered in one thread (dispatch.batch_thread), so it still wakes once.
+        route = dispatch.batch_thread(conn, agent["id"], pending)
+        rooms = {}
+        for p in pending:
+            rooms.setdefault(route.get(p["id"], p["thread_id"]), []).append(p)
+        tname = min(rooms, key=lambda t: rooms[t][0]["id"])
+        mine = rooms[tname]
+        session = db.row(conn.execute(
+            "select * from sessions where agent_id=? and state='current' and thread_id=?", (agent["id"], tname)))
+        claimed = False
+        if session is None:
+            # pre-binding sessions are room-less: the first thread that wakes claims hub-owned ones.
+            # TUI/desktop/relay rows stay room-less (v1: that side carries no thread context).
+            session = db.row(conn.execute(
+                "select * from sessions where agent_id=? and state='current' and thread_id is null"
+                " and origin='hub' order by id desc limit 1", (agent["id"],)))
+            claimed = session is not None
+        pres = None
+        if session is None:
+            # a live TUI holding one of this agent's room-less sessions keeps today's behavior (push
+            # into it, or queue while the human uses it). Only claude reports holder='tui'; anywhere
+            # else no room-less session means this thread gets a fresh one of its own.
+            for cand in db.rows(conn.execute(
+                    "select * from sessions where agent_id=? and state='current' and thread_id is null"
+                    " order by id desc", (agent["id"],))):
+                pc = driver.presence(agent, cand["vendor_session"])
+                if pc.holder == "tui":
+                    session, pres = cand, pc
+                    break
+        if pres is None:
+            pres = driver.presence(agent, session and session["vendor_session"])
         if pres.human_turn:
             return  # human input in flight: wait for its turn end
         if pres.holder == "tui":
@@ -175,17 +206,20 @@ class Engine:
             if conn.execute("select 1 from agents where id=? and paused=0 and coalesce(paused_until, 0)<=?",
                             (agent["id"], db.now())).fetchone() is None:
                 return  # the messages stay queued; resume kicks the engine
-            chain = pending[-1]["chain_id"]
+            chain = mine[-1]["chain_id"]
             tid = conn.execute("insert into turns(agent_id, session_id, adapter, chain_id, fresh, state, started_at)"
                                " values(?,?,?,?,?,?,?)", (agent["id"], None if fresh else session["id"], adapter.name,
                                                           chain, int(fresh), "running", db.now())).lastrowid
+            if claimed:
+                conn.execute("update sessions set thread_id=? where id=? and state='current' and thread_id is null",
+                             (tname, session["id"]))
             conn.executemany("update deliveries set state='admitted', turn_id=?, read_at=?, updated_at=? where id=?",
-                             [(tid, db.now(), db.now(), p["did"]) for p in pending])
-            for c in {p["chain_id"] for p in pending}:
+                             [(tid, db.now(), db.now(), p["did"]) for p in mine])
+            for c in {p["chain_id"] for p in mine}:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
         # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
         cwd = db.workdir(agent, self.ws)
-        pack = wakepack.render(conn, self.cfg, agent, pending, None if fresh else session["id"], str(cwd))
+        pack = wakepack.render(conn, self.cfg, agent, mine, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))
@@ -203,8 +237,9 @@ class Engine:
             return
         with db.tx(conn):
             sid = None if not fresh else conn.execute(
-                "insert into sessions(agent_id, vendor_session, cwd, origin, created_at) values(?,?,?,?,?)",
-                (agent["id"], info.get("handle"), info.get("cwd", str(cwd)), "hub", db.now())).lastrowid
+                "insert into sessions(agent_id, vendor_session, cwd, origin, thread_id, created_at)"
+                " values(?,?,?,?,?,?)",
+                (agent["id"], info.get("handle"), info.get("cwd", str(cwd)), "hub", tname, db.now())).lastrowid
             conn.execute("update turns set pid=?, handle=?, session_id=coalesce(session_id, ?) where id=?",
                          (info.get("pid"), info.get("handle"), sid, tid))
             if sid:

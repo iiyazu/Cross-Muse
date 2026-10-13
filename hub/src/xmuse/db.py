@@ -21,6 +21,7 @@ create table if not exists sessions(
   cwd text,                                  -- dsh resumes only in the exact cwd it was created in
   origin text not null,                      -- hub | tui
   state text not null default 'current',     -- current | retired
+  thread_id text,                            -- room binding: the thread whose turns resume this session (null = room-less)
   context_tokens integer not null default 0, total_tokens integer not null default 0,
   wakes integer not null default 0, created_at real not null, retired_at real);
 create table if not exists threads(
@@ -158,6 +159,8 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # T8c H3: compaction state per session (auto-compact mark, in-flight flag)
            ("sessions", "auto_compacted", "integer not null default 0"),
            ("sessions", "compacting", "integer not null default 0"),
+           # room binding: the thread whose turns resume this session (null = pre-binding / room-less)
+           ("sessions", "thread_id", "text"),
            # when the last hub-run compaction of the session succeeded: the size the view shows is stale until a turn
            ("sessions", "compacted_at", "real"),
            # the user took a message back (panel "撤回"): its body is replaced, this is when
@@ -170,6 +173,11 @@ def init(path) -> sqlite3.Connection:
     for table, col, decl in COLUMNS:
         if col not in {r[1] for r in conn.execute(f"pragma table_info({table})")}:
             conn.execute(f"alter table {table} add column {col} {decl}")
+    # room binding: at most one current session per (agent, thread). Room-less (null) rows stay
+    # exempt (nulls are distinct): pre-binding hubs keep working untouched.
+    if {"agent_id", "thread_id", "state"} <= {r[1] for r in conn.execute("pragma table_info(sessions)")}:
+        conn.execute("create unique index if not exists sessions_current_room on sessions(agent_id, thread_id)"
+                     " where state='current'")
     return conn
 
 
