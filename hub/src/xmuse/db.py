@@ -158,6 +158,8 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # T8c H3: compaction state per session (auto-compact mark, in-flight flag)
            ("sessions", "auto_compacted", "integer not null default 0"),
            ("sessions", "compacting", "integer not null default 0"),
+           # when the last hub-run compaction of the session succeeded: the size the view shows is stale until a turn
+           ("sessions", "compacted_at", "real"),
            # the user took a message back (panel "撤回"): its body is replaced, this is when
            ("messages", "retracted_at", "real")]
 

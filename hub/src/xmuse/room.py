@@ -173,6 +173,18 @@ def _status(conn, a: dict, online: bool) -> str:
     return "idle" if online else "offline"
 
 
+def _context(conn, agent_id: str) -> dict:
+    """The latest turn's context size; compacting (a hub-run compaction in flight); compacted (one succeeded after
+    that turn, so the size is stale and shows as 0 until the next turn measures the compacted session)."""
+    last = conn.execute("select u.context, t.started_at from usage u join turns t on t.id=u.turn_id"
+                        " where t.agent_id=? order by t.id desc limit 1", (agent_id,)).fetchone()
+    s = conn.execute("select coalesce(compacting, 0), compacted_at from sessions where agent_id=? and state='current'"
+                     " order by id desc limit 1", (agent_id,)).fetchone()
+    compacted = bool(s and s[1] and (last is None or s[1] > last[1]))
+    return {"context_tokens": 0 if compacted or last is None else last[0],
+            "compacting": bool(s and s[0]), "compacted": compacted}
+
+
 def members(conn, cfg: dict) -> list[dict]:
     since, out = db.now() - 3600, []
     prog = cfg.get("_progress") or {}
@@ -196,11 +208,7 @@ def members(conn, cfg: dict) -> list[dict]:
                                  "last_tool": pe.get("last_tool"), "text": pe.get("text", ""),
                                  "updated_at": pe.get("updated_at", 0.0)} if pe else None,
                     # T8c H3: the latest turn's context size, and whether a compaction is running
-                    "context_tokens": (conn.execute(
-                        "select u.context from usage u join turns t on t.id=u.turn_id"
-                        " where t.agent_id=? order by t.id desc limit 1", (a["id"],)).fetchone() or [0])[0],
-                    "compacting": bool(conn.execute("select 1 from sessions where agent_id=? and state='current'"
-                                                    " and coalesce(compacting, 0)=1", (a["id"],)).fetchone())})
+                    **_context(conn, a["id"])})
     return out
 
 
