@@ -139,6 +139,15 @@ def test_opencode_handle_tracks_tools_text_and_reply(tmp_path):
     p.handle({"type": "session.execution.succeeded", "data": {"sessionID": "ses_1"}})
     [end] = sink.ended
     assert end.reply == "ok"
+    # a text block being written shows as it grows (the panel's live draft), the whole block once it ends
+    p.turns["ses_1"] = Tracked(spec)
+    sink.prog.clear()
+    for ev in ({"type": "session.text.started", "data": {"sessionID": "ses_1"}},
+               {"type": "session.text.delta", "data": {"sessionID": "ses_1", "delta": "正在"}},
+               {"type": "session.text.delta", "data": {"sessionID": "ses_1", "delta": "回复"}},
+               {"type": "session.text.ended", "data": {"sessionID": "ses_1", "text": "正在回复。"}}):
+        p.handle(ev)
+    assert [u["text"] for _, u in sink.prog] == ["正在", "正在回复", "正在回复。"]
 
 
 # ---- H4 -------------------------------------------------------------------
@@ -147,10 +156,10 @@ def test_progress_shows_in_members_and_clears_on_end(make):
     h = team(make)
     tid, _ = mkturn(h)
     eng = h.hub.engine
-    eng.progress(tid, {"tools": 9, "last_tool": "bash", "text": "y" * 500})
+    eng.progress(tid, {"tools": 9, "last_tool": "bash", "text": "x" * 100 + "y" * 400})
     [m] = [x for x in rooms.members(h.conn(), h.hub.cfg) if x["id"] == "e1"]
     assert m["progress"]["turn"] == tid and m["progress"]["tools"] == 9
-    assert m["progress"]["last_tool"] == "bash" and len(m["progress"]["text"]) == 400
+    assert m["progress"]["last_tool"] == "bash" and m["progress"]["text"] == "y" * 400  # the latest part
     assert [x for x in rooms.members(h.conn(), h.hub.cfg) if x["id"] == "e2"][0]["progress"] is None
     end(h, tid)
     [m] = [x for x in rooms.members(h.conn(), h.hub.cfg) if x["id"] == "e1"]

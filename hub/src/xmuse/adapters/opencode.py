@@ -346,6 +346,7 @@ class Tracked:
     def __init__(self, spec: TurnSpec):
         self.spec, self.usage, self.seen, self.delivered, self.log = spec, Usage(), set(), False, spec.run_log.open("w", encoding="utf-8")
         self.tools, self.last_tool, self.reply = 0, None, None  # H4 progress, H13 last assistant text
+        self.partial = ""  # the text block being written (text.delta so far), shown live as the member's draft
 
 
 class OpenCodePrompt:
@@ -435,12 +436,17 @@ class OpenCodePrompt:
             t.last_tool = d.get("name") or t.last_tool
         elif typ == "session.tool.called" and t is not None:
             t.tools += 1
+        elif typ == "session.text.started" and t is not None:
+            t.partial = ""
+        elif typ == "session.text.delta" and t is not None and isinstance(d.get("delta"), str):
+            t.partial += d["delta"]
         elif typ == "session.text.ended" and t is not None and isinstance(d.get("text"), str):
-            t.reply = d["text"]
+            t.reply, t.partial = d["text"], ""
         if t is not None and typ in ("session.tool.called", "session.tool.input.started", "session.text.ended",
-                                     "session.step.ended"):
+                                     "session.text.delta", "session.step.ended"):
+            # the block being written when there is one (the panel draws it as a live draft), else the last whole one
             self.sink.progress(t.spec.turn_id, {"tools": t.tools, "last_tool": t.last_tool,
-                                                "text": t.reply or ""})
+                                                "text": t.partial or t.reply or ""})
         elif typ in ("session.compaction.ended", "session.compaction.failed"):
             for ev, box in self.compact_waiters.pop(sid, []):
                 box.append({"type": typ, "data": d})
