@@ -278,23 +278,34 @@ def test_preset_worktree_gets_the_executors_own_claude_config(make, tmp_path):
     assert s["cwd"] == str(wt) and s["effort"] == "high"
 
 
-def test_a_hub_run_member_runs_bash_behind_the_gate(tmp_path):
-    """Auto mode: hook.py PreToolUse denies what risk.py flags for a hub-run member, says nothing for the user's
-    own sessions (desktop, interactive cli), and lets everyday commands through."""
+def test_a_hub_run_member_runs_bash_behind_the_gate(make):
+    """Auto mode: hook.py PreToolUse asks the hub's risk check (POST /v1/risk) and denies what it flags for a hub-run
+    member, says nothing for the user's own sessions (desktop, interactive cli), lets everyday commands through, and
+    denies everything when the hub cannot answer."""
     import os
     import subprocess
     import sys
     from xmuse.config import HOOK
+    h = make()
 
-    def gate(cmd, **env):
-        r = subprocess.run([sys.executable, str(HOOK), "PreToolUse"], capture_output=True, text=True, timeout=20,
-                           input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(tmp_path)}),
-                           env={**os.environ, "XMUSE_STATE": str(tmp_path), "XMUSE_AGENT": "c1",
+    def gate(cmd, cwd=None, **env):
+        r = subprocess.run([sys.executable, "-I", str(HOOK), "PreToolUse"], capture_output=True, text=True,
+                           timeout=20, input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd},
+                                                         "cwd": cwd or str(h.ws)}),
+                           env={**os.environ, "XMUSE_STATE": str(h.state), "XMUSE_AGENT": "claude-1",
                                 "CLAUDE_CODE_ENTRYPOINT": "sdk-cli", **env})
         return r.stdout.strip()
 
     assert gate("pytest -q") == ""
     out = json.loads(gate("git push origin main"))["hookSpecificOutput"]
     assert out["permissionDecision"] == "deny" and "git push" in out["permissionDecisionReason"]
+    # the member's directory is the workspace, whatever directory its shell has moved to
+    assert "outside" in json.loads(gate("rm -rf build", cwd="/"))["hookSpecificOutput"]["permissionDecisionReason"]
     assert gate("git push origin main", CLAUDE_CODE_ENTRYPOINT="cli") == ""  # the user's own interactive claude
     assert gate("git push origin main", XMUSE_DESKTOP="1") == ""  # the desktop coordinator
+    (h.state / "hub.json").rename(h.state / "hub.json.away")  # no hub to ask: fail closed
+    try:
+        out = json.loads(gate("ls"))["hookSpecificOutput"]
+    finally:
+        (h.state / "hub.json.away").rename(h.state / "hub.json")
+    assert out["permissionDecision"] == "deny" and "could not check" in out["permissionDecisionReason"]

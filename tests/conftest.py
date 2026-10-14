@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from fakes.fake_opencode import FakeOpenCode  # noqa: E402
-from xmuse import db, init as xinit, registry  # noqa: E402
+from xmuse import auth, db, init as xinit, registry  # noqa: E402
 from xmuse.config import MODELS, family  # noqa: E402
 from xmuse.server import Hub, digest  # noqa: E402
 
@@ -65,8 +65,7 @@ class Harness:
 
     def add_raw(self, aid, vendor, settings=None):
         """A second agent of the same vendor (project configs allow one; the engine does not care), or dsh."""
-        tok = "xmt_" + aid
-        (self.state / "tokens" / aid).write_text(tok, encoding="utf-8")
+        tok = auth.issue(self.state, aid, "member")
         model = (settings or {}).pop("model", None) or MODELS[vendor]
         with db.tx(self.conn()) as c:
             c.execute("insert into agents(id, vendor, model, family, settings, token_digest, created_at)"

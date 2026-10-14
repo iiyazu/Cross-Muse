@@ -116,22 +116,30 @@ def test_a_429_in_a_successful_turns_output_is_not_a_quota():
     assert not _succeeded("RESOURCE_EXHAUSTED: quota exceeded") and not _succeeded('{"event":"result","result":{}}')
 
 
-def test_the_agy_gate_runs_the_auto_check(tmp_path):
-    """The generated .agents/xmuse-hook.py: everyday commands run, consequential ones are denied with the reason."""
+def test_the_agy_gate_asks_the_hub(make):
+    """The generated .agents/xmuse-hook.py (any python, stdlib only) asks the hub's risk check: everyday commands
+    run, consequential ones are denied with the reason, and with no hub to ask everything is denied."""
     import subprocess
     import sys
-    from xmuse.adapters.agy import gate_script
-    gate = tmp_path / "xmuse-hook.py"
-    gate.write_text(gate_script("agy-1", tmp_path), encoding="utf-8")
+    h = make(AGY)
+    gate = h.ws / ".agents" / "xmuse-hook.py"
 
     def ask(tool, **inp):
-        r = subprocess.run([sys.executable, str(gate)], input=json.dumps({"tool_name": tool, "tool_input": inp}),
+        r = subprocess.run([sys.executable, "-I", str(gate)], input=json.dumps({"tool_name": tool, "tool_input": inp}),
                            capture_output=True, text=True, timeout=20)
         return json.loads(r.stdout)
 
-    assert ask("run_command", CommandLine="python3 -m pytest -q", Cwd=str(tmp_path))["decision"] == "allow"
-    no = ask("run_command", CommandLine="cd x && git push", Cwd=str(tmp_path))
+    assert ask("run_command", CommandLine="python3 -m pytest -q", Cwd=str(h.ws))["decision"] == "allow"
+    no = ask("run_command", CommandLine="cd x && git push", Cwd=str(h.ws))
     assert no["decision"] == "deny" and "git push" in no["reason"] and "xmuse_send" in no["reason"]
-    assert ask("write_to_file", TargetFile=str(tmp_path / "a.py"))["decision"] == "allow"
+    assert ask("run_command", CommandLine="rm -rf build", Cwd="/")["decision"] == "deny"  # cwd places relative paths
+    assert ask("write_to_file", TargetFile=str(h.ws / "a.py"))["decision"] == "allow"
     assert ask("write_to_file", TargetFile="/etc/profile")["decision"] == "deny"
     assert ask("call_mcp_tool", ServerName="xmuse_xmuse", ToolName="xmuse_send")["decision"] == "allow"
+    hub_json = h.state / "hub.json"
+    hub_json.rename(h.state / "hub.json.away")  # what a stopped hub leaves: no hub.json
+    try:
+        down = ask("run_command", CommandLine="ls", Cwd=str(h.ws))
+    finally:
+        (h.state / "hub.json.away").rename(hub_json)
+    assert down["decision"] == "deny" and "could not check" in down["reason"]

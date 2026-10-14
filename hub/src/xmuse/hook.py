@@ -23,22 +23,28 @@ import urllib.request
 BAKED = globals().get("BAKED") or {}  # defined by the generated header of the per-workspace copy
 
 
-def gate(desktop: bool) -> None:
-    """PreToolUse(Bash) of a hub-run Claude member (auto mode lets it run Bash): a command risk.py flags is denied
-    with the reason, and the member asks the user through xmuse. The user's own sessions in the same directory
-    (the desktop coordinator, an interactive `claude`) keep their own prompts: nothing is said for them. When the
-    check itself fails, the command is denied: this gate fails closed."""
+def post(state: str, agent: str, path: str, body: dict, timeout: float) -> dict:
+    hub = json.load(open(os.path.join(state, "hub.json"), encoding="utf-8"))
+    token = open(os.path.join(state, "tokens", agent), encoding="utf-8").read().strip()
+    req = urllib.request.Request(f"http://127.0.0.1:{hub['port']}{path}", method="POST", data=json.dumps(body).encode(),
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
+    return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+
+
+def gate(desktop: bool, state: str, agent: str) -> None:
+    """PreToolUse(Bash) of a hub-run Claude member (auto mode lets it run Bash): a command the hub's risk check
+    (POST /v1/risk) flags is denied with the reason, and the member asks the user through xmuse. The user's own
+    sessions in the same directory (the desktop coordinator, an interactive `claude`) keep their own prompts: nothing
+    is said for them. When the check itself fails (hub down...), the command is denied: this gate fails closed."""
     if desktop or os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli":
         return
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("xmuse_risk", os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "risk.py"))
-        risk = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(risk)
         p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
         cmd = str((p.get("tool_input") or {}).get("command") or "")
-        why = risk.risky(cmd, p.get("cwd") or os.getcwd())
+        reply = post(state, agent, "/v1/risk", {"command": cmd, "cwd": p.get("cwd") or os.getcwd()}, 8)
+        if "result" not in reply:
+            raise RuntimeError((reply.get("error") or {}).get("message") or "no answer")
+        why = reply["result"].get("why")
     except Exception as e:  # noqa: BLE001
         why = f"the xmuse gate could not check this command ({e})"
     if why:
@@ -60,21 +66,16 @@ try:
         sys.stdout.flush()
         sys.exit(0)
     if event == "PreToolUse":
-        gate(desktop)
+        gate(desktop, state, agent)
         sys.exit(0)
     p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))  # UTF-8 whatever the Windows code page
-    hub = json.load(open(os.path.join(state, "hub.json"), encoding="utf-8"))
-    token = open(os.path.join(state, "tokens", agent), encoding="utf-8").read().strip()
     pid = int(os.environ.get("CLAUDE_PID") or os.getppid())
     body = {"event": event, "pid": pid, "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
             "session_id": p.get("session_id"), "source": p.get("source"), "reason": p.get("reason"),
             "transcript_path": p.get("transcript_path"), "prompt": str(p.get("prompt", ""))[:200]}
     if desktop:
         body["desktop"] = True
-    req = urllib.request.Request(f"http://127.0.0.1:{hub['port']}/v1/hooks/claude", method="POST",
-                                 data=json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
-    reply = json.loads(urllib.request.urlopen(req, timeout=3).read())
+    reply = post(state, agent, "/v1/hooks/claude", body, 3)
     res = reply.get("result") or {}
     if desktop and event == "UserPromptSubmit":
         if res.get("pending", 0) > 0:

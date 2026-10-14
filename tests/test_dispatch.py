@@ -16,7 +16,7 @@ def team(make, desktop_host=False, **cfg):
     with h.conn() as c:
         c.execute("insert into room(id, name, dir, host, created_at) values('r-t', 'dev', ?, 'coord', ?)",
                   (str(h.ws), time.time()))
-    h.ot = rooms.operator_token(h.conn(), "coord")  # the user, from the host's sidebar
+    h.ot = rooms.operator_token(h.conn(), h.hub.key, "coord")  # the user, from the host's sidebar
     return h
 
 
@@ -241,7 +241,7 @@ def test_notify_now_and_wake_host(make):
     assert st == 200 and out == {"ok": True, "released": 1}
     quiet(h)
     assert host_turns(h) == 2 and held(h) == []
-    st, out = act(h, rooms.operator_token(h.conn(), "e1"), act="wake_host")
+    st, out = act(h, rooms.operator_token(h.conn(), h.hub.key, "e1"), act="wake_host")
     assert st == 200 and out["released"] == 0  # nothing held
     st, out = act(h, h.token("e1"), act="wake_host")
     assert st == 403  # the member token cannot

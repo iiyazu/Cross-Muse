@@ -1,7 +1,7 @@
 """Auto approval: which commands still go to the user (risk.py)."""
 import pytest
 
-from xmuse.risk import risky
+from xmuse.risk import risky, risky_paths
 
 WS = "/home/u/proj"
 
@@ -62,6 +62,51 @@ LOCAL_CURL = [
     "curl -s -o /dev/null -w \"%{http_code}\\n\" http://127.0.0.1:14101/api/event 2>&1",
     "curl -s http://127.0.0.1:1/x > /dev/null", "find . -name '*.pyc' -delete", "sed -i s/a/b/ src/f.py",
 ]
+
+
+# what the syntax tree (tree-sitter-bash) reads that splitting a line could not
+PARSED_SAFE = [
+    "echo '$(not run)'", "printf '%s\\n' 'a | sh'", "bash -c 'pytest -q && git status'", "sh -c \"ls -la\"",
+    "for f in a b; do echo $f > out/$f.txt; done", "(cd sub && make test)", "grep -n 'git push' notes.md",
+    "cat <<EOF > out/notes.md\ngit push\nEOF", "echo hi >&2", "ls 2>&1 | tee out/log.txt",
+]
+PARSED_RISKY = [
+    ("for f in a; do rm -rf /; done", "outside"), ("f() { git push; }; f", "git push"), ("(cd sub && git push)", "git push"),
+    ("$CMD push", "command name"), ("echo hi > '/etc/x'", "outside"), ("cat <<EOF > /etc/x\nhi\nEOF", "outside"),
+    ("if true; then sudo ls; fi", "sudo"), ("bash -c 'cd x; git push'", "git push"), ("bash -c \"sh -c 'git push'\"", "git push"),
+    ("cat <<EOF | sh\nrm -rf /\nEOF", "input"), ("diff <(ls) b", "process substitution"), ("ls &> ~/out", "outside"),
+    ("pwsh -c 'Remove-Item x'", "-c"), ("bash -c \"$X\"", "-c"),
+]
+
+
+@pytest.mark.parametrize("cmd", PARSED_SAFE)
+def test_the_parser_lets_harmless_shapes_run(cmd):
+    assert risky(cmd, WS) is None, (cmd, risky(cmd, WS))
+
+
+@pytest.mark.parametrize("cmd,why", PARSED_RISKY)
+def test_the_parser_finds_commands_wherever_they_are_nested(cmd, why):
+    r = risky(cmd, WS)
+    assert r and why in r, (cmd, r)
+
+
+def test_cd_moves_where_relative_paths_land():
+    assert "outside" in risky("cd .. && rm -rf proj", WS)
+    assert "outside" in risky("cd / ; rm -rf x", WS)
+    assert "outside" in risky("cd ~ && echo x > a", WS)
+    assert "outside" in risky("cd $D && rm -rf x", WS)
+    assert risky("cd sub && rm -rf build && cd .. && echo ok > out.txt", WS) is None
+    assert risky("cd /tmp && rm -rf x", WS) is None
+    # the directory the agent's shell is already in (Claude's Bash keeps it between calls)
+    assert "outside" in risky("rm -rf x", WS, cwd="/home/u")
+    assert risky("rm -rf x", WS, cwd=WS + "/sub") is None
+
+
+def test_windows_paths_from_agy_map_to_the_hub():
+    assert risky_paths([r"C:\Users\u\proj\a.py"], "/mnt/c/Users/u/proj") is None
+    assert risky_paths([r"\\wsl.localhost\Ubuntu\home\u\proj\a.py"], "/home/u/proj") is None
+    assert "outside" in risky_paths([r"C:\Windows\x.dll"], "/mnt/c/Users/u/proj")
+    assert risky("echo x > out.txt", r"\\wsl$\Ubuntu\home\u\proj") is None
 
 
 @pytest.mark.parametrize("cmd", BYPASSES_STILL_ASKED)

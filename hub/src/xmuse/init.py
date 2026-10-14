@@ -6,13 +6,12 @@ Nothing global is touched. Generated files that should not be committed are list
 import json
 import os
 import re
-import secrets
 import subprocess
 from pathlib import Path
 
-from . import config, db
+from . import auth, config, db
 from .adapters import agy, claude, dsh, opencode
-from .server import digest
+from .auth import digest
 from .tools import tools_for
 
 WRITERS = {"claude": claude.write_config, "opencode": opencode.write_config, "dsh": dsh.DshDriver.write_config,
@@ -30,11 +29,9 @@ GENERATED = [".xmuse.json", ".mcp.json", ".claude/", ".opencode/", ".agents/", "
 SKILL_DIRS = [".claude/skills", ".opencode/skills", ".agents/skills"]  # .agents/skills: dsh
 
 
-def _token(path: Path) -> str:
-    tok = "xmt_" + secrets.token_urlsafe(32)
-    path.write_text(tok, encoding="utf-8")
-    path.chmod(0o600)
-    return tok
+def _token(state: Path, who: str) -> str:
+    """A JWT for member `who` (or "human": the admin token), written to tokens/ (auth.issue)."""
+    return auth.issue(state, who, "admin" if who == config.HUMAN else "member")
 
 
 def _git_common_dir(ws: Path) -> Path | None:
@@ -164,7 +161,7 @@ def init(ws: Path) -> Path:
         cfg.write_text(json.dumps({"workspace": str(ws),
                                    "claude_allow": CLAUDE_ALLOW + (PYTHON_ALLOW if python else [])}, indent=2), encoding="utf-8")
     if not (state / "tokens" / "_admin").exists():
-        _token(state / "tokens" / "_admin")
+        _token(state, config.HUMAN)
     (ws / ".xmuse.json").write_text(json.dumps({"state": str(state)}) + "\n", encoding="utf-8")
     write_prompts(ws, state, config.load(state))
     _claude_md(ws)
@@ -252,7 +249,7 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
                          (m, config.family(vendor, m), role or old["role"], json.dumps(s),
                           old["description"] if description is None else description, agent_id))
         else:
-            tok = _token(state / "tokens" / agent_id)
+            tok = _token(state, agent_id)
             m = model or config.MODELS[vendor]
             conn.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at,"
                          " description) values(?,?,?,?,?,?,?,?,?)",

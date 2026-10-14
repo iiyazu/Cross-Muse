@@ -225,13 +225,27 @@ def polled(agent: dict) -> bool:
 
 
 class Pool:
-    """One connection per thread (HTTP handlers, engine, adapter watchers)."""
+    """One connection per thread (HTTP handlers, engine, adapter watchers). The HTTP API's worker threads come and go
+    (and outlive a stopped server): a new connection closes those of threads that have ended, and close() closes all."""
 
     def __init__(self, path):
         self.path, self.local = path, threading.local()
+        self.lock, self.open = threading.Lock(), []  # [(thread, connection)]
 
     def __call__(self) -> sqlite3.Connection:
         c = getattr(self.local, "c", None)
         if c is None:
             c = self.local.c = connect(self.path)
+            with self.lock:
+                for t, old in self.open:
+                    if not t.is_alive():
+                        old.close()
+                self.open = [(t, o) for t, o in self.open if t.is_alive()] + [(threading.current_thread(), c)]
         return c
+
+    def close(self) -> None:
+        with self.lock:
+            for _, c in self.open:
+                c.close()
+            self.open = []
+        self.local = threading.local()
