@@ -10,22 +10,23 @@ SEND = ["xmuse_send", {"to": "human", "body": "pong"}]
 
 
 def test_turn_runs_headless_and_resumes_in_the_same_session(make):
+    """Resident mode (the default): the second wake is a line on the same process's stdin, in the same conversation."""
     h = make(AGY)
     h.plan_agy({"as": "agy-1", "calls": [SEND]}, {"as": "agy-1", "calls": [SEND]})
     m = h.send("agy-1", "ping")
     h.wait_quiet()
     [t] = h.turns()
-    assert t["state"] == "succeeded" and t["adapter"] == "agy"
+    assert t["state"] == "succeeded" and t["adapter"] == "agy", (t["error"], t["summary"])
     [s] = h.q("select * from sessions")
     assert s["vendor_session"].startswith("session-")
     assert h.q("select state from deliveries where message_id=?", m["id"])[0]["state"] == "done"
     assert h.q("select body from messages where sender='agy-1'")[0]["body"] == "pong"
 
     c1 = h.agy_calls()[0]
-    assert "-p" in c1["argv"]
+    assert "--input-format" in c1["argv"] and "-p" not in c1["argv"]
     assert "ping" in c1["prompt"] and "You are agy-1" in c1["prompt"]
 
-    # Second turn resumes in same session
+    # Second turn resumes in same session, in the same process
     h.send("agy-1", "again")
     h.wait_quiet()
     assert len(h.turns()) == 2
@@ -33,8 +34,75 @@ def test_turn_runs_headless_and_resumes_in_the_same_session(make):
     assert h.turns()[1]["handle"] == s["vendor_session"]
 
     c2 = h.agy_calls()[1]
+    assert c2["pid"] == c1["pid"]
+    assert "You are agy-1" not in c2["prompt"] and "again" in c2["prompt"]
+
+
+def test_cold_mode_runs_one_process_per_wake(make):
+    h = make(AGY, agy_resident=False)
+    h.plan_agy({"as": "agy-1", "calls": [SEND]}, {"as": "agy-1", "calls": [SEND]})
+    h.send("agy-1", "ping")
+    h.wait_quiet()
+    h.send("agy-1", "again")
+    h.wait_quiet()
+    [s] = h.q("select * from sessions")
+    c1, c2 = h.agy_calls()
+    assert "-p" in c1["argv"] and c1["pid"] != c2["pid"]
     assert f"--conversation={s['vendor_session']}" in c2["argv"]
-    assert "You are agy-1" not in c2["prompt"]
+    assert [t["state"] for t in h.turns()] == ["succeeded", "succeeded"]
+
+
+def test_a_hub_restart_resumes_the_conversation_in_a_new_resident(make):
+    h = make(AGY)
+    h.plan_agy({"as": "agy-1", "calls": [SEND]}, {"as": "agy-1", "calls": [SEND]})
+    h.send("agy-1", "ping")
+    h.wait_quiet()
+    h.hub.engine.drivers["agy"].headless.close()  # what a hub restart does to the process
+    h.hub.engine.drivers["agy"].headless.closing.clear()
+    h.send("agy-1", "again")
+    h.wait_quiet()
+    [s] = h.q("select * from sessions")
+    c1, c2 = h.agy_calls()
+    assert c1["pid"] != c2["pid"] and f"--conversation={s['vendor_session']}" in c2["argv"]
+    assert h.turns()[1]["state"] == "succeeded"
+
+
+def test_a_resident_that_dies_mid_turn_fails_the_turn_and_the_next_wake_starts_one(make):
+    h = make(AGY)
+    h.plan_agy({"as": "agy-1", "calls": [SEND]}, {"result": "exit"}, {"as": "agy-1", "calls": [SEND]})
+    h.send("agy-1", "one")
+    h.wait_quiet()
+    h.send("agy-1", "two")
+    h.wait_quiet()
+    assert [t["state"] for t in h.turns()][:2] == ["succeeded", "failed"]
+    h.send("agy-1", "three")
+    h.wait_quiet()
+    assert h.turns()[-1]["state"] == "succeeded"
+    calls = h.agy_calls()
+    assert calls[0]["pid"] == calls[1]["pid"] != calls[2]["pid"]
+
+
+def test_an_idle_resident_is_closed(make):
+    h = make(AGY, agy_idle=0.3)
+    h.plan_agy({"as": "agy-1", "calls": [SEND]})
+    h.send("agy-1", "ping")
+    h.wait_quiet()
+    headless = h.hub.engine.drivers["agy"].headless
+    h.wait(lambda: not headless.residents, what="idle resident closed")
+
+
+def test_turn_usage_is_the_turns_own_not_the_conversations(make):
+    """agy's result usage is the conversation's running total; a turn records the sum of its own model steps."""
+    h = make(AGY)
+    h.plan_agy({"as": "agy-1", "calls": [SEND]}, {"as": "agy-1", "calls": [SEND]})
+    h.send("agy-1", "one")
+    h.wait_quiet()
+    h.send("agy-1", "two")
+    h.wait_quiet()
+    t1, t2 = h.turns()
+    assert (t1["input"], t1["output"], t1["cache_read"], t1["calls"]) == (100, 30, 20, 1)
+    assert (t2["input"], t2["output"], t2["cache_read"]) == (100, 30, 20)
+    assert t2["context"] == 150
 
 
 def test_coding_turn_is_flagged_code(make):
@@ -124,9 +192,9 @@ def test_stream_json_progress_and_exact_usage(make):
     [t] = h.turns()
     assert t["state"] == "succeeded"
     assert t["mode"] == "code"
-    assert t["input"] == 120
-    assert t["output"] == 40
-    assert t["context"] == 160
+    assert t["input"] == 100  # the model steps' own usage (fake_agy: one step)
+    assert t["output"] == 30
+    assert t["context"] == 150
     prog = h.hub.engine.progress_state.get(t["id"])
     if prog:
         assert prog["tools"] >= 1
