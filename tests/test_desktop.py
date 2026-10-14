@@ -121,6 +121,8 @@ def test_non_desktop_config_is_unchanged(ws):
              for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop")}
     hooks["SessionStart"].append({"matcher": "compact", "hooks": [{
         "type": "command", "timeout": 10, "command": f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"}]})
+    hooks["PreToolUse"] = [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"{hook} PreToolUse",
+                                                         "timeout": 10}]}]
     settings = {"enabledMcpjsonServers": ["xmuse"], "permissions": {"allow": ["mcp__xmuse__*"]}, "hooks": hooks}
     assert (ws / ".claude" / "settings.json").read_text(encoding="utf-8") == json.dumps(settings, indent=2) + "\n"
 

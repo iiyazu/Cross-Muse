@@ -276,3 +276,25 @@ def test_preset_worktree_gets_the_executors_own_claude_config(make, tmp_path):
     assert identity(wt) == "dev-1" and identity(h.ws) == "lead"
     s = settings_of(h, "dev-1")
     assert s["cwd"] == str(wt) and s["effort"] == "high"
+
+
+def test_a_hub_run_member_runs_bash_behind_the_gate(tmp_path):
+    """Auto mode: hook.py PreToolUse denies what risk.py flags for a hub-run member, says nothing for the user's
+    own sessions (desktop, interactive cli), and lets everyday commands through."""
+    import os
+    import subprocess
+    import sys
+    from xmuse.config import HOOK
+
+    def gate(cmd, **env):
+        r = subprocess.run([sys.executable, str(HOOK), "PreToolUse"], capture_output=True, text=True, timeout=20,
+                           input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(tmp_path)}),
+                           env={**os.environ, "XMUSE_STATE": str(tmp_path), "XMUSE_AGENT": "c1",
+                                "CLAUDE_CODE_ENTRYPOINT": "sdk-cli", **env})
+        return r.stdout.strip()
+
+    assert gate("pytest -q") == ""
+    out = json.loads(gate("git push origin main"))["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "git push" in out["permissionDecisionReason"]
+    assert gate("git push origin main", CLAUDE_CODE_ENTRYPOINT="cli") == ""  # the user's own interactive claude
+    assert gate("git push origin main", XMUSE_DESKTOP="1") == ""  # the desktop coordinator

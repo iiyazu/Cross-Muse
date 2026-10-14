@@ -21,6 +21,7 @@ from pathlib import Path
 from .. import db, proc, registry
 from ..config import SHIM
 from ..env import clean_env
+from ..risk import risky
 from .base import Presence, TurnEnd, TurnSpec, Usage
 
 END = {"session.execution.succeeded": "succeeded", "session.execution.failed": "failed",
@@ -54,7 +55,8 @@ ASK_SHELL = ["git push*", "git merge*", "git rebase*", "git reset --hard*", "git
 RUNNERS = {"docker", "podman", "java", "javac", "mvn", "mvnw", "mvn.cmd", "gradle", "gradlew", "gradle.bat",
            "wsl", "wsl.exe", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 _WORDS = re.compile(r"[^\s;&|()<>`'\"$={}]+")
-POLICIES = ("allowlist", "blocklist-experiment", "open-experiment")
+# auto (the default, user 10-14): everything runs unasked but what risk.risky flags; allowlist: only the allowlist
+POLICIES = ("auto", "allowlist", "blocklist-experiment", "open-experiment")
 _META = re.compile(r";|&&|\|\||&|`|\$\(|\$\{|<\(|>\(|<|\n|\\\n")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+")
 
@@ -205,11 +207,14 @@ def names_key(resources) -> bool:
     return isinstance(resources, list) and any(isinstance(r, str) and registry.mentions_key(r) for r in resources)
 
 
-def shell_auto_ok(action: str | None, resources, policy: str = "allowlist") -> bool:
+def shell_auto_ok(action: str | None, resources, policy: str = "allowlist", ws: str = ".") -> bool:
     """True when every shell command in a permission request passes the policy's check (env prefixes removed
-    first: `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs)."""
+    first: `PYTHONPATH=x python -m unittest` is the common case that used to park unattended runs). `ws`: the
+    directory the agent works in (auto: what is inside it may change without asking)."""
     if action != "shell" or not isinstance(resources, list) or not resources or names_key(resources):
         return False
+    if policy == "auto":
+        return all(isinstance(r, str) and risky(r, ws) is None for r in resources)
     ok = blocklist_ok if policy == "blocklist-experiment" else command_auto_ok
     return all(isinstance(r, str) and ok(r) for r in resources)
 
@@ -218,13 +223,13 @@ def names_runner(cmd: str) -> bool:
     return any(w.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower() in RUNNERS for w in _WORDS.findall(cmd))
 
 
-def auto_decision(action: str | None, resources, policy: str = "allowlist") -> str | None:
+def auto_decision(action: str | None, resources, policy: str = "allowlist", ws: str = ".") -> str | None:
     """The hub's own answer to a permission request ('once' or 'reject'), or None: the human decides."""
     if policy == "open-experiment":
         return "once"
     if action == "shell" and names_key(resources):  # the sidebar key (contract 8.1): agents do not join by themselves
         return "reject"
-    return "once" if shell_auto_ok(action, resources, policy) else None
+    return "once" if shell_auto_ok(action, resources, policy, ws) else None
 
 
 def instance_dir(state: Path, agent_id: str) -> Path:

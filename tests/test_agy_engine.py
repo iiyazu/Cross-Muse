@@ -114,3 +114,24 @@ def test_a_429_in_a_successful_turns_output_is_not_a_quota():
     ok = '{"event":"step","duration_seconds":0.082294294}\n{"event":"result","result":{"status":"SUCCESS"}}\n'
     assert _succeeded(ok)
     assert not _succeeded("RESOURCE_EXHAUSTED: quota exceeded") and not _succeeded('{"event":"result","result":{}}')
+
+
+def test_the_agy_gate_runs_the_auto_check(tmp_path):
+    """The generated .agents/xmuse-hook.py: everyday commands run, consequential ones are denied with the reason."""
+    import subprocess
+    import sys
+    from xmuse.adapters.agy import gate_script
+    gate = tmp_path / "xmuse-hook.py"
+    gate.write_text(gate_script("agy-1", tmp_path), encoding="utf-8")
+
+    def ask(tool, **inp):
+        r = subprocess.run([sys.executable, str(gate)], input=json.dumps({"tool_name": tool, "tool_input": inp}),
+                           capture_output=True, text=True, timeout=20)
+        return json.loads(r.stdout)
+
+    assert ask("run_command", CommandLine="python3 -m pytest -q", Cwd=str(tmp_path))["decision"] == "allow"
+    no = ask("run_command", CommandLine="cd x && git push", Cwd=str(tmp_path))
+    assert no["decision"] == "deny" and "git push" in no["reason"] and "xmuse_send" in no["reason"]
+    assert ask("write_to_file", TargetFile=str(tmp_path / "a.py"))["decision"] == "allow"
+    assert ask("write_to_file", TargetFile="/etc/profile")["decision"] == "deny"
+    assert ask("call_mcp_tool", ServerName="xmuse_xmuse", ToolName="xmuse_send")["decision"] == "allow"

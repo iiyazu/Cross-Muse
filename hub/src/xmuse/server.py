@@ -78,11 +78,11 @@ class Hub:
         self.join_lock, self.started_at = threading.Lock(), time.time()
         self.version = rooms.stored_version(self.db())
         self.engine = Engine(state, self.cfg, self.db, {}, self.ws)
-        policy = os.environ.get("XMUSE_SHELL_POLICY") or "allowlist"
+        policy = os.environ.get("XMUSE_SHELL_POLICY") or "auto"
         if policy not in POLICIES:
             raise SystemExit(f"XMUSE_SHELL_POLICY must be one of {', '.join(POLICIES)}, not {policy!r}")
         self.engine.shell_policy = policy
-        if policy != "allowlist":
+        if policy not in ("auto", "allowlist"):
             log.warning("shell approval policy %s: %s", policy,
                         "everything approved, build/test runners flagged, no human" if policy ==
                         "open-experiment" else "bypassable blocklist for unattended experiments")
