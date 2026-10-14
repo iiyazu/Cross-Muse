@@ -80,8 +80,20 @@ OPENCODE_TOOLS = ("Your xmuse tools are code-mode tools, not shell commands: cal
                   "`await tools.xmuse.xmuse_send({...})` (search({query: \"xmuse\"}) lists them).")
 
 
+# agy calls MCP tools through call_mcp_tool and first reads each tool's schema file, one model step (3-6 s) per file;
+# a greeting took 33 steps and 87 s, most of them reading the skill and schemas and re-reading what this pack holds
+# (probe 10-14, room tmp_xmuse).
+AGY_TOOLS = ("The messages for you are below in full: do not fetch them again with xmuse_inbox, xmuse_thread or "
+             "xmuse_whoami, and read the xmuse-collab skill or tool schema files only when the task needs more than a "
+             "reply. Call the tools with call_mcp_tool, ServerName \"xmuse_xmuse\": xmuse_send {to, body, reply_to?, "
+             "mentions?} (to: a peer id, \"human\" or a group like \"#room\"; reply_to: the id of the message you "
+             "answer), then xmuse_done {summary, next} (next: \"none\" when nobody has to act).")
+VENDOR_TOOLS = {"opencode": OPENCODE_TOOLS, "agy": AGY_TOOLS}
+
+
 def relay(x) -> str:
-    return RELAY + " " + OPENCODE_TOOLS if x.fresh and x.agent.get("vendor") == "opencode" else RELAY
+    hint = VENDOR_TOOLS.get(x.agent.get("vendor", "")) if x.fresh else None
+    return RELAY + " " + hint if hint else RELAY
 
 
 def identity(x) -> str:

@@ -190,6 +190,7 @@ def test_wakepack_tags_relay_and_passive_summary(make):
     oc = {**agent, "vendor": "opencode"}
     assert "tools.xmuse.xmuse_send" in wakepack.render(conn, cfg, oc, msgs, None, "/w").text
     assert "code-mode tools" not in wakepack.render(conn, cfg, oc, msgs, 1, "/w").text  # a resumed session knows
+    assert 'ServerName "xmuse_xmuse"' in wakepack.render(conn, cfg, {**agent, "vendor": "agy"}, msgs, None, "/w").text
 
 
 def test_wakepack_recent_thread_excludes_new_messages(make):
