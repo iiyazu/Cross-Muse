@@ -9,7 +9,7 @@
 | `dsh-drawer-probe/` | C | dsh 插件探针：宿主侧路由 `/xmuse-probe/*` 转发到回环 hub，浏览器侧可收起抽屉；`test/host-proxy.mjs` 是假宿主测试 |
 | `http-echo-server.js` | A/C | 最小 HTTP 回显服务（记录每个请求），`node http-echo-server.js <port> <host> <logfile>` |
 | `pty-run.py` | A/B | 在伪终端里驱动交互式 TUI（claude / opencode）并截屏成文本 |
-| `scripts/` | 全部 | 实测时用的 shell 脚本（`run-a.sh`、`run-a-tui.sh`、`oc-serve.sh`、`oc-attach.sh`、`oc-tui-plugin.sh`、`winhub-*.bat` 等），路径写死为作者机器，仅供复现参考 |
+| （未公开） | 全部 | 实测时用的 shell 脚本路径写死为作者机器，没有公开 |
 
 注意：
 

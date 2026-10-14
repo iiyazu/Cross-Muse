@@ -1,173 +1,114 @@
-# xmuse 2
+# xmuse
 
 [中文](README.md)
 
-**In one line**: a local, cross-vendor collaboration layer for coding agents. Claude Code, OpenCode and dsh (DeepSeek Harness) agents keep running in their own native environments, and use the same small set of MCP tools to message each other, hand off work and share the conventions they have agreed on. The user coordinates them from one main window.
+Bring OpenCode, dsh, agy and other local agents into Claude Code and get them working together.
 
-## The problem
+You can let Claude lead and hand the work out to the other agents, or have several agents discuss one plan as equals and poke holes in it. Either way, the decisions, assumptions and open questions passed between them go through xmuse's collaboration layer, which decides who needs to know what, and when. Each agent keeps running in its own native environment; the collaboration UI is a panel in the Claude desktop app.
 
-When you use several coding agents at once, they cannot see each other. Hand-offs mean copy-paste, a changed convention reaches nobody, and when one agent waits on another, nobody wakes it up. Most existing answers move the agents into a new platform and lose their native sessions, tools and permission systems.
+> v1 (the room runtime) is deprecated; its code is on the `v1` branch.
 
-xmuse does the opposite: **the agents stay as they are, plus a thin plugin**. The plugin gives them an identity, direct and group messages, and shared context. A local hub stores messages, decides when to wake whom, and hands each woken agent the conventions that currently apply.
+## The problem it works on
 
-## Architecture
+When several independent agents work together, the hard part is context: what each agent should know, and when. If a decision changes and one agent misses it, that agent keeps working from the old one. If every chat message is forwarded to everyone, contexts grow without bound. xmuse spends its effort here and does not take the agents over: sessions, tools, permissions and context compaction stay with each vendor.
+
+How it does that:
+
+- **Agreements are entries, not chat.** Agents declare decisions, assumptions and open questions as entries (`kind=decision|assumption|question`); a new entry can `supersede` an old one. Entries belong to a thread and only go to the members concerned.
+- **A wake carries only the changes.** When the hub wakes an agent it attaches only what that agent has not seen yet. After a new session, a handoff or a detected compaction it sends a full snapshot instead, under a token budget, with the agent's assigned work first. Wake packs are built deterministically, without calling an LLM.
+- **Wake on demand.** A message wakes whoever it mentions; unaddressed messages go to the host. Every causal chain has a cap on wakes and tokens, so agents cannot keep waking each other.
+- **Private messages stay private.** What the user sends one member in private stays with that member. Passing it on needs the user's approval.
+
+## How it works
 
 ```mermaid
 flowchart TB
-  subgraph Agents["Vendor agents (native sessions, tools and permissions)"]
-    CC["Claude Code<br/>CLI / desktop"]
-    OC["OpenCode<br/>server"]
-    DSH["dsh<br/>headless / desktop foreground"]
+  USER["User"] --> PANEL["xmuse panel<br/>(Claude Code plugin)"]
+  CC["Claude Code<br/>(host)"] --- PANEL
+  subgraph HELPERS["Assistants"]
+    OC["OpenCode"]
+    AGY["agy"]
+    DSH["dsh"]
   end
-  SHIM["MCP stdio shim (TS, ~100 lines)<br/>xmuse_send / inbox / ack / thread / context / whoami / done"]
-  CC & OC --> SHIM
-  DSH -->|"dsh bundle (relay long-poll)"| HUB
-  SHIM -->|"loopback HTTP"| HUB
-  subgraph HUB["xmuse-hub (Python, one process per workspace)"]
-    MAIL["Mail<br/>messages, threads, idempotency"]
-    ENG["Engine<br/>admission, session leases, chain budgets"]
-    ALIGN["Alignment layer<br/>decisions / assumptions / open questions"]
-    PRE["Orchestration preset<br/>plan-split-integrate"]
-    DB[("hub.db<br/>SQLite")]
+  CC -->|"MCP tools"| HUB
+  PANEL -->|"HTTP"| HUB
+  subgraph HUB["hub (local, one per project)"]
+    MAIL["messages, threads"]
+    ENG["wake engine"]
+    ALIGN["agreement entries"]
+    DB[("hub.db (SQLite)")]
   end
-  ENG -->|"channel push / -p --resume"| CC
-  ENG -->|"/api/session/.../prompt + SSE"| OC
-  ENG -->|"headless --session-id"| DSH
-  HUB -.->|"optional: /curate /recall"| MO["MemoryOS"]
-  USER["User / desktop coordinator"] --> HUB
+  ENG -->|"vendor adapters"| HELPERS
+  HUB -.->|"optional"| MO["MemoryOS"]
 ```
 
-- **The hub** is about 5,500 lines of Python, adapters and the orchestration preset included. All state lives in `hub.db`, kept outside the workspace in `~/.local/state/xmuse/<workspace>-<hash>/`.
-- **Waking** takes a different path for each vendor:
-  - Claude: channel push into an interactive session, or `-p --resume` in the background;
-  - OpenCode: its server's prompt API plus SSE;
-  - dsh: headless `--session-id` continuation.
-  - A recipient runs at most one turn at a time; queued messages merge into that turn.
-- **Runaway limits**: each causal chain has a wake cap and a token cap, and each agent has per-hour turn and token caps. When a vendor rate limit hits, messages go back in the queue and the agent pauses until the reset time. `xmuse stop` interrupts at any time.
+The hub is a local Python process that keeps all state in one SQLite file. Agents send messages and declare agreements through a set of MCP tools. The hub wakes each assistant the way its vendor supports: OpenCode through its server API, agy and dsh in headless mode. Claude keeps all of its own capabilities; the hub does not drive it.
 
-## Quick start
+[MemryOS-lite](https://github.com/iiyazu/MemryOS-lite) can be attached as an optional memory layer. Without configuration it is not used.
 
-You need Linux or WSL, [uv](https://docs.astral.sh/uv/), node ≥ 20, and at least one agent CLI (`claude` or `opencode`). dsh runs on Windows only.
+## Install
+
+You need Linux or WSL, [uv](https://docs.astral.sh/uv/), Node 22, and the CLIs of the agents you want to bring in.
 
 ```bash
-git clone <repo> xmuse2 && cd xmuse2
-scripts/bootstrap.sh                     # uv sync + shim npm ci + xmuse doctor; safe to re-run
-export PATH="$PWD/hub/.venv/bin:$PATH"
-
-xmuse init ~/work/demo                   # state lives outside the workspace; writes an AGENTS.md section, the skill, .xmuse.json
-cd ~/work/demo
-xmuse agent add claude-1 --vendor claude
-xmuse agent add oc-1 --vendor opencode
-xmuse doctor                             # one line per check, with the command that fixes each problem
-xmuse hub start
-
-xmuse send claude-1 "implement calc.sub, then hand it to oc-1 for review"   # DM; group: '#topic' with --mention
-xmuse log                                # timeline of messages and turns, with tokens
-xmuse transcript oc-1                    # an agent's current session as readable text
+git clone https://github.com/iiyazu/Cross-Muse.git && cd Cross-Muse
+scripts/bootstrap.sh      # installs dependencies and runs a self-check; safe to re-run
 ```
 
-To set up the Claude desktop app as coordinator, dsh foreground mode or the dsh bundle, see [hub/README.md](hub/README.md) and [integrations/dsh-bundle/README.zh.md](integrations/dsh-bundle/README.zh.md).
+Then install the panel plugin from a Claude Code terminal session:
 
-## Key design points
+```
+/plugin install xmuse --marketplace <path to integrations/xmuse-panel>
+```
 
-- **Alignment layer (deterministic, no LLM on the hot path)**
-  - Agents declare conventions that others depend on with `kind=decision|assumption|question`. Declarations go straight into the store, and a new convention replaces an old one explicitly with `supersedes`.
-  - Each wake carries only the delta the agent has not seen yet, tracked by a watermark. After the vendor compacts a session, the next wake sends a full snapshot again.
-  - The wake pack is built by a pipeline of named processors and is byte-identical for equal state, so prefix caches keep hitting.
-  - **Module scope**: an entry can carry `module:<name>` and is injected only into agents subscribed to that module, plus the entry's author. Subscriptions come from the modules named in a handoff: both the assignee and the assigner (the planner) subscribe.
-  - **Dependency wake**: a handoff with `depends_on` does not wake the executor while the dependency is unresolved; once it resolves (a reply, a confirmation, a closed thread) the executor is woken.
-  - **Question routing**: a question wakes the planner without needing a mention; the planner's answer propagates in the original scope and wakes the asker.
-- **Info-layer master switch**: the hub setting `info_layer` (in `config.json` in the state directory, default `on`). With `off`, only plain messages remain: `kind` in the tool table is just `message`, there is no `xmuse_context`, the prompts no longer mention decisions and the like, and the hub rejects every other kind. Nothing is injected, there is no scope or question routing or dependency wake, and agents are woken by mentions only. It exists for controlled comparisons: same agents, same topology, only this switch differs.
-- **Several instances per vendor**: each OpenCode agent gets its own server (own port, password and config file); headless dsh passes its identity per run, so several can be registered. Claude can have several too, provided each member has its own directory: `xmuse agent add dev-1 --vendor claude --cwd <dir>` (the directory must exist and be inside the workspace or be the root of a git worktree of the workspace's repository). The member's `.mcp.json` and `.claude/` are written there and its turns run there; a member without `--cwd` keeps using the workspace root. One Claude member per directory, because `.mcp.json` can hold only one identity. `--effort low|medium|high|xhigh|max` sets a member's effort (headless Claude turns only; other vendors ignore it with a note).
-- **Rooms and sidebars**: the hub serves the [sidebar API contract](docs/design/XMUSE2-VIEW-API.zh.md): `/v1/view` (a long-polled full view), `/v1/act`, `/v1/rooms`, `/v1/join`, `/v1/rebind`, `/v1/leave`. A member token can only send and mark read; the operator token a sidebar receives stands for the user, may approve and manage, and what it sends is recorded as "the user (via the <provider> sidebar)". `xmuse invite <vendor> --role <role> --description <duties>` makes a one-time code (valid 10 minutes) that the other sidebar uses with `/xmuse join <code>`. `xmuse agent add --description` records what a member is responsible for; peers and sidebars see it.
-- **Orchestration preset plan-split-integrate**: one planner plus several executors, driven by a state machine in the hub.
-  - Phases: P0 planning (the planner writes `.xmuse-plan.json`: file ownership and an acceptance list) → P1 executors in parallel → P2 integration → P3 targeted fixes (2 rounds at most by default) → wrap-up. Every phase has a time limit and is forced forward on timeout; the default total limit is 3600 seconds.
-  - Each executor has its own git worktree and branch under `<workspace>/.xmuse-wt/<id>`; a snapshot (a `git diff --binary` patch) is saved at the end of each phase.
-  - A crashed agent is retried once, then degraded and taken over by another executor. A branch that conflicts on merge is left to the planner and logged as an event; edits outside an executor's files are logged, not blocked.
-  - Usage: `xmuse run --preset plan-split-integrate --planner P --executors E1,E2 --task-file F [--limits JSON]`; progress with `xmuse run-status [id]`.
-  - So far the whole flow has been tested only with scripted fake agents, not yet run end to end with real ones.
-- **Extra MCP servers for headless dsh and OpenCode**: `xmuse agent add <id> --vendor dsh|opencode --extra-mcp file.json` mounts additional stdio MCP servers (`[{name, command, args, env}]`) for that agent, for example a tool that can only run tests in the experiments.
-  - dsh: written into the overlay of every run.
-  - OpenCode: written into that instance's own config, plus an allow rule in the workspace permissions for the tools under those server names (`<name>_*`).
-- **Identity and provenance**
-  - Every agent has its own token, and messages record `via`. Words the coordinator relays for the user show as "human (via coordinator)"; messages sent from the CLI show "via cli".
-  - A dsh session must `/xmuse bind` to an agent before it can act as that agent.
-- **Desktop coordinator**: the Claude desktop app serves as the user's interface. The hub never wakes it in the background, replies addressed to the user are copied to it, and when it relays a decision for the user, the provenance says so.
-- **dsh bundle**: registers native `xmuse_*` tools and a `/xmuse` command in dsh desktop, long-polls the hub, and delivers messages into the bound session. The user can watch what dsh is doing and step in at any time.
-- **Trust model (stated plainly)**: this is a **single-user model that guards against mistakes, not against an agent that sets out to get around it**.
-  - Every OpenCode shell command goes to the hub first. The hub approves on its own only single commands on an allowlist (tests, read-only inspection, local git, and so on); chained commands, `bash -c`, `python -c` and everything else go to the human.
-  - Three admin actions need more than the admin token: approving a held command, confirming a proposal, and resuming a paused agent. The call must come from the user's own terminal (a process with a controlling terminal, outside every agent's process tree), or from the desktop coordinator relaying the user's own words.
-  - Remaining gap: agents run as the same OS user as the hub, so they can still read the token files, and a determined agent can fool the process check. A real boundary needs a separate OS user or a sandbox for agents; see [design §4.7](docs/design/XMUSE2-ARCH-2026-10.zh.md).
+Open the panel, press "开房间" (open a room), and add assistants at the top. You can also skip the panel and use the CLI:
 
-## Results and limits
+```bash
+export PATH="$PWD/hub/.venv/bin:$PATH"
+xmuse init ~/work/demo && cd ~/work/demo
+xmuse agent add oc-1 --vendor opencode
+xmuse hub start
+xmuse send oc-1 "implement calc.sub, then hand it to claude for review"
+```
 
-### M2b: alignment-layer comparison
-
-The [full report](docs/design/XMUSE2-M2B-EXP-REPORT.zh.md) is in Chinese. Setup: OpenCode implements and dsh reviews, on three small cross-module tasks. Groups A (wake everyone), B (wake only mentioned agents) and C (wake only mentioned agents, plus the alignment layer) have 9 runs each; there are also a long-session group and a review group.
-
-**Supported by the data:**
-- The alignment layer is cheap: at most 0.4% of a turn's tokens. But the store held only a dozen entries, so this shows low cost, not usefulness.
-- In a single turn, the reviewer finds a single planted bug: 6/6 found, with 2 false positives.
-- No run needed a human to finish or to fail. The exceptions: one run hung for about 30 minutes on a permission prompt, and one long-session run was stopped by hand.
-
-**Not supported:**
-- **"The alignment layer raises completion"**: C 7/9 vs B 6/9 is not significant. The only item that differed comes from an ambiguous spec. With the later runs it is 3/7 vs 0/6 (one-sided p≈0.12), and the task was picked after the fact.
-- **"The alignment layer prevents rot"**: every rot message named every agent, everyone followed it, so the test hits a ceiling.
-- **"MemoryOS helps"**: an offline replay of 35 runs recovered only 7 checklist items, 70% of its proposals were noise, and its recall ranking was no better than "take the newest".
-
-**Limits:**
-- Small samples (3 runs per group per task).
-- In the last 21 runs both agents used the same model, so they were cross-framework only.
-- No Claude agent took part.
-
-### T6: single-agent baseline and follow-ups
-
-[Pre-registration and results](docs/design/XMUSE2-T6-PREREG.zh.md) (in Chinese): metrics fixed before the runs, 42 runs in total. Same tasks, but the two ambiguities in the spec (the two "guess the answer" failures in M2b) are now written down.
-
-| Comparison | Result | 95% CI of the difference |
-|---|---|---|
-| Single agent (implement plus self-review) vs multi-agent (OpenCode implements, dsh reviews), completion rate | 9/9 vs 9/9 | −0.30 to +0.30 |
-| Alignment layer C2 vs B2 (minisql), completion rate | 6/6 vs 5/6 | −0.25 to +0.56 |
-| Same-vendor vs cross-vendor review, planted-bug detection | 6/6 vs 6/6 | −0.39 to +0.39 |
-
-- On small tasks the single agent and the multi-agent team score the same, and every interval spans 0. **The team shows no advantage and costs more**: a single-agent run averages about 830k tokens in 2 turns; the team about 4.1M tokens in 8 turns, so the single agent uses about a fifth.
-- Completion and detection rates hit the ceiling, so these tasks cannot tell the arms apart. Only cost differs.
-- With the spec fixed, the gap between alignment layer C and B shrinks to one run. That matches M2b's reading that the difference came from the ambiguity, and it does not show that the alignment layer helps.
-- Confounds: base and r7 (two machines) each ran part of the runs, with different hub commits and OpenCode versions; dsh used `deepseek-v4-flash` in T6 and muse-spark in M2b, so the two batches cannot be pooled.
-
-### T15: team experiment on a bug-hunt codebase (in progress)
-
-A small task cannot show the value of collaboration, so the next test is larger: a bug-hunt built on a private Spring Boot project, 44 bugs spread across layers, some of them cross-layer (the dataset is not public).
-- **Single agent**: one dsh agent fixed 32/44 in 7 minutes with no regressions. It never called the test tool and worked from reading the code alone. The set is too easy and its difficulty is being adjusted; if it is not, the team experiment runs on the current set.
-- **Team experiment**: [pre-registered](docs/design/T15-TEAM-PREREG.zh.md) (in Chinese) and **not yet run**. Three agents (one planner, two executors, from two shells and two models) use the preset above. The two groups share topology, task text, time limits and guardrails and differ only in the info-layer switch (`info_layer` on vs off), with 3 runs each, alternating. The primary metric is collaboration quality: duplicate fixes, fixes lost in integration, merge conflicts, inconsistent edits on the two sides of a cross-layer bug, and tokens. With 3 runs per group the results are descriptive only, with no significance claims.
-
-Where this leaves us: **there is no data yet that the info layer helps**, and on small tasks the team did no better than one agent. T15 asks whether that changes on a larger task where several agents must edit one system in parallel.
+Windows and WSL details are in [hub/README.md](hub/README.md) and the [panel notes](integrations/xmuse-panel/README.zh.md) (Chinese).
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `hub/` | Hub and CLI (`xmuse`), Python; `src/xmuse/adapters/` holds the vendor adapters |
-| `shim/` | MCP stdio shim (TS): forwards to the hub and handles Claude channel push |
-| `integrations/xmuse-panel/` | Collaboration panel (Claude Code mod, T8): one Claude session coordinates, the other agents assist |
-| `integrations/dsh-bundle/` | dsh desktop plugin bundle (JS) |
-| `skill/`, `templates/` | Collaboration skill and AGENTS.md section written into workspaces |
-| `tests/` | Hub tests (pytest; fake agents replay real recorded output), about 3 minutes |
-| `experiments/` | Scenarios, runner, metrics (`metrics.py`), offline replay (`replay_mo.py`), results |
-| `docs/design/` | Design notes, pre-registrations, experiment report, audit (Chinese) |
-| `docs/HANDOFF-BASE-REPORT.zh.md` | Per-task reports: what was done, raw test output, what was left open (Chinese) |
-| `scripts/bootstrap.sh` | One-step environment setup |
-| `archive/` | Early probes (`spikes/`), M1 end-to-end records (`e2e/`), the per-vendor sidebars of 10-11 (`claude-mod-t0/`, `opencode-plugin-t0/`), kept for history, not maintained |
+| `hub/` | the hub and the `xmuse` CLI; vendor adapters in `src/xmuse/adapters/` |
+| `shim/` | MCP shim that forwards tool calls to the hub |
+| `integrations/xmuse-panel/` | the Claude Code panel plugin |
+| `integrations/dsh-bundle/` | the dsh desktop plugin bundle |
+| `skill/`, `templates/` | the collaboration skill and AGENTS.md section written into a project |
+| `tests/` | hub tests, replaying recorded agent output through fake agents |
+| `experiments/`, `docs/design/` | experiments, design notes and reports |
+
+## Evidence
+
+Checked with mechanism probes: a small simulated project, one feature per probe, outcomes judged by a program, 10 runs per cell.
+
+- **Changed agreements reach everyone.** The user tells one member in private that the division of work changed. Without the hub, the other member stayed out of date in 10 of 10 runs; members passed the change on in only 1 run, and even then the peer did not act on it. Through the hub, all 10 runs were in sync (one-sided Fisher test, p=0.006). During the rounds around the change, the hub group woke once and used about 46% fewer tokens than broadcasting to everyone.
+- **Agreement entries are followed more than plain messages.** The same format rule, sent as a plain message, was judged "not a team rule" and ignored by 9 of 40 members; sent as an agreement entry, it was broken by 0 of 20 (p=0.019).
+- **Agreements are cheap.** In multi-agent coding runs, the agreement section took at most 0.4% of the tokens of a wake.
+
+Data and validity notes: the "S 系列阶段分析" section of [HANDOFF-BASE-REPORT.zh.md](docs/HANDOFF-BASE-REPORT.zh.md) and the [M2b report](docs/design/XMUSE2-M2B-EXP-REPORT.zh.md); probe design in [XMUSE2-PROBES.zh.md](docs/design/XMUSE2-PROBES.zh.md) (all in Chinese).
+
+## Limits
+
+- One machine, one user. Agents and the hub run as the same OS user; the permission model guards against mistakes, not against an agent that tries to get around it.
+- The panel depends on Claude Code's plugin interface and is developed and tested on the Windows desktop app with WSL.
+- The evidence comes from small simulated projects; it has not been measured systematically on large real projects.
 
 ## Development
 
 ```bash
-hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider   # tests that need Windows / dsh skip themselves
+hub/.venv/bin/python -m pytest tests -q -p no:cacheprovider
 (cd integrations/dsh-bundle && npm test)
+claude plugin test integrations/xmuse-panel
 ```
-
-Last measured: hub 337 passed, 1 skipped, in about 2 min 28 s; bundle 28 passed.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
