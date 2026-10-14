@@ -74,8 +74,14 @@ def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamesp
                            seq=align.current_seq(conn))
 
 
+# OpenCode (v2.0.26) reaches MCP tools only from its code tool; without this a fresh session first looked for
+# xmuse with shell commands, which the user had to approve (probe 10-14, room tmp_xmuse).
+OPENCODE_TOOLS = ("Your xmuse tools are code-mode tools, not shell commands: call them from your code tool as "
+                  "`await tools.xmuse.xmuse_send({...})` (search({query: \"xmuse\"}) lists them).")
+
+
 def relay(x) -> str:
-    return RELAY
+    return RELAY + " " + OPENCODE_TOOLS if x.fresh and x.agent.get("vendor") == "opencode" else RELAY
 
 
 def identity(x) -> str:

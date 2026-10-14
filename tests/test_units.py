@@ -186,6 +186,10 @@ def test_wakepack_tags_relay_and_passive_summary(make):
     assert "next_action: n" in text and "Also 1 unread message(s)" in text
     resume = wakepack.render(conn, cfg, agent, msgs, 1, "/w").text
     assert "You are" not in resume and "Earlier in" not in resume
+    assert "code-mode tools" not in text  # OpenCode only
+    oc = {**agent, "vendor": "opencode"}
+    assert "tools.xmuse.xmuse_send" in wakepack.render(conn, cfg, oc, msgs, None, "/w").text
+    assert "code-mode tools" not in wakepack.render(conn, cfg, oc, msgs, 1, "/w").text  # a resumed session knows
 
 
 def test_wakepack_recent_thread_excludes_new_messages(make):

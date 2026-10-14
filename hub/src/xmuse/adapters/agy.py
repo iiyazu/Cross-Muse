@@ -73,6 +73,18 @@ def _default_agy_bin() -> str | None:
     return None
 
 
+def _succeeded(stdout_text: str) -> bool:
+    """agy's final `result` event says SUCCESS."""
+    for line in reversed(stdout_text.splitlines()):
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("event") == "result":
+            return (ev.get("result") or {}).get("status") == "SUCCESS"
+    return False
+
+
 def parse_transcript(path: Path) -> tuple[dict, Usage]:
     """Parse transcript.jsonl of one run -> (info, usage)."""
     info, u = {}, Usage()
@@ -167,9 +179,11 @@ class AgyHeadless:
                     last_convs = self._read_last_conversations()
                     sid = last_convs.get(str(cwd)) or last_convs.get(to_win(spec.cwd)) or f"session-{spec.turn_id}"
 
-            full_output = (stdout_text + "\n" + stderr_text).strip()
-            is_unknown = "not found" in full_output.lower() or "does not exist" in full_output.lower()
-            is_quota = "resource_exhausted" in full_output.lower() or "quota" in full_output.lower() or "429" in full_output
+            # Only a turn agy did not report as a success is searched for these: the output carries tool results and
+            # timings ("duration_seconds":0.082294294 once read as a 429 and paused a healthy agy for an hour).
+            full_output = "" if _succeeded(stdout_text) else (stdout_text + "\n" + stderr_text).strip().lower()
+            is_unknown = "not found" in full_output or "does not exist" in full_output
+            is_quota = re.search(r"resource_exhausted|quota|\b429\b", full_output) is not None
 
             # Parse usage
             transcript_path = self._transcript_path(sid)
