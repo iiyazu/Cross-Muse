@@ -20,17 +20,17 @@ import {
 // T8 wrap-up: stop, retract, compaction (context size per member, the 压缩 button, the session.compact hook), the hub
 // found through WSL instead of fixed paths, and a known room's hub started by itself after a reboot.
 // TODO: "open in terminal" (H7).
-// DEV (./dev.ts) is false in the repository and true in a dev mod folder. It switches the dev-only things: LOAD_MARK
-// and FOCUS_MARK (written for diagnosis), the ROOM_OVERRIDE fallback and DEV_AVATAR_DIR.
-import { DEV, DEV_AVATAR_DIR, FOCUS_MARK, LOAD_MARK, ROOM_OVERRIDE } from './dev'
+// DEV (./dev.ts) is false in the repository and true in a dev mod folder. It switches the dev-only things: LOAD_MARK,
+// FOCUS_MARK and REBIND_MARK (written for diagnosis), the ROOM_OVERRIDE fallback and DEV_AVATAR_DIR.
+import { DEV, DEV_AVATAR_DIR, FOCUS_MARK, LOAD_MARK, REBIND_MARK, ROOM_OVERRIDE } from './dev'
 
 const PANE = 'xmuse'
 // The registry directory (hubs.json, sidebar.key, install.json) and how to start a hub are found once through WSL and
 // kept in the store: see hubSetup. Nothing machine-specific is written here.
 const STORE_SETUP = 'setup' // HubSetup
 const STORE_KNOWN = 'knownRooms' // string[]: room directories this panel has joined; one found down gets its hub started
-const STORE_CONN = 'conn' // { url, token, member }: the operator token from /v1/join
-const STORE_MEMBER = 'member' // our member id in the room, kept so a re-join takes the same member over
+const STORE_CONN = 'conn' // key prefix, 'conn:<room dir>' (connKey): { url, token, member }, the operator token from /v1/join
+// The sidebar's Claude joins as the room's coordinator: its id is the room's `host` in hubs.json.
 const STORE_AUTO = 'autoWake' // boolean: submit a turn when a message for the panel arrives (default off)
 const STORE_SEEN = 'wakeSeen' // number: highest message id already handled (submitted or baseline)
 
@@ -96,15 +96,21 @@ const REVEAL_STEP_MS = 70
 // token: operator (speaks as the user); memberToken: this session's own member; sid: the session the member was bound
 // to last. Both tokens live in the hub's state (db, tokens/), so they outlive a hub restart: only `url` changes then.
 type HubConn = { url: string; token: string; member: string; memberToken?: string; dir?: string; sid?: string }
-let connSuspect = false // a call to the stored address failed: check it before trusting it again
+const suspect = new Set<string>() // room dirs whose stored address failed a call: check it before trusting it again
+let legacyConnDropped = false
 
 async function setConn($: any, phase: ConnInfo['phase'], error: string) {
   await update($, connAtom, () => ({ phase, error }))
 }
 
-async function clearConn($: any) {
-  connSuspect = false
-  try { await $.store.delete(STORE_CONN) } catch { /* nothing stored */ }
+/** One store key per room directory: sessions on different rooms share the plugin's store and must not overwrite each other. */
+function connKey(dir: string): string {
+  return STORE_CONN + ':' + dir
+}
+
+async function clearConn($: any, dir: string) {
+  suspect.delete(dir)
+  try { await $.store.delete(connKey(dir)) } catch { /* nothing stored */ }
 }
 
 /** Does this hub take our operator token? 'ok', 'denied' (another room, or its state was reset) or 'down'. 3 s at most. */
@@ -122,19 +128,27 @@ async function probeToken($: any, url: string, token: string): Promise<'ok' | 'd
  * The member stays bound to the session that uses it: after the desktop app restarted (a new session id) the member
  * is moved over with /v1/rebind (the member token proves it is ours), once per session. Failing that, the panel still
  * works on the operator token; only the model's xmuse_send would be refused as "bound to another session".
+ * The rebind races a 3 s timeout like probeToken (no hang: see §3.2); the outcome goes to REBIND_MARK under DEV.
  */
 async function ensureBound($: any, c: HubConn): Promise<HubConn> {
   const sid: string = await $.session.id()
   if (c.sid === sid || !c.memberToken) return c
+  const mark = async (s: string) => {
+    if (DEV) { try { await $.fs.write(REBIND_MARK, `${new Date().toISOString()} ${s}\n`) } catch { /* diagnostics only */ } }
+  }
   try {
-    const r = await $.http.fetch(`${c.url}/v1/rebind`, {
-      method: 'POST', headers: { authorization: `Bearer ${c.memberToken}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ session_id: sid }),
-    })
-    if (r.status !== 200) return c
-  } catch { return c }
+    const r: any = await Promise.race([
+      $.http.fetch(`${c.url}/v1/rebind`, {
+        method: 'POST', headers: { authorization: `Bearer ${c.memberToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      }),
+      $.clock.sleep(3000).then(() => { throw new Error('timeout') }),
+    ])
+    if (r.status !== 200) { await mark(`rebind ${r.status}`); return c }
+  } catch (err) { await mark(`rebind ${errText(err)}`); return c }
   const n = { ...c, sid }
-  await $.store.set(STORE_CONN, n)
+  await $.store.set(connKey(n.dir ?? await roomDirFor($)), n)
+  await mark('rebind ok')
   return n
 }
 
@@ -210,10 +224,11 @@ async function hubAlive($: any, url: string, key: string): Promise<boolean> {
   } catch { return false }
 }
 
-/** Stored connection, or find the room for this session's directory and join it with the sidebar key. */
-async function getConn($: any): Promise<HubConn> {
-  const stored = (await $.store.get(STORE_CONN)) as HubConn | undefined
-
+/**
+ * The room directory of this session and the hubs registered for it: the session's cwd, or (DEV, no hub for the cwd)
+ * the override file's directory. getConn and roomDirFor use the same rule.
+ */
+async function lookupRoom($: any) {
   const cwd: string = await $.session.cwd()
   let hubsText = ''
   let hubsErr = ''
@@ -224,7 +239,7 @@ async function getConn($: any): Promise<HubConn> {
   } catch {
     hubsErr = '读不到本机登记表（hubs.json）：WSL 没启动，或还没有 hub'
   }
-  let roomDir = cwd
+  let roomDir = toPosix(cwd)
   let cands = matchHubs(parseHubs(hubsText), cwd).filter(e => isLoopbackUrl(e.url ?? ''))
   if (!cands.length && DEV) {
     // Dev only: a session whose own directory has no room can point at a test room's directory.
@@ -232,36 +247,51 @@ async function getConn($: any): Promise<HubConn> {
     try { alt = String(await $.fs.read(ROOM_OVERRIDE)).trim() } catch { /* no override */ }
     if (alt) { roomDir = alt; cands = matchHubs(parseHubs(hubsText), alt).filter(e => isLoopbackUrl(e.url ?? '')) }
   }
+  return { cwd, roomDir, cands, hubsErr, stateDir }
+}
+
+async function roomDirFor($: any): Promise<string> {
+  return (await lookupRoom($)).roomDir
+}
+
+/**
+ * Stored connection of this session's room, or find the room for this session's directory and join it with the
+ * sidebar key. Connections are kept per room directory (the store is shared by every session of the plugin).
+ */
+async function getConn($: any): Promise<HubConn> {
+  if (!legacyConnDropped) {
+    legacyConnDropped = true
+    try { await $.store.delete('conn') } catch { /* nothing stored */ } // the old single, session-shared key
+  }
+  const { cwd, roomDir, cands, hubsErr, stateDir } = await lookupRoom($)
+  const stored = (await $.store.get(connKey(roomDir))) as HubConn | undefined
   // joined before (the list, or a connection kept from before the list existed)
   const kr = await knownRooms($)
   const known = kr.includes(roomDir) || kr.includes(toPosix(cwd)) || (!!stored?.dir && stored.dir === roomDir)
   if (known && !kr.includes(roomDir)) await addKnown($, roomDir)
   if (!cands.length && known) throw new HubDownError(hubsErr || '房间的 hub 没在运行')
   if (!cands.length) throw new NoRoomError(hubsErr || '这个目录还没有 xmuse 房间')
-  // A stored connection is reused while it belongs to this directory's room (the directory or the dev override may
-  // now point at another hub). The hub restarted on a new address: the tokens still hold there, so only the address
-  // moves (a re-join would be refused: the member is still bound to the session that last used it).
+  // A stored connection is reused while the hub still takes it. The hub restarted on a new address: the tokens still
+  // hold there, so only the address moves (a re-join would be refused: the member is still bound to the session that
+  // last used it).
   if (stored && typeof stored.url === 'string' && typeof stored.token === 'string') {
     const urls = cands.map(e => String(e.url).replace(/\/$/, ''))
-    if (stored.dir && stored.dir !== roomDir) {
-      await clearConn($) // another room: forget it, member included
-      try { await $.store.delete(STORE_MEMBER) } catch { /* none stored */ }
-    } else if (urls.includes(stored.url) && !connSuspect) {
+    if (urls.includes(stored.url) && !suspect.has(roomDir)) {
       return ensureBound($, stored)
     } else {
       let down = 0
       for (const url of [stored.url, ...urls.filter(u => u !== stored.url)].filter(u => urls.includes(u))) {
         const p = await probeToken($, url, stored.token)
         if (p === 'ok') {
-          connSuspect = false
+          suspect.delete(roomDir)
           const moved = { ...stored, url }
-          if (url !== stored.url) await $.store.set(STORE_CONN, moved)
+          if (url !== stored.url) await $.store.set(connKey(roomDir), moved)
           return ensureBound($, moved)
         }
         if (p === 'down') down++
       }
       if (known && down === urls.length) throw new HubDownError(`连不上 ${urls.join('、')}`)
-      await clearConn($) // a hub that refuses our token (its state was reset): join afresh below
+      await clearConn($, roomDir) // a hub that refuses our token (its state was reset): join afresh below
     }
   }
 
@@ -270,52 +300,40 @@ async function getConn($: any): Promise<HubConn> {
   if (!/^[0-9a-f]{64}$/.test(key)) throw new Error('读不到侧栏凭据（sidebar.key）')
 
   const sid: string = await $.session.id()
-  // the room's coordinator is the sidebar's Claude: a stored claude-N from an earlier join is not reused
-  let member: string | undefined = 'claude'
   let last = '没有可用的 hub'
   let unreachable = 0
-  for (let pass = 0; pass < 2; pass++) { // a stored member that blocks the join is replaced by the coordinator once
-    let restart = false
-    for (const e of cands) {
-      const url = String(e.url).replace(/\/$/, '')
-      try {
-        const body: Record<string, unknown> = { dir: roomDir, vendor: 'claude', session_id: sid }
-        body.name = member ?? 'claude' // the sidebar's Claude is the coordinator; without a name the hub adds claude-N
-        const r = await $.http.fetch(`${url}/v1/join`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-xmuse-sidebar': key },
-          body: JSON.stringify(body),
-        })
-        let data: any = null
-        try { data = JSON.parse(r.text) } catch { /* not JSON */ }
-        if (r.status === 200 && data && typeof data.operator_token === 'string') {
-          const conn: HubConn = { url, dir: roomDir, token: data.operator_token, member: String(data.member_id ?? ''),
-            memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
-          await $.store.set(STORE_CONN, conn)
-          if (conn.member) await $.store.set(STORE_MEMBER, conn.member)
-          await addKnown($, roomDir)
-          return conn
-        }
-        if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
-        if (r.status === 409 && data?.error === 'member_exists') {
-          if (member && member !== 'claude') { // the stored member (a removed one, say) blocks: take the coordinator instead
-            await $.store.delete(STORE_MEMBER)
-            member = 'claude'
-            restart = true
-            break
-          }
-          last = `成员 ${member ?? ''} 还绑定在另一个（可能已关闭的）会话上，面板这里没有它的令牌，接管不了：`
-            + `在原会话里打开面板一次，或让 hub 解除绑定`
-          continue
-        }
-        last = `join 失败 ${r.status}: ${String(data?.message ?? data?.error ?? '').slice(0, 120)}`
-      } catch (err) {
-        if (err instanceof NoRoomError) throw err
-        last = `连不上 ${url}: ${errText(err)}`
-        unreachable++
+  for (const e of cands) {
+    const url = String(e.url).replace(/\/$/, '')
+    // The coordinator id is the room's host from hubs.json (it differs per room); a registry without it: 'claude'.
+    const member = typeof e.host === 'string' && e.host ? e.host : 'claude'
+    try {
+      const body: Record<string, unknown> = { dir: roomDir, vendor: 'claude', session_id: sid, name: member }
+      const r = await $.http.fetch(`${url}/v1/join`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-xmuse-sidebar': key },
+        body: JSON.stringify(body),
+      })
+      let data: any = null
+      try { data = JSON.parse(r.text) } catch { /* not JSON */ }
+      if (r.status === 200 && data && typeof data.operator_token === 'string') {
+        const conn: HubConn = { url, dir: roomDir, token: data.operator_token, member: String(data.member_id ?? ''),
+          memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
+        await $.store.set(connKey(roomDir), conn)
+        await addKnown($, roomDir)
+        return conn
       }
+      if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
+      if (r.status === 409 && data?.error === 'member_exists') {
+        // a sidebar join takes a member bound to another session over, so this is a removed member or another vendor's id
+        last = `成员 ${member} 不能加入：已被移出房间，或这个 id 属于别的厂商`
+        continue
+      }
+      last = `join 失败 ${r.status}: ${String(data?.message ?? data?.error ?? '').slice(0, 120)}`
+    } catch (err) {
+      if (err instanceof NoRoomError) throw err
+      last = `连不上 ${url}: ${errText(err)}`
+      unreachable++
     }
-    if (!restart) break
   }
   // every registered address is dead (entries a killed hub left behind, as after a reboot)
   if (known && unreachable === cands.length) throw new HubDownError(last)
@@ -334,10 +352,10 @@ async function callHub($: any, method: string, path: string, body?: unknown): Pr
         body: body === undefined ? undefined : JSON.stringify(body),
       })
     } catch (err) {
-      connSuspect = true // the hub may have restarted on another port: getConn checks before trusting it (tokens kept)
+      if (conn.dir) suspect.add(conn.dir) // the hub may have restarted on another port: getConn checks before trusting it (tokens kept)
       throw new Error(`连不上 ${conn.url}: ${errText(err)}`)
     }
-    if (r.status === 401 && attempt === 0) { await clearConn($); continue }
+    if (r.status === 401 && attempt === 0) { await clearConn($, conn.dir ?? await roomDirFor($)); continue }
     let data: any = null
     try { data = r.text ? JSON.parse(r.text) : null } catch { /* 204 or not JSON */ }
     return { status: r.status, data }
@@ -568,7 +586,7 @@ async function openRoom($: any, auto = false) {
         + '单元状态：systemctl --user status xmuse-hub-*）')
     }
     if (auto) {
-      await clearConn($) // the old address is dead: join afresh at the new one
+      await clearConn($, dir) // the old address is dead: join afresh at the new one
       await update($, openAtom, () => ({ busy: false, msg: '', error: '' }))
       await startLoop($)
       return
@@ -577,9 +595,7 @@ async function openRoom($: any, auto = false) {
     await openStep($, '创建房间…')
     if (!/^[0-9a-f]{64}$/.test(key)) throw new Error('读不到侧栏凭据（sidebar.key）')
     const sid: string = await $.session.id()
-    const member = ((await $.store.get(STORE_MEMBER)) as string | undefined) || undefined
-    const body: Record<string, unknown> = { dir, vendor: 'claude', session_id: sid }
-    if (member) body.member_id = member
+    const body: Record<string, unknown> = { dir, vendor: 'claude', session_id: sid, member_id: 'claude' } // a new room's host is the sidebar's Claude
     const r = await $.http.fetch(`${hub.url}/v1/rooms`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-xmuse-sidebar': key },
@@ -590,12 +606,11 @@ async function openRoom($: any, auto = false) {
     if (r.status === 200 && data && typeof data.operator_token === 'string') {
       const conn: HubConn = { url: hub.url, dir, token: data.operator_token, member: String(data.member_id ?? ''),
         memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
-      await $.store.set(STORE_CONN, conn)
-      if (conn.member) await $.store.set(STORE_MEMBER, conn.member)
+      await $.store.set(connKey(dir), conn)
       await addKnown($, dir)
       if (data.brief_missing === true) { await $.store.set(STORE_BRIEF, true); await update($, briefAtom, () => true) }
     } else if (r.status === 409 && data?.error === 'room_exists') {
-      await clearConn($) // the hub already has a room (another session opened it): the normal join takes over below
+      await clearConn($, dir) // the hub already has a room (another session opened it): the normal join takes over below
     } else {
       throw new Error(`建房失败 ${r.status}: ${String(data?.message ?? data?.error ?? r.text ?? '').slice(0, 140)}`)
     }
@@ -814,14 +829,16 @@ async function compactHook($: any, e: any, next: any) {
   if (e.agentId || e.trigger === 'precompute') return next(e)
   let hub = ''
   try {
-    const stored = (await $.store.get(STORE_CONN)) as HubConn | undefined
-    if (stored?.member) { // at most 5 s: a hub that does not answer must not hold the compaction up
-      const r: any = await Promise.race([
-        callHub($, 'GET', `/v1/compact_instructions?member=${encodeURIComponent(stored.member)}`),
-        $.clock.sleep(5000).then(() => null),
-      ])
-      if (r?.status === 200 && typeof r.data?.text === 'string') hub = r.data.text
-    }
+    // at most 5 s in all (room lookup included): a hub that does not answer must not hold the compaction up
+    const r: any = await Promise.race([
+      (async () => {
+        const stored = (await $.store.get(connKey(await roomDirFor($)))) as HubConn | undefined
+        if (!stored?.member) return null
+        return callHub($, 'GET', `/v1/compact_instructions?member=${encodeURIComponent(stored.member)}`)
+      })(),
+      $.clock.sleep(5000).then(() => null),
+    ])
+    if (r?.status === 200 && typeof r.data?.text === 'string') hub = r.data.text
   } catch { /* no hub: the engine's own prompt alone */ }
   if (!hub) return next(e)
   return next({ ...e, instructions: mergeCompactInstructions(e.instructions, hub) })
@@ -1010,7 +1027,7 @@ async function promote($: any, id: number) {
 async function callAsMember($: any, args: Record<string, unknown>): Promise<{ status: number; data: any }> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const conn = await getConn($)
-    if (!conn.memberToken) { await clearConn($); if (attempt === 0) continue; throw new Error('没有成员令牌（重新加入后仍缺）') }
+    if (!conn.memberToken) { await clearConn($, conn.dir ?? await roomDirFor($)); if (attempt === 0) continue; throw new Error('没有成员令牌（重新加入后仍缺）') }
     const r = await $.http.fetch(`${conn.url}/v1/tools/xmuse_send`, {
       method: 'POST',
       // the member is bound to this session (ensureBound): a bound member's tool calls name it
@@ -1018,7 +1035,7 @@ async function callAsMember($: any, args: Record<string, unknown>): Promise<{ st
         ...(conn.sid ? { 'x-xmuse-session': conn.sid } : {}) },
       body: JSON.stringify({ args }), // the hub's tool route reads body.args
     })
-    if (r.status === 401 && attempt === 0) { await clearConn($); continue }
+    if (r.status === 401 && attempt === 0) { await clearConn($, conn.dir ?? await roomDirFor($)); continue }
     let data: any = null
     try { data = r.text ? JSON.parse(r.text) : null } catch { /* not JSON */ }
     return { status: r.status, data }
