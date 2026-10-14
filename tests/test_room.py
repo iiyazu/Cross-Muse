@@ -161,6 +161,18 @@ def test_rebind_and_leave(make):
     assert st == 200 and h.q("select bound_session from agents where id='lead'")[0]["bound_session"] is None
 
 
+def test_taking_a_member_over_leaves_the_view_alone(make):
+    # two sessions on one room that take the host member back and forth must not redraw every sidebar on each take
+    h = make()
+    room = open_room(h)
+    mt, ot = room["member_token"], room["operator_token"]
+    v0 = view(h, ot)[1]["version"]
+    for sid in ("S-a", "S-b", "S-a"):
+        assert call(h, "POST", "/v1/rebind", {"session_id": sid}, mt)[0] == 200
+    assert view(h, ot)[1]["version"] == v0
+    assert call(h, "POST", "/v1/leave", {}, mt, "S-a")[0] == 200  # unbound is a change: the member goes offline
+    assert view(h, ot)[1]["version"] != v0
+
 # ---- the view: long poll, timeline, says --------------------------------------------------------------------------
 
 def test_long_poll_returns_on_change_and_204_when_quiet(make):

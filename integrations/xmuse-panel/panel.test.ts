@@ -188,6 +188,21 @@ for (const [label, columns] of [['narrow', 40], ['wide', 130]] as const) {
   })
 }
 
+test('the rail folds by the pane width, not by the transcript beside it', async ($, on) => {
+  on('clock.now', async () => ({ value: T0 }))
+  on('store.get', async () => ({ value: null }))
+  on('state.get', async (_$: any, e: any, next: any) => (e.key === 'view' ? { value: { value: widthView(), version: 1 } } : next(e)))
+  // a narrow docked pane beside a wide transcript: folded
+  let ui = await $.ui.mount({ plugin: 'xmuse', surface: 'desktop', component: 'Pane', requestId: 'xmuse', props: { bodyColumns: 40 }, viewport: { columns: 130, rows: 40 } })
+  expect(await ui.find({ type: 'Text', text: 'delta' })).toBeUndefined()
+  await ui.unmount()
+  // a wide pane beside a narrow transcript: open
+  ui = await $.ui.mount({ plugin: 'xmuse', surface: 'desktop', component: 'Pane', requestId: 'xmuse', props: { bodyColumns: 120 }, viewport: { columns: 50, rows: 40 } })
+  expect(await ui.find({ type: 'Text', text: 'delta' })).toBeDefined()
+  expect(await ui.find({ key: 'rail-toggle' })).toBeDefined()
+  await ui.unmount()
+})
+
 // ---- member chips: the status area stays small; a chip opens the full card ------------------------------------------------
 
 const chipView = {

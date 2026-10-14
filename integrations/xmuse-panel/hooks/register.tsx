@@ -681,7 +681,7 @@ async function autoRead($: any, view: any) {
 
 async function setTab($: any, tab: string) {
   await update($, tabAtom, () => tab)
-  await update($, replyAtom, () => 0)
+  if ((await read($, replyAtom)) !== 0) await update($, replyAtom, () => 0) // every write is a redraw: only a real one
   const view = await read($, viewAtom)
   if (view) await markRead($, unreadThreadsFor(view, tab))
 }
@@ -1010,8 +1010,13 @@ async function pendingForMe($: any, view: any): Promise<number> {
   return wakeCandidates(view, typeof seen === 'number' ? seen : maxWakeId(view)).length
 }
 
+let lastStatus: string | null = null // the status line as last set: set again only when its text changes
+
 async function refreshStatus($: any, view: any) {
-  $.ui.status(summaryLine(view, await pendingForMe($, view), (await $.store.get(STORE_AUTO)) === true))
+  const line = summaryLine(view, await pendingForMe($, view), (await $.store.get(STORE_AUTO)) === true)
+  if (line === lastStatus) return
+  lastStatus = line
+  $.ui.status(line)
 }
 
 /** Messages for the panel newer than the handled mark: submit one turn for all of them (auto on, or `force`). */
@@ -1161,7 +1166,13 @@ async function openPanel($: any) {
 // ---- theme, avatars, copy, draft, toasts ---------------------------------------------------------------------
 
 /** The `theme` row of /config decides the palette; read at start, after each view and on config.set. */
-async function refreshTheme($: any) {
+let themeAt = -Infinity // host clock of the last look at the theme: polls look at most every THEME_EVERY_MS
+const THEME_EVERY_MS = 30_000
+
+async function refreshTheme($: any, force = false) {
+  const now = await $.clock.now()
+  if (!force && now - themeAt < THEME_EVERY_MS) return
+  themeAt = now
   try {
     const rows = await $.config.list()
     const row = rows.find((r: any) => r.key === 'theme')
@@ -1284,8 +1295,8 @@ function avatar(ui: any, id: string, size: number, look: Look) {
 
 type Look = { light: boolean; pal: Pal; vend: Record<string, string>; badges: Record<string, string> }
 type RailMode = 'auto' | 'open' | 'closed'
-const RAIL_OPEN_COLS = 16 // the rail's width open (avatar and name) and folded (avatar only), in cells
-const RAIL_SHUT_COLS = 6
+const RAIL_OPEN_COLS = 18 // the rail's width open (avatar and name) and folded (avatar only), in cells
+const RAIL_SHUT_COLS = 7
 
 async function toggleFold($: any, key: string) {
   await update($, foldAtom, m => ({ ...m, [key]: !m[key] }))
@@ -1297,8 +1308,9 @@ async function drawPanel($: any, e: any) {
   drawStage = 'resolve'
   const ui = $.ui.resolve(e) as any
   const { Box, Text, Button, Input, Markdown, Code, Select, Client } = ui
-  // the pane's width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide)
-  const cols = Number(e?.viewport?.columns ?? 0)
+  // the pane's own width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide).
+  // Not viewport.columns: beside a docked pane that is the transcript's column, which widens as the pane narrows.
+  const cols = Number(e?.props?.bodyColumns ?? e?.viewport?.columns ?? 0)
   const narrow = cols > 0 && cols < NARROW_COLS
   drawStage = 'read view'
   // every value the draw reads, at once: one round trip to the host instead of one per value (a draw ran ~30 in a row)
@@ -1796,16 +1808,17 @@ async function drawPanel($: any, e: any) {
   const openMember = members.find(x => x.id === expanded)
   const peerMember = peerOf ? members.find(x => x.id === peerOf) : undefined
 
-  // the left rail, IM style: the room, one entry per member (the user's private chat with it), everything. Open: one
-  // row each (avatar, state dot, name, unread), the open one marked by an accent bar on a light ground, as a chat app's
-  // list. Folded (by hand, or by itself on a narrow pane): the avatar over a short name or the unread count. Only the
-  // Button takes a press (an avatar cannot), so the name is the target. The pane scrolls as one: the rail sits on top.
+  // the left rail, IM style: the room, one entry per member (the user's private chat with it), everything. The fold
+  // button heads it (the rail is as tall as the conversation, so a button at its foot could be far below). Open: one
+  // row each (accent bar when open, avatar, name, state dot, unread) with a blank row between, as a chat app's list.
+  // Folded (by hand, or by itself on a narrow pane): the avatar over a short name, or the unread count. Only a Button
+  // takes a press (an avatar cannot), so the name is the target. The pane scrolls as one: the rail sits on top.
   const railShown = railMode === 'open' || (railMode === 'auto' && !narrow)
   const fit = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
   const railIcon = (it: RailItem, size: number) => it.kind === 'room'
     ? <ui.Svg source={roomSvg(size)} alt="大群" width={size} height={size} />
     : it.peer ? avatar(ui, it.peer, size, look)
-    : <Box width={2} justifyContent="center"><Text dimColor>≡</Text></Box>
+    : <Box width={3} justifyContent="center"><Text dimColor>≡</Text></Box>
   const railRow = (it: RailItem) => {
     const sel = it.id === activeTab
     const m = it.peer ? members.find(x => x.id === it.peer) : undefined
@@ -1814,7 +1827,7 @@ async function drawPanel($: any, e: any) {
     const name = it.kind === 'room' ? '大群' : it.label
     if (!railShown) {
       return (
-        <Box key={`rw-${key}`} flexDirection="column" alignItems="center" width="100%" paddingY={0}
+        <Box key={`rw-${key}`} flexDirection="column" alignItems="center" width="100%" paddingY={1}
           {...(sel ? { backgroundColor: pal.bubble } : {})}>
           {railIcon(it, 24)}
           <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
@@ -1825,12 +1838,13 @@ async function drawPanel($: any, e: any) {
       )
     }
     return (
-      <Box key={`rw-${key}`} flexDirection="row" alignItems="center" gap={1} width="100%" {...(sel ? { backgroundColor: pal.bubble } : {})}>
-        <Text color={sel ? C_BLUE : pal.codeBg}>▍</Text>
-        {railIcon(it, 22)}
+      <Box key={`rw-${key}`} flexDirection="row" alignItems="center" gap={1} width="100%" paddingY={1}
+        {...(sel ? { backgroundColor: pal.bubble } : {})}>
+        <Text color={sel ? C_BLUE : undefined}>{sel ? '▍' : ' '}</Text>
+        {railIcon(it, 24)}
         <Box flexGrow={1} flexShrink={1}>
           <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
-            <Text bold={sel} color={m ? nc(m.id) : undefined}>{fit(name, RAIL_OPEN_COLS - 8)}</Text>
+            <Text bold={sel} color={m ? nc(m.id) : undefined}>{fit(name, RAIL_OPEN_COLS - 10)}</Text>
             {b ? <Text color={b.dot}>{' ●'}</Text> : null}
           </Button>
         </Box>
@@ -1840,16 +1854,16 @@ async function drawPanel($: any, e: any) {
   }
   const railNode = (
     <Box flexDirection="column" flexShrink={0} width={railShown ? RAIL_OPEN_COLS : RAIL_SHUT_COLS} backgroundColor={pal.codeBg}
-      paddingY={1} paddingRight={railShown ? 1 : 0} gap={railShown ? 0 : 1} alignItems={railShown ? 'stretch' : 'center'}>
-      {railRow(rail[0]!)}
-      <Box marginY={railShown ? 0 : 0} justifyContent="center"><Text dimColor>{railShown ? ' ' : '─'}</Text></Box>
-      {rail.slice(1).map(railRow)}
-      <Box flexGrow={1} />
-      <Box flexDirection="row" justifyContent="center" marginTop={1}>
-        <Button key="rail-toggle" plain dimColor onPress={() => toggleRail($, railShown)}>{railShown ? '‹ 收起' : '›'}</Button>
+      paddingRight={railShown ? 1 : 0}>
+      <Box flexDirection="row" alignItems="center" justifyContent={railShown ? 'space-between' : 'center'} paddingLeft={railShown ? 2 : 0}
+        paddingY={1}>
+        {railShown ? <Text dimColor>会话</Text> : null}
+        <Button key="rail-toggle" plain dimColor onPress={() => toggleRail($, railShown)}>{railShown ? '«' : '»'}</Button>
       </Box>
+      {rail.map(railRow)}
     </Box>
   )
+
 
 
   return (
@@ -2103,7 +2117,7 @@ export const register: Register = on => {
     }
     await $.command.register({ name: 'xmuse', description: 'Open the xmuse collaboration panel' })
     await registerTool($)
-    await refreshTheme($)
+    await refreshTheme($, true)
     await openPanel($)
     // a reload keeps the last view: its avatars are looked up now, not at the next change in the room
     const kept = await read($, viewAtom)

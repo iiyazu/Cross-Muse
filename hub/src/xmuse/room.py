@@ -93,7 +93,9 @@ def fingerprint(conn) -> tuple:
     one = lambda sql: tuple(conn.execute(sql).fetchone())  # noqa: E731
     return (one("select max(id) from messages"),
             one("select count(*), max(updated_at), total(read_at), total(acked_at) from deliveries"),
-            one("select group_concat(id || ':' || paused || ':' || removed || ':' || coalesce(bound_session, '')"
+            # bound or not (it makes a member online), never which session: sessions that take a member over from each
+            # other would otherwise change the view on every take, and every sidebar would redraw without pause
+            one("select group_concat(id || ':' || paused || ':' || removed || ':' || (bound_session is not null)"
                 " || ':' || role || ':' || description || ':' || model, '|') from agents"),
             one("select max(id), group_concat(agent_id) from turns where state='running'"),
             one("select count(*), max(id) from turns"),
