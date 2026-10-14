@@ -106,3 +106,11 @@ def test_write_config_mounts_mcp_and_hook(make):
     hooks_cfg = json.loads(hooks_file.read_text(encoding="utf-8"))
     assert "xmuse-safety" in hooks_cfg
     assert hooks_cfg["xmuse-safety"]["PreToolUse"][0]["matcher"] == "*"
+
+
+def test_a_429_in_a_successful_turns_output_is_not_a_quota():
+    """agy's output carries timings and tool results: "0.082294294" once paused a healthy agy for an hour."""
+    from xmuse.adapters.agy import _succeeded
+    ok = '{"event":"step","duration_seconds":0.082294294}\n{"event":"result","result":{"status":"SUCCESS"}}\n'
+    assert _succeeded(ok)
+    assert not _succeeded("RESOURCE_EXHAUSTED: quota exceeded") and not _succeeded('{"event":"result","result":{}}')
