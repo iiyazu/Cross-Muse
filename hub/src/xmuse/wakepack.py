@@ -82,17 +82,22 @@ OPENCODE_TOOLS = ("Your xmuse tools are code-mode tools, not shell commands: cal
 
 # agy calls MCP tools through call_mcp_tool and first reads each tool's schema file, one model step (3-6 s) per file;
 # a greeting took 33 steps and 87 s, most of them reading the skill and schemas and re-reading what this pack holds
-# (probe 10-14, room tmp_xmuse).
-AGY_TOOLS = ("The messages for you are below in full: do not fetch them again with xmuse_inbox, xmuse_thread or "
-             "xmuse_whoami, and read the xmuse-collab skill or tool schema files only when the task needs more than a "
-             "reply. Call the tools with call_mcp_tool, ServerName \"xmuse_xmuse\": xmuse_send {to, body, reply_to?, "
-             "mentions?} (to: a peer id, \"human\" or a group like \"#room\"; reply_to: the id of the message you "
-             "answer), then xmuse_done {summary, next} (next: \"none\" when nobody has to act).")
+# (probe 10-14, room tmp_xmuse). A resumed session forgets it: a one-joke reply still called xmuse_inbox,
+# xmuse_thread and xmuse_ack first, 3 of its 6 model steps (13 of 50 s; probe 10-14 turn 4), so agy gets it every wake.
+# xmuse_ack is not needed: the messages in a wake pack are marked read when the turn is admitted (Engine._admit).
+AGY_TOOLS = ("The messages for you are below in full and already count as read: do not fetch them again with "
+             "xmuse_inbox, xmuse_thread or xmuse_whoami, and do not xmuse_ack them; read the xmuse-collab skill or tool "
+             "schema files only when the task needs more than a reply. Call the tools with call_mcp_tool, ServerName "
+             "\"xmuse_xmuse\": xmuse_send {to, body, reply_to?, mentions?} (to: a peer id, \"human\" or a group like "
+             "\"#room\"; reply_to: the id of the message you answer), then xmuse_done {summary, next} (next: \"none\" "
+             "when nobody has to act).")
 VENDOR_TOOLS = {"opencode": OPENCODE_TOOLS, "agy": AGY_TOOLS}
+EVERY_WAKE = {"agy"}  # vendors whose hint goes into every wake, not only a new session's first
 
 
 def relay(x) -> str:
-    hint = VENDOR_TOOLS.get(x.agent.get("vendor", "")) if x.fresh else None
+    vendor = x.agent.get("vendor", "")
+    hint = VENDOR_TOOLS.get(vendor) if x.fresh or vendor in EVERY_WAKE else None
     return RELAY + " " + hint if hint else RELAY
 
 
