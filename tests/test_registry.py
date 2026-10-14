@@ -12,7 +12,7 @@ import pytest
 from conftest import sidebar_key
 from xmuse import db
 from test_init_cli import run, ws  # noqa: F401  (ws: fixture)
-from test_room import act, call, open_room, view
+from test_room import act, call, kind, open_room, view
 from test_trust import OC
 from xmuse import config, registry, room as rooms
 from xmuse.adapters.opencode import auto_decision, shell_auto_ok
@@ -232,7 +232,7 @@ def test_join_by_dir_and_by_room_id(make):
     st, j = join(h, role="reviewer", description="reviews D4", client_info={"client": "t"})
     assert st == 200 and j["member_id"] == "claude" and j["room"]["id"] == rooms.room_id(h.ws)
     assert j["room"]["host"] == "lead"
-    assert j["member_token"].startswith("xmt_") and j["operator_token"].startswith("xmo_")
+    assert kind(h, j["member_token"]) == ("member", "claude") and kind(h, j["operator_token"]) == ("operator", "claude")
     a = h.q("select role, description, bound_session, settings from agents where id='claude'")[0]
     assert (a["role"], a["description"], a["bound_session"]) == ("reviewer", "reviews D4", "S-j")
     assert json.loads(a["settings"]).get("desktop")  # lives in the user's own session

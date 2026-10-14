@@ -87,7 +87,6 @@ def test_unexpected_handler_errors_answer_500_json(make, monkeypatch):
     monkeypatch.setattr(type(h.hub), "act_pause", lambda self, p, b: (_ for _ in ()).throw(OSError("disk")))
     st, out = act(h, ot, act="pause", member="opencode-1")
     assert st == 500 and out["error"] == "internal_error" and "OSError" in out["message"]
-    monkeypatch.setattr(type(h.hub), "admin_pause", lambda self, b: (_ for _ in ()).throw(OSError("disk")), raising=False)
-    monkeypatch.setattr(type(h.hub), "route", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    monkeypatch.setattr(type(h.hub), "admin_stop", lambda self, b: (_ for _ in ()).throw(OSError("disk")))
     r = h.post("/v1/admin/stop", {}, h.token("human"))
     assert r["error"]["code"] == "internal_error"

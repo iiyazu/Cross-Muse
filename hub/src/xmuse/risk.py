@@ -1,7 +1,7 @@
 """Which shell commands still need the user in auto mode (the default approval policy, user 10-14).
 
-Everything else an agent runs is approved without asking. A command needs the user when any of its pieces
-(split at ; && || | & and newlines) is one of:
+Everything else an agent runs is approved without asking. A command line is parsed with tree-sitter-bash; it needs
+the user when any simple command in it (in a list, pipeline, subshell, loop, function body, `sh -c` script...) is:
   - git push / merge / rebase / reset --hard / clean / branch -D / checkout -- / checkout -f / restore
   - rm -r or rm -f of anything but a relative path inside the workspace or a path under /tmp
   - sudo / su / doas
@@ -10,27 +10,34 @@ Everything else an agent runs is approved without asking. A command needs the us
   - curl / wget to anything but a loopback address, or with a proxy, config file or name override
   - another machine or a publication: ssh, scp, remote rsync, nc; gh merge/create/release/api...; npm/cargo publish
   - dd, mkfs*, chmod -R, chown -R, shutdown, reboot
-  - a write outside the workspace and /tmp: a > or >> redirection, tee, cp/mv/install/ln, -o/--output, sed -i
+  - a write outside the workspace and /tmp: a > >> &> >| <> redirection, tee, cp/mv/install/ln, -o/--output, sed -i
   - find -delete/-exec outside the workspace; xargs rm/mv/cp/sh (paths never seen); a shell reading its input
   - a credential or xmuse's own state: ~/.ssh, ~/.claude, ~/.aws, ~/.gnupg, .netrc, .git-credentials, id_rsa /
     id_ed25519, xmuse's state directory or sidebar.key; the admin `xmuse send` / `xmuse approve`
-A command this module cannot read for sure is asked too: $( ), backticks, <( ), eval, source, `sh -c`-style
-inner scripts, unbalanced quotes.
+A command this module cannot read for sure is asked too: $( ), backticks, <( ), eval, source, a command name that is
+an expansion, a PowerShell/cmd inner script, a line that does not parse (unbalanced quotes...). A bash `-c` script
+with a literal body is parsed and checked like the outer line.
 
-Standalone on purpose (stdlib only, no package import): the agy and Claude member hooks embed this file's source.
+Runs in the hub only (POST /v1/risk): the agy and Claude member hooks ask the hub, so the parser is installed once.
 """
 import os
 import re
-import shlex
 
-_SUBST = re.compile(r"\$\(|`|<\(|>\(")
+import tree_sitter_bash
+from tree_sitter import Language, Node, Parser
+
+_PARSER = Parser(Language(tree_sitter_bash.language()))
+_DEPTH = 3  # sh -c 'sh -c "..."' nesting this check still reads
+
 _LOOPBACK = re.compile(r"^(https?://)?(127\.\d+\.\d+\.\d+|localhost|\[::1\])(:\d+)?(/|$)", re.I)
-_ENV = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _SECRET = re.compile(r"(^|[/\\~])\.(ssh|claude|aws|gnupg)([/\\]|$)|\.netrc|\.git-credentials|\bid_(rsa|ed25519|ecdsa)"
                      r"|\.local[/\\]state[/\\]xmuse|sidebar\.key", re.I)
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _SHELLS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "pwsh", "powershell", "cmd", "cmd.exe"}
-_OPS = {";", "&&", "||", "|", "&", "\n", "|&", ";;"}
-_REDIRECT = re.compile(r"^\d*>>?$|^&>>?$")
+_POSIX_SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+_WRITE_OPS = {">", ">>", "&>", "&>>", ">|", "<>", ">&"}
+_OPAQUE = {"command_substitution": "command substitution this check cannot read",
+           "process_substitution": "process substitution this check cannot read"}
 
 _OUT_FLAGS = {"-o", "--output", "-fprint", "-fprint0", "-fprintf", "-fls"}
 _GH_WRITE = {"merge", "create", "close", "delete", "edit", "comment", "review", "release", "api", "push", "fork",
@@ -48,38 +55,87 @@ GIT_ASK = {"push": "git push", "merge": "git merge", "rebase": "git rebase", "cl
 INSTALLERS = {"apt", "apt-get", "aptitude", "dnf", "yum", "pacman", "brew", "snap", "zypper", "apk"}
 
 
-def _inside(path: str, ws: str) -> bool:
+def native(path: str) -> str:
+    """A Windows path an agent on the Windows side reports (agy) -> the hub's own form: C:\\x -> /mnt/c/x,
+    \\\\wsl.localhost\\<distro>\\home\\x (or \\\\wsl$) -> /home/x. Anything else is returned as it is."""
+    if os.name == "nt" or not isinstance(path, str):
+        return path
+    m = re.match(r"^([A-Za-z]):[\\/]", path)
+    if m:
+        return f"/mnt/{m.group(1).lower()}/" + path[3:].replace("\\", "/")
+    m = re.match(r"^[\\/]{2}wsl(?:\.localhost|\$)[\\/][^\\/]+(.*)$", path, re.I)
+    if m:
+        return m.group(1).replace("\\", "/") or "/"
+    return path
+
+
+class Where:
+    """The workspace root a command may change, and the directory its relative paths start from. `cd` in the line
+    moves `cwd` (None: a directory this check cannot know, so no relative path is inside)."""
+
+    def __init__(self, root: str, cwd: str | None = None):
+        self.root = native(root)
+        self.cwd = native(cwd) if cwd else self.root
+
+    def cd(self, args: list[str]) -> None:
+        dest = next((native(a) for a in args if not a.startswith("-") or a == "-"), None)
+        if dest is None or dest == "-" or dest.startswith(("~", "$")) or (self.cwd is None and not os.path.isabs(dest)):
+            self.cwd = None  # home, the previous directory, an expansion: unknown
+            return
+        self.cwd = os.path.normpath(dest if os.path.isabs(dest) else os.path.join(self.cwd, dest))
+
+
+def _inside(path: str, ws: "str | Where") -> bool:
     """A path an agent may change without asking: under /tmp, /dev/null, or inside the workspace."""
+    w = ws if isinstance(ws, Where) else Where(ws)
+    path, ws = native(path), w.root
     if not path or any(c in path for c in "*?["):
         return False
     if path.startswith("~") or path.startswith("$"):
         return False
-    full = os.path.normpath(path if os.path.isabs(path) else os.path.join(ws, path))
+    if not os.path.isabs(path) and w.cwd is None:
+        return False
+    full = os.path.normpath(path if os.path.isabs(path) else os.path.join(w.cwd, path))
     if full in ("/dev/null", "/dev/stdout", "/dev/stderr") or full.startswith("/tmp/") or full == "/tmp":
         return True
     root = os.path.normpath(ws)
     return full == root or full.startswith(root.rstrip("/\\") + os.sep) or full.startswith(root.rstrip("/\\") + "/")
 
 
-def _pieces(cmd: str) -> list[list[str]] | None:
-    lex = shlex.shlex(cmd.replace("\n", " ; "), posix=True, punctuation_chars=";&|<>")  # a line is a command
-    lex.whitespace_split = True
-    lex.commenters = ""
-    try:
-        toks = list(lex)
-    except ValueError:
-        return None
-    out, cur = [], []
-    for t in toks:
-        if t in _OPS or set(t) <= set(";&|"):
-            if cur:
-                out.append(cur)
-            cur = []
-        else:
-            cur.append(t)
-    if cur:
-        out.append(cur)
-    return out
+# ---- from the syntax tree to argv ---------------------------------------------------------------------------
+
+def _word(n: Node) -> str:
+    """The value bash gives an argument node, as far as it is known without running anything. An expansion keeps
+    its `$...` text: a path starting with one is never inside the workspace."""
+    t = n.text.decode("utf-8", "replace")
+    if n.type == "raw_string":
+        return t[1:-1]
+    if n.type == "ansi_c_string":
+        return t[2:-1]
+    if n.type == "string":
+        return "".join(_word(c) for c in n.children if c.type != '"')
+    if n.type == "string_content":
+        return re.sub(r"\\([\\$`\"\n])", r"\1", t)
+    if n.type == "concatenation":
+        return "".join(_word(c) for c in n.children)
+    if n.type == "word":
+        return re.sub(r"\\(.)", r"\1", t, flags=re.S)
+    return t  # number, simple_expansion, expansion, ...
+
+
+def _dynamic(n: Node) -> bool:
+    """The node's value depends on the environment ($X, ${X}, $(...))."""
+    return n.type in ("simple_expansion", "expansion", "command_substitution", "arithmetic_expansion") or \
+        any(_dynamic(c) for c in n.children)
+
+
+def _argv(cmd: Node) -> tuple[list[str], bool]:
+    """A `command` node -> (argv without its leading assignments, whether the command name is an expansion)."""
+    name = cmd.child_by_field_name("name")
+    if name is None:
+        return [], False
+    args = cmd.children_by_field_name("argument")
+    return [_word(name.children[0] if name.children else name)] + [_word(a) for a in args], _dynamic(name)
 
 
 def _flags(args: list[str]) -> set[str]:
@@ -92,38 +148,29 @@ def _flags(args: list[str]) -> set[str]:
     return f
 
 
-def _one(argv: list[str], ws: str) -> str | None:
-    while argv and _ENV.match(argv[0]):
+def _one(argv: list[str], ws: Where, depth: int) -> str | None:
+    """One simple command (its redirections are file_redirect nodes, checked on their own)."""
+    while argv and _ASSIGN.match(argv[0]):
         argv = argv[1:]
     while argv and argv[0] in ("env", "command", "nohup", "time", "exec", "nice", "timeout"):
         argv = argv[1:]
-        while argv and (argv[0].startswith("-") or _ENV.match(argv[0]) or re.fullmatch(r"\d+[smhd]?", argv[0])):
+        while argv and (argv[0].startswith("-") or _ASSIGN.match(argv[0]) or re.fullmatch(r"\d+[smhd]?", argv[0])):
             argv = argv[1:]
     if not argv:
         return None
     name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
     args = argv[1:]
-    # redirections first: a write outside the workspace, whatever the command
-    for i, a in enumerate(args):
-        if _REDIRECT.match(a) and i + 1 < len(args) and not _inside(args[i + 1], ws):
-            return f"writes outside the workspace ({args[i + 1]})"
-        m = re.match(r"^\d*>>?(.+)$", a)
-        if m and not m.group(1).startswith("&") and not _inside(m.group(1), ws):
-            return f"writes outside the workspace ({m.group(1)})"
-    plain = []  # the arguments without redirections (2>&1, > file, < file)
-    for i, a in enumerate(args):
-        if re.fullmatch(r"[<>&]+\d*", a) or (i and re.fullmatch(r"[<>&]+", args[i - 1])) or \
-                (a.isdigit() and i + 1 < len(args) and re.fullmatch(r"[<>&]+", args[i + 1])):
-            continue
-        plain.append(a)
-    args = plain
     fl = _flags(args)
     if name in ("sudo", "su", "doas"):
         return name
     if name in ("eval", "source", "."):
         return f"{name} runs code this check cannot read"
     if name in _SHELLS and ("-c" in fl or "-command" in {a.lower() for a in args} or "/c" in {a.lower() for a in args}):
-        return f"{name} -c runs a script this check cannot read"
+        script = next((a for a in args if not a.startswith("-")), None)
+        if name not in _POSIX_SHELLS or script is None or depth >= _DEPTH:
+            return f"{name} -c runs a script this check cannot read"
+        why = _check(script, ws, depth + 1)  # a literal script: the same check, one level down
+        return f"{name} -c: {why}" if why else None
     if name in _SHELLS and not [a for a in args if not a.startswith("-")]:
         return f"{name} runs a script from its input"
     if name == "xmuse" and args[:1] and args[0] in ("send", "approve"):
@@ -140,7 +187,7 @@ def _one(argv: list[str], ws: str) -> str | None:
         iname = inner[0].replace("\\", "/").rsplit("/", 1)[-1] if inner else "echo"
         if iname in ("rm", "mv", "cp", "tee", "dd", "chmod", "chown", *_SHELLS):
             return f"xargs {iname} on paths this check never sees"
-        return _one(inner, ws)
+        return _one(inner, ws, depth)
     if name == "find":
         starts = [a for a in args if not a.startswith(("-", "(", ")", "!"))][:1] or ["."]
         acts = {"-delete", "-exec", "-execdir", "-ok", "-okdir"} & set(args)
@@ -150,10 +197,10 @@ def _one(argv: list[str], ws: str) -> str | None:
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
                 inner = []
                 for t in args[i + 1:]:
-                    if t in (";", "\\;", "+"):
+                    if t in (";", "+"):
                         break
                     inner.append(t)
-                why = _one(inner, ws)
+                why = _one(inner, ws, depth)
                 if why:
                     return why
         return None
@@ -188,7 +235,8 @@ def _one(argv: list[str], ws: str) -> str | None:
         return None
     if name == "rm":
         if fl & {"-r", "-R", "-f", "--recursive", "--force"}:
-            bad = [a for a in args if not a.startswith("-") and not _inside(a, ws)]
+            # the parent must be inside too: rm -rf . (or the workspace by name) removes the workspace itself
+            bad = [a for a in args if not a.startswith("-") and not _inside(os.path.join(a, ".."), ws)]
             if bad or not [a for a in args if not a.startswith("-")]:
                 return f"rm {' '.join(sorted(fl))} outside the workspace ({' '.join(bad) or '?'})"
         return None
@@ -204,7 +252,7 @@ def _one(argv: list[str], ws: str) -> str | None:
     if name in ("npm", "pnpm", "yarn", "bun") and (fl & {"-g", "--global"} or args[:1] == ["global"]):
         return f"{name} global install"
     if name in ("curl", "wget"):
-        return _fetch(name, args, ws)
+        return _fetch(name, args)
     if name == "dd" or name.startswith("mkfs") or name in ("shutdown", "reboot", "poweroff", "halt"):
         return name
     if name in ("chmod", "chown", "chgrp") and fl & {"-R", "--recursive"}:
@@ -224,7 +272,7 @@ def _one(argv: list[str], ws: str) -> str | None:
     return None
 
 
-def _fetch(name: str, args: list[str], ws: str) -> str | None:
+def _fetch(name: str, args: list[str]) -> str | None:
     """curl / wget: only addresses on this machine, no proxy, config file or name override."""
     takes = _CURL_VALUE if name == "curl" else _WGET_VALUE
     i = 0
@@ -252,19 +300,58 @@ def _fetch(name: str, args: list[str], ws: str) -> str | None:
     return None
 
 
-def risky(cmd: str, ws: str) -> str | None:
-    """Why `cmd` (one shell command line, run in workspace `ws`) needs the user, or None."""
-    if not isinstance(cmd, str) or not cmd.strip():
+def _redirect(n: Node, ws: Where) -> str | None:
+    """A file_redirect node: a write outside the workspace (`>&2` duplicates a descriptor and writes nothing new)."""
+    op = next((c.type for c in n.children if c.type in _WRITE_OPS), None)
+    dest = n.child_by_field_name("destination")
+    if op is None or dest is None or (op == ">&" and dest.type == "number") or _word(dest) == "-":
         return None
-    if _SUBST.search(cmd):
-        return "command substitution this check cannot read"
-    if _SECRET.search(cmd):
-        return "touches credentials or xmuse's own state"
-    pieces = _pieces(cmd)
-    if pieces is None:
-        return "unbalanced quotes"
-    for argv in pieces:
-        why = _one(argv, ws)
+    target = _word(dest)
+    return None if _inside(target, ws) else f"writes outside the workspace ({target})"
+
+
+def _walk(n: Node, ws: Where, depth: int) -> str | None:
+    """Every node of the tree: substitutions, redirections and simple commands wherever they are nested."""
+    if n.type in _OPAQUE:
+        return _OPAQUE[n.type]
+    if n.type == "file_redirect":
+        why = _redirect(n, ws)
+        if why:
+            return why
+    if n.type == "command":
+        argv, opaque = _argv(n)
+        if opaque:
+            return "a command name this check cannot read"
+        if argv and argv[0] in ("cd", "pushd", "popd"):
+            ws.cd(argv[1:] if argv[0] != "popd" else ["-"])
+        why = argv and _one(argv, ws, depth)
+        if why:
+            return why
+    for c in n.children:
+        why = _walk(c, ws, depth)
         if why:
             return why
     return None
+
+
+def _check(cmd: str, ws: Where, depth: int) -> str | None:
+    if _SECRET.search(cmd):
+        return "touches credentials or xmuse's own state"
+    tree = _PARSER.parse(cmd.encode("utf-8"))
+    if tree.root_node.has_error:
+        return "unbalanced quotes or syntax this check cannot parse"
+    return _walk(tree.root_node, ws, depth)
+
+
+def risky(cmd: str, ws: str, cwd: str | None = None) -> str | None:
+    """Why `cmd` (one shell command line for workspace `ws`, run in directory `cwd`, default the workspace) needs
+    the user, or None. A `cwd` outside the workspace makes every relative path outside too."""
+    if not isinstance(cmd, str) or not cmd.strip():
+        return None
+    return _check(cmd, Where(ws, cwd), 0)
+
+
+def risky_paths(paths: list[str], ws: str) -> str | None:
+    """A file tool writing `paths` (agy's write_to_file...): why that needs the user, or None."""
+    bad = [p for p in paths if not _inside(p, ws) or _SECRET.search(p)]
+    return f"writes outside the workspace ({', '.join(bad)})" if bad else None

@@ -65,7 +65,7 @@ Polled (foreground or desktop) agents can have messages pushed into their sessio
 (`integrations/dsh-bundle`), instead of running `watch --once`. Agent-token auth like `/v1/tools/*`; both calls work
 without a running turn, and other agents get `invalid_arguments`.
 
-- `POST /v1/relay/poll {cursor, wait_s<=25}` blocks (own handler thread; the server is a `ThreadingHTTPServer`) until the
+- `POST /v1/relay/poll {cursor, wait_s<=25}` blocks (a thread of the API's pool; the server is FastAPI on uvicorn, `api.py`) until the
   caller has queued wake deliveries with id > cursor (not acked, not canceled, not held/passive), or the wait ends. Returns
   `{cursor, items:[{delivery_id, message_id, thread, from, kind, mentions, wake}], text}`; `text` is the prompt to inject
   (`wakepack.relayed`: relay header, `<xmuse from=... thread=... kind=...>` blocks, how to answer). Up to 20 per call.
@@ -81,3 +81,14 @@ without a running turn, and other agents get `invalid_arguments`.
   token files, so this stops honest mistakes and improvising models, not deliberate impersonation.
 - `xmuse send` (the admin token) is recorded as `human` with `via="cli"`: it shows as `human (via cli)` in `xmuse log`,
   inboxes and the `<xmuse ... via="cli">` wake tag, so agents can tell a terminal command from the user typing.
+
+### Tokens and the risk check
+
+- Every token (member `tokens/<id>`, admin `tokens/_admin`, sidebar operator tokens) is an HS256 JWT signed with
+  `tokens/_signing.key` (`auth.py`; claims `iss=xmuse`, `sub`, `kind`, `iat`, `jti`, no expiry). hub.db still keeps
+  each live token's sha256, so a re-issued or removed member's old token is refused. A hub that finds pre-JWT
+  (`xmt_...`) token files re-issues them at start and logs who got one: restart those members' sessions.
+- `POST /v1/risk {command, cwd}` or `{paths}` (any agent token): `{why}` is why the auto approval policy sends this to
+  the user, or null (`risk.py`, a tree-sitter-bash parse of the line). The Claude member gate (`hook.py PreToolUse`)
+  and the agy gate (`.agents/xmuse-hook.py`) ask it and deny the call when the hub cannot answer. The workspace is the
+  member's own directory; `cwd` only places relative paths.

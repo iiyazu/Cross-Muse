@@ -7,13 +7,19 @@ import urllib.error
 import urllib.request
 
 from test_trust import OC, held_approval
-from xmuse import db
+from xmuse import auth, db
 
 
 def pause(h, agent):
     """Keep the engine from admitting (and so marking read) the agent's mail while a test reads it."""
     with db.tx(h.conn()) as c:
         c.execute("update agents set paused=1 where id=?", (agent,))
+
+
+def kind(h, token):
+    """(kind, subject) of a token the hub signed."""
+    c = auth.claims(h.hub.key, token)
+    return c and (c["kind"], c["sub"])
 
 
 def call(h, method, path, body=None, token=None, session=None, timeout=40, key=None):
@@ -54,7 +60,7 @@ def test_rooms_creates_the_host_with_both_tokens(make):
     room = open_room(h, description="plans and reviews")
     assert room["member_id"] == "lead" and room["room"]["host"] == "lead" and room["room"]["name"] == "dev"
     mt, ot = room["member_token"], room["operator_token"]
-    assert mt != ot and mt.startswith("xmt_") and ot.startswith("xmo_")
+    assert mt != ot and kind(h, mt) == ("member", "lead") and kind(h, ot) == ("operator", "lead")
     st, out = call(h, "POST", "/v1/rooms", {"dir": str(h.ws), "vendor": "claude", "session_id": "S2"}, key=h.key())
     assert st == 409 and out["error"] == "room_exists"
     st, v = view(h, mt, "S-lead")

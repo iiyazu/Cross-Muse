@@ -18,8 +18,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
-from . import align, config, db, dispatch, evidence, mail, share
+from . import align, auth, config, db, dispatch, evidence, mail, share
 from . import threads as groups
+from .auth import digest
 from .config import HUMAN, VIA_CLI
 from .tools import ToolError
 
@@ -50,23 +51,22 @@ class Principal:
         return self.member or HUMAN
 
 
-def digest(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def principal(conn, admin_digest: str, header: str | None) -> Principal | None:
-    token = (header or "").removeprefix("Bearer ").strip()
-    if not token:
+def principal(conn, key: bytes, admin_digest: str, header: str | None) -> Principal | None:
+    """Who a bearer token speaks for: a JWT this hub signed (auth.claims) whose digest is still current in hub.db,
+    with a kind and subject that match the row it is found in."""
+    token = auth.bearer(header)
+    c = token and auth.claims(key, token)
+    if not c:
         return None
     d = digest(token)
-    if secrets.compare_digest(d, admin_digest):
-        return Principal("admin", None)
-    r = conn.execute("select id from agents where token_digest=? and removed=0", (d,)).fetchone()
-    if r:
-        return Principal("member", r[0])
+    if c["kind"] == "admin":
+        return Principal("admin", None) if secrets.compare_digest(d, admin_digest) else None
+    if c["kind"] == "member":
+        r = conn.execute("select id from agents where token_digest=? and removed=0", (d,)).fetchone()
+        return Principal("member", r[0]) if r and r[0] == c["sub"] else None
     r = conn.execute("select o.member_id from operators o join agents a on a.id=o.member_id"
                      " where o.token_digest=? and a.removed=0", (d,)).fetchone()
-    return r and Principal("operator", r[0])
+    return Principal("operator", r[0]) if r and r[0] == c["sub"] else None
 
 
 # ---- room row and version ---------------------------------------------------------------------------------
@@ -358,8 +358,8 @@ def view(conn, cfg: dict, ws: Path, p: Principal, version: int) -> dict:
 
 # ---- tokens, invitations ------------------------------------------------------------------------------------
 
-def operator_token(conn, member: str) -> str:
-    tok = "xmo_" + secrets.token_urlsafe(32)
+def operator_token(conn, key: bytes, member: str) -> str:
+    tok = auth.mint(key, member, "operator")
     with db.tx(conn):
         conn.execute("insert into operators values(?,?,?)", (digest(tok), member, db.now()))
     return tok

@@ -6,6 +6,11 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "zstandard>=0.25.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pyjwt>=2.8",
+    "tree-sitter>=0.23",
+    "tree-sitter-bash>=0.23",
 ]
 
 [project.scripts]

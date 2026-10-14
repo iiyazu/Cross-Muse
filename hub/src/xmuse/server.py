@@ -1,11 +1,9 @@
-"""xmuse-hub process: loopback HTTP for the shim, hooks and the CLI; runs the engine thread.
+"""xmuse-hub process: loopback HTTP for the shim, hooks and the CLI (api.py); runs the engine thread.
 
-Auth: every agent holds a locally issued bearer token (tokens/<agent>, 0600; only its sha256 is in
+Auth: every agent holds a bearer JWT the hub signed (auth.py; tokens/<agent>, 0600; only its sha256 is in
 hub.db); the CLI uses tokens/_admin and speaks as 'human'. Simplified from v1 plugin grants +
 pairing: one workspace, one user, no remote hosts, so no pairing codes, scopes or expiry.
 """
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -16,24 +14,22 @@ import threading
 import time
 import urllib.error
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import agents, align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
+from . import agents, align, api, auth, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads
+from . import wakepack
 from . import room as rooms
 from .adapters.agy import AgyDriver
 from .adapters.claude import ClaudeDriver
 from .adapters.dsh import DshDriver
 from .adapters.opencode import POLICIES, OpenCodeDriver, Server
+from .auth import digest  # noqa: F401 - tests and older callers import it from here
 from .engine import Engine
+from .risk import risky, risky_paths
 from .tools import ToolError, tools_for, validate
 
 
 log = logging.getLogger("xmuse.hub")
-
-
-def digest(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class Hub:
@@ -73,6 +69,11 @@ class Hub:
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
         self.stopping = threading.Event()
         self.done = threading.Event()  # serve() returns when set (signal, or /v1/admin/shutdown)
+        self.key = auth.signing_key(state)
+        migrated = auth.migrate(state, self.db())
+        if migrated:
+            log.warning("re-issued pre-JWT tokens as JWTs for %s; their running MCP shims (and the sidebars) need a "
+                        "restart or a re-join", ", ".join(migrated))
         self.admin = digest((state / "tokens" / "_admin").read_text(encoding="utf-8").strip())
         self.view_lock, self.view_fp = threading.Lock(), None  # sidebar view version (room.fingerprint)
         self.join_lock, self.started_at = threading.Lock(), time.time()
@@ -114,14 +115,11 @@ class Hub:
         return errors
 
     def who(self, header: str | None) -> str | None:
-        token = (header or "").removeprefix("Bearer ").strip()
-        if not token:
+        """The agent API's caller: an agent's id, or 'human' for the admin token (an operator token is not one)."""
+        p = rooms.principal(self.db(), self.key, self.admin, header)
+        if p is None or p.kind == "operator":
             return None
-        d = digest(token)
-        if hmac.compare_digest(d, self.admin):
-            return config.HUMAN
-        r = self.db().execute("select id from agents where token_digest=?", (d,)).fetchone()
-        return r and r[0]
+        return config.HUMAN if p.kind == "admin" else p.member
 
     # ---- request handlers: (caller, body) -> result -----------------------------------
     def tool(self, agent: str, name: str, args: dict, session: str | None = None):
@@ -529,8 +527,23 @@ class Hub:
             conn.execute("update sessions set wakes=wakes+1 where agent_id=? and state='current'", (agent,))
         return {"delivered": n, "session": sid}
 
-    RELAY = {"/v1/relay/bind": "relay_bind", "/v1/relay/unbind": "relay_unbind", "/v1/relay/poll": "relay_poll",
-             "/v1/relay/delivered": "relay_delivered"}
+    def risk(self, caller: str, body: dict) -> dict:
+        """POST /v1/risk: a member's PreToolUse gate (Claude member, agy) asks whether a shell command, or a file tool
+        writing `paths`, needs the user. The workspace is the member's own directory, never one the request names;
+        `cwd` (where the command runs) only places its relative paths."""
+        root = str(self.ws)
+        if caller != config.HUMAN:
+            r = db.row(self.db().execute("select settings from agents where id=?", (caller,)))
+            root = (r and db.settings(r).get("cwd")) or root
+        cwd = body.get("cwd") if isinstance(body.get("cwd"), str) and body.get("cwd") else None
+        if "paths" in body:
+            paths = body["paths"]
+            if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+                raise ToolError("bad_request", "paths must be a list of strings")
+            return {"why": risky_paths(paths, root)}
+        if not isinstance(body.get("command"), str):
+            raise ToolError("bad_request", "risk needs command (string) or paths (list)")
+        return {"why": risky(body["command"], root, cwd)}
 
     HUMAN_ONLY = {"approve", "align", "resume"}  # admin actions that grant power: a person, not just the token
 
@@ -546,34 +559,12 @@ class Hub:
     def require_human(self, name: str, client_port: int | None) -> None:
         if not self.human_check or name not in self.HUMAN_ONLY:
             return
-        why = peer.human_check(client_port or 0, self.httpd.server_address[1], self.agent_pids())
+        why = peer.human_check(client_port or 0, self.api.port, self.agent_pids())
         if why:
             raise ToolError("human_only", f"{name} needs a person: {why}. Run `xmuse {name} ...` in your own "
                                           "terminal, or tell the desktop coordinator your decision so it relays it")
 
-    def route(self, method: str, path: str, caller: str, body: dict, session: str | None = None,
-              client_port: int | None = None):
-        if path in self.RELAY and caller != config.HUMAN:
-            return getattr(self, self.RELAY[path])(caller, body, session)
-        if path.startswith("/v1/tools/") and caller != config.HUMAN:
-            return self.tool(caller, path.rsplit("/", 1)[1], body.get("args", {}), session)
-        if path in ("/v1/hooks/claude", "/v1/hooks/dsh") and caller != config.HUMAN:
-            return self.hook(caller, body)
-        if path == "/v1/shim/register" and caller != config.HUMAN:
-            return self.register(caller, body)
-        if path.startswith("/v1/admin/") and caller == config.HUMAN:
-            fn = getattr(self, "admin_" + path.rsplit("/", 1)[1], None)
-            if fn:
-                self.require_human(path.rsplit("/", 1)[1], client_port)
-                return fn(body)
-        raise ToolError("not_found", f"{method} {path}")
-
-    # ---- sidebars (D2, contract XMUSE2-VIEW-API v0): own error format and HTTP statuses ----------------------
-    SIDEBAR = {("GET", "/v1/view"), ("GET", "/v1/timeline"), ("POST", "/v1/act"), ("POST", "/v1/rooms"),
-               ("GET", "/v1/rooms"), ("POST", "/v1/join"), ("POST", "/v1/rebind"), ("POST", "/v1/leave"),
-               ("GET", "/v1/agents"), ("POST", "/v1/agents/scan"), ("POST", "/v1/agents/trial"),
-               ("POST", "/v1/agents/model"), ("GET", "/v1/compact_instructions")}
-
+    # ---- sidebars (D2, contract XMUSE2-VIEW-API v0): own error format and HTTP statuses (api.SIDEBAR) -----------
     def view_version(self) -> int:
         conn = self.db()
         with self.view_lock:
@@ -602,7 +593,7 @@ class Hub:
         if not isinstance(body, dict):
             raise rooms.ApiError(400, "bad_request", "the body must be a JSON object")
         if path in ("/v1/rooms", "/v1/join"):  # local sidebars: the sidebar key; an agent's member token never works
-            p = rooms.principal(self.db(), self.admin, auth)
+            p = rooms.principal(self.db(), self.key, self.admin, auth)
             if p is not None and p.kind == "member":
                 raise rooms.ApiError(403, "member_forbidden", f"{path} is for sidebars, not for members")
             keyed = path == "/v1/rooms" or not str(body.get("code") or "").strip()
@@ -613,7 +604,7 @@ class Hub:
             return 200, self.create_room(body) if method == "POST" else self.list_rooms()
         if path in ("/v1/agents", "/v1/agents/scan", "/v1/agents/trial", "/v1/agents/model"):
             # machine-local assistant registry: the sidebar key only. A member token never works here.
-            p = rooms.principal(self.db(), self.admin, auth)
+            p = rooms.principal(self.db(), self.key, self.admin, auth)
             if p is not None and p.kind == "member":
                 raise rooms.ApiError(403, "member_forbidden", f"{path} is for sidebars, not for members")
             if not registry.check_key(key):
@@ -627,7 +618,7 @@ class Hub:
             if path == "/v1/agents/model":
                 return 200, self.agents_model(body)
         conn = self.db()
-        p = rooms.principal(conn, self.admin, auth)
+        p = rooms.principal(conn, self.key, self.admin, auth)
         if p is None:
             raise rooms.ApiError(401, "unauthorized", "bad or missing token")
         if path == "/v1/compact_instructions":  # the operator token (task book §4); a member token never works
@@ -1081,7 +1072,7 @@ class Hub:
                                + (f": {desc}" if desc else ""))
         r = rooms.room_row(conn, self.ws)
         return {"member_id": mid, "member_token": self._token_of(mid),
-                "operator_token": rooms.operator_token(conn, mid),
+                "operator_token": rooms.operator_token(conn, self.key, mid),
                 "room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}}
 
     # rooms and invitations: no token (the caller has none yet)
@@ -1107,7 +1098,7 @@ class Hub:
         brief_missing = conn.execute("select 1 from entries where kind='convention' and scope='global'"
                                      " and status='active' and statement like '[brief]%'").fetchone() is None
         return {"room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}, "member_id": mid,
-                "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid),
+                "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, self.key, mid),
                 "brief_missing": brief_missing}
 
     def join(self, b: dict) -> dict:
@@ -1137,7 +1128,8 @@ class Hub:
         desc = f": {inv['description']}" if inv["description"] else ""
         rooms.notice(conn, f"{mid} joined the room ({vendor}{', ' + inv['role'] if inv['role'] else ''}){desc}")
         r = rooms.room_row(conn, self.ws)
-        return {"member_id": mid, "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid),
+        return {"member_id": mid, "member_token": self._token_of(mid),
+                "operator_token": rooms.operator_token(conn, self.key, mid),
                 "room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}}
 
     def add_member(self, mid: str, vendor: str, role: str, description, session: str, takeover: bool = False) -> None:
@@ -1166,7 +1158,7 @@ class Hub:
 
     def _add_plain(self, mid, vendor, role, settings, description) -> None:
         from .init import _token
-        tok = _token(self.state / "tokens" / mid)
+        tok = _token(self.state, mid)
         m = config.MODELS[vendor]
         with db.tx(self.db()) as c:
             c.execute("insert into agents(id, vendor, model, family, role, settings, token_digest, created_at,"
@@ -1196,93 +1188,19 @@ class Hub:
         try:
             r = db.row(self.db().execute("select * from room"))
             registry.register({"room_id": rooms.room_id(self.ws), "name": r["name"] if r else self.ws.name,
-                               "dir": str(self.ws), "url": f"http://127.0.0.1:{self.httpd.server_address[1]}",
+                               "dir": str(self.ws), "url": f"http://127.0.0.1:{self.api.port}",
                                "host": r["host"] if r else None, "pid": os.getpid(), "started_at": self.started_at})
             registry.write_install()
         except (OSError, ValueError):
             log.warning("cannot write the hub registry in %s", registry.directory(), exc_info=True)
 
     def start(self) -> None:
-        hub = self
-
-        class H(BaseHTTPRequestHandler):
-            def _sidebar(self, method: str, path: str, query: dict, body):
-                try:
-                    status, out = hub.sidebar(method, path, query, body, self.headers.get("authorization"),
-                                              self.headers.get("x-xmuse-session") or None,
-                                              self.headers.get("x-xmuse-sidebar"))
-                except rooms.ApiError as e:
-                    status, out = e.status, {"error": e.code, "message": e.message}
-                    log.warning("sidebar %s %s from %s -> %s %s", method, path,
-                                self.client_address[0], status, e.code)
-                except ToolError as e:
-                    status, out = 400, {"error": e.code, "message": e.message}
-                except (KeyError, TypeError, ValueError) as e:
-                    status, out = 400, {"error": "bad_request", "message": repr(e)}
-                except Exception as e:  # noqa: BLE001 - never drop the connection: the sidebar needs a JSON answer
-                    log.exception("unhandled error in %s %s", method, path)
-                    status, out = 500, {"error": "internal_error", "message": f"{type(e).__name__}: {e}"}
-                if status == 204:
-                    self.send_response(204)
-                    self.end_headers()
-                    return
-                self._send(status, out)
-
-            def do_GET(self):
-                u = urllib.parse.urlsplit(self.path)
-                if ("GET", u.path) not in hub.SIDEBAR:
-                    return self._send(404, {"error": "not_found", "message": f"GET {u.path}"})
-                self._sidebar("GET", u.path, dict(urllib.parse.parse_qsl(u.query)), {})
-
-            def do_POST(self):
-                u = urllib.parse.urlsplit(self.path)
-                if ("POST", u.path) in hub.SIDEBAR:
-                    try:
-                        body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or b"{}")
-                    except ValueError:
-                        return self._send(400, {"error": "bad_json", "message": "the body is not JSON"})
-                    self._sidebar("POST", u.path, {}, body)
-                    with hub.relay_cv:
-                        hub.relay_cv.notify_all()
-                    return
-                caller = hub.who(self.headers.get("authorization"))
-                if caller is None:
-                    return self._send(401, {"error": {"code": "unauthorized", "message": "bad or missing token"}})
-                n = int(self.headers.get("content-length") or 0)
-                try:
-                    body = json.loads(self.rfile.read(n) or b"{}")
-                    out = hub.route("POST", self.path, caller, body, self.headers.get("x-xmuse-session") or None,
-                                    self.client_address[1])
-                    if not self.path.startswith("/v1/relay/"):
-                        with hub.relay_cv:
-                            hub.relay_cv.notify_all()
-                    self._send(200, {"result": out})
-                except ToolError as e:
-                    self._send(200, {"error": {"code": e.code, "message": e.message}})
-                except (KeyError, TypeError, ValueError) as e:
-                    self._send(400, {"error": {"code": "bad_request", "message": repr(e)}})
-                except Exception as e:  # noqa: BLE001 - never drop the connection: answer 500 with JSON
-                    log.exception("unhandled error in POST %s", self.path)
-                    self._send(500, {"error": {"code": "internal_error", "message": f"{type(e).__name__}: {e}"}})
-
-            def _send(self, code, obj):
-                raw = json.dumps(obj, ensure_ascii=False).encode()
-                self.send_response(code)
-                self.send_header("content-type", "application/json")
-                self.send_header("content-length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-
-            def log_message(self, *a):
-                pass
-
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        self.api = api.Server(api.build(self))
         self.loop = threading.Thread(target=self.engine.run_forever, args=(self.stopping,), daemon=True)
         self.loop.start()
         threading.Thread(target=preset.loop, args=(self.preset, self.stopping, self.cfg.get("preset_tick", 2.0)),
                          daemon=True).start()
-        (self.state / "hub.json").write_text(json.dumps({"port": self.httpd.server_address[1], "pid": os.getpid(),
+        (self.state / "hub.json").write_text(json.dumps({"port": self.api.port, "pid": os.getpid(),
                                                          "shell_policy": self.engine.shell_policy}), encoding="utf-8")
         try:
             registry.ensure_key()
@@ -1300,10 +1218,11 @@ class Hub:
         self.engine.q.put(("stop",))
         self.loop.join(10)
         self.curator.stop()
-        self.httpd.shutdown()
+        self.api.shutdown()
         for d in self.engine.drivers.values():
             d.close()
         (self.state / "hub.json").unlink(missing_ok=True)
+        self.db.close()
         self.close_lock()  # last: a new hub may take over only once hub.json is gone
 
     def serve(self) -> None:

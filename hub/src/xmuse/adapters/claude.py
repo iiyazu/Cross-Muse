@@ -252,7 +252,8 @@ def write_config(ws: Path, agent: dict, state: Path) -> list[Path]:
              for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop")}
     hooks["SessionStart"].append({"matcher": "compact", "hooks": [{  # stdout lands in the model's context
         "type": "command", "timeout": 10, "command": compact}]})
-    # auto mode: a hub-run member may run Bash (ClaudeResume), and this gate sends what risk.py flags to the user
+    # auto mode: a hub-run member may run Bash (ClaudeResume); this gate asks the hub (POST /v1/risk) and sends what
+    # it flags to the user
     hooks["PreToolUse"] = [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"{hook} PreToolUse",
                                                          "timeout": 10}]}]
     (ws / ".claude").mkdir(exist_ok=True)
