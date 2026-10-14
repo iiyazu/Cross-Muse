@@ -116,8 +116,9 @@ def test_agy_joins_and_rejoins_the_same_session(make):
     assert h.q("select bound_session from agents where id='agy-j'")[0]["bound_session"] == "conv-1"
     st, out = join(h, session_id="conv-1", name="agy-j")
     assert st == 200 and out["member_id"] == "agy-j"  # the same session is taken back
-    st, out = join(h, session_id="conv-2", name="agy-j")
-    assert (st, out["error"]) == (409, "member_exists")
+    st, out = join(h, session_id="conv-2", name="agy-j")  # another session: the sidebar takes the member over
+    assert st == 200 and out["member_id"] == "agy-j"
+    assert h.q("select bound_session from agents where id='agy-j'")[0]["bound_session"] == "conv-2"
     st, out = join(h, vendor="claude", session_id="conv-1", name="agy-j")
     assert (st, out["error"]) == (409, "member_exists")  # another vendor cannot take the name
     st, out = join(h, session_id="conv-3")

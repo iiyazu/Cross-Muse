@@ -19,7 +19,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import agents, align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
+from . import agents, align, config, db, dispatch, hublock, mail, memoryos, peer, preset, registry, share, threads, wakepack
 from . import room as rooms
 from .adapters.agy import AgyDriver
 from .adapters.claude import ClaudeDriver
@@ -39,6 +39,19 @@ def digest(token: str) -> str:
 class Hub:
     def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None,
                  human_check: bool = True):
+        self.lock = hublock.acquire(state)  # first: one hub per state dir (raises HubLocked); closed by shutdown()
+        try:
+            self._setup(state, claude_bin, oc_base, human_check)
+        except BaseException:
+            self.close_lock()
+            raise
+
+    def close_lock(self) -> None:
+        lock, self.lock = self.lock, None
+        if lock:
+            lock.close()
+
+    def _setup(self, state: Path, claude_bin: str | None, oc_base, human_check: bool) -> None:
         # human_check is a constructor argument, never config: an agent can edit config.json, not the hub's argv
         self.state, self.cfg, self.human_check = state, config.load(state), human_check
         claude_bin = claude_bin or self.cfg.get("claude_bin", "claude")
@@ -1032,7 +1045,8 @@ class Hub:
 
     def join_local(self, b: dict) -> dict:
         """POST /v1/join without a code (sidebar key checked): a sidebar on this machine joins by directory or room
-        id. A named member that exists, has the same vendor and no session is taken over; bound or other: 409."""
+        id. A named member that exists with the same vendor is taken over by this session, even when another session
+        holds it (the sidebar key proves the user); a removed member or another vendor's id: 409."""
         conn, vendor, sid = self.db(), b.get("vendor"), b.get("session_id")
         d, rid, name = b.get("dir"), b.get("room_id"), self._text(b, "name") or None
         role, desc = self._text(b, "role") or "", self._text(b, "description") or ""
@@ -1057,7 +1071,8 @@ class Hub:
             mid = name or rooms.free_id(conn, vendor)
             prev = db.row(conn.execute("select bound_session, removed from agents where id=?", (mid,)))
             was_bound_here = bool(prev) and not prev["removed"] and prev["bound_session"] == sid
-            self.add_member(mid, vendor, role, desc, sid)
+            self.add_member(mid, vendor, role, desc, sid, takeover=True)  # the sidebar key is the user's own word
+            log.info("join member=%s vendor=%s sid=%s was_bound_here=%s", mid, vendor, sid, was_bound_here)
             if role:
                 with db.tx(conn):
                     conn.execute("update agents set role=? where id=?", (role, mid))
@@ -1125,13 +1140,15 @@ class Hub:
         return {"member_id": mid, "member_token": self._token_of(mid), "operator_token": rooms.operator_token(conn, mid),
                 "room": {k: r[k] for k in ("id", "name", "dir", "host", "created_at")}}
 
-    def add_member(self, mid: str, vendor: str, role: str, description, session: str) -> None:
+    def add_member(self, mid: str, vendor: str, role: str, description, session: str, takeover: bool = False) -> None:
         """A sidebar's member. An existing member of the same vendor no session holds is taken over (e.g. one
         `xmuse agent add` registered); otherwise a new one: Claude and dsh live in the user's own session (the hub
-        never runs them), OpenCode runs on a hub-owned server its TUI attaches to."""
+        never runs them), OpenCode runs on a hub-owned server its TUI attaches to. `takeover` (a keyed sidebar join):
+        a member bound to another session moves to this one; the other session's member token is refused from then on."""
         conn = self.db()
         old = db.row(conn.execute("select * from agents where id=?", (mid,)))
-        if old and (old["vendor"] != vendor or old["removed"] or old["bound_session"] not in (None, "", session)):  # same session re-joins
+        bound_elsewhere = old is not None and old["bound_session"] not in (None, "", session)
+        if old and (old["vendor"] != vendor or old["removed"] or (bound_elsewhere and not takeover)):  # same session re-joins
             raise rooms.ApiError(409, "member_exists", f"{mid} is already a member; pick another name")
         if old is None:
             from .init import add_agent
@@ -1196,6 +1213,8 @@ class Hub:
                                               self.headers.get("x-xmuse-sidebar"))
                 except rooms.ApiError as e:
                     status, out = e.status, {"error": e.code, "message": e.message}
+                    log.warning("sidebar %s %s from %s -> %s %s", method, path,
+                                self.client_address[0], status, e.code)
                 except ToolError as e:
                     status, out = 400, {"error": e.code, "message": e.message}
                 except (KeyError, TypeError, ValueError) as e:
@@ -1285,12 +1304,14 @@ class Hub:
         for d in self.engine.drivers.values():
             d.close()
         (self.state / "hub.json").unlink(missing_ok=True)
+        self.close_lock()  # last: a new hub may take over only once hub.json is gone
 
     def serve(self) -> None:
         errors = self.precheck()
         if errors:
             for d in self.engine.drivers.values():
                 d.close()
+            self.close_lock()
             raise SystemExit("precheck failed:\n" + "\n".join(errors))
         self.start()
         done = self.done
