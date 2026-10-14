@@ -63,17 +63,14 @@ export function parseHubs(text: string): HubEntry[] {
   }
 }
 
-/** Entries whose room dir is the session's cwd or a parent of it, best match first (deepest dir, newest hub). */
+/**
+ * Entries whose room dir is exactly the session's cwd, newest hub first. Not a parent's: a hub serves only its own
+ * directory (join elsewhere is 400 wrong_dir), so a subfolder of a room's directory has no room of its own yet.
+ */
 export function matchHubs(entries: HubEntry[], cwd: string): HubEntry[] {
   const me = toPosix(cwd).toLowerCase()
-  const scored: { e: HubEntry; len: number }[] = []
-  for (const e of entries) {
-    const d = toPosix(e.dir ?? '').toLowerCase()
-    if (!d) continue
-    if (me === d || me.startsWith(d === '/' ? '/' : d + '/')) scored.push({ e, len: d.length })
-  }
-  scored.sort((a, b) => b.len - a.len || (b.e.started_at ?? 0) - (a.e.started_at ?? 0))
-  return scored.map(s => s.e)
+  return entries.filter(e => !!e.dir && toPosix(e.dir).toLowerCase() === me)
+    .sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0))
 }
 
 export function isLoopbackUrl(url: string): boolean {

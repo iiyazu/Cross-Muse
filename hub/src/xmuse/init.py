@@ -149,6 +149,9 @@ def sync_member_dirs(ws: Path, state: Path, cfg: dict) -> None:
 
 def init(ws: Path) -> Path:
     ws = ws.resolve()
+    if config.is_home(ws):
+        raise SystemExit(f"{ws} is a home folder: its .claude/ is your own Claude Code configuration. "
+                         "Open the room in a project folder instead.")
     state = config.state_dir_for(ws)
     for d in ("tokens", "logs", "runs"):
         (state / d).mkdir(parents=True, exist_ok=True)

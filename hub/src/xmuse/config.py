@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 HUMAN = "human"
@@ -62,6 +63,17 @@ SKILL = REPO / "skill" / "xmuse-collab"
 TEMPLATES = REPO / "templates"
 HOOK = Path(__file__).resolve().parent / "hook.py"
 DSH_HOOK = Path(__file__).resolve().parent / "dsh_hook.py"
+
+
+def is_home(ws: Path) -> bool:
+    """A user's home folder (this user's ~, or a Windows profile such as C:\\Users\\<name> or /mnt/c/Users/<name>).
+    Its .claude/ is that user's own Claude Code configuration, so a room there would put xmuse's project hooks into
+    every session the user starts anywhere."""
+    profile = r"(?i)(/mnt/[a-z]|[a-z]:)[/\\]Users[/\\][^/\\]+"
+    if re.fullmatch(profile, str(ws).rstrip("/\\")):  # before resolve: on Linux "C:/Users/x" resolves to a relative path
+        return True
+    p = str(Path(ws).expanduser().resolve()).rstrip("/\\")
+    return p == str(Path.home().resolve()).rstrip("/\\") or re.fullmatch(profile, p) is not None
 
 
 def state_root() -> Path:

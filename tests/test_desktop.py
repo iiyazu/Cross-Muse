@@ -1,6 +1,7 @@
 """Claude desktop app mode: no push, no background wake; the agent polls xmuse_inbox every turn."""
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -75,17 +76,20 @@ def test_desktop_config(ws):
     assert "XMUSE_CHANNEL" not in (ws / ".mcp.json").read_text(encoding="utf-8")
     st = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert st["enabledMcpjsonServers"] == ["xmuse"] and st["permissions"] == {"allow": ["mcp__xmuse__*"]}
-    pre = "wsl.exe -d Ubuntu-Test -- python3 .claude/xmuse-hook.py"
+    def cmd(ev):  # no copy in the session's directory: pass (python3 would exit 2, which blocks the prompt)
+        return f'wsl.exe -d Ubuntu-Test -- sh -c "test ! -f .claude/xmuse-hook.py || exec python3 .claude/xmuse-hook.py {ev}"'
     for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"):
         h = st["hooks"][ev][0]["hooks"][0]
-        assert h["command"] == f"{pre} {ev}" and h["timeout"] == 10
+        assert h["command"] == cmd(ev) and h["timeout"] == 10
     compact = st["hooks"]["SessionStart"][1]
     assert compact["matcher"] == "compact"
-    assert compact["hooks"][0]["command"] == f"{pre} compact"
+    assert compact["hooks"][0]["command"] == cmd("compact")
     for ev in st["hooks"].values():
         for g in ev:
             for h in g["hooks"]:
-                assert not any(t in h["command"] for t in BASH_ISH), h["command"]
+                # the host shell (Git Bash or cmd) sees no operator: the only one sits inside the double quotes
+                outside = re.sub(r'"[^"]*"', '""', h["command"])
+                assert not any(t in outside for t in BASH_ISH), h["command"]
                 # Git Bash rewrites arguments that start with "/" (also NAME=/path): none may exist
                 assert not any(t.startswith("/") or "=/" in t for t in h["command"].split()), h["command"]
     copy = (ws / ".claude" / "xmuse-hook.py").read_text(encoding="utf-8")
@@ -119,6 +123,36 @@ def test_non_desktop_config_is_unchanged(ws):
         "type": "command", "timeout": 10, "command": f"XMUSE_STATE={state} {sys.executable} -m xmuse hook compact"}]})
     settings = {"enabledMcpjsonServers": ["xmuse"], "permissions": {"allow": ["mcp__xmuse__*"]}, "hooks": hooks}
     assert (ws / ".claude" / "settings.json").read_text(encoding="utf-8") == json.dumps(settings, indent=2) + "\n"
+
+
+@wsl_hub
+def test_settings_are_merged_into_the_projects_own_and_taken_out_again(ws):
+    """A project's .claude/settings.json keeps its own settings and hooks; only xmuse's entries come and go."""
+    own = {"model": "opus", "permissions": {"allow": ["Bash(make:*)"], "deny": ["Read(.env)"]},
+           "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-send done"}]}]}}
+    (ws / ".claude").mkdir()
+    (ws / ".claude" / "settings.json").write_text(json.dumps(own), encoding="utf-8")
+    state = xinit.init(ws)
+    xinit.add_agent(state, "dog", "claude", settings={"desktop": True})
+    xinit.add_agent(state, "dog", "claude", settings={"desktop": True})  # written again: no duplicate entries
+    st = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert st["model"] == "opus" and st["permissions"]["deny"] == ["Read(.env)"]
+    assert st["permissions"]["allow"] == ["Bash(make:*)", "mcp__xmuse__*"]
+    assert [g["hooks"][0]["command"] for g in st["hooks"]["Stop"]][0] == "notify-send done"
+    assert len(st["hooks"]["Stop"]) == 2 and len(st["hooks"]["SessionStart"]) == 2
+    from xmuse.adapters.claude import strip_settings
+    assert strip_settings(ws / ".claude" / "settings.json")
+    assert json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8")) == own
+
+
+def test_no_room_in_a_home_folder(ws, tmp_path):
+    """A home folder's .claude/ is the user's own Claude Code configuration: no room, no member config there."""
+    from xmuse.config import is_home
+    assert is_home(tmp_path / "home") and is_home(Path("/mnt/c/Users/someone")) and is_home(Path("C:/Users/someone"))
+    assert not is_home(ws) and not is_home(Path("/mnt/c/Users/someone/project"))
+    with pytest.raises(SystemExit, match="home folder"):
+        xinit.init(tmp_path / "home")
+    assert not (tmp_path / "home" / ".claude").exists()
 
 
 def test_desktop_replacing_a_cli_identity_prints_a_note(ws, capsys):
