@@ -6,6 +6,7 @@ declare module 'claude-code' {
       conn: ConnInfo
       view: any
       tab: string
+      rail: 'auto' | 'open' | 'closed'
       replyTo: number
       gen: number
       promoted: Record<string, string>

@@ -60,4 +60,14 @@ eq('tail', [draftTail('short'), draftTail('x'.repeat(300)).length, draftTail('a\
 import { shortModel } from './logic.ts'
 eq('short model', [shortModel('opencode-go/muse-spark-1.3-contributor'), shortModel('sonnet'), shortModel(''), shortModel('a/' + 'x'.repeat(30)).length],
   ['muse-spark-1.3-contribu…', 'sonnet', '', 24])
+import { dmThreadId, railOf, toLabel, buildSay, roomSvg } from './logic.ts'
+// the rail: the room, one private chat per member (the hub's dm id), then 全部 counting the other threads
+const rv = { room: { name: 'dev', host: 'claude' }, me: { id: 'claude' }, members: [{ id: 'claude' }, { id: 'dsh' }, { id: 'agy' }],
+  threads: [{ id: '#room', unread: 2 }, { id: 'dm:dsh+human', kind: 'dm', unread: 1 }, { id: 'dm:claude+dsh', kind: 'dm', unread: 4 }] }
+eq('dm id', [dmThreadId('dsh'), dmThreadId('opencode')], ['dm:dsh+human', 'dm:human+opencode'])
+eq('rail', railOf(rv).map(x => [x.id, x.kind, x.unread]), [['#room', 'room', 2], ['dm:dsh+human', 'dm', 1], ['dm:agy+human', 'dm', 0], ['all', 'all', 4]])
+eq('say in a dm', [buildSay('hi', 'dm:dsh+human', 0, rv).to, buildSay('@agy @dsh hi', 'dm:dsh+human', 0, rv).mentions], ['dm:dsh+human', ['dsh']])
+eq('to label', [toLabel({ id: 1, thread: '#room', mentions: ['dsh'] }), toLabel({ id: 2, thread: '#room' }),
+  toLabel({ id: 3, thread: 'dm:dsh+human', to: ['dsh'] })], ['全员 · @dsh', '全员', 'dsh'])
+eq('room svg', roomSvg(28).startsWith('<svg') && roomSvg(28).includes('width="28"'), true)
 console.log(bad2 ? 'FAILED' : 'ok2')

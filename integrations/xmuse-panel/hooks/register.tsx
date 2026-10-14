@@ -7,7 +7,7 @@ import {
   C_AMBER, C_BLUE, C_GREEN, C_ORANGE, C_RED, agoText, approvalHasAlways, approvalKindLabel, approvalText, approvalsOf, avatarSvg, backoffMs,
   buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
   isDoneMsg, isLoopbackUrl, isToClaude, lastLines, matchHubs, maxWakeId, membersOf, messagesFor, noiseSummary, parseHubs, parseMentions, replyLabel,
-  statusOf, summaryLine, tabsOf, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
+  statusOf, summaryLine, railOf, dmThreadId, roomSvg, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
   workingMembers, changedWorker, doneLine, finishedMembers, textsOf, toPosix, typingSteps,
   badgeOf, completeMention, dayLabel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
   trailingMention, vendorKey, canCompact, ctxLevel, ctxText, mergeCompactInstructions, hubStartScript,
@@ -36,7 +36,8 @@ const STORE_SEEN = 'wakeSeen' // number: highest message id already handled (sub
 
 const connAtom = atom({ plugin: 'xmuse', key: 'conn' } as const, { phase: 'idle', error: '' } as ConnInfo)
 const viewAtom = atom({ plugin: 'xmuse', key: 'view' } as const, null as any)
-const tabAtom = atom({ plugin: 'xmuse', key: 'tab' } as const, 'all')
+const tabAtom = atom({ plugin: 'xmuse', key: 'tab' } as const, '#room') // the open rail entry: '#room', a dm: thread id, or 'all'
+const railAtom = atom({ plugin: 'xmuse', key: 'rail' } as const, 'auto' as RailMode) // the left rail: auto (by width), open, closed
 const replyAtom = atom({ plugin: 'xmuse', key: 'replyTo' } as const, 0)
 const genAtom = atom({ plugin: 'xmuse', key: 'gen' } as const, 0)
 const promotedAtom = atom({ plugin: 'xmuse', key: 'promoted' } as const, {} as Record<string, string>)
@@ -896,7 +897,7 @@ async function loadOlder($: any) {
   await update($, olderAtom, o => ({ ...o, loading: true }))
   try {
     const tabId = await read($, tabAtom)
-    const activeTab = tabsOf(view).some(t => t.id === tabId) ? tabId : 'all'
+    const activeTab = railOf(view).some(t => t.id === tabId) ? tabId : '#room'
     let before = Math.min(...ids)
     let got: any[] = []
     let hasMore = true
@@ -928,6 +929,38 @@ async function loadOlder($: any) {
 /** A member chip pressed: its full card opens (one at a time); pressing the open one closes it. */
 async function toggleExpand($: any, id: string) {
   await update($, expandedAtom, v => (v === id ? '' : id))
+}
+
+/** The rail's fold button: from auto it flips what the width chose; after that it toggles. */
+async function toggleRail($: any, shownOpen: boolean) {
+  await update($, railAtom, () => (shownOpen ? 'closed' : 'open'))
+}
+
+/**
+ * The member menu's 暂停 / 恢复 / 移出 (hub acts pause, resume, remove). 移出 takes two presses: the first turns the
+ * button into "确认移出", the second removes (the member's history stays; its token stops working).
+ */
+async function memberAct($: any, id: string, act: 'pause' | 'resume' | 'remove') {
+  const busy = await read($, busyAtom)
+  if (busy[`ma${id}`]) return
+  if (act === 'remove' && !busy[`rmq${id}`]) {
+    await update($, busyAtom, m => ({ ...m, [`rmq${id}`]: true }))
+    return
+  }
+  await update($, busyAtom, m => ({ ...m, [`ma${id}`]: true }))
+  const label = act === 'pause' ? '暂停' : act === 'resume' ? '恢复' : '移出'
+  try {
+    const r = await callHub($, 'POST', '/v1/act', { act, member: id })
+    if (r.status !== 200) $.ui.toast(`${label}失败 ${r.status}: ${String(r.data?.message ?? r.data?.error ?? '').slice(0, 100)}`)
+    else {
+      $.ui.toast(`已${label} ${displayName(id)}`)
+      if (act === 'remove') { await update($, tabAtom, () => '#room'); await update($, expandedAtom, () => '') }
+    }
+  } catch (err) {
+    $.ui.toast(`${label}失败: ${errText(err)}`)
+  } finally {
+    await update($, busyAtom, m => { const n = { ...m }; delete n[`ma${id}`]; delete n[`rmq${id}`]; return n })
+  }
 }
 
 async function toggleAddOpen($: any) {
@@ -1232,18 +1265,28 @@ function avatar(ui: any, id: string, size: number, look: Look) {
 }
 
 type Look = { light: boolean; pal: Pal; vend: Record<string, string>; badges: Record<string, string> }
+type RailMode = 'auto' | 'open' | 'closed'
+const RAIL_OPEN_COLS = 12 // the rail's width open (avatar and name) and folded (avatar only), in cells
+const RAIL_SHUT_COLS = 5
 
 async function toggleFold($: any, key: string) {
   await update($, foldAtom, m => ({ ...m, [key]: !m[key] }))
 }
 
+const DRAW_LIMIT_MS = 5000
+const TIMED_OUT = Symbol('timed out')
+let drawStage = '' // the last step drawPanel reached (shown when a draw throws or does not settle)
+
 async function drawPanel($: any, e: any) {
+  drawStage = 'resolve'
   const ui = $.ui.resolve(e) as any
   const { Box, Text, Button, Input, Markdown, Code, Select, Client } = ui
   // the pane's width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide)
   const cols = Number(e?.viewport?.columns ?? 0)
   const narrow = cols > 0 && cols < NARROW_COLS
+  drawStage = 'read view'
   const view = await read($, viewAtom)
+  drawStage = 'read state'
   const conn = await read($, connAtom)
   const tab = await read($, tabAtom)
   const replyTo = await read($, replyAtom)
@@ -1256,9 +1299,12 @@ async function drawPanel($: any, e: any) {
   await read($, avatarVerAtom) // redraw when a custom avatar file has been picked up
 
   const open = await read($, openAtom)
+  drawStage = 'store brief'
   const briefMissing = (await read($, briefAtom)) || (await $.store.get(STORE_BRIEF)) === true
   const noRoom = conn.phase === 'noroom'
+  drawStage = 'room target'
   const target = noRoom ? await roomTarget($) : ''
+  drawStage = `build (view ${view ? 'yes' : 'no'}, conn ${conn.phase})`
   // "no room here yet" with the button, the progress of opening it, or why it failed
   const roomBar = (noRoom || open.busy || open.error) ? (
     <Box flexDirection="column" gap={1}>
@@ -1319,8 +1365,10 @@ async function drawPanel($: any, e: any) {
   const members = membersOf(view)
   const hostId: string = view.room?.host ?? ''
   const meId: string = view.me?.id ?? ''
-  const tabs = tabsOf(view)
-  const activeTab = tabs.some(t => t.id === tab) ? tab : 'all'
+  const rail = railOf(view)
+  const activeTab = rail.some(t => t.id === tab) ? tab : '#room'
+  const activeItem = rail.find(t => t.id === activeTab)!
+  const peerOf = activeItem.peer
   // the view's recent page plus any older pages loaded with the button at the bottom
   // (the view carries only the latest page, so every message seen is kept: one that slid out of the page stays)
   const older = await read($, olderAtom)
@@ -1333,7 +1381,7 @@ async function drawPanel($: any, e: any) {
   const rows = buildRows(msgs)
   const replied = msgs.find(m => m.id === replyTo)
   const replySnip = replied ? `${displayName(replied.from)}：${String(replied.text ?? '').replace(/\s+/g, ' ').slice(0, 40)}` : ''
-  const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? activeTab
+  const activeLabel = activeItem.kind === 'room' ? '全员' : activeItem.kind === 'all' ? '全员（大群）' : activeItem.label
   const placeholder = narrow ? '说点什么…（@ 指定成员）' : '说点什么…  @ 指定成员 · Enter 发送 · \\n 换行'
   const approvals = approvalsOf(view)
   const working = workingMembers(view)
@@ -1473,8 +1521,7 @@ async function drawPanel($: any, e: any) {
 
   // Live drafts, newest of all so at the top: each member at work (in this tab) as a bubble in the making, with what
   // it is writing (the latest part, typed in) or the tool it runs, and three dots that step with the clock.
-  const peerOf = tabs.find(t => t.id === activeTab)?.peer
-  const drafts = stale ? [] : working.filter(w => activeTab === 'all' || peerOf === w.id).map(w => {
+  const drafts = stale ? [] : working.filter(w => !peerOf || peerOf === w.id).map(w => {
     const p = w.progress
     const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
     const raw = String(p?.text ?? '')
@@ -1721,9 +1768,43 @@ async function drawPanel($: any, e: any) {
     )
   }
   const openMember = members.find(x => x.id === expanded)
+  const peerMember = peerOf ? members.find(x => x.id === peerOf) : undefined
+
+  // the left rail, IM style: the room, one entry per member (the user's private chat with it), everything; folds to
+  // avatars only (auto: folded on a narrow pane). The pane scrolls as one, so the rail sits at the top like the composer.
+  const railMode = await read($, railAtom)
+  const railShown = railMode === 'open' || (railMode === 'auto' && !narrow)
+  const short = (s: string) => (s.length > 8 ? s.slice(0, 7) + '…' : s)
+  const railNode = (
+    <Box flexDirection="column" flexShrink={0} width={railShown ? RAIL_OPEN_COLS : RAIL_SHUT_COLS} backgroundColor={pal.codeBg}
+      paddingY={1} gap={1} alignItems="center">
+      <Button key="rail-toggle" plain dimColor onPress={() => toggleRail($, railShown)}>{railShown ? '«' : '»'}</Button>
+      {rail.map(it => {
+        const sel = it.id === activeTab
+        const m = it.peer ? members.find(x => x.id === it.peer) : undefined
+        const b = m ? bitsOf(m) : null
+        const key = it.kind === 'dm' ? `rail-dm-${it.peer}` : `rail-${it.kind}`
+        const name = it.kind === 'room' ? '大群' : it.label
+        return (
+          <Box key={`rw-${key}`} flexDirection="column" alignItems="center" width="100%" {...(sel ? { backgroundColor: pal.bubble } : {})}>
+            {it.kind === 'room' ? <ui.Svg source={roomSvg(28)} alt="大群" width={28} height={28} />
+              : m ? avatar(ui, m.id, 28, look) : null}
+            <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
+              {b ? <Text color={b.dot}>●</Text> : null}
+              {railShown || it.kind === 'all' ? <Text bold={sel} color={m ? nc(m.id) : undefined}>{`${b ? ' ' : ''}${short(name)}`}</Text>
+                : b ? null : <Text bold={sel}>群</Text>}
+              {it.unread > 0 ? <Text color={C_RED}>{` ${it.unread}`}</Text> : null}
+            </Button>
+          </Box>
+        )
+      })}
+    </Box>
+  )
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="row" gap={1}>
+    {railNode}
+    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
       {errorCard}
       {roomBar}
@@ -1766,19 +1847,37 @@ async function drawPanel($: any, e: any) {
           ) : null}
         </Box>
       ) : null}
-      {/* header: the room on the left; add an assistant and auto-wake as two text buttons on the right, as one group */}
-      <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={3}>
-        <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-          <Text bold>{String(view.room?.name ?? 'xmuse')}</Text>
-          <Text dimColor>{`· ${members.length} 位成员`}</Text>
-        </Box>
-        <Box flexDirection="row" alignItems="center" columnGap={3} flexShrink={0}>
-          {members.length ? <Button key="add-toggle" plain onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 助手'}</Button> : null}
-          <Button key="auto-wake" plain onPress={() => toggleAuto($)}>
-            {autoWake ? <Text color={C_GREEN}>自动叫醒 ●</Text> : <Text dimColor>自动叫醒 ○</Text>}
+      {/* the open conversation's header: the room (name, members, add an assistant, auto-wake), a member (its state and
+          the 操作 menu: model, compact, stop, pause, remove), or everything */}
+      {peerMember ? (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={2}>
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+            {avatar(ui, peerMember.id, 20, look)}
+            <Text bold color={nc(peerMember.id)}>{peerMember.id}</Text>
+            {peerMember.id === hostId ? <Text color={C_AMBER}>★ 主控</Text> : null}
+            <Text color={bitsOf(peerMember).dot}>●</Text>
+            <Text dimColor>{stale ? '未知' : bitsOf(peerMember).st.label}</Text>
+            {bitsOf(peerMember).ctx ? <Text dimColor>{bitsOf(peerMember).ctx}</Text> : null}
+          </Box>
+          <Button key={`peer-menu-${peerMember.id}`} plain onPress={() => toggleExpand($, peerMember.id)}>
+            {expanded === peerMember.id ? '收起 ▴' : '操作 ▾'}
           </Button>
         </Box>
-      </Box>
+      ) : (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={3}>
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+            {activeItem.kind === 'room' ? <ui.Svg source={roomSvg(20)} alt="大群" width={20} height={20} /> : null}
+            <Text bold>{activeItem.kind === 'all' ? '全部消息' : String(view.room?.name ?? 'xmuse')}</Text>
+            <Text dimColor>{activeItem.kind === 'all' ? '· 含成员之间的私聊' : `· ${members.length} 位成员`}</Text>
+          </Box>
+          <Box flexDirection="row" alignItems="center" columnGap={3} flexShrink={0}>
+            {members.length ? <Button key="add-toggle" plain onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 助手'}</Button> : null}
+            <Button key="auto-wake" plain onPress={() => toggleAuto($)}>
+              {autoWake ? <Text color={C_GREEN}>自动叫醒 ●</Text> : <Text dimColor>自动叫醒 ○</Text>}
+            </Button>
+          </Box>
+        </Box>
+      )}
       {addOpen && members.length ? (
         <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
           <Text dimColor>添加</Text>
@@ -1791,31 +1890,23 @@ async function drawPanel($: any, e: any) {
           )}
         </Box>
       ) : null}
-
-      {/* members as chips: avatar, state dot, name, and the running time or the context size; a press opens that
-          member's full card below (one at a time, a second press closes it) */}
-      <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
-        {members.map(m => {
-          const b = bitsOf(m)
-          const sel = expanded === m.id
-          // narrow pane: avatar and state dot only (the name and numbers are in the card a press opens)
-          return (
-            <Box key={`chip-wrap-${m.id}`} flexDirection="row" alignItems="center" gap={1} flexShrink={0} borderStyle="round"
-              borderColor={sel ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.8) : pal.bubbleBorder} paddingX={1}
-              {...(sel ? { backgroundColor: pal.codeBg } : {})}>
-              {avatar(ui, m.id, 14, look)}
-              <Button key={`chip-${m.id}`} plain onPress={() => toggleExpand($, m.id)}>
-                <Text color={b.dot}>●</Text>
-                {narrow ? null : <Text bold={sel} color={nc(m.id)}>{` ${m.id}`}</Text>}
-                {!narrow && m.id === hostId ? <Text color={C_AMBER}>★</Text> : null}
-                {b.compacting ? <Text color={C_BLUE}>{' ◌'}</Text> : b.ctx && (!narrow || b.cl > 0) ? <Text color={b.cl === 2 ? C_RED : b.cl === 1 ? C_AMBER : undefined} dimColor={b.cl === 0}>{` ${b.ctx}`}</Text> : null}
+      {peerMember && openMember?.id === peerMember.id ? (
+        <Box flexDirection="column" marginTop={1}>
+          {cardOf(peerMember)}
+          <Box key={`menu-${peerMember.id}`} flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+            {peerMember.paused || peerMember.status === 'paused'
+              ? <Button key={`resume-${peerMember.id}`} plain onPress={() => memberAct($, peerMember.id, 'resume')}>▶ 恢复</Button>
+              : <Button key={`pause-${peerMember.id}`} plain onPress={() => memberAct($, peerMember.id, 'pause')}>⏸ 暂停</Button>}
+            {peerMember.id !== hostId ? (
+              <Button key={`remove-${peerMember.id}`} plain dimColor={!busy[`rmq${peerMember.id}`]} hover={{ color: C_RED }}
+                onPress={() => memberAct($, peerMember.id, 'remove')}>
+                {busy[`rmq${peerMember.id}`] ? '确认移出？再点一次' : '移出房间'}
               </Button>
-              {b.running && !narrow ? <Client key={`el-${m.id}-chip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} /> : null}
-            </Box>
-          )
-        })}
-      </Box>
-      {openMember ? cardOf(openMember) : null}
+            ) : null}
+            {busy[`ma${peerMember.id}`] ? <Text color={C_BLUE}>处理中…</Text> : null}
+          </Box>
+        </Box>
+      ) : null}
       </Box>
 
       {/* model picker of one member: the hub's options (its catalog, the defaults, what the room ran) or a typed
@@ -1847,19 +1938,6 @@ async function drawPanel($: any, e: any) {
           {mp.error ? <Text color={C_RED}>{mp.error}</Text> : null}
         </Box>
       ) : null}
-
-      {/* tabs (which conversation the list and the composer show): bare text on a thin rule, the open one bold and
-          underlined, so they never read as the member chips above (those are boxed and open a card). A colour dot
-          marks a private chat, # a group. They stay apart from the chips as a filter of the messages, not of members. */}
-      <Box flexDirection="row" flexWrap="wrap" columnGap={3} marginTop={1}>
-        {tabs.map(t => (
-          <Button key={`tab-${t.id}`} plain onPress={() => setTab($, t.id)}>
-            {t.peer ? <Text color={nc(t.peer)}>● </Text> : t.group ? <Text dimColor># </Text> : null}
-            {activeTab === t.id ? <Text bold underline>{t.label}</Text> : <Text dimColor>{t.label}</Text>}
-            {t.unread > 0 ? <Text color={C_RED}>{` ${t.unread}`}</Text> : null}
-          </Button>
-        ))}
-      </Box>
 
       {/* approval cards, pinned above the messages: the first one open, the rest behind one line */}
       {decision.text ? <Box marginTop={1}><Text color={decision.ok ? C_GREEN : C_RED} wrap="truncate-end">{decision.text}</Text></Box> : null}
@@ -1907,9 +1985,8 @@ async function drawPanel($: any, e: any) {
         {/* one small line above the field: who it goes to (the open tab) and the reply it answers */}
         <Box flexDirection="row" gap={1} alignItems="center">
           <Text dimColor>发给</Text>
-          <Text color={activeTab === 'all' ? undefined : nc(tabs.find(t => t.id === activeTab)?.peer ?? '')} bold>
-            {activeTab === 'all' ? '全员' : activeLabel}
-          </Text>
+          <Text color={peerOf ? nc(peerOf) : undefined} bold>{activeLabel}</Text>
+          {peerOf ? <Text dimColor>（私聊）</Text> : null}
           {replyTo > 0 ? (
             <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1}>
               <Text color="permission" wrap="truncate-end">{`↩ #${replyTo} ${replySnip}`}</Text>
@@ -1945,7 +2022,7 @@ async function drawPanel($: any, e: any) {
      {/* messages, newest first */}
      <Box flexDirection="column">
       <Box flexDirection="column" gap={1}>
-      {rows.length === 0 && !drafts.length ? <Text dimColor>{activeTab === 'all' ? '这里还没有消息：发一句话试试，@名字 可以指定对象' : `和 ${activeLabel} 说点什么吧`}</Text> : null}
+      {rows.length === 0 && !drafts.length ? <Text dimColor>{peerOf ? `和 ${peerOf} 的私聊：只有你们两个看得到` : '这里还没有消息：发一句话试试，@名字 可以指定对象'}</Text> : null}
       {drafts}
       {msgNodes}
       {hasOlder ? (
@@ -1956,6 +2033,7 @@ async function drawPanel($: any, e: any) {
       </Box>
      </Box>
 
+    </Box>
     </Box>
   )
 }
@@ -2013,5 +2091,28 @@ export const register: Register = on => {
     return { text: 'xmuse panel opened' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => drawPanel($, e))
+  // A throw or a draw that never settles would leave the pane to the engine's "Nothing to show yet" with no reason:
+  // show the error, or after DRAW_LIMIT_MS the last step the draw reached.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    drawStage = 'start'
+    const failed = (title: string, detail: string) => {
+      const { Box, Text } = $.ui.resolve(e) as any
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text color={C_RED}>{title}</Text>
+          <Text wrap="wrap">{detail.slice(0, 2000)}</Text>
+        </Box>
+      )
+    }
+    let late: ((v: unknown) => void) | undefined
+    const timer = new Promise(resolve => { late = resolve })
+    $.clock.after(DRAW_LIMIT_MS, () => late?.(TIMED_OUT))
+    try {
+      const r = await Promise.race([drawPanel($, e), timer])
+      if (r === TIMED_OUT) return failed(`xmuse 面板绘制超时（${DRAW_LIMIT_MS / 1000} 秒）`, `停在：${drawStage}`)
+      return r
+    } catch (err: any) {
+      return failed('xmuse 面板绘制出错', `${String(err?.stack ?? err)}\n停在：${drawStage}`)
+    }
+  })
 }

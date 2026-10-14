@@ -307,6 +307,45 @@ export function tabsOf(view: any): Tab[] {
   return out
 }
 
+/** The private chat between the user and a member, as the hub names it (mail.dm_id): `dm:` + the two ids sorted. */
+export function dmThreadId(member: string): string {
+  return 'dm:' + ['human', member].sort().join('+')
+}
+
+/** One entry of the left rail: the room, a member (its private chat with the user), or everything. */
+export type RailItem = { id: string; kind: 'room' | 'dm' | 'all'; label: string; unread: number; peer?: string }
+
+/**
+ * The left rail, IM style: the room (#room) first, then one entry per member (the user's private chat with it, which
+ * the hub creates on the first message), then "全部" (every thread the user can see, the other members' DMs included).
+ * Unread counts come from the view's threads; a chat that does not exist yet has none.
+ */
+export function railOf(view: any): RailItem[] {
+  const ths = threadsOf(view)
+  const unread = (id: string) => Number(ths.find(t => t.id === id)?.unread ?? 0)
+  const out: RailItem[] = [{ id: '#room', kind: 'room', label: String(view?.room?.name ?? '') || '大群', unread: unread('#room') }]
+  for (const m of membersOf(view)) {
+    const id = dmThreadId(m.id)
+    out.push({ id, kind: 'dm', label: m.id, unread: unread(id), peer: m.id })
+  }
+  // threads that are neither the room nor one of the user's chats (members' DMs, groups): only counted under 全部
+  const mine = new Set(out.map(x => x.id))
+  const rest = ths.filter(t => !mine.has(t.id)).reduce((n, t) => n + Number(t.unread ?? 0), 0)
+  out.push({ id: 'all', kind: 'all', label: '全部', unread: rest })
+  return out
+}
+
+/** The room's avatar: a disc with three heads, the group's mark in the rail and the room header. */
+export function roomSvg(size: number): string {
+  const head = (x: number, y: number, r: number) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#FFFFFF"/>`
+  const body = (x: number, y: number, w: number) =>
+    `<path d="M${x - w} ${y + 6} C${x - w} ${y} ${x + w} ${y} ${x + w} ${y + 6} Z" fill="#FFFFFF"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32">`
+    + `<circle cx="16" cy="16" r="16" fill="#3D8B6E"/>`
+    + `<g opacity="0.75">${head(9.5, 13, 3)}${body(9.5, 18, 4.5)}${head(22.5, 13, 3)}${body(22.5, 18, 4.5)}</g>`
+    + `${head(16, 11.5, 3.6)}${body(16, 17, 5.6)}</svg>`
+}
+
 /** Thread id to use for `say` and `read` on a tab. */
 export function threadForTab(tab: string): string {
   return tab === 'all' ? '#room' : tab
@@ -330,6 +369,8 @@ export function toLabel(m: Msg): string {
   const ments = Array.isArray(m.mentions) ? m.mentions : []
   const to = Array.isArray(m.to) ? m.to : []
   const th = m.thread ?? ''
+  // in the room everyone reads it: @ only says whom it wakes, so it must not read as a private message
+  if ((th === '#room' || th === '') && ments.length) return `全员 · @${ments.map(displayName).join(' @')}`
   let who: string[]
   if (ments.length) who = ments
   else if (th.startsWith('dm:')) who = to
@@ -587,7 +628,11 @@ export function expandNewlines(text: string): string {
 export function buildSay(text: string, tab: string, replyTo: number, view: any): SayBody | null {
   const t = text.trim()
   if (!t) return null
-  const body: SayBody = { act: 'say', to: threadForTab(tab), text: t, mentions: parseMentions(t, view) }
+  const to = threadForTab(tab)
+  let mentions = parseMentions(t, view)
+  // a private chat has two members: an @ of anyone else is just text there (the hub refuses mentions outside a thread)
+  if (to.startsWith('dm:')) mentions = mentions.filter(m => to.slice(3).split('+').includes(m))
+  const body: SayBody = { act: 'say', to, text: t, mentions }
   if (replyTo > 0) body.reply_to = replyTo
   return body
 }

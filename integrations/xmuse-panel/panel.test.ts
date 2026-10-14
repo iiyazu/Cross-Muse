@@ -160,24 +160,30 @@ for (const surface of ['terminal', 'desktop'] as const) {
 const widthView = () => ({ ...chipView, timeline: [{ id: 5, from: 'alpha', thread: '#room', at: 1_699_000_005, text: 'hi claude', for_me: true }] })
 
 for (const [label, columns] of [['narrow', 40], ['wide', 130]] as const) {
-  test(`header, notices, chips, tabs and composer all draw at a ${label} pane (${columns} columns)`, async ($, on) => {
+  test(`rail, header, notices and composer all draw at a ${label} pane (${columns} columns)`, async ($, on) => {
     const stored: Record<string, unknown> = { briefMissing: true, wakeSeen: 0 }
     on('clock.now', async () => ({ value: T0 }))
     on('store.get', async (_$: any, e: any) => ({ value: stored[e.key] ?? null }))
     on('state.get', async (_$: any, e: any, next: any) => (e.key === 'view' ? { value: { value: widthView(), version: 1 } } : next(e)))
     const ui = await $.ui.mount({ plugin: 'xmuse', surface: 'desktop', component: 'Pane', requestId: 'xmuse', props: {}, viewport: { columns, rows: 40 } })
     await ui.drawn()
-    // every control keeps its key at both widths
-    const keys = ['wake-banner', 'brief-ask', 'brief-skip', 'add-toggle', 'auto-wake', 'tab-all', 'xm-in-0', 'wk-stop-alpha',
-      ...['alpha', 'beta', 'gamma', 'delta'].map(id => `chip-${id}`)]
+    // every control keeps its key at both widths: the rail has the room, one entry per member and 全部
+    const keys = ['wake-banner', 'brief-ask', 'brief-skip', 'add-toggle', 'auto-wake', 'rail-toggle', 'rail-room', 'rail-all', 'xm-in-0',
+      'wk-stop-alpha', ...['alpha', 'beta', 'gamma', 'delta'].map(id => `rail-dm-${id}`)]
     for (const k of keys) expect(await ui.find({ key: k })).toBeDefined()
     // only the wake notice is a solid (primary) button; the rest are plain text buttons
     const primary = JSON.stringify(await ui.drawn()).match(/"variant":"primary"/g) ?? []
     expect(primary).toHaveLength(1)
-    // a chip carries the member's name only on a wide pane
+    // the rail carries the members' names only open: folded by itself on a narrow pane
     const named = await ui.find({ type: 'Text', text: ' delta' })
     if (columns >= 56) expect(named).toBeDefined()
     else expect(named).toBeUndefined()
+    // the fold button flips it
+    await ui.press({ key: 'rail-toggle' })
+    await ui.redraw()
+    const after = await ui.find({ type: 'Text', text: ' delta' })
+    if (columns >= 56) expect(after).toBeUndefined()
+    else expect(after).toBeDefined()
     await ui.unmount()
   })
 }
@@ -195,28 +201,35 @@ const chipView = {
   timeline: [],
 }
 
-test('member chips are collapsed by default; a press opens one full card, a second press closes it', async ($, on) => {
+test('a member in the rail opens the private chat; its 操作 menu holds the card, pause and a two-press remove', async ($, on) => {
   on('clock.now', async () => ({ value: T0 }))
   on('store.get', async () => ({ value: null }))
   on('state.get', async (_$: any, e: any, next: any) => (e.key === 'view' ? { value: { value: chipView, version: 1 } } : next(e)))
+  const acts: any[] = []
+  on('http.fetch', async (_$: any, e: any) => {
+    acts.push(JSON.parse(String(e.body ?? '{}')))
+    return { status: 200, headers: {}, body: '{"ok":true}' }
+  })
   const ui = await $.ui.mount({ plugin: 'xmuse', surface: 'terminal', component: 'Pane', requestId: 'xmuse', props: {} })
-  for (const id of ['alpha', 'beta', 'gamma', 'delta']) {
-    expect(await ui.find({ key: `chip-${id}` })).toBeDefined() // every member has a chip
-    expect(await ui.find({ key: `md-${id}` })).toBeUndefined() // but no model button
-    expect(await ui.find({ key: `cp-${id}` })).toBeUndefined() // and no compact button
-  }
+  // the room is open: the composer says 全员, no member menu
+  expect(await ui.find({ type: 'Text', text: '全员' })).toBeDefined()
+  for (const id of ['alpha', 'beta', 'gamma', 'delta']) expect(await ui.find({ key: `peer-menu-${id}` })).toBeUndefined()
   expect(await ui.findAll({ type: 'Button', key: 'wk-stop-alpha' })).toHaveLength(1) // running members keep a stop button in the strip
-  await ui.press({ key: 'chip-gamma' })
+  await ui.press({ key: 'rail-dm-gamma' })
   await ui.redraw()
-  expect(await ui.find({ key: 'md-gamma' })).toBeDefined() // gamma's full card is open
+  expect(await ui.find({ type: 'Text', text: '（私聊）' })).toBeDefined() // the composer now goes to gamma alone
+  expect(await ui.find({ key: 'md-gamma' })).toBeUndefined() // the menu is closed
+  await ui.press({ key: 'peer-menu-gamma' })
+  await ui.redraw()
+  expect(await ui.find({ key: 'md-gamma' })).toBeDefined() // model and compact from the card
   expect(await ui.find({ key: 'cp-gamma' })).toBeDefined()
-  expect(await ui.find({ key: 'md-delta' })).toBeUndefined() // only one at a time
-  await ui.press({ key: 'chip-delta' })
+  expect(await ui.find({ key: 'pause-gamma' })).toBeDefined()
+  await ui.press({ key: 'remove-gamma' })
   await ui.redraw()
-  expect(await ui.find({ key: 'md-gamma' })).toBeUndefined()
-  expect(await ui.find({ key: 'md-delta' })).toBeDefined()
-  await ui.press({ key: 'chip-delta' })
+  expect(JSON.stringify(await ui.drawn())).toContain('确认移出？再点一次') // the first press only asks
+  expect(acts.some(a => a.act === 'remove')).toBe(false)
+  await ui.press({ key: 'peer-menu-gamma' })
   await ui.redraw()
-  expect(await ui.find({ key: 'md-delta' })).toBeUndefined() // closed again
+  expect(await ui.find({ key: 'md-gamma' })).toBeUndefined() // closed again
   await ui.unmount()
 })
