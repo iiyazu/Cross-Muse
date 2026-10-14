@@ -90,7 +90,8 @@ def test_claude_config(ws):
     assert mcp["env"] == {"XMUSE_STATE": str(state), "XMUSE_AGENT": "claude-1", "XMUSE_CHANNEL": "1"}
     s = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert s["permissions"] == {"allow": ["mcp__xmuse__*"]} and s["enabledMcpjsonServers"] == ["xmuse"]
-    assert set(s["hooks"]) == {"SessionStart", "SessionEnd", "UserPromptSubmit", "Stop"}
+    assert set(s["hooks"]) == {"SessionStart", "SessionEnd", "UserPromptSubmit", "Stop", "PreToolUse"}
+    assert s["hooks"]["PreToolUse"][0]["matcher"] == "Bash"  # the auto-mode gate (hook.py gate)
     assert "XMUSE_AGENT=claude-1" in s["hooks"]["Stop"][0]["hooks"][0]["command"]
     [plain, compact] = s["hooks"]["SessionStart"]
     assert "matcher" not in plain and compact["matcher"] == "compact"

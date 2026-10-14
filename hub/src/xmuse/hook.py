@@ -22,6 +22,31 @@ import urllib.request
 
 BAKED = globals().get("BAKED") or {}  # defined by the generated header of the per-workspace copy
 
+
+def gate(desktop: bool) -> None:
+    """PreToolUse(Bash) of a hub-run Claude member (auto mode lets it run Bash): a command risk.py flags is denied
+    with the reason, and the member asks the user through xmuse. The user's own sessions in the same directory
+    (the desktop coordinator, an interactive `claude`) keep their own prompts: nothing is said for them. When the
+    check itself fails, the command is denied: this gate fails closed."""
+    if desktop or os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli":
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("xmuse_risk", os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), "risk.py"))
+        risk = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(risk)
+        p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+        cmd = str((p.get("tool_input") or {}).get("command") or "")
+        why = risk.risky(cmd, p.get("cwd") or os.getcwd())
+    except Exception as e:  # noqa: BLE001
+        why = f"the xmuse gate could not check this command ({e})"
+    if why:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": f"needs the user's approval: {why}. Ask the user with xmuse_send (to: human) "
+                                        "and wait for the answer; do not try another way around."}}))
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # the reminder reaches the model as UTF-8, whatever the code page
     state = BAKED.get("state") or os.environ["XMUSE_STATE"]
@@ -33,6 +58,9 @@ try:
                            env={**os.environ, "XMUSE_STATE": state}, timeout=20)
         sys.stdout.buffer.write(r.stdout)
         sys.stdout.flush()
+        sys.exit(0)
+    if event == "PreToolUse":
+        gate(desktop)
         sys.exit(0)
     p = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))  # UTF-8 whatever the Windows code page
     hub = json.load(open(os.path.join(state, "hub.json"), encoding="utf-8"))

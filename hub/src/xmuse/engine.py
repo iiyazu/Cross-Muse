@@ -25,7 +25,7 @@ class Engine:
         self.state, self.cfg, self.db, self.drivers, self.ws = state, cfg, dbf, drivers, workspace
         self.q: queue.Queue = queue.Queue()
         self.adapters = {}  # turn id -> adapter that runs it
-        self.shell_policy = "allowlist"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
+        self.shell_policy = "auto"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
         self.progress_state = cfg["_progress"] = {}  # H4: turn_id -> {tools, last_tool, text}; memory only
         self._progress_lock = threading.Lock()
         self._progress_tick = 0.0
@@ -364,7 +364,9 @@ class Engine:
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
-        auto = auto_decision(req.get("action"), req.get("resources"), self.shell_policy) \
+        row = db.row(conn.execute("select * from agents where id=?", (agent_id,))) if agent_id else None
+        auto = auto_decision(req.get("action"), req.get("resources"), self.shell_policy,
+                             str(db.workdir(row, self.ws) if row else self.ws)) \
             if "opencode" in self.drivers else None
         with db.tx(conn):
             conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
