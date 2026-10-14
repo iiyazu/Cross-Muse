@@ -104,3 +104,119 @@ test('one press on the older-messages button skips pages of notices until a real
   expect((await ui.find({ type: 'Markdown', text: 'an older plain message' }))?.text).toContain('an older plain message')
   await ui.unmount()
 })
+
+// ---- the reveal of a new message (grow Client, 'md' mode) must always draw -----------------------------------------------
+
+const REVEAL_TEXTS: Record<string, string> = {
+  short: 'ack',
+  markdown: '**Plan**\n\n- one\n- two\n\n```ts\nconst a = 1\n```\n\n> quoted `code` and [a link](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |',
+  crlf: 'line one\r\nline two\r\n',
+}
+
+function revealStepsOf(len: number): number[] {
+  const n = Math.min(10, Math.max(3, Math.ceil(len / 40)))
+  const out: number[] = []
+  for (let i = 1; i <= n; i++) out.push(Math.min(len, Math.ceil((len * i) / n)))
+  out[out.length - 1] = len
+  return out
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  for (const [name, text] of Object.entries(REVEAL_TEXTS)) {
+    for (const withSteps of [true, false]) {
+      test(`reveal of a ${name} message draws on ${surface}${withSteps ? '' : ' (no steps)'} from start to done`, async ($, on) => {
+        const msg = { id: 7, from: 'agy', thread: '#room', at: 1_699_000_007, text, reply_to: 3 }
+        const v = { ...chipView, members: [], timeline: [{ id: 3, from: 'human', thread: '#room', at: 1_699_000_003, text: 'ping' }, msg] }
+        const steps = withSteps ? revealStepsOf(text.length) : []
+        let cleared = false
+        on('state.set', async (_$: any, e: any, next: any) => { if (e.key === 'reveal') cleared = true; return next(e) })
+        on('clock.now', async () => ({ value: T0 }))
+        on('store.get', async () => ({ value: null }))
+        on('state.get', async (_$: any, e: any, next: any) => {
+          if (e.key === 'view') return { value: { value: v, version: 1 } }
+          if (e.key === 'reveal' && !cleared) return { value: { value: { id: 7, steps, run: 1 }, version: 0 } }
+          return next(e)
+        })
+        const ui = await $.ui.mount({ plugin: 'xmuse', surface, component: 'Pane', requestId: 'xmuse', props: {} })
+        await ui.drawn() // rejects with the refusal when the surface could not draw the panel or one of its Clients
+        for (let i = 0; i < steps.length + 2; i++) {
+          await ui.advance(70)
+          await ui.drawn()
+          if (withSteps && !cleared) {
+            // the Client draws plain Text: a Markdown root in a Client is what the desktop refused to draw
+            expect(JSON.stringify(await ui.drawn({ in: 'gr-m-7' }))).not.toContain('"Markdown"')
+          }
+        }
+        await ui.redraw()
+        expect(await ui.find({ type: 'Client', key: 'gr-m-7' })).toBeUndefined() // done: the plain rendering is back
+        await ui.unmount()
+      })
+    }
+  }
+}
+
+// ---- layout at two pane widths ---------------------------------------------------------------------------------------------
+
+const widthView = () => ({ ...chipView, timeline: [{ id: 5, from: 'alpha', thread: '#room', at: 1_699_000_005, text: 'hi claude', for_me: true }] })
+
+for (const [label, columns] of [['narrow', 40], ['wide', 130]] as const) {
+  test(`header, notices, chips, tabs and composer all draw at a ${label} pane (${columns} columns)`, async ($, on) => {
+    const stored: Record<string, unknown> = { briefMissing: true, wakeSeen: 0 }
+    on('clock.now', async () => ({ value: T0 }))
+    on('store.get', async (_$: any, e: any) => ({ value: stored[e.key] ?? null }))
+    on('state.get', async (_$: any, e: any, next: any) => (e.key === 'view' ? { value: { value: widthView(), version: 1 } } : next(e)))
+    const ui = await $.ui.mount({ plugin: 'xmuse', surface: 'desktop', component: 'Pane', requestId: 'xmuse', props: {}, viewport: { columns, rows: 40 } })
+    await ui.drawn()
+    // every control keeps its key at both widths
+    const keys = ['wake-banner', 'brief-ask', 'brief-skip', 'add-toggle', 'auto-wake', 'tab-all', 'xm-in-0', 'wk-stop-alpha',
+      ...['alpha', 'beta', 'gamma', 'delta'].map(id => `chip-${id}`)]
+    for (const k of keys) expect(await ui.find({ key: k })).toBeDefined()
+    // only the wake notice is a solid (primary) button; the rest are plain text buttons
+    const primary = JSON.stringify(await ui.drawn()).match(/"variant":"primary"/g) ?? []
+    expect(primary).toHaveLength(1)
+    // a chip carries the member's name only on a wide pane
+    const named = await ui.find({ type: 'Text', text: ' delta' })
+    if (columns >= 56) expect(named).toBeDefined()
+    else expect(named).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+// ---- member chips: the status area stays small; a chip opens the full card ------------------------------------------------
+
+const chipView = {
+  version: 1,
+  room: { id: 'r1', host: 'claude', name: 'dev' },
+  me: { id: 'claude' },
+  members: ['alpha', 'beta', 'gamma', 'delta'].map((id, i) => ({
+    id, vendor: 'opencode', model: 'prov/model-x', context_tokens: 85_000, online: true,
+    ...(i < 2 ? { status: 'running', progress: { started_at: T0 / 1000 - 30, tools: 1, text: `${id} is working` } } : {}),
+  })),
+  timeline: [],
+}
+
+test('member chips are collapsed by default; a press opens one full card, a second press closes it', async ($, on) => {
+  on('clock.now', async () => ({ value: T0 }))
+  on('store.get', async () => ({ value: null }))
+  on('state.get', async (_$: any, e: any, next: any) => (e.key === 'view' ? { value: { value: chipView, version: 1 } } : next(e)))
+  const ui = await $.ui.mount({ plugin: 'xmuse', surface: 'terminal', component: 'Pane', requestId: 'xmuse', props: {} })
+  for (const id of ['alpha', 'beta', 'gamma', 'delta']) {
+    expect(await ui.find({ key: `chip-${id}` })).toBeDefined() // every member has a chip
+    expect(await ui.find({ key: `md-${id}` })).toBeUndefined() // but no model button
+    expect(await ui.find({ key: `cp-${id}` })).toBeUndefined() // and no compact button
+  }
+  expect(await ui.findAll({ type: 'Button', key: 'wk-stop-alpha' })).toHaveLength(1) // running members keep a stop button in the strip
+  await ui.press({ key: 'chip-gamma' })
+  await ui.redraw()
+  expect(await ui.find({ key: 'md-gamma' })).toBeDefined() // gamma's full card is open
+  expect(await ui.find({ key: 'cp-gamma' })).toBeDefined()
+  expect(await ui.find({ key: 'md-delta' })).toBeUndefined() // only one at a time
+  await ui.press({ key: 'chip-delta' })
+  await ui.redraw()
+  expect(await ui.find({ key: 'md-gamma' })).toBeUndefined()
+  expect(await ui.find({ key: 'md-delta' })).toBeDefined()
+  await ui.press({ key: 'chip-delta' })
+  await ui.redraw()
+  expect(await ui.find({ key: 'md-delta' })).toBeUndefined() // closed again
+  await ui.unmount()
+})

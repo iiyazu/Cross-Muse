@@ -24,8 +24,15 @@ function draftTail(text: string, max = 280): string {
   return '…' + s
 }
 
+/** Text a surface can always take: no control characters but tab and newline, and no half of a surrogate pair at a cut. */
+function clean(s: string): string {
+  const t = s.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+  const last = t.charCodeAt(t.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? t.slice(0, -1) : t
+}
+
 const Grow: ClientModule<GrowProps, GrowState> = (p, surface) => {
-  const { Text, Markdown } = surface.elements
+  const { Text } = surface.elements
   const st = surface.state
   if (!st) {
     surface.setState({ i: 0 })
@@ -41,9 +48,11 @@ const Grow: ClientModule<GrowProps, GrowState> = (p, surface) => {
   }
   const i = st ? st.i : 0
   const done = i >= p.steps.length
-  const shown = i <= 0 ? p.from : p.steps[Math.min(i, p.steps.length) - 1]!
-  const prefix = p.text.slice(0, shown)
-  if (p.mode === 'md') return <Markdown text={done ? p.text : prefix + ' ▍'} />
+  const shown = i <= 0 || !p.steps.length ? p.from : p.steps[Math.min(i, p.steps.length) - 1]!
+  const prefix = clean(p.text.slice(0, shown))
+  // Plain Text in both modes: a Markdown element as the root of a Client made the desktop refuse the tree ("returned a
+  // tree the page cannot draw"); the panel draws the message as Markdown once this is done.
+  if (p.mode === 'md') return <Text>{done ? clean(p.text) : `${prefix} ▍`}</Text>
   return <Text dimColor>{`${draftTail(prefix)} ▍`}</Text>
 }
 
