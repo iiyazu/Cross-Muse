@@ -160,7 +160,7 @@ def test_desktop_member_writes_into_its_cwd(ws):
     assert "'agent': 'dev-1'" in (d / ".claude" / "xmuse-hook.py").read_text().splitlines()[1]
     assert "'agent': 'lead'" in (ws / ".claude" / "xmuse-hook.py").read_text().splitlines()[1]
     st = json.loads((d / ".claude" / "settings.json").read_text())
-    assert st["hooks"]["Stop"][0]["hooks"][0]["command"].endswith("python3 .claude/xmuse-hook.py Stop")
+    assert st["hooks"]["Stop"][0]["hooks"][0]["command"].endswith('python3 .claude/xmuse-hook.py Stop"')
 
 
 def test_attach_commands_name_the_member_dir(make, tmp_path):
