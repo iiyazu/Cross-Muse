@@ -18,6 +18,7 @@ declare module 'claude-code' {
       sendN: number
       sending: boolean
       addOpen: boolean
+      expanded: string
       busy: Record<string, boolean>
       fold: Record<string, boolean>
       open: { busy: boolean; msg: string; error: string }

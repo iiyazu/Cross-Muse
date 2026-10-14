@@ -57,6 +57,7 @@ let toastSeeded = false
 const sendNAtom = atom({ plugin: 'xmuse', key: 'sendN' } as const, 0) // goes into the Input key: a new key clears it
 const sendingAtom = atom({ plugin: 'xmuse', key: 'sending' } as const, false)
 const addOpenAtom = atom({ plugin: 'xmuse', key: 'addOpen' } as const, false)
+const expandedAtom = atom({ plugin: 'xmuse', key: 'expanded' } as const, '') // id of the member whose card is open under the chips, or ''
 const foldAtom = atom({ plugin: 'xmuse', key: 'fold' } as const, {} as Record<string, boolean>) // opened rows: done lines, noise runs, warnings
 // Message actions (reply / promote) show on hover. If hover does not work in the desktop pane, set this to false: the buttons stay visible.
 const HOVER_ACTIONS: boolean = true
@@ -88,6 +89,8 @@ let feedMaxId = -1 // highest timeline id seen this load; -1 until the first vie
 let revealRunN = 0
 const REVEAL_STEP_MS = 70
 const TYPE_STEP_MS = 150
+const NARROW_COLS = 56 // below this many cells (about 420 px) member chips shrink to avatar and state dot
+const GROW_GRACE_MS =1500 // a grow Client that has not reported this long after its last step is dropped (growDone clears the atom)
 
 // ---- hub access ----------------------------------------------------------------------------------------------
 
@@ -462,7 +465,9 @@ async function typeStart($: any, newView: any) {
     if (prev.run > 0 && prev.id === ch.id && prev.full === ch.old) from = Math.min(from, prev.from) // still typing: restart from its start
   }
   if (from >= ch.text.length) { await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: [], run: 0 })); return }
-  await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: typingSteps(from, ch.text.length, 4), run: ++typeRunN }))
+  const run = ++typeRunN
+  await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: typingSteps(from, ch.text.length, 4), run }))
+  $.clock.after(4 * TYPE_STEP_MS + GROW_GRACE_MS, () => { void growDone($, { grown: `t:${ch.id}:${run}` }) }) // the Client never reported: end it
 }
 
 /**
@@ -479,7 +484,9 @@ async function revealStart($: any, view: any) {
   if (!m) return
   const steps = revealSteps(String(m.text ?? '').length)
   if (!steps.length) return
-  await update($, revealAtom, () => ({ id: m.id, steps, run: ++revealRunN }))
+  const run = ++revealRunN
+  await update($, revealAtom, () => ({ id: m.id, steps, run }))
+  $.clock.after(steps.length * REVEAL_STEP_MS + GROW_GRACE_MS, () => { void growDone($, { grown: `r:${m.id}:${run}` }) }) // likewise
 }
 
 /** ui.message from a grow Client: it showed its last step; the atom goes idle and the normal rendering comes back. */
@@ -918,6 +925,11 @@ async function loadOlder($: any) {
   }
 }
 
+/** A member chip pressed: its full card opens (one at a time); pressing the open one closes it. */
+async function toggleExpand($: any, id: string) {
+  await update($, expandedAtom, v => (v === id ? '' : id))
+}
+
 async function toggleAddOpen($: any) {
   await update($, addOpenAtom, v => !v)
 }
@@ -1228,6 +1240,9 @@ async function toggleFold($: any, key: string) {
 async function drawPanel($: any, e: any) {
   const ui = $.ui.resolve(e) as any
   const { Box, Text, Button, Input, Markdown, Code, Select, Client } = ui
+  // the pane's width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide)
+  const cols = Number(e?.viewport?.columns ?? 0)
+  const narrow = cols > 0 && cols < NARROW_COLS
   const view = await read($, viewAtom)
   const conn = await read($, connAtom)
   const tab = await read($, tabAtom)
@@ -1319,13 +1334,14 @@ async function drawPanel($: any, e: any) {
   const replied = msgs.find(m => m.id === replyTo)
   const replySnip = replied ? `${displayName(replied.from)}：${String(replied.text ?? '').replace(/\s+/g, ' ').slice(0, 40)}` : ''
   const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? activeTab
-  const placeholder = '和大家说点什么…'
+  const placeholder = narrow ? '说点什么…（@ 指定成员）' : '说点什么…  @ 指定成员 · Enter 发送 · \\n 换行'
   const approvals = approvalsOf(view)
   const working = workingMembers(view)
   const nowMs = await $.clock.now() // the host clock; the per-second times are drawn by the elapsed Client (elapsed.tsx)
   const sendN = await read($, sendNAtom)
   const sending = await read($, sendingAtom)
   const addOpen = await read($, addOpenAtom)
+  const expanded = await read($, expandedAtom)
   const busy = await read($, busyAtom)
   const decision = await read($, decisionAtom)
   const mq = await read($, mentionAtom)
@@ -1356,7 +1372,7 @@ async function drawPanel($: any, e: any) {
     const full = String(m.text ?? '')
     const expanded = !!fold[`l${m.id}`]
     // just arrived: a grow Client draws its prefix and a caret until the reveal reaches the end, then reports back
-    const growing = reveal.run > 0 && reveal.id === m.id
+    const growing = reveal.run > 0 && reveal.id === m.id && reveal.steps.length > 0
     const folded = expanded || growing ? null : foldLong(full)
     const longOpen = expanded && foldLong(full) !== null
     const blocks = growing ? [] : splitBlocks(folded ? folded.text : full)
@@ -1462,7 +1478,7 @@ async function drawPanel($: any, e: any) {
     const p = w.progress
     const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
     const raw = String(p?.text ?? '')
-    const typing = typed.run > 0 && typed.id === w.id && typed.full === raw // a grow Client types it in
+    const typing = typed.run > 0 && typed.steps.length > 0 &&typed.id === w.id && typed.full === raw // a grow Client types it in
     const text = typing ? raw : draftTail(raw)
     return (
       <Box key={`dr-${w.id}`} flexDirection="row" gap={1}>
@@ -1638,25 +1654,79 @@ async function drawPanel($: any, e: any) {
   const allOpen = !!fold['ap-all']
   const shownApprovals = allOpen ? approvals : approvals.slice(0, 1)
 
+  // one member's numbers, for its chip and for its card
+  const bitsOf = (m: any) => {
+    const waiting = approvals.some(a => a.member === m.id)
+    const st = statusOf(m, waiting)
+    const tokens = m.id === meId && selfCtx > 0 ? selfCtx : m.context_tokens
+    const ctx = stale ? '' : ctxText(tokens)
+    // real colours (the theme names for idle / subtle are close to invisible): idle green, running blue, waiting or paused
+    // amber, offline grey, a lost connection red
+    const dot = stale ? '#F85149' : st.label === '执行中' ? '#4C8DF6' : st.label === '空闲' ? '#3FB950' : st.label === '离线' ? '#8B949E' : '#D29922'
+    return { st, tokens, ctx, dot, cl: ctxLevel(tokens), compacting: !!m.compacting || cpBusy(m.id), running: !stale && st.label === '执行中' }
+  }
+
+  // the full card of the member whose chip is open: its model picker button, context meter and compact control (the
+  // compact control reads 压缩中… from the press on, and "已压缩" until the next reply measures again)
+  const cardOf = (m: any) => {
+    const b = bitsOf(m)
+    const q = Number(m.queued ?? 0)
+    // only with a size to show (no session yet: nothing to compact); a running opencode answers busy
+    const offer = !stale && !!b.ctx && !b.compacting && canCompact(m, meId) && (m.id === meId || b.st.label !== '执行中')
+    return (
+      <Box key={`mate-${m.id}`} flexDirection="row" gap={1} alignItems="center" borderStyle="round"
+        borderColor={b.running ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.6) : pal.bubbleBorder}
+        backgroundColor={pal.bubble} paddingX={1} minWidth={26}>
+        {avatar(ui, m.id, 32, look)}
+        <Box flexDirection="column" flexGrow={1}>
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text bold color={nc(m.id)}>{m.id}</Text>
+            {m.id === hostId ? <Text color={C_AMBER}>★ 主控</Text> : null}
+          </Box>
+          <Box flexDirection="row">
+            <Text color={b.dot}>{b.st.dot}</Text>
+            <Text dimColor>{` ${stale ? '未知' : b.st.label}`}</Text>
+            {b.running ? (
+              <Client key={`el-${m.id}-card`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} />
+            ) : null}
+            {b.running ? <Text dimColor>{` · ${toolCount(m.progress)} 个工具`}</Text> : null}
+            {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
+          </Box>
+          {/* its model, a button that opens the picker; this session's own Claude is the desktop app's to set */}
+          {m.model && m.id !== meId ? (
+            <Button key={`md-${m.id}`} plain dimColor={mp?.member !== m.id} hover={{ color: C_BLUE }} onPress={() => toggleModelPicker($, m.id)}>
+              {`${shortModel(m.model)} ${mp?.member === m.id ? '▴' : '▾'}`}
+            </Button>
+          ) : null}
+          {!stale && (b.ctx || m.compacted || b.compacting) ? (
+            <Box flexDirection="row" gap={1} alignItems="center">
+              {b.compacting ? <Text color={C_BLUE}>◌ 压缩中…</Text>
+                : m.compacted ? <Text dimColor>已压缩 · 待下次回复</Text>
+                : (
+                  <Box flexDirection="row" gap={1} alignItems="center">
+                    <ui.Svg source={ctxBarSvg(b.tokens)} alt={`上下文 ${b.ctx}`} width={56} height={6} />
+                    <Text color={b.cl === 2 ? C_RED : b.cl === 1 ? C_AMBER : undefined} dimColor={b.cl === 0}>{b.ctx}</Text>
+                  </Box>
+                )}
+              {offer ? <Button key={`cp-${m.id}`} plain dimColor={b.cl === 0} hover={{ color: C_BLUE }} onPress={() => compactMember($, m.id, m.id === meId)}>压缩</Button> : null}
+            </Box>
+          ) : null}
+          {b.running ? (
+            <Button key={`card-stop-${m.id}`} plain hover={{ color: C_RED }} onPress={() => stopMember($, m.id)}>
+              {busy[`st${m.id}`] ?'停止中…' : '■ 停止'}
+            </Button>
+          ) : null}
+        </Box>
+      </Box>
+    )
+  }
+  const openMember = members.find(x => x.id === expanded)
+
   return (
     <Box flexDirection="column">
-     <Box flexDirection="column" gap={1} flexShrink={0} marginBottom={1}>
-      {/* messages waiting for Claude while auto-wake is off: the most prominent thing in the panel */}
-      {!autoWake && wakePending > 0 ? (
-        <Box flexDirection="row" gap={1} alignItems="center" borderStyle="round" borderColor={C_AMBER} backgroundColor={pal.banner} paddingX={1}>
-          <Text color={C_AMBER}>{`⚠ 有 ${wakePending} 条消息等 Claude 处理`}</Text>
-          <Button key="wake-banner" variant="primary" onPress={() => wakeNow($)}>{busy.wake ? '处理中…' : '现在处理'}</Button>
-        </Box>
-      ) : null}
+     <Box flexDirection="column" flexShrink={0} marginBottom={1}>
       {errorCard}
       {roomBar}
-      {briefMissing ? (
-        <Box flexDirection="row" gap={1} alignItems="center">
-          <Text color={C_AMBER}>还没有项目简介</Text>
-          <Button key="brief-ask" onPress={() => askBrief($)}>让 Claude 写</Button>
-          <Button key="brief-skip" plain onPress={() => dismissBrief($)}>忽略</Button>
-        </Box>
-      ) : null}
 
       {/* X2: an empty room gets a first-step card with the two add buttons right there */}
       {members.length === 0 ? (
@@ -1674,94 +1744,85 @@ async function drawPanel($: any, e: any) {
         </Box>
       ) : null}
 
-      {/* header: the room, then one segmented control at the right: add an assistant | auto-wake */}
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        <Text bold>{String(view.room?.name ?? 'xmuse')}</Text>
-        <Text dimColor>{`· ${members.length} 位成员`}</Text>
-        <Box flexGrow={1} />
-        <Box flexDirection="row" alignItems="center" borderStyle="round" borderColor={pal.bubbleBorder} backgroundColor={pal.bubble} paddingX={1} gap={1}>
-          {members.length ? <Button key="add-toggle" plain onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 添加助手'}</Button> : null}
-          {members.length ? <Text dimColor>│</Text> : null}
+      <Box flexDirection="column">
+      {/* one line of notices: messages waiting for Claude while auto-wake is off, and a missing project brief */}
+      {/* Every unit below (a notice with its buttons, the header's button group) is one unbreakable box: when the
+          pane is too narrow the row wraps between units, never inside one. Buttons are plain text buttons; the one
+          solid button in the area is the main action of a notice. */}
+      {(!autoWake && wakePending > 0) || briefMissing ? (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+          {!autoWake && wakePending > 0 ? (
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+              <Text color={C_AMBER}>{`⚠ ${wakePending} 条待处理`}</Text>
+              <Button key="wake-banner" variant="primary" onPress={() => wakeNow($)}>{busy.wake ? '处理中…' : '处理'}</Button>
+            </Box>
+          ) : null}
+          {briefMissing ? (
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+              <Text color={C_AMBER}>无项目简介</Text>
+              <Button key="brief-ask" plain onPress={() => askBrief($)}>写一份</Button>
+              <Button key="brief-skip" plain dimColor onPress={() => dismissBrief($)}>忽略</Button>
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
+      {/* header: the room on the left; add an assistant and auto-wake as two text buttons on the right, as one group */}
+      <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={3}>
+        <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+          <Text bold>{String(view.room?.name ?? 'xmuse')}</Text>
+          <Text dimColor>{`· ${members.length} 位成员`}</Text>
+        </Box>
+        <Box flexDirection="row" alignItems="center" columnGap={3} flexShrink={0}>
+          {members.length ? <Button key="add-toggle" plain onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 助手'}</Button> : null}
           <Button key="auto-wake" plain onPress={() => toggleAuto($)}>
-            {autoWake ? <Text color={C_GREEN}>● 自动叫醒</Text> : <Text dimColor>○ 自动叫醒</Text>}
+            {autoWake ? <Text color={C_GREEN}>自动叫醒 ●</Text> : <Text dimColor>自动叫醒 ○</Text>}
           </Button>
         </Box>
       </Box>
       {addOpen && members.length ? (
-        <Box flexDirection="row" alignItems="center" gap={1} borderStyle="round" borderColor={pal.bubbleBorder} paddingX={1}>
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
           <Text dimColor>添加</Text>
           {busy.add ? <Text color={C_BLUE}>正在添加…</Text> : (
-            <Box flexDirection="row" gap={1}>
-              <Button key="add-opencode" variant="secondary" onPress={() => addMember($, 'opencode')}>OpenCode</Button>
-              <Button key="add-dsh" variant="secondary" onPress={() => addMember($, 'dsh')}>dsh</Button>
-              <Button key="add-agy" variant="secondary" onPress={() => addMember($, 'agy')}>agy</Button>
+            <Box flexDirection="row" columnGap={3}>
+              <Button key="add-opencode" plain onPress={() => addMember($, 'opencode')}>OpenCode</Button>
+              <Button key="add-dsh" plain onPress={() => addMember($, 'dsh')}>dsh</Button>
+              <Button key="add-agy" plain onPress={() => addMember($, 'agy')}>agy</Button>
             </Box>
           )}
         </Box>
       ) : null}
 
-      {/* member cards: one framed card each, the same height: name and host star, state, then a context meter with
-          its size and the compact control (压缩中… from the press on; "已压缩" until the next reply measures again) */}
-      <Box flexDirection="row" flexWrap="wrap" gap={1} rowGap={1}>
+      {/* members as chips: avatar, state dot, name, and the running time or the context size; a press opens that
+          member's full card below (one at a time, a second press closes it) */}
+      <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
         {members.map(m => {
-          const waiting = approvals.some(a => a.member === m.id)
-          const st = statusOf(m, waiting)
-          const q = Number(m.queued ?? 0)
-          const dot = stale ? 'subtle' : st.color
-          const tokens = m.id === meId && selfCtx > 0 ? selfCtx : m.context_tokens
-          const ctx = stale ? '' : ctxText(tokens)
-          const cl = ctxLevel(tokens)
-          const compacting = !!m.compacting || cpBusy(m.id)
-          // only with a size to show (no session yet: nothing to compact); a running opencode answers busy
-          const offer = !stale && !!ctx && !compacting && canCompact(m, meId) && (m.id === meId || st.label !== '执行中')
+          const b = bitsOf(m)
+          const sel = expanded === m.id
+          // narrow pane: avatar and state dot only (the name and numbers are in the card a press opens)
           return (
-            <Box key={`mate-${m.id}`} flexDirection="row" gap={1} alignItems="center" borderStyle="round"
-              borderColor={st.label === '执行中' && !stale ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.6) : pal.bubbleBorder}
-              backgroundColor={pal.bubble} paddingX={1} minWidth={26}>
-              {avatar(ui, m.id, 32, look)}
-              <Box flexDirection="column" flexGrow={1}>
-                <Box flexDirection="row" gap={1} alignItems="center">
-                  <Text bold color={nc(m.id)}>{m.id}</Text>
-                  {m.id === hostId ? <Text color={C_AMBER}>★ 主控</Text> : null}
-                </Box>
-                <Box flexDirection="row">
-                  <Text color={dot}>{st.dot}</Text>
-                  <Text dimColor>{` ${stale ? '未知' : st.label}`}</Text>
-                  {!stale && st.label === '执行中' ? (
-                    <Client key={`el-${m.id}-card`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} />
-                  ) : null}
-                  {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
-                </Box>
-                {/* its model, a button that opens the picker; this session's own Claude is the desktop app's to set */}
-                {m.model && m.id !== meId ? (
-                  <Button key={`md-${m.id}`} plain dimColor={mp?.member !== m.id} hover={{ color: C_BLUE }} onPress={() => toggleModelPicker($, m.id)}>
-                    {`${shortModel(m.model)} ${mp?.member === m.id ? '▴' : '▾'}`}
-                  </Button>
-                ) : null}
-                {!stale && (ctx || m.compacted || compacting) ? (
-                  <Box flexDirection="row" gap={1} alignItems="center">
-                    {compacting ? <Text color={C_BLUE}>◌ 压缩中…</Text>
-                      : m.compacted ? <Text dimColor>已压缩 · 待下次回复</Text>
-                      : (
-                        <Box flexDirection="row" gap={1} alignItems="center">
-                          <ui.Svg source={ctxBarSvg(tokens)} alt={`上下文 ${ctx}`} width={56} height={6} />
-                          <Text color={cl === 2 ? C_RED : cl === 1 ? C_AMBER : undefined} dimColor={cl === 0}>{ctx}</Text>
-                        </Box>
-                      )}
-                    {offer ? <Button key={`cp-${m.id}`} plain dimColor={cl === 0} hover={{ color: C_BLUE }} onPress={() => compactMember($, m.id, m.id === meId)}>压缩</Button> : null}
-                  </Box>
-                ) : null}
-              </Box>
+            <Box key={`chip-wrap-${m.id}`} flexDirection="row" alignItems="center" gap={1} flexShrink={0} borderStyle="round"
+              borderColor={sel ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.8) : pal.bubbleBorder} paddingX={1}
+              {...(sel ? { backgroundColor: pal.codeBg } : {})}>
+              {avatar(ui, m.id, 14, look)}
+              <Button key={`chip-${m.id}`} plain onPress={() => toggleExpand($, m.id)}>
+                <Text color={b.dot}>●</Text>
+                {narrow ? null : <Text bold={sel} color={nc(m.id)}>{` ${m.id}`}</Text>}
+                {!narrow && m.id === hostId ? <Text color={C_AMBER}>★</Text> : null}
+                {b.compacting ? <Text color={C_BLUE}>{' ◌'}</Text> : b.ctx && (!narrow || b.cl > 0) ? <Text color={b.cl === 2 ? C_RED : b.cl === 1 ? C_AMBER : undefined} dimColor={b.cl === 0}>{` ${b.ctx}`}</Text> : null}
+              </Button>
+              {b.running && !narrow ? <Client key={`el-${m.id}-chip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} /> : null}
             </Box>
           )
         })}
+      </Box>
+      {openMember ? cardOf(openMember) : null}
       </Box>
 
       {/* model picker of one member: the hub's options (its catalog, the defaults, what the room ran) or a typed
           name; a pick is saved at once and takes effect at the member's next turn */}
       {mp && members.some(x => x.id === mp.member) ? (
         <Box key="model-pick" flexDirection="column" borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.6)}
-          backgroundColor={pal.bubble} paddingX={1} gap={1}>
+          backgroundColor={pal.bubble} paddingX={1} gap={1} marginTop={1}>
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text bold>{'更换 '}</Text>
             <Text bold color={nc(mp.member)}>{displayName(mp.member)}</Text>
@@ -1787,22 +1848,24 @@ async function drawPanel($: any, e: any) {
         </Box>
       ) : null}
 
-      {/* tabs: a colour dot before a private chat, # before a group */}
-      <Box flexDirection="row" flexWrap="wrap" gap={1} rowGap={1}>
+      {/* tabs (which conversation the list and the composer show): bare text on a thin rule, the open one bold and
+          underlined, so they never read as the member chips above (those are boxed and open a card). A colour dot
+          marks a private chat, # a group. They stay apart from the chips as a filter of the messages, not of members. */}
+      <Box flexDirection="row" flexWrap="wrap" columnGap={3} marginTop={1}>
         {tabs.map(t => (
-          <Button key={`tab-${t.id}`} variant={activeTab === t.id ? 'primary' : 'secondary'} onPress={() => setTab($, t.id)}>
-            {t.peer ? <Text color={nc(t.peer)}>● </Text> : t.group ? '# ' : ''}
-            {t.label}
-            {t.unread > 0 ? <Text color={C_RED}>{` ${t.unread}`}</Text> : ''}
+          <Button key={`tab-${t.id}`} plain onPress={() => setTab($, t.id)}>
+            {t.peer ? <Text color={nc(t.peer)}>● </Text> : t.group ? <Text dimColor># </Text> : null}
+            {activeTab === t.id ? <Text bold underline>{t.label}</Text> : <Text dimColor>{t.label}</Text>}
+            {t.unread > 0 ? <Text color={C_RED}>{` ${t.unread}`}</Text> : null}
           </Button>
         ))}
       </Box>
 
       {/* approval cards, pinned above the messages: the first one open, the rest behind one line */}
-      {decision.text ? <Text color={decision.ok ? C_GREEN : C_RED} wrap="truncate-end">{decision.text}</Text> : null}
-      {shownApprovals.map(a => approvalCard(a))}
+      {decision.text ? <Box marginTop={1}><Text color={decision.ok ? C_GREEN : C_RED} wrap="truncate-end">{decision.text}</Text></Box> : null}
+      {shownApprovals.map(a => <Box key={`apw-${a.id}`} flexDirection="column" marginTop={1}>{approvalCard(a)}</Box>)}
       {approvals.length > 1 ? (
-        <Box flexDirection="row" gap={1} alignItems="center">
+        <Box flexDirection="row" gap={1} alignItems="center" marginTop={1}>
           <Text color={C_AMBER}>{allOpen ? `共 ${approvals.length} 条待审批` : `还有 ${approvals.length - 1} 条待审批`}</Text>
           <Button key="ap-all-toggle" plain onPress={() => toggleFold($, 'ap-all')}>{allOpen ? '只看第一条' : '全部展开'}</Button>
         </Box>
@@ -1812,32 +1875,26 @@ async function drawPanel($: any, e: any) {
      {/* working strip and input sit right under the header: the desktop pane scrolls natively, so nothing can be
          pinned; newest messages come first below them and scrolling down reads history */}
      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
-      {/* working strip (E1, E2, E3): one box, two rows per member: who and for how long, then what it is doing */}
+      {/* working strip: one line per running member (two at most): who, what it is doing, how long, stop */}
       {working.length ? (
-        <Box flexDirection="column" borderStyle="round" borderColor={C_BLUE} paddingX={1}>
-          {working.map(m => {
+        <Box flexDirection="column">
+          {working.slice(0, 2).map(m => {
             const p = m.progress
             const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
             const tail = lastLines(String(p?.text ?? ''), 1) // the typing effect is the draft bubble's alone
-            const doing = lt ? `正在：${lt}` : tail
-            const q = Number(m.queued ?? 0)
             return (
-              <Box key={`wk-${m.id}`} flexDirection="column">
-                <Box flexDirection="row">
-                  <Text color={C_BLUE}>● </Text>
-                  <Text color={nc(m.id)}>{m.id}</Text>
-                  <Client key={`el-${m.id}-strip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'level' }} />
-                  <Text dimColor>{` · ${toolCount(p)} 个工具`}</Text>
-                  {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
-                  <Box flexGrow={1} />
-                  <Button key={`wk-stop-${m.id}`} variant="secondary" hover={{ color: C_RED }} onPress={() => stopMember($, m.id)}>
-                    {busy[`st${m.id}`] ? '停止中…' : '■ 停止'}
-                  </Button>
-                </Box>
-                {doing ? <Text key={`wk-do-${m.id}`} dimColor wrap="truncate-end">{doing}</Text> : null}
+              <Box key={`wk-${m.id}`} flexDirection="row" alignItems="center" gap={1}>
+                <Text color={C_BLUE}>●</Text>
+                <Text color={nc(m.id)}>{m.id}</Text>
+                <Box flexGrow={1} flexShrink={1}><Text key={`wk-do-${m.id}`} dimColor wrap="truncate-end">{`正在：${lt || tail || '思考中'}`}</Text></Box>
+                <Client key={`el-${m.id}-strip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'level' }} />
+                <Button key={`wk-stop-${m.id}`} plain hover={{ color: C_RED }} onPress={() => stopMember($, m.id)}>
+                  {busy[`st${m.id}`] ? '停止中…' : '■ 停止'}
+                </Button>
               </Box>
             )
           })}
+          {working.length > 2 ? <Text dimColor>{`另有 ${working.length - 2} 位在执行`}</Text> : null}
         </Box>
       ) : null}
       {Object.keys(done).filter(id => !working.some(w => w.id === id) && members.some(x => x.id === id)).map(id => (
@@ -1846,27 +1903,27 @@ async function drawPanel($: any, e: any) {
 
       {/* composer: a full-width card as an agent's prompt box: who it goes to (and the reply) on top, the field
           across the whole width, the @ list inside it, the keys at the bottom. The platform's field is one line. */}
-      <Box flexDirection="column" borderStyle="round" borderColor={replyTo > 0 ? 'permission' : 'promptBorder'}
-        backgroundColor={pal.bubble} paddingX={1} paddingY={1} gap={1}>
+      <Box flexDirection="column" marginTop={1}>
+        {/* one small line above the field: who it goes to (the open tab) and the reply it answers */}
         <Box flexDirection="row" gap={1} alignItems="center">
           <Text dimColor>发给</Text>
-          <Box backgroundColor={pal.codeBg} paddingX={1}>
-            <Text color={activeTab === 'all' ? undefined : nc(tabs.find(t => t.id === activeTab)?.peer ?? '')} bold>
-              {activeTab === 'all' ? '全员' : activeLabel}
-            </Text>
-          </Box>
+          <Text color={activeTab === 'all' ? undefined : nc(tabs.find(t => t.id === activeTab)?.peer ?? '')} bold>
+            {activeTab === 'all' ? '全员' : activeLabel}
+          </Text>
           {replyTo > 0 ? (
             <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1}>
-              <Text color="permission" wrap="truncate-end">{`↩ 回复 #${replyTo} ${replySnip}`}</Text>
+              <Text color="permission" wrap="truncate-end">{`↩ #${replyTo} ${replySnip}`}</Text>
               <Button key="re-cancel" plain dimColor onPress={() => setReply($, 0)}>✕</Button>
             </Box>
           ) : null}
         </Box>
-        {/* the Input draws its own send button (submitLabel); a completion or a retract gives it a new value, not a
-            new key, so it keeps the focus */}
-        <Input key={`xm-in-${sendN}`} placeholder={placeholder}
-          {...(typeof forced === 'string' ? { value: forced } : {})}
-          submitLabel={sending ? '发送中…' : '发送'} onInput={(v: string) => inputChanged($, v)} onSubmit={(v: string) => submitInput($, v)} />
+        {/* the Input draws its own send button (submitLabel) and takes the row's whole width; a completion or a retract
+            gives it a new value, not a new key, so it keeps the focus. The key hints are its placeholder. */}
+        <Box flexDirection="row" flexGrow={1}>
+          <Input key={`xm-in-${sendN}`} placeholder={placeholder}
+            {...(typeof forced === 'string' ? { value: forced } : {})}
+            submitLabel={sending ? '发送中…' : '发送'} onInput={(v: string) => inputChanged($, v)} onSubmit={(v: string) => submitInput($, v)} />
+        </Box>
         {cands.length ? (
           <Box flexDirection="column" borderStyle="round" borderColor={pal.bubbleBorder} paddingX={1}>
             {cands.map((c, i) => (
@@ -1881,7 +1938,7 @@ async function drawPanel($: any, e: any) {
             ))}
           </Box>
         ) : null}
-        <Text dimColor>{cands.length ? `Enter 选 @${cands[0]!.id} · 继续输入缩小范围` : 'Enter 发送 · @ 指定成员 · \\n 换行'}</Text>
+        {cands.length ? <Text dimColor>{`Enter 选 @${cands[0]!.id} · 继续输入缩小范围`}</Text> : null}
       </Box>
      </Box>
 
