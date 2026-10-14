@@ -19,7 +19,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import agents, align, config, db, dispatch, hublock, mail, memoryos, peer, preset, registry, share, threads, wakepack
+from . import agents, align, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads, wakepack
 from . import room as rooms
 from .adapters.agy import AgyDriver
 from .adapters.claude import ClaudeDriver
@@ -39,7 +39,7 @@ def digest(token: str) -> str:
 class Hub:
     def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None,
                  human_check: bool = True):
-        self.lock = hublock.acquire(state)  # first: one hub per state dir (raises HubLocked); closed by shutdown()
+        self.lock = None  # the single-hub lock (hublock) is not wired in yet
         try:
             self._setup(state, claude_bin, oc_base, human_check)
         except BaseException:
