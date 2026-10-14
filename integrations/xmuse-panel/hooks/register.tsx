@@ -5,11 +5,11 @@ import type { ConnInfo } from '../types'
 import type { Pal, Tone } from './logic'
 import {
   C_AMBER, C_BLUE, C_GREEN, C_ORANGE, C_RED, agoText, approvalHasAlways, approvalKindLabel, approvalText, approvalsOf, avatarSvg, backoffMs,
-  buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, fmtElapsed, hardBreaks, isAutoForward,
+  buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
   isDoneMsg, isLoopbackUrl, isToClaude, lastLines, matchHubs, maxWakeId, membersOf, messagesFor, noiseSummary, parseHubs, parseMentions, replyLabel,
   statusOf, summaryLine, tabsOf, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
-  workingMembers, changedWorker, doneLine, finishedMembers, textsOf, toPosix, typedText, typingSteps,
-  badgeOf, completeMention, dayLabel, elapsedLevel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
+  workingMembers, changedWorker, doneLine, finishedMembers, textsOf, toPosix, typingSteps,
+  badgeOf, completeMention, dayLabel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
   trailingMention, vendorKey, canCompact, ctxLevel, ctxText, mergeCompactInstructions, hubStartScript,
   TONES, ctxBarSvg, noiseTitle, noiseTone, draftTail, freshMessage, revealSteps, shortModel,
 } from './logic'
@@ -41,8 +41,6 @@ const replyAtom = atom({ plugin: 'xmuse', key: 'replyTo' } as const, 0)
 const genAtom = atom({ plugin: 'xmuse', key: 'gen' } as const, 0)
 const promotedAtom = atom({ plugin: 'xmuse', key: 'promoted' } as const, {} as Record<string, string>)
 const lastReadAtom = atom({ plugin: 'xmuse', key: 'lastRead' } as const, '')
-const nowAtom = atom({ plugin: 'xmuse', key: 'now' } as const, 0)
-const tickingAtom = atom({ plugin: 'xmuse', key: 'ticking' } as const, 0) // heartbeat: clock time of the last tick, 0 = no chain
 const themeAtom = atom({ plugin: 'xmuse', key: 'light' } as const, false) // the /config theme is a light one
 const mentionAtom = atom({ plugin: 'xmuse', key: 'mention' } as const, null as string | null) // typed prefix after a trailing @, or null
 // the text the Input is drawn with (a @ completion, a retracted message put back), or null: a new `value` on the same
@@ -54,7 +52,6 @@ let draftLive = '' // the Input's text as last reported by onInput; read at pres
 const avatarImgs: Record<string, string> = {} // member id or 'v:<vendor>' -> data: URI of a custom avatar PNG
 let avatarTried: Record<string, boolean> = {}
 let decisionN = 0
-let tickToken = 0
 const toastSeen = new Set<string>()
 let toastSeeded = false
 const sendNAtom = atom({ plugin: 'xmuse', key: 'sendN' } as const, 0) // goes into the Input key: a new key clears it
@@ -67,12 +64,12 @@ const STORE_BRIEF = 'briefMissing' // boolean: the room was opened and has no pr
 const TOOL = 'xmuse_send' // registered as mcp__xmuse__xmuse_send
 const TOOL_BRIEF = 'xmuse_brief' // mcp__xmuse__xmuse_brief: writes the project brief
 const openAtom = atom({ plugin: 'xmuse', key: 'open' } as const, { busy: false, msg: '', error: '' })
-const typedAtom = atom({ plugin: 'xmuse', key: 'typed' } as const, { id: '', full: '', shown: 0 })
+// the typing effect of one member's partial output: run > 0 while a Client (grow.tsx) is typing it in, 0 when idle
+const typedAtom = atom({ plugin: 'xmuse', key: 'typed' } as const, { id: '', full: '', from: 0, steps: [] as number[], run: 0 })
 const doneAtom = atom({ plugin: 'xmuse', key: 'done' } as const, {} as Record<string, { tools: number; startedMs: number; endedMs: number }>)
 const briefAtom = atom({ plugin: 'xmuse', key: 'brief' } as const, false) // mirrors STORE_BRIEF so the panel redraws
 const DONE_KEEP_MS = 30_000 // how long the grey "finished" line stays
-let typeTimer: { cancel: () => void } | null = null // the one typing-effect timer; a newer update cancels it
-let typeToken = 0 // a step whose token is stale does nothing
+let typeRunN = 0 // run counter: part of the grow Client's key, a new run is a fresh instance
 let lastTexts: Record<string, string> = {} // partial output seen in the last view, per running member
 const POOL = 5000 // messages a tab can scroll through: the view's own plus every older page loaded
 const OLDER_PAGE = 100 // one "加载更早的消息" press
@@ -83,13 +80,14 @@ const olderAtom = atom({ plugin: 'xmuse', key: 'older' } as const, { items: [] a
 const busyAtom =atom({ plugin: 'xmuse', key: 'busy' } as const, {} as Record<string, boolean>) // approval ids in flight
 const selfCtxAtom = atom({ plugin: 'xmuse', key: 'selfCtx' } as const, 0) // this session's own context fill (session.measure)
 // a member's message that just arrived, drawn growing to its full length (the vendors give no token stream for it)
-const revealAtom = atom({ plugin: 'xmuse', key: 'reveal' } as const, { id: 0, shown: 0 })
+const revealAtom = atom({ plugin: 'xmuse', key: 'reveal' } as const, { id: 0, steps: [] as number[], run: 0 })
 // the model picker of one member: what the hub offers (act models), or loading / an error
 type ModelPick = { member: string; current: string; options: { value: string; label?: string }[]; format: string; note: string; loading: boolean; error: string }
 const modelAtom = atom({ plugin: 'xmuse', key: 'modelPick' } as const, null as ModelPick | null)
 let feedMaxId = -1 // highest timeline id seen this load; -1 until the first view sets the baseline (history: no effect)
-let revealToken = 0
+let revealRunN = 0
 const REVEAL_STEP_MS = 70
+const TYPE_STEP_MS = 150
 
 // ---- hub access ----------------------------------------------------------------------------------------------
 
@@ -99,7 +97,14 @@ type HubConn = { url: string; token: string; member: string; memberToken?: strin
 const suspect = new Set<string>() // room dirs whose stored address failed a call: check it before trusting it again
 let legacyConnDropped = false
 
+const elapsedStart = (v: any): number => (typeof v === 'number' && isFinite(v) ? v : 0) // started_at as a Client prop (plain JSON)
+
+// Every atom write redraws the whole panel (and voids the handlers of its buttons), so the writes that run on every
+// poll skip a value that did not change (read first, compare). `read` and `update` need the atom as a const of this
+// file, so the check is written at each call site instead of in a helper.
 async function setConn($: any, phase: ConnInfo['phase'], error: string) {
+  const cur = await read($, connAtom)
+  if (cur.phase === phase && cur.error === error) return
   await update($, connAtom, () => ({ phase, error }))
 }
 
@@ -390,7 +395,6 @@ async function pollOnce($: any, gen: number, fails: number) {
     await refreshTheme($)
     await loadAvatars($, r.data)
     await toastNew($, r.data)
-    void ensureTick($)
     await autoRead($, r.data)
     $.clock.after(50, () => { void pollOnce($, gen, 0) })
   } catch (err) {
@@ -442,40 +446,29 @@ async function expireDone($: any, id: string, endedMs: number) {
   await update($, doneAtom, m => { const n = { ...m }; delete n[id]; return n })
 }
 
-/** Partial output of the last member whose text changed is revealed in 4 steps over 600 ms; a newer view cancels it. */
+/**
+ * Partial output of the last member whose text changed is typed in over 4 steps of TYPE_STEP_MS. The steps run in a
+ * Client (grow.tsx), not here: the atom is written once at the start and once when the Client reports it is done.
+ */
 async function typeStart($: any, newView: any) {
   const ch = changedWorker(lastTexts, newView)
   lastTexts = textsOf(newView)
   if (!ch) return
-  typeToken++
-  if (typeTimer) { typeTimer.cancel(); typeTimer = null }
   const prev = await read($, typedAtom)
   // Continue from what was on screen for this member; text that is not an extension of it appears at once.
   let from = ch.text.length
   if (ch.text.startsWith(ch.old)) {
     from = ch.old.length
-    if (prev.id === ch.id && prev.full === ch.old) from = Math.min(from, prev.shown)
+    if (prev.run > 0 && prev.id === ch.id && prev.full === ch.old) from = Math.min(from, prev.from) // still typing: restart from its start
   }
-  await update($, typedAtom, () => ({ id: ch.id, full: ch.text, shown: from }))
-  if (from >= ch.text.length) return
-  typeStep($, typeToken, typingSteps(from, ch.text.length, 4), 0)
-}
-
-function typeStep($: any, token: number, steps: number[], i: number) {
-  typeTimer = $.clock.after(150, () => { void typeRun($, token, steps, i) })
-}
-
-async function typeRun($: any, token: number, steps: number[], i: number) {
-  if (token !== typeToken) return // superseded by a newer view
-  await update($, typedAtom, t => ({ ...t, shown: steps[i]! }))
-  if (token !== typeToken) return
-  if (i + 1 < steps.length) typeStep($, token, steps, i + 1)
-  else typeTimer = null
+  if (from >= ch.text.length) { await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: [], run: 0 })); return }
+  await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: typingSteps(from, ch.text.length, 4), run: ++typeRunN }))
 }
 
 /**
  * A member's message that a fresh view brought grows to its full length in a few steps (about 40 characters each,
- * 70 ms apart), so it reads as streamed. The first view of a load only sets the baseline; a newer arrival cancels it.
+ * REVEAL_STEP_MS apart), so it reads as streamed; a Client (grow.tsx) runs the steps. The first view of a load only
+ * sets the baseline; a newer arrival replaces it.
  */
 async function revealStart($: any, view: any) {
   const tl: any[] = Array.isArray(view?.timeline) ? view.timeline : []
@@ -486,20 +479,16 @@ async function revealStart($: any, view: any) {
   if (!m) return
   const steps = revealSteps(String(m.text ?? '').length)
   if (!steps.length) return
-  const token = ++revealToken
-  await update($, revealAtom, () => ({ id: m.id, shown: 0 }))
-  revealStep($, token, m.id, steps, 0)
+  await update($, revealAtom, () => ({ id: m.id, steps, run: ++revealRunN }))
 }
 
-function revealStep($: any, token: number, id: number, steps: number[], i: number) {
-  $.clock.after(REVEAL_STEP_MS, () => { void revealRun($, token, id, steps, i) })
-}
-
-async function revealRun($: any, token: number, id: number, steps: number[], i: number) {
-  if (token !== revealToken) return
-  const last = i + 1 >= steps.length
-  await update($, revealAtom, () => (last ? { id: 0, shown: 0 } : { id, shown: steps[i]! }))
-  if (!last) revealStep($, token, id, steps, i + 1)
+/** ui.message from a grow Client: it showed its last step; the atom goes idle and the normal rendering comes back. */
+async function growDone($: any, data: any) {
+  const id = typeof data?.grown === 'string' ? data.grown : ''
+  const kind = id.slice(0, 2) // 't:<member>:<run>' | 'r:<message id>:<run>'
+  const n = Number(id.slice(id.lastIndexOf(':') + 1))
+  if (kind === 't:') await update($, typedAtom, t => (t.run === n ? { ...t, steps: [], run: 0 } : t))
+  else if (kind === 'r:') await update($, revealAtom, r => (r.run === n ? { id: 0, steps: [], run: 0 } : r))
 }
 
 // ---- opening a room (H1) -------------------------------------------------------------------------------------
@@ -884,7 +873,13 @@ async function setModel($: any, id: string, model: string) {
   }
 }
 
-/** One page of history older than anything shown, from /v1/timeline. */
+const OLDER_MAX_PAGES = 10 // one press fetches up to this many pages while they show nothing but folded notices
+
+/**
+ * Older history from /v1/timeline. A page that the panel would fold entirely into notice rows (the same buildRows the
+ * draw uses, for the open tab) shows the person nothing new, so the next page is fetched too, up to OLDER_MAX_PAGES.
+ * The atom is written once at the end: one redraw, the button reads "加载中…" meanwhile.
+ */
 async function loadOlder($: any) {
   const cur = await read($, olderAtom)
   if (cur.loading) return
@@ -893,10 +888,30 @@ async function loadOlder($: any) {
   if (!ids.length) return
   await update($, olderAtom, o => ({ ...o, loading: true }))
   try {
-    const r = await callHub($, 'GET', `/v1/timeline?before=${Math.min(...ids)}&limit=${OLDER_PAGE}`)
-    if (r.status !== 200) { $.ui.toast(`加载失败 ${r.status}`); await update($, olderAtom, o => ({ ...o, loading: false })); return }
-    const items: any[] = Array.isArray(r.data?.items) ? r.data.items : []
-    await update($, olderAtom, o => ({ items: [...items, ...o.items], hasMore: !!r.data?.has_more, loading: false }))
+    const tabId = await read($, tabAtom)
+    const activeTab = tabsOf(view).some(t => t.id === tabId) ? tabId : 'all'
+    let before = Math.min(...ids)
+    let got: any[] = []
+    let hasMore = true
+    let pages = 0
+    let shows = false
+    while (pages < OLDER_MAX_PAGES && hasMore && !shows) {
+      const r = await callHub($, 'GET', `/v1/timeline?before=${before}&limit=${OLDER_PAGE}`)
+      if (r.status !== 200) {
+        $.ui.toast(`加载失败 ${r.status}`)
+        if (!got.length) { await update($, olderAtom, o => ({ ...o, loading: false })); return }
+        break
+      }
+      pages++
+      const items: any[] = Array.isArray(r.data?.items) ? r.data.items : []
+      got = [...items, ...got]
+      hasMore = !!r.data?.has_more && items.length > 0
+      const ids2 = items.map((m: any) => m?.id).filter((x: any) => typeof x === 'number')
+      if (ids2.length) before = Math.min(before, ...ids2)
+      shows = buildRows(messagesFor({ ...view, timeline: items }, activeTab, POOL).reverse()).some(row => row.kind !== 'noise')
+    }
+    if (!shows && hasMore && pages >= OLDER_MAX_PAGES) $.ui.toast(`更早的 ${pages * OLDER_PAGE} 条都是通知，已折叠；再点继续`)
+    await update($, olderAtom, o => ({ items: [...got, ...o.items], hasMore, loading: false }))
   } catch (err) {
     $.ui.toast(`加载失败: ${errText(err)}`)
     await update($, olderAtom, o => ({ ...o, loading: false }))
@@ -934,37 +949,6 @@ async function pendingForMe($: any, view: any): Promise<number> {
 
 async function refreshStatus($: any, view: any) {
   $.ui.status(summaryLine(view, await pendingForMe($, view), (await $.store.get(STORE_AUTO)) === true))
-}
-
-/**
- * Once per second while somebody is running: updating nowAtom redraws the panel, and the draw reads the clock itself.
- * Root cause of the stuck 0:00 (batch 1): the tick wrote Date.now() (the plugin sandbox clock, which is not the host clock)
- * into the atom and the draw used that value, and "a chain is running" was a boolean that survived a hot reload while its
- * timer chain did not, so nothing ever restarted it. Now the clock is $.clock.now(), the flag is a heartbeat time, and a
- * stale chain is replaced (the token makes the old one stop).
- */
-async function tick($: any, token: number) {
-  if (token !== tickToken) return
-  const view = await read($, viewAtom)
-  if (!workingMembers(view).length) {
-    await update($, tickingAtom, () => 0)
-    return
-  }
-  const now = await $.clock.now()
-  await update($, tickingAtom, () => now)
-  await update($, nowAtom, () => now)
-  $.clock.after(1000, () => { void tick($, token) })
-}
-
-async function ensureTick($: any) {
-  const view = await read($, viewAtom)
-  if (!workingMembers(view).length) return
-  const now = await $.clock.now()
-  const beat = await read($, tickingAtom)
-  if (beat && now - beat < 3500) return // a chain is alive
-  tickToken++
-  await update($, tickingAtom, () => now)
-  void tick($, tickToken)
 }
 
 /** Messages for the panel newer than the handled mark: submit one turn for all of them (auto on, or `force`). */
@@ -1243,7 +1227,7 @@ async function toggleFold($: any, key: string) {
 
 async function drawPanel($: any, e: any) {
   const ui = $.ui.resolve(e) as any
-  const { Box, Text, Button, Input, Markdown, Code, Select } = ui
+  const { Box, Text, Button, Input, Markdown, Code, Select, Client } = ui
   const view = await read($, viewAtom)
   const conn = await read($, connAtom)
   const tab = await read($, tabAtom)
@@ -1338,8 +1322,7 @@ async function drawPanel($: any, e: any) {
   const placeholder = '和大家说点什么…'
   const approvals = approvalsOf(view)
   const working = workingMembers(view)
-  await read($, nowAtom) // the once-a-second tick lands here and redraws; the time itself comes from the clock
-  const nowMs = await $.clock.now()
+  const nowMs = await $.clock.now() // the host clock; the per-second times are drawn by the elapsed Client (elapsed.tsx)
   const sendN = await read($, sendNAtom)
   const sending = await read($, sendingAtom)
   const addOpen = await read($, addOpenAtom)
@@ -1372,11 +1355,11 @@ async function drawPanel($: any, e: any) {
     const decided = promoted[String(m.id)]
     const full = String(m.text ?? '')
     const expanded = !!fold[`l${m.id}`]
-    // just arrived: drawn growing (its prefix and a caret) until the reveal reaches the end
-    const growing = reveal.id === m.id && reveal.shown < full.length
+    // just arrived: a grow Client draws its prefix and a caret until the reveal reaches the end, then reports back
+    const growing = reveal.run > 0 && reveal.id === m.id
     const folded = expanded || growing ? null : foldLong(full)
     const longOpen = expanded && foldLong(full) !== null
-    const blocks = growing ? [{ kind: 'md' as const, text: full.slice(0, reveal.shown) + ' ▍' }] : splitBlocks(folded ? folded.text : full)
+    const blocks = growing ? [] : splitBlocks(folded ? folded.text : full)
     const quote = m.reply_to ? replyLabel(view, m.reply_to) : ''
     const bg = mine ? pal.mine : toMe ? pal.toClaude : pal.bubble
     const bd = mine ? pal.mineBorder : toMe ? C_ORANGE : mixHex(pal.bubbleBorder, nc(from), 0.35)
@@ -1403,6 +1386,10 @@ async function drawPanel($: any, e: any) {
         {blocks.map((b, i) => b.kind === 'diff'
           ? <Code key={`cd-${m.id}-${i}`} source={b.text} format="diff" />
           : <Markdown key={`md-${m.id}-${i}`} text={hardBreaks(b.text)} />)}
+        {growing ? (
+          <Client key={`gr-m-${m.id}`} module="./grow.tsx"
+            props={{ id: `r:${m.id}:${reveal.run}`, text: full, from: 0, stepMs: REVEAL_STEP_MS, steps: reveal.steps, mode: 'md' }} />
+        ) : null}
         {folded ? (
           <Box flexDirection="row"><Button key={`lg-${m.id}`} plain dimColor onPress={() => toggleFold($, `l${m.id}`)}>{`展开 (+${folded.hidden} 行)`}</Button></Box>
         ) : null}
@@ -1471,11 +1458,12 @@ async function drawPanel($: any, e: any) {
   // Live drafts, newest of all so at the top: each member at work (in this tab) as a bubble in the making, with what
   // it is writing (the latest part, typed in) or the tool it runs, and three dots that step with the clock.
   const peerOf = tabs.find(t => t.id === activeTab)?.peer
-  const dots = ['·  ', '·· ', '···'][Math.floor(nowMs / 1000) % 3]!
   const drafts = stale ? [] : working.filter(w => activeTab === 'all' || peerOf === w.id).map(w => {
     const p = w.progress
     const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
-    const text = draftTail(typedText(String(p?.text ?? ''), typed, w.id))
+    const raw = String(p?.text ?? '')
+    const typing = typed.run > 0 && typed.id === w.id && typed.full === raw // a grow Client types it in
+    const text = typing ? raw : draftTail(raw)
     return (
       <Box key={`dr-${w.id}`} flexDirection="row" gap={1}>
         {avatar(ui, w.id, 28, look)}
@@ -1483,11 +1471,14 @@ async function drawPanel($: any, e: any) {
           <Box flexDirection="row" gap={1} alignItems="center">
             <Text bold color={nc(w.id)}>{displayName(w.id)}</Text>
             <Text color={C_BLUE}>{lt ? `正在调用 ${lt}` : text ? '正在写' : '正在思考'}</Text>
-            <Text dimColor>{`${dots} ${fmtElapsed(p?.started_at, nowMs)}`}</Text>
+            <Client key={`el-${w.id}-dots`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'dots' }} />
           </Box>
           {text ? (
             <Box borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.5)} paddingX={1}>
-              <Text dimColor>{`${text} ▍`}</Text>
+              {typing ? (
+                <Client key={`gr-t-${w.id}-${typed.run}`} module="./grow.tsx"
+                  props={{ id: `t:${w.id}:${typed.run}`, text: raw, from: typed.from, stepMs: TYPE_STEP_MS, steps: typed.steps, mode: 'draft' }} />
+              ) : <Text dimColor>{`${text} ▍`}</Text>}
             </Box>
           ) : null}
         </Box>
@@ -1735,7 +1726,10 @@ async function drawPanel($: any, e: any) {
                 </Box>
                 <Box flexDirection="row">
                   <Text color={dot}>{st.dot}</Text>
-                  <Text dimColor>{` ${stale ? '未知' : st.label}${!stale && st.label === '执行中' ? ' ' + fmtElapsed(m.progress?.started_at, nowMs) : ''}`}</Text>
+                  <Text dimColor>{` ${stale ? '未知' : st.label}`}</Text>
+                  {!stale && st.label === '执行中' ? (
+                    <Client key={`el-${m.id}-card`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} />
+                  ) : null}
                   {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
                 </Box>
                 {/* its model, a button that opens the picker; this session's own Claude is the desktop app's to set */}
@@ -1824,16 +1818,15 @@ async function drawPanel($: any, e: any) {
           {working.map(m => {
             const p = m.progress
             const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
-            const tail = lastLines(typedText(String(p?.text ?? ''), typed, m.id), 1)
+            const tail = lastLines(String(p?.text ?? ''), 1) // the typing effect is the draft bubble's alone
             const doing = lt ? `正在：${lt}` : tail
             const q = Number(m.queued ?? 0)
-            const lvl = elapsedLevel(p?.started_at, nowMs)
             return (
               <Box key={`wk-${m.id}`} flexDirection="column">
                 <Box flexDirection="row">
                   <Text color={C_BLUE}>● </Text>
                   <Text color={nc(m.id)}>{m.id}</Text>
-                  <Text color={lvl === 2 ? C_RED : lvl === 1 ? C_AMBER : undefined} dimColor={lvl === 0}>{` ${fmtElapsed(p?.started_at, nowMs)}`}</Text>
+                  <Client key={`el-${m.id}-strip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'level' }} />
                   <Text dimColor>{` · ${toolCount(p)} 个工具`}</Text>
                   {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
                   <Box flexGrow={1} />
@@ -1930,6 +1923,13 @@ export const register: Register = on => {
   })
 
   on('session.compact', async ($, e, next) => compactHook($, e, next))
+
+  // a grow Client (grow.tsx) showed its last step: e.data is { grown: '<t|r>:<id>:<run>' }
+  on('ui.message', async ($, e, next) => {
+    const d: any = e.data
+    if (typeof d?.grown === 'string') await growDone($, d) // validated there: kind and run must match the live atom
+    return next(e)
+  })
 
   // this session's own context size for its member card (the hub knows only its helpers' sizes); redraw per 1k moved
   on('session.measure', async ($, e, next) => {
