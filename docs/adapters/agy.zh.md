@@ -31,17 +31,21 @@
   3. 初次无头启动（`spec.session is None`）后，驱动通过解析最新修改的 `last_conversations.json` 或 `brain` 目录下新增记录提取该会话 ID。
 
 ### 1.3 有没有机器可读的事件流（JSON 行、SSE……）？回合结束、出错、用量分别在哪个事件里？
-- **事件流格式与存储位置**：
-  `agy` 产生标准 JSON Lines（JSONL）格式的机器可读日志：
+- **事件流格式与运行时输出**：
+  `agy` 支持 `--output-format stream-json`，运行时由 stdout 直接输出实时 NDJSON 事件流：
+  - `init` 事件：包含会话 ID（`conversation_id`）、工作目录与可用工具；驱动据此直接提取会话 ID，零歧义。
+  - `step_update` 事件：
+    - `step_type: "tool"`：包含 `tool_name`、状态（`ACTIVE` / `DONE`）与参数，驱动由 `scan_agy_line` 实时折叠并通过 `sink.progress` 上报工具调用进度。
+    - `step_type: "agent_response"`：包含流式生成的 `text_delta` 与步骤 `usage`，实时更新 Panel 界面中的实时草稿。
+  - `result` 事件：回合结束时输出，包含 `status`（`SUCCESS` / 错误原因）、完整 `response` 文本及精准的官方 `usage` 指标（`input_tokens`、`output_tokens`、`thinking_tokens`、`cache_read_tokens`、`total_tokens`）。
+- **磁盘事件流归档**：
   - 紧凑摘要：`<brain_dir>/<conv_id>/.system_generated/logs/transcript.jsonl`
   - 完整记录：`<brain_dir>/<conv_id>/.system_generated/logs/transcript_full.jsonl`
-- **事件字段结构**：
-  每行一个 JSON 对象，包含 `step_index`、`source`（`MODEL` / `USER_EXPLICIT` / `SYSTEM`）、`type`（`USER_INPUT` / `PLANNER_RESPONSE`）、`status`（`DONE` / `ERROR`）、`created_at`、`tool_calls` 等字段。
-- **回合结束与状态**：
-  - CLI 子进程退出码为 0，且日志中最后步骤达成。
-  - 出错时，CLI 退出码非 0，stderr 中输出错误调用栈或拒绝信息；或日志中记录 `status: "ERROR"`。
+- **回合结束与状态判定**：
+  - 子进程退出码为 0 且 `result.status == "SUCCESS"` 时标记 `succeeded`。
+  - 出错时，依据 stderr 或 `result.error` 区分 `not found`（触发 `requeue="fresh"`）、配额不足（HTTP 429 / `RESOURCE_EXHAUSTED`，设置 `retry_at` 退避）或执行失败。
 - **用量指标**：
-  驱动依据 transcript 中的响应元数据与步骤提取 token 指标。证据核对（`spec.run_log`）会直接保留 `transcript.jsonl` 镜像。
+  - 优先由 `result.usage` 精确填入 `TurnEnd.usage`，在缺失时平滑回退至 `transcript.jsonl` 解析或字符估算。证据核对（`spec.run_log`）逐行保留实时 stdout 镜像。
 
 ### 1.4 怎么挂一个项目级的 stdio MCP 服务器？怎么只预先放行指定的工具？
 - **项目级 MCP 服务器配置**：
