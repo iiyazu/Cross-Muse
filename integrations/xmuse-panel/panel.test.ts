@@ -175,13 +175,13 @@ for (const [label, columns] of [['narrow', 40], ['wide', 130]] as const) {
     const primary = JSON.stringify(await ui.drawn()).match(/"variant":"primary"/g) ?? []
     expect(primary).toHaveLength(1)
     // the rail carries the members' names only open: folded by itself on a narrow pane
-    const named = await ui.find({ type: 'Text', text: ' delta' })
+    const named = await ui.find({ type: 'Text', text: 'delta' })
     if (columns >= 56) expect(named).toBeDefined()
     else expect(named).toBeUndefined()
     // the fold button flips it
     await ui.press({ key: 'rail-toggle' })
     await ui.redraw()
-    const after = await ui.find({ type: 'Text', text: ' delta' })
+    const after = await ui.find({ type: 'Text', text: 'delta' })
     if (columns >= 56) expect(after).toBeUndefined()
     else expect(after).toBeDefined()
     await ui.unmount()

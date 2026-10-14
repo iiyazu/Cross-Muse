@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { ConnInfo } from '../types'
-import type { Pal, Tone } from './logic'
+import type { Pal, RailItem, Tone } from './logic'
 import {
   C_AMBER, C_BLUE, C_GREEN, C_ORANGE, C_RED, agoText, approvalHasAlways, approvalKindLabel, approvalText, approvalsOf, avatarSvg, backoffMs,
   buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
@@ -79,6 +79,9 @@ const seenMsgs = new Map<number, any>() // every timeline item seen this load, b
 let seenRoom = ''
 // older pages fetched from /v1/timeline (oldest first), and whether the hub has still older ones
 const olderAtom = atom({ plugin: 'xmuse', key: 'older' } as const, { items: [] as any[], hasMore: true, loading: false })
+// messages drawn per conversation (newest first): a draw builds only these, the rest waits behind "显示更早的"
+const shownAtom = atom({ plugin: 'xmuse', key: 'shown' } as const, {} as Record<string, number>)
+const SHOW_STEP = 40
 const busyAtom =atom({ plugin: 'xmuse', key: 'busy' } as const, {} as Record<string, boolean>) // approval ids in flight
 const selfCtxAtom = atom({ plugin: 'xmuse', key: 'selfCtx' } as const, 0) // this session's own context fill (session.measure)
 // a member's message that just arrived, drawn growing to its full length (the vendors give no token stream for it)
@@ -135,13 +138,20 @@ async function probeToken($: any, url: string, token: string): Promise<'ok' | 'd
 
 /**
  * The member stays bound to the session that uses it: after the desktop app restarted (a new session id) the member
- * is moved over with /v1/rebind (the member token proves it is ours), once per session. Failing that, the panel still
+ * is moved over with /v1/rebind (the member token proves it is ours), once per load of this session (`rebound`): the
+ * store is shared, so two sessions open on one room would otherwise take the member back from each other on every poll
+ * (each take changes the view: both panels redraw without pause). /xmuse takes it over again. Failing that, the panel still
  * works on the operator token; only the model's xmuse_send would be refused as "bound to another session".
  * The rebind races a 3 s timeout like probeToken (no hang: see §3.2); the outcome goes to REBIND_MARK under DEV.
  */
+const rebound = new Set<string>() // '<room dir>|<session id>' already bound by this load: never taken back unasked
+
 async function ensureBound($: any, c: HubConn): Promise<HubConn> {
   const sid: string = await $.session.id()
   if (c.sid === sid || !c.memberToken) return c
+  const once = `${c.dir ?? ''}|${sid}`
+  if (rebound.has(once)) return c // another session took it later: leave it there
+  rebound.add(once)
   const mark = async (s: string) => {
     if (DEV) { try { await $.fs.write(REBIND_MARK, `${new Date().toISOString()} ${s}\n`) } catch { /* diagnostics only */ } }
   }
@@ -329,6 +339,7 @@ async function getConn($: any): Promise<HubConn> {
           memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
         await $.store.set(connKey(roomDir), conn)
         await addKnown($, roomDir)
+        rebound.add(`${roomDir}|${sid}`)
         return conn
       }
       if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
@@ -920,10 +931,17 @@ async function loadOlder($: any) {
     }
     if (!shows && hasMore && pages >= OLDER_MAX_PAGES) $.ui.toast(`更早的 ${pages * OLDER_PAGE} 条都是通知，已折叠；再点继续`)
     await update($, olderAtom, o => ({ items: [...got, ...o.items], hasMore, loading: false }))
+    const more = messagesFor({ ...view, timeline: got }, activeTab, POOL).length // what was fetched for this conversation shows
+    if (more) await update($, shownAtom, m => ({ ...m, [activeTab]: (m[activeTab] ?? SHOW_STEP) + more }))
   } catch (err) {
     $.ui.toast(`加载失败: ${errText(err)}`)
     await update($, olderAtom, o => ({ ...o, loading: false }))
   }
+}
+
+/** "显示更早的": the next SHOW_STEP messages of the open conversation that are already here (no hub call). */
+async function showMore($: any, tab: string) {
+  await update($, shownAtom, m => ({ ...m, [tab]: (m[tab] ?? SHOW_STEP) + SHOW_STEP }))
 }
 
 /** A member chip pressed: its full card opens (one at a time); pressing the open one closes it. */
@@ -1266,15 +1284,13 @@ function avatar(ui: any, id: string, size: number, look: Look) {
 
 type Look = { light: boolean; pal: Pal; vend: Record<string, string>; badges: Record<string, string> }
 type RailMode = 'auto' | 'open' | 'closed'
-const RAIL_OPEN_COLS = 12 // the rail's width open (avatar and name) and folded (avatar only), in cells
-const RAIL_SHUT_COLS = 5
+const RAIL_OPEN_COLS = 16 // the rail's width open (avatar and name) and folded (avatar only), in cells
+const RAIL_SHUT_COLS = 6
 
 async function toggleFold($: any, key: string) {
   await update($, foldAtom, m => ({ ...m, [key]: !m[key] }))
 }
 
-const DRAW_LIMIT_MS = 5000
-const TIMED_OUT = Symbol('timed out')
 let drawStage = '' // the last step drawPanel reached (shown when a draw throws or does not settle)
 
 async function drawPanel($: any, e: any) {
@@ -1285,22 +1301,44 @@ async function drawPanel($: any, e: any) {
   const cols = Number(e?.viewport?.columns ?? 0)
   const narrow = cols > 0 && cols < NARROW_COLS
   drawStage = 'read view'
-  const view = await read($, viewAtom)
+  // every value the draw reads, at once: one round trip to the host instead of one per value (a draw ran ~30 in a row)
+  const [view, conn, tab, replyTo, promoted, typed, done, fold, light, _avatarVer, open, briefFlag, briefStored, older, nowMs, sendN, sending, addOpen, expanded, busy, decision, mq, forced, autoStored, seenRaw, selfCtx, reveal, mp, railMode, shown] = await Promise.all([
+    read($, viewAtom),
+    read($, connAtom),
+    read($, tabAtom),
+    read($, replyAtom),
+    read($, promotedAtom),
+    read($, typedAtom),
+    read($, doneAtom),
+    read($, foldAtom),
+    read($, themeAtom),
+    read($, avatarVerAtom),
+    read($, openAtom),
+    read($, briefAtom),
+    $.store.get(STORE_BRIEF),
+    read($, olderAtom),
+    $.clock.now(),
+    read($, sendNAtom),
+    read($, sendingAtom),
+    read($, addOpenAtom),
+    read($, expandedAtom),
+    read($, busyAtom),
+    read($, decisionAtom),
+    read($, mentionAtom),
+    read($, forcedAtom),
+    $.store.get(STORE_AUTO),
+    $.store.get(STORE_SEEN),
+    read($, selfCtxAtom),
+    read($, revealAtom),
+    read($, modelAtom),
+    read($, railAtom),
+    read($, shownAtom),
+  ])
   drawStage = 'read state'
-  const conn = await read($, connAtom)
-  const tab = await read($, tabAtom)
-  const replyTo = await read($, replyAtom)
-  const promoted = await read($, promotedAtom)
-  const typed = await read($, typedAtom)
-  const done = await read($, doneAtom)
-  const fold = await read($, foldAtom)
-  const light = await read($, themeAtom)
   const pal = palOf(light)
-  await read($, avatarVerAtom) // redraw when a custom avatar file has been picked up
 
-  const open = await read($, openAtom)
   drawStage = 'store brief'
-  const briefMissing = (await read($, briefAtom)) || (await $.store.get(STORE_BRIEF)) === true
+  const briefMissing = briefFlag || briefStored === true
   const noRoom = conn.phase === 'noroom'
   drawStage = 'room target'
   const target = noRoom ? await roomTarget($) : ''
@@ -1371,37 +1409,25 @@ async function drawPanel($: any, e: any) {
   const peerOf = activeItem.peer
   // the view's recent page plus any older pages loaded with the button at the bottom
   // (the view carries only the latest page, so every message seen is kept: one that slid out of the page stays)
-  const older = await read($, olderAtom)
   if (seenRoom !== String(view.room?.id ?? '')) { seenRoom = String(view.room?.id ?? ''); seenMsgs.clear() }
   for (const m of older.items) if (typeof m?.id === 'number' && !seenMsgs.has(m.id)) seenMsgs.set(m.id, m)
   for (const m of (Array.isArray(view.timeline) ? view.timeline : [])) if (typeof m?.id === 'number') seenMsgs.set(m.id, m)
   const histView = { ...view, timeline: [...seenMsgs.values()].sort((a, b) => a.id - b.id) }
   const hasOlder = older.items.length ? older.hasMore : !!view.timeline_cursor?.has_more
-  const msgs = messagesFor(histView, activeTab, POOL).reverse() // newest first (see the layout note below)
+  const tabMsgs = messagesFor(histView, activeTab, POOL).reverse() // newest first (see the layout note below)
+  const msgs = tabMsgs.slice(0, shown[activeTab] ?? SHOW_STEP) // only these are built: a long history costs nothing per draw
+  const hiddenHere = tabMsgs.length - msgs.length
   const rows = buildRows(msgs)
-  const replied = msgs.find(m => m.id === replyTo)
+  const replied = tabMsgs.find(m => m.id === replyTo)
   const replySnip = replied ? `${displayName(replied.from)}：${String(replied.text ?? '').replace(/\s+/g, ' ').slice(0, 40)}` : ''
   const activeLabel = activeItem.kind === 'room' ? '全员' : activeItem.kind === 'all' ? '全员（大群）' : activeItem.label
   const placeholder = narrow ? '说点什么…（@ 指定成员）' : '说点什么…  @ 指定成员 · Enter 发送 · \\n 换行'
   const approvals = approvalsOf(view)
   const working = workingMembers(view)
-  const nowMs = await $.clock.now() // the host clock; the per-second times are drawn by the elapsed Client (elapsed.tsx)
-  const sendN = await read($, sendNAtom)
-  const sending = await read($, sendingAtom)
-  const addOpen = await read($, addOpenAtom)
-  const expanded = await read($, expandedAtom)
-  const busy = await read($, busyAtom)
-  const decision = await read($, decisionAtom)
-  const mq = await read($, mentionAtom)
-  const forced = await read($, forcedAtom)
-  const autoWake = (await $.store.get(STORE_AUTO)) === true
-  const seenRaw = await $.store.get(STORE_SEEN)
+  const autoWake = autoStored === true
   const wakePending = wakeCandidates(view, typeof seenRaw === 'number' ? seenRaw : maxWakeId(view)).length
   const stale = conn.phase === 'error' // the view is old: no live-looking states
   const cands = mq !== null ? mentionCandidates(view, mq, 6) : []
-  const selfCtx = await read($, selfCtxAtom)
-  const reveal = await read($, revealAtom)
-  const mp = await read($, modelAtom)
   const cpBusy = (id: string) => !!busy[`cp${id}`]
 
   // one message: optional header, bubble, hover actions. `head` false = continuation inside a group
@@ -1770,36 +1796,61 @@ async function drawPanel($: any, e: any) {
   const openMember = members.find(x => x.id === expanded)
   const peerMember = peerOf ? members.find(x => x.id === peerOf) : undefined
 
-  // the left rail, IM style: the room, one entry per member (the user's private chat with it), everything; folds to
-  // avatars only (auto: folded on a narrow pane). The pane scrolls as one, so the rail sits at the top like the composer.
-  const railMode = await read($, railAtom)
+  // the left rail, IM style: the room, one entry per member (the user's private chat with it), everything. Open: one
+  // row each (avatar, state dot, name, unread), the open one marked by an accent bar on a light ground, as a chat app's
+  // list. Folded (by hand, or by itself on a narrow pane): the avatar over a short name or the unread count. Only the
+  // Button takes a press (an avatar cannot), so the name is the target. The pane scrolls as one: the rail sits on top.
   const railShown = railMode === 'open' || (railMode === 'auto' && !narrow)
-  const short = (s: string) => (s.length > 8 ? s.slice(0, 7) + '…' : s)
+  const fit = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+  const railIcon = (it: RailItem, size: number) => it.kind === 'room'
+    ? <ui.Svg source={roomSvg(size)} alt="大群" width={size} height={size} />
+    : it.peer ? avatar(ui, it.peer, size, look)
+    : <Box width={2} justifyContent="center"><Text dimColor>≡</Text></Box>
+  const railRow = (it: RailItem) => {
+    const sel = it.id === activeTab
+    const m = it.peer ? members.find(x => x.id === it.peer) : undefined
+    const b = m ? bitsOf(m) : null
+    const key = it.kind === 'dm' ? `rail-dm-${it.peer}` : `rail-${it.kind}`
+    const name = it.kind === 'room' ? '大群' : it.label
+    if (!railShown) {
+      return (
+        <Box key={`rw-${key}`} flexDirection="column" alignItems="center" width="100%" paddingY={0}
+          {...(sel ? { backgroundColor: pal.bubble } : {})}>
+          {railIcon(it, 24)}
+          <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
+            {it.unread > 0 ? <Text color={C_RED} bold>{String(Math.min(it.unread, 99))}</Text>
+              : <Text bold={sel} color={sel && m ? nc(m.id) : undefined}>{fit(name, 4)}</Text>}
+          </Button>
+        </Box>
+      )
+    }
+    return (
+      <Box key={`rw-${key}`} flexDirection="row" alignItems="center" gap={1} width="100%" {...(sel ? { backgroundColor: pal.bubble } : {})}>
+        <Text color={sel ? C_BLUE : pal.codeBg}>▍</Text>
+        {railIcon(it, 22)}
+        <Box flexGrow={1} flexShrink={1}>
+          <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
+            <Text bold={sel} color={m ? nc(m.id) : undefined}>{fit(name, RAIL_OPEN_COLS - 8)}</Text>
+            {b ? <Text color={b.dot}>{' ●'}</Text> : null}
+          </Button>
+        </Box>
+        {it.unread > 0 ? <Text color={C_RED} bold>{String(Math.min(it.unread, 99))}</Text> : null}
+      </Box>
+    )
+  }
   const railNode = (
     <Box flexDirection="column" flexShrink={0} width={railShown ? RAIL_OPEN_COLS : RAIL_SHUT_COLS} backgroundColor={pal.codeBg}
-      paddingY={1} gap={1} alignItems="center">
-      <Button key="rail-toggle" plain dimColor onPress={() => toggleRail($, railShown)}>{railShown ? '«' : '»'}</Button>
-      {rail.map(it => {
-        const sel = it.id === activeTab
-        const m = it.peer ? members.find(x => x.id === it.peer) : undefined
-        const b = m ? bitsOf(m) : null
-        const key = it.kind === 'dm' ? `rail-dm-${it.peer}` : `rail-${it.kind}`
-        const name = it.kind === 'room' ? '大群' : it.label
-        return (
-          <Box key={`rw-${key}`} flexDirection="column" alignItems="center" width="100%" {...(sel ? { backgroundColor: pal.bubble } : {})}>
-            {it.kind === 'room' ? <ui.Svg source={roomSvg(28)} alt="大群" width={28} height={28} />
-              : m ? avatar(ui, m.id, 28, look) : null}
-            <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
-              {b ? <Text color={b.dot}>●</Text> : null}
-              {railShown || it.kind === 'all' ? <Text bold={sel} color={m ? nc(m.id) : undefined}>{`${b ? ' ' : ''}${short(name)}`}</Text>
-                : b ? null : <Text bold={sel}>群</Text>}
-              {it.unread > 0 ? <Text color={C_RED}>{` ${it.unread}`}</Text> : null}
-            </Button>
-          </Box>
-        )
-      })}
+      paddingY={1} paddingRight={railShown ? 1 : 0} gap={railShown ? 0 : 1} alignItems={railShown ? 'stretch' : 'center'}>
+      {railRow(rail[0]!)}
+      <Box marginY={railShown ? 0 : 0} justifyContent="center"><Text dimColor>{railShown ? ' ' : '─'}</Text></Box>
+      {rail.slice(1).map(railRow)}
+      <Box flexGrow={1} />
+      <Box flexDirection="row" justifyContent="center" marginTop={1}>
+        <Button key="rail-toggle" plain dimColor onPress={() => toggleRail($, railShown)}>{railShown ? '‹ 收起' : '›'}</Button>
+      </Box>
     </Box>
   )
+
 
   return (
     <Box flexDirection="row" gap={1}>
@@ -2025,7 +2076,11 @@ async function drawPanel($: any, e: any) {
       {rows.length === 0 && !drafts.length ? <Text dimColor>{peerOf ? `和 ${peerOf} 的私聊：只有你们两个看得到` : '这里还没有消息：发一句话试试，@名字 可以指定对象'}</Text> : null}
       {drafts}
       {msgNodes}
-      {hasOlder ? (
+      {hiddenHere > 0 ? (
+        <Box flexDirection="row" justifyContent="center">
+          <Button key="show-more" variant="secondary" onPress={() => showMore($, activeTab)}>{`显示更早的 ${Math.min(SHOW_STEP, hiddenHere)} 条`}</Button>
+        </Box>
+      ) : hasOlder ? (
         <Box flexDirection="row" justifyContent="center">
           <Button key="older" variant="secondary" onPress={() => loadOlder($)}>{older.loading ? '加载中…' : '加载更早的消息'}</Button>
         </Box>
@@ -2085,14 +2140,14 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'xmuse' }, async $ => {
+    rebound.clear() // opened by hand here: this session takes the member back once
     avatarTried = {} // pick up avatar files added since the last load
     await openPanel($)
     await startLoop($)
     return { text: 'xmuse panel opened' }
   })
 
-  // A throw or a draw that never settles would leave the pane to the engine's "Nothing to show yet" with no reason:
-  // show the error, or after DRAW_LIMIT_MS the last step the draw reached.
+  // A throw would leave the pane to the engine's "Nothing to show yet" with no reason: show the error and the last step.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     drawStage = 'start'
     const failed = (title: string, detail: string) => {
@@ -2104,13 +2159,10 @@ export const register: Register = on => {
         </Box>
       )
     }
-    let late: ((v: unknown) => void) | undefined
-    const timer = new Promise(resolve => { late = resolve })
-    $.clock.after(DRAW_LIMIT_MS, () => late?.(TIMED_OUT))
+    // no timeout race: a timer per draw is one more host call on every redraw, and the hook's own budget already ends
+    // a draw that hangs (the engine then draws its own and logs why)
     try {
-      const r = await Promise.race([drawPanel($, e), timer])
-      if (r === TIMED_OUT) return failed(`xmuse 面板绘制超时（${DRAW_LIMIT_MS / 1000} 秒）`, `停在：${drawStage}`)
-      return r
+      return await drawPanel($, e)
     } catch (err: any) {
       return failed('xmuse 面板绘制出错', `${String(err?.stack ?? err)}\n停在：${drawStage}`)
     }

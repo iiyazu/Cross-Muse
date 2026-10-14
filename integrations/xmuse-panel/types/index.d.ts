@@ -27,6 +27,7 @@ declare module 'claude-code' {
       done: Record<string, { tools: number; startedMs: number; endedMs: number }>
       brief: boolean
       older: { items: any[]; hasMore: boolean; loading: boolean }
+      shown: Record<string, number>
       selfCtx: number
       reveal: { id: number; steps: number[]; run: number }
       modelPick: {
