@@ -144,6 +144,78 @@ def parse_transcript(path: Path) -> tuple[dict, Usage]:
     return info, u
 
 
+def scan_agy_line(acc: dict, line: str) -> bool:
+    """Fold one stream-json line into a live progress accumulator (H4). True when tools or text changed."""
+    if not line.startswith("{"):
+        return False
+    try:
+        o = json.loads(line)
+    except ValueError:
+        return False
+    changed = False
+    ev = o.get("event")
+    if ev == "step_update":
+        su = o.get("step_update") or {}
+        stype = su.get("step_type")
+        if stype == "tool" and su.get("state") == "ACTIVE":
+            acc["tools"] = acc.get("tools", 0) + 1
+            acc["last_tool"] = su.get("tool_name") or ((su.get("tool_info") or {}).get("name", acc.get("last_tool")))
+            changed = True
+        elif stype == "agent_response":
+            delta = su.get("text_delta")
+            if delta and isinstance(delta, str):
+                acc["text"] = acc.get("text", "") + delta
+                changed = True
+    return changed
+
+
+def parse_stream(lines: list[str]) -> tuple[dict, Usage]:
+    """stream-json of one `agy -p` run -> (result info, usage)."""
+    info, u = {}, Usage()
+    last_text = []
+    seen_calls = 0
+    for line in lines:
+        if not line.startswith("{"):
+            continue
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        ev = o.get("event")
+        if ev == "init":
+            if o.get("conversation_id"):
+                info["session"] = o["conversation_id"]
+        elif ev == "step_update":
+            su = o.get("step_update") or {}
+            stype = su.get("step_type")
+            if stype == "tool":
+                tname = su.get("tool_name") or ((su.get("tool_info") or {}).get("name") or "")
+                if tname in CODE_TOOLS:
+                    u.mode = "code"
+            elif stype == "agent_response":
+                delta = su.get("text_delta")
+                if delta:
+                    last_text.append(delta)
+                if su.get("state") == "DONE":
+                    seen_calls += 1
+        elif ev == "result":
+            res = o.get("result") or {}
+            if res.get("conversation_id"):
+                info["session"] = res["conversation_id"]
+            info["ok"] = (res.get("status") == "SUCCESS")
+            info["error"] = None if info["ok"] else (res.get("error") or res.get("status"))
+            usg = res.get("usage") or {}
+            u.input = usg.get("input_tokens", 0)
+            u.output = usg.get("output_tokens", 0)
+            u.cache_read = usg.get("cache_read_tokens", 0)
+            u.context = usg.get("total_tokens", 0) or (u.input + u.output + u.cache_read)
+            u.calls = max(res.get("num_turns", seen_calls or 1), 1)
+            info["reply"] = res.get("response") or "".join(last_text)
+            if res.get("denied_actions"):
+                info["denied"] = [d.get("action") for d in res["denied_actions"] if isinstance(d, dict)]
+    return info, u
+
+
 class AgyHeadless:
     name = "agy"
 
@@ -154,16 +226,22 @@ class AgyHeadless:
         self.bin = cfg.get("agy_bin") or _default_agy_bin() or "agy"
         self.runs: dict[int, dict] = {}
 
-    def command(self, session: str | None, prompt: str) -> list[str]:
+    def command(self, session: str | None, prompt: str, agent: dict | None = None) -> list[str]:
         # No proc.argv on main: inline the only case that needs wrapping (a .py fake on Windows has no shebang).
         if sys.platform == "win32" and str(self.bin).lower().endswith(".py"):
             cmd = [sys.executable, str(self.bin)]
         else:
             cmd = [str(self.bin)]
+        if "--output-format" not in cmd:
+            cmd.extend(["--output-format", "stream-json"])
         if "--dangerously-skip-permissions" not in cmd:
             cmd.append("--dangerously-skip-permissions")
         if session:
             cmd.append(f"--conversation={session}")
+        s = db.settings(agent) if agent else {}
+        effort = s.get("effort")
+        if effort in ("low", "medium", "high", "xhigh", "max"):
+            cmd.extend(["--effort", effort])
         cmd.extend(["-p", prompt])
         return cmd
 
@@ -173,23 +251,41 @@ class AgyHeadless:
         return {"handle": spec.session, "cwd": to_win(spec.cwd)}
 
     def _turn(self, spec: TurnSpec, st: dict) -> None:
-        cmd = self.command(spec.session, spec.prompt)
+        cmd = self.command(spec.session, spec.prompt, spec.agent)
         cwd = to_win(spec.cwd) if sys.platform == "win32" else spec.cwd
         env = clean_env({"CASCADE_DEFAULT_MODEL_OVERRIDE": spec.agent["model"]})
         sid = spec.session
-        stdout_text, stderr_text, rc = "", "", 0
+        lines, stderr_text, rc = [], "", 0
+        prog = {"tools": 0, "last_tool": None, "text": ""}
 
         with spec.run_log.open("a", encoding="utf-8") as out, spec.run_log.with_suffix(".err").open("a", encoding="utf-8") as err:
             try:
                 p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, text=True, encoding="utf-8", env=env,
-                                       start_new_session=True)
+                                     stderr=subprocess.PIPE, text=True, encoding="utf-8", env=env,
+                                     start_new_session=True)
                 st["p"] = p
-                stdout_text, stderr_text = p.communicate()
-                out.write(stdout_text)
-                out.flush()
-                err.write(stderr_text)
-                err.flush()
+
+                def _read_err():
+                    nonlocal stderr_text
+                    try:
+                        stderr_text = p.stderr.read()
+                        err.write(stderr_text)
+                        err.flush()
+                    except Exception:
+                        pass
+
+                t_err = threading.Thread(target=_read_err, daemon=True)
+                t_err.start()
+
+                for line in p.stdout:
+                    out.write(line)
+                    out.flush()
+                    lines.append(line)
+                    if scan_agy_line(prog, line):
+                        self.sink.progress(spec.turn_id, dict(prog))
+
+                p.wait()
+                t_err.join(timeout=2)
                 rc = p.returncode
             except Exception as e:
                 rc = 1
@@ -198,11 +294,15 @@ class AgyHeadless:
 
         end = None
         try:
-            # Detect created conversation id if this was a fresh session
+            info, stream_usage = parse_stream(lines)
+            if info.get("session"):
+                sid = info["session"]
+
+            # Detect created conversation id if this was a fresh session and not found in stream
             if not sid:
-                m = re.search(r"Created conversation ([0-9a-fA-F-]+)", stdout_text + stderr_text)
+                m = re.search(r"Created conversation ([0-9a-fA-F-]+)", "".join(lines) + stderr_text)
                 if not m:
-                    m = re.search(r"conversation=([0-9a-fA-F-]+)", stdout_text + stderr_text)
+                    m = re.search(r"conversation=([0-9a-fA-F-]+)", "".join(lines) + stderr_text)
                 if m:
                     sid = m.group(1)
                 else:
@@ -211,36 +311,45 @@ class AgyHeadless:
 
             # Only a turn agy did not report as a success is searched for these: the output carries tool results and
             # timings ("duration_seconds":0.082294294 once read as a 429 and paused a healthy agy for an hour).
-            full_output = "" if _succeeded(stdout_text) else (stdout_text + "\n" + stderr_text).strip().lower()
+            out_text = "".join(lines)
+            full_output = "" if _succeeded(out_text) else (out_text + "\n" + stderr_text).strip().lower()
             is_unknown = "not found" in full_output or "does not exist" in full_output
             is_quota = re.search(r"resource_exhausted|quota|\b429\b", full_output) is not None
 
-            # Parse usage
-            transcript_path = self._transcript_path(sid)
-            if transcript_path and transcript_path.exists():
-                _, usage = parse_transcript(transcript_path)
+            # Determine usage
+            if stream_usage.calls > 0:
+                usage = stream_usage
             else:
-                usage = Usage()
-                usage.input = len(spec.prompt) // 4
-                usage.output = len(stdout_text) // 4
-                usage.context = usage.input + usage.output
-                usage.calls = 1
-                if any(t in stdout_text for t in CODE_TOOLS):
-                    usage.mode = "code"
+                transcript_path = self._transcript_path(sid)
+                if transcript_path and transcript_path.exists():
+                    _, usage = parse_transcript(transcript_path)
+                else:
+                    usage = Usage()
+                    usage.input = len(spec.prompt) // 4
+                    usage.output = sum(len(l) for l in lines) // 4
+                    usage.context = usage.input + usage.output
+                    usage.calls = 1
+                    if any(t in "".join(lines) for t in CODE_TOOLS):
+                        usage.mode = "code"
 
             usage.model = spec.agent.get("model", "")
+            reply = info.get("reply")
+
+            note = None
+            if info.get("denied"):
+                note = "permission_denied: " + ", ".join(info["denied"])
 
             if st["stop"].is_set():
-                end = TurnEnd(spec.turn_id, "interrupted", sid, usage, "interrupted by hub")
+                end = TurnEnd(spec.turn_id, "interrupted", sid, usage, "interrupted by hub", note=note, reply=reply)
             elif is_unknown:
-                end = TurnEnd(spec.turn_id, "failed", sid, usage, "conversation not found", requeue="fresh")
+                end = TurnEnd(spec.turn_id, "failed", sid, usage, "conversation not found", note=note, requeue="fresh", reply=reply)
             elif is_quota:
-                end = TurnEnd(spec.turn_id, "failed", sid, usage, "quota exceeded", retry_at=time.time() + 3600)
-            elif rc == 0:
-                end = TurnEnd(spec.turn_id, "succeeded", sid, usage)
+                end = TurnEnd(spec.turn_id, "failed", sid, usage, "quota exceeded", note=note, retry_at=time.time() + 3600, reply=reply)
+            elif rc == 0 and info.get("ok", True):
+                end = TurnEnd(spec.turn_id, "succeeded", sid, usage, note=note, reply=reply)
             else:
-                tail = stderr_text[-300:].strip() or f"exit {rc}"
-                end = TurnEnd(spec.turn_id, "failed", sid, usage, tail)
+                tail = stderr_text[-300:].strip() or (info.get("error") if info.get("error") else f"exit {rc}")
+                end = TurnEnd(spec.turn_id, "failed", sid, usage, tail, note=note, reply=reply)
         except (Exception, host.HostError) as e:
             log.exception(f"turn {spec.turn_id} finalize failed: {e}")
             end = TurnEnd(spec.turn_id, "failed", sid or spec.session, Usage(), f"internal error: {e}")

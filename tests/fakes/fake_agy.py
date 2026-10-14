@@ -88,9 +88,17 @@ def tool(name, args):
 for name, args in step.get("calls", []):
     tool(name, args)
 
-if step.get("code"):
-    print("Executing tool: run_command")
-
-print(f"Created conversation {sid}")
-print("Response: OK")
+is_stream_json = "--output-format" in argv and "stream-json" in argv
+if is_stream_json:
+    print(json.dumps({"event": "init", "conversation_id": sid, "init": {"tools": ["xmuse_send", "xmuse_done"]}}))
+    if step.get("code"):
+        print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command"}}))
+        print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "DONE", "step_type": "tool", "tool_name": "run_command"}}))
+    print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 2, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "Response: OK"}}))
+    print(json.dumps({"event": "result", "result": {"conversation_id": sid, "status": "SUCCESS", "response": "Response: OK\n", "duration_seconds": 0.5, "num_turns": 1, "usage": {"input_tokens": 120, "output_tokens": 40, "thinking_tokens": 20, "cache_read_tokens": 0, "total_tokens": 160}}}))
+else:
+    if step.get("code"):
+        print("Executing tool: run_command")
+    print(f"Created conversation {sid}")
+    print("Response: OK")
 sys.exit(0)

@@ -116,6 +116,24 @@ def test_a_429_in_a_successful_turns_output_is_not_a_quota():
     assert not _succeeded("RESOURCE_EXHAUSTED: quota exceeded") and not _succeeded('{"event":"result","result":{}}')
 
 
+def test_stream_json_progress_and_exact_usage(make):
+    h = make(AGY)
+    h.plan_agy({"as": "agy-1", "code": True, "calls": [SEND]})
+    h.send("agy-1", "do work")
+    h.wait_quiet()
+    [t] = h.turns()
+    assert t["state"] == "succeeded"
+    assert t["mode"] == "code"
+    assert t["input"] == 120
+    assert t["output"] == 40
+    assert t["context"] == 160
+    prog = h.hub.engine.progress_state.get(t["id"])
+    if prog:
+        assert prog["tools"] >= 1
+        assert prog["last_tool"] == "run_command"
+        assert "Response: OK" in prog["text"]
+
+
 def test_the_agy_gate_asks_the_hub(make):
     """The generated .agents/xmuse-hook.py (any python, stdlib only) asks the hub's risk check: everyday commands
     run, consequential ones are denied with the reason, and with no hub to ask everything is denied."""
