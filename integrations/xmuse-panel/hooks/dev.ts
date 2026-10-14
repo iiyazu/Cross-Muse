@@ -4,4 +4,5 @@ export const DEV: boolean = false
 export const ROOM_OVERRIDE = '' // dev: a file holding a room directory to use instead of the session's
 export const LOAD_MARK = '' // dev: a file written on each load
 export const FOCUS_MARK = '' // dev: a file the last $.ui.focus answer is written to
+export const REBIND_MARK = '' // dev: a file the last ensureBound outcome is written to
 export const DEV_AVATAR_DIR = '' // dev: avatars, instead of <registry>/avatars
