@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fake `agy` CLI for hub tests: simulates prompt execution, tool calls, and failure cases."""
+"""Fake `agy` CLI for hub tests: simulates prompt execution, tool calls, and failure cases.
+
+Two ways to run, like agy: `-p <prompt>` runs one turn and exits; `--input-format stream-json --print=` stays up and
+runs one turn per {"event": "user", "message": {"content": ...}} line on stdin (one init event at start, a result
+event per turn; a failed turn reports status ERROR and the process goes on). Each turn takes the next step of
+plan.json and appends {n, argv, prompt, cwd, step, pid} to calls.jsonl. Like agy, the result's usage is the
+conversation's running total; each model step carries its own.
+"""
 import json
 import os
 import sys
@@ -32,46 +39,30 @@ if "--version" in argv:  # the registry probe: no turn, no counter
     print("agy 0.0-fake")
     sys.exit(0)
 
-n_file = home / "n"
-n = int(n_file.read_text(encoding="utf-8")) if n_file.exists() else 0
-n_file.write_text(str(n + 1), encoding="utf-8")
-
-plan_file = home / "plan.json"
-plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else []
-step = plan[n] if n < len(plan) else {}
-
-with (home / "calls.jsonl").open("a", encoding="utf-8") as f:
-    f.write(json.dumps({"n": n, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
-                        "step": step}) + "\n")
-
+stream_in = "--input-format" in argv and argv[argv.index("--input-format") + 1] == "stream-json"
+stream_out = "--output-format" in argv and "stream-json" in argv
 store = home / "sessions.json"
-sessions = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
+total = {"input_tokens": 0, "output_tokens": 0, "thinking_tokens": 0, "cache_read_tokens": 0, "total_tokens": 0}
 
-# Failures
-if step.get("result") == "unknown" or (sid is not None and sid not in sessions and step.get("unknown", True) and not sid.startswith("session-")):
-    print(f"Conversation {sid} not found, ignoring --conversation flag", file=sys.stderr)
-    sys.exit(1)
 
-if step.get("result") == "quota":
-    print("RESOURCE_EXHAUSTED: quota exceeded", file=sys.stderr)
-    sys.exit(1)
+def emit(o):
+    print(json.dumps(o), flush=True)
 
-if step.get("result") == "error":
-    print("Error: model execution failed", file=sys.stderr)
-    sys.exit(1)
 
-if step.get("result") == "hang":
-    time.sleep(step.get("sleep", 60))
+def next_step(prompt):
+    n_file = home / "n"
+    n = int(n_file.read_text(encoding="utf-8")) if n_file.exists() else 0
+    n_file.write_text(str(n + 1), encoding="utf-8")
+    plan_file = home / "plan.json"
+    plan = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else []
+    step = plan[n] if n < len(plan) else {}
+    with (home / "calls.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"n": n, "argv": argv, "prompt": prompt, "cwd": os.getcwd(), "step": step,
+                            "pid": os.getpid()}) + "\n")
+    return step
 
-if step.get("sleep"):
-    time.sleep(step["sleep"])
 
-sid = sid or step.get("session") or f"session-{uuid.uuid4()}"
-sessions[sid] = os.getcwd()
-store.write_text(json.dumps(sessions), encoding="utf-8")
-
-# Tool calls
-def tool(name, args):
+def tool(step, name, args):
     ws_file = Path.cwd() / ".xmuse.json"
     if ws_file.exists():
         state = Path(json.loads(ws_file.read_text(encoding="utf-8"))["state"])
@@ -85,20 +76,90 @@ def tool(name, args):
                                  headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
-for name, args in step.get("calls", []):
-    tool(name, args)
 
-is_stream_json = "--output-format" in argv and "stream-json" in argv
-if is_stream_json:
-    print(json.dumps({"event": "init", "conversation_id": sid, "init": {"tools": ["xmuse_send", "xmuse_done"]}}))
+def known(sid, step):
+    sessions = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
+    return not (sid is not None and sid not in sessions and step.get("unknown", True) and not sid.startswith("session-"))
+
+
+def remember(sid):
+    sessions = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
+    sessions[sid] = os.getcwd()
+    store.write_text(json.dumps(sessions), encoding="utf-8")
+
+
+def turn(step, sid):
+    """One turn's work and its stream-json events (after init). Returns an error text, or None."""
+    if step.get("result") == "quota":
+        return "RESOURCE_EXHAUSTED: quota exceeded"
+    if step.get("result") == "error":
+        return "Error: model execution failed"
+    if step.get("result") == "hang":
+        time.sleep(step.get("sleep", 60))
+    if step.get("sleep"):
+        time.sleep(step["sleep"])
+    for name, args in step.get("calls", []):
+        tool(step, name, args)
+    if not stream_out:
+        if step.get("code"):
+            print("Executing tool: run_command")
+        print(f"Created conversation {sid}")
+        print("Response: OK")
+        return None
     if step.get("code"):
-        print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command"}}))
-        print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "DONE", "step_type": "tool", "tool_name": "run_command"}}))
-    print(json.dumps({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 2, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "Response: OK"}}))
-    print(json.dumps({"event": "result", "result": {"conversation_id": sid, "status": "SUCCESS", "response": "Response: OK\n", "duration_seconds": 0.5, "num_turns": 1, "usage": {"input_tokens": 120, "output_tokens": 40, "thinking_tokens": 20, "cache_read_tokens": 0, "total_tokens": 160}}}))
-else:
-    if step.get("code"):
-        print("Executing tool: run_command")
-    print(f"Created conversation {sid}")
-    print("Response: OK")
+        emit({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "ACTIVE",
+                                                      "step_type": "tool", "tool_name": "run_command"}})
+        emit({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 1, "state": "DONE",
+                                                      "step_type": "tool", "tool_name": "run_command"}})
+    use = {"input_tokens": 100, "output_tokens": 30, "thinking_tokens": 10, "cache_read_tokens": 20,
+           "total_tokens": 130}
+    for k in total:
+        total[k] += use[k]
+    emit({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 2, "state": "ACTIVE",
+                                                  "step_type": "agent_response", "text_delta": "Response: OK"}})
+    emit({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": 2, "state": "DONE",
+                                                  "step_type": "agent_response", "usage": use}})
+    emit({"event": "result", "result": {"conversation_id": sid, "status": "SUCCESS", "response": "Response: OK\n",
+                                        "duration_seconds": 0.5, "num_turns": 1, "usage": dict(total)}})
+    return None
+
+
+if not stream_in:  # agy -p: one turn
+    step = next_step(prompt)
+    if step.get("result") == "unknown" or not known(sid, step):
+        print(f"Conversation {sid} not found, ignoring --conversation flag", file=sys.stderr)
+        sys.exit(1)
+    sid = sid or step.get("session") or f"session-{uuid.uuid4()}"
+    remember(sid)
+    if stream_out:
+        emit({"event": "init", "conversation_id": sid, "init": {"tools": ["xmuse_send", "xmuse_done"]}})
+    err = turn(step, sid)
+    if err:
+        print(err, file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+# resident: init once, then a turn per stdin line
+if sid is not None and not known(sid, {}):
+    print(f"Conversation {sid} not found, ignoring --conversation flag", file=sys.stderr)
+    sys.exit(1)
+sid = sid or f"session-{uuid.uuid4()}"
+remember(sid)
+emit({"event": "init", "conversation_id": sid, "init": {"tools": ["xmuse_send", "xmuse_done"]}})
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("event") != "user":
+        print(f"warning: ignoring unsupported stream input message event {msg.get('event')!r}", file=sys.stderr)
+        continue
+    step = next_step(msg["message"]["content"])
+    if step.get("result") == "unknown":
+        print(f"Conversation {sid} not found", file=sys.stderr)
+        sys.exit(1)
+    if step.get("result") == "exit":  # the process dies mid-turn
+        sys.exit(2)
+    err = turn(step, sid)
+    if err:
+        print(err, file=sys.stderr, flush=True)
+        emit({"event": "result", "result": {"conversation_id": sid, "status": "ERROR", "response": "", "error": err,
+                                            "usage": dict(total)}})
 sys.exit(0)

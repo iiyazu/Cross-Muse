@@ -17,6 +17,14 @@
 - **关键语法陷阱与注意事项**：
   `agy` CLI 的 `-p` / `--print` 参数具有贪婪性，会消费紧随其后的参数作为提示词。因此所有标志选项（`--model`、`--conversation` 等）**必须置于 `-p` 之前**。若放置在 `-p` 之后，将被当作 prompt 的一部分或被丢弃。
 
+### 1.1a 常驻模式（默认，10-14）
+- **为什么**：每次唤醒都跑一个 `agy -p`，第一次调模型前要先花约 15 秒（登录刷新令牌约 1 秒、`loadCodeAssist`/`fetchAvailableModels` 等后端握手约 7 秒、加载会话和 MCP 约 7 秒；tmp_xmuse 第 4 回合的 agy 日志）。
+- **怎么跑**：`agy --output-format stream-json --input-format stream-json --print= [--conversation=<id>] [--effort <档位>]` 常驻不退出，stdin 每行一条消息、跑一个回合：
+  `{"event":"user","message":{"role":"user","content":"<prompt>"}}`。启动时输出一次 `init`（带 `conversation_id`），每个回合以一个 `result` 事件结束；回合出错时 `result.status` 为 `ERROR`，进程继续。`-p` 后面必须带值，所以用 `--print=` 表示提示词全从 stdin 来。输入格式文档里没写，是逐个试出来的：别的 `event` 被忽略（`ignoring unsupported stream input message event`），缺 `message` 或 `content` 会报错。
+- **实测**：同一进程三次唤醒 15.2 / 2.5 / 2.2 秒（第一次含冷启动），会话连续；接已有会话（`--conversation=`）同样可用。
+- **驱动的做法**（`adapters/agy.py` 的 `Resident`）：每个 agy 成员一个进程。会话、模型、effort 或工作目录变了就换进程；回合没成功、被中断（stream-json 没有中断事件，只能杀进程）、hub 关闭时关掉；闲置 `agy_idle` 秒（默认 900）后回收。`config.json` 里 `agy_resident: false` 退回每次唤醒一个 `agy -p`。
+- **注意**：`result.usage` 是整个会话的累计值（跨进程也是），单回合的用量要用本回合各个 `agent_response` 步骤（`state: DONE`）自带的 `usage` 相加。
+
 ### 1.2 怎么接着用一个已有会话？会话 id 从哪里拿到？
 - **续用会话参数**：
   通过 `--conversation=<id>` 参数续用已有会话，命令格式必须为：

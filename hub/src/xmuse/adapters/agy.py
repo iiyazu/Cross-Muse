@@ -13,6 +13,7 @@ Mapping to the contract A–H (XMUSE2-ADAPTER-GUIDE §4):
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import signal
@@ -170,10 +171,13 @@ def scan_agy_line(acc: dict, line: str) -> bool:
 
 
 def parse_stream(lines: list[str]) -> tuple[dict, Usage]:
-    """stream-json of one `agy -p` run -> (result info, usage)."""
+    """stream-json of one turn -> (result info, usage). The result event's usage covers the whole conversation (it
+    grows turn after turn, across processes: probe 10-14), so a turn's usage is the sum of its model steps' own usage
+    (agent_response DONE); the result's is used only when no step carries any (contract E: never cumulative)."""
     info, u = {}, Usage()
     last_text = []
     seen_calls = 0
+    steps = []  # the usage of each model step of this turn
     for line in lines:
         if not line.startswith("{"):
             continue
@@ -198,6 +202,8 @@ def parse_stream(lines: list[str]) -> tuple[dict, Usage]:
                     last_text.append(delta)
                 if su.get("state") == "DONE":
                     seen_calls += 1
+                    if isinstance(su.get("usage"), dict):
+                        steps.append(su["usage"])
         elif ev == "result":
             res = o.get("result") or {}
             if res.get("conversation_id"):
@@ -213,7 +219,79 @@ def parse_stream(lines: list[str]) -> tuple[dict, Usage]:
             info["reply"] = res.get("response") or "".join(last_text)
             if res.get("denied_actions"):
                 info["denied"] = [d.get("action") for d in res["denied_actions"] if isinstance(d, dict)]
+    if steps:
+        u.input = sum(s.get("input_tokens", 0) for s in steps)
+        u.output = sum(s.get("output_tokens", 0) for s in steps)
+        u.cache_read = sum(s.get("cache_read_tokens", 0) for s in steps)
+        last = steps[-1]  # the context the last step saw
+        u.context = last.get("input_tokens", 0) + last.get("cache_read_tokens", 0) + last.get("output_tokens", 0)
+        u.calls = len(steps)
     return info, u
+
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _effort(agent: dict | None) -> str | None:
+    """The member's `effort` setting, passed as --effort."""
+    e = db.settings(agent).get("effort") if agent else None
+    return e if e in EFFORTS else None
+
+
+class Resident:
+    """One long-lived `agy --input-format stream-json` process for one agent: each wake is one line on its stdin and
+    ends with a `result` event (agy keeps the conversation open between them). A cold `agy -p` spends about 15 s per
+    wake before its first model call, signing in and loading the conversation; a resident process 0 (probe 10-14:
+    8.4 s for the first turn, then 2.6 and 2.2 s)."""
+
+    def __init__(self, cmd: list[str], cwd, env: dict, key: tuple):
+        self.key, self.sid, self.used = key, None, time.monotonic()
+        self.p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, encoding="utf-8", env=env, start_new_session=True)
+        self.lines: queue.Queue = queue.Queue()  # stdout lines; None at end of file
+        self.err: list[str] = []
+        threading.Thread(target=self._read_out, daemon=True).start()
+        self.t_err = threading.Thread(target=self._read_err, daemon=True)
+        self.t_err.start()
+
+    def _read_out(self) -> None:
+        try:
+            for line in self.p.stdout:
+                self.lines.put(line)
+        finally:
+            self.lines.put(None)
+
+    def _read_err(self) -> None:
+        for line in self.p.stderr:
+            self.err = (self.err + [line])[-200:]
+
+    def alive(self) -> bool:
+        return self.p.poll() is None
+
+    def send(self, prompt: str) -> None:
+        self.p.stdin.write(json.dumps({"event": "user", "message": {"role": "user", "content": prompt}},
+                                      ensure_ascii=False) + "\n")
+        self.p.stdin.flush()
+
+    def close(self) -> None:
+        try:
+            self.p.stdin.close()
+        except (OSError, ValueError):
+            pass
+        if self.alive():
+            try:
+                os.killpg(self.p.pid, signal.SIGKILL)
+            except (ProcessLookupError, AttributeError):
+                self.p.kill()
+
+
+def _is_result(line: str) -> bool:
+    if '"result"' not in line:
+        return False
+    try:
+        return json.loads(line).get("event") == "result"
+    except ValueError:
+        return False
 
 
 class AgyHeadless:
@@ -225,73 +303,131 @@ class AgyHeadless:
         self.cfg = cfg
         self.bin = cfg.get("agy_bin") or _default_agy_bin() or "agy"
         self.runs: dict[int, dict] = {}
+        # resident mode (default): one stream-json process per agent, closed after agy_idle seconds without a wake
+        self.resident = cfg.get("agy_resident", True)
+        self.idle = float(cfg.get("agy_idle", 900))
+        self.residents: dict[str, Resident] = {}
+        self.lock = threading.Lock()
+        self.closing = threading.Event()
+        if self.resident:
+            threading.Thread(target=self._reap, daemon=True, name="agy-reaper").start()
 
-    def command(self, session: str | None, prompt: str, agent: dict | None = None) -> list[str]:
+    def _base(self, session: str | None, agent: dict | None) -> list[str]:
         # No proc.argv on main: inline the only case that needs wrapping (a .py fake on Windows has no shebang).
         if sys.platform == "win32" and str(self.bin).lower().endswith(".py"):
             cmd = [sys.executable, str(self.bin)]
         else:
             cmd = [str(self.bin)]
-        if "--output-format" not in cmd:
-            cmd.extend(["--output-format", "stream-json"])
-        if "--dangerously-skip-permissions" not in cmd:
-            cmd.append("--dangerously-skip-permissions")
+        cmd.extend(["--output-format", "stream-json", "--dangerously-skip-permissions"])
         if session:
             cmd.append(f"--conversation={session}")
-        s = db.settings(agent) if agent else {}
-        effort = s.get("effort")
-        if effort in ("low", "medium", "high", "xhigh", "max"):
+        effort = _effort(agent)
+        if effort:
             cmd.extend(["--effort", effort])
-        cmd.extend(["-p", prompt])
         return cmd
 
+    def command(self, session: str | None, prompt: str, agent: dict | None = None) -> list[str]:
+        """One cold run: `agy -p <prompt>` (agy_resident: false)."""
+        return self._base(session, agent) + ["-p", prompt]
+
+    def resident_command(self, session: str | None, agent: dict | None = None) -> list[str]:
+        """A resident process: the prompts come on stdin (`--print=` takes none from argv)."""
+        return self._base(session, agent) + ["--input-format", "stream-json", "--print="]
+
     def start(self, spec: TurnSpec) -> dict:
-        st = self.runs[spec.turn_id] = {"stop": threading.Event()}
+        st = self.runs[spec.turn_id] = {"stop": threading.Event(), "aid": spec.agent["id"]}
         threading.Thread(target=self._turn, args=(spec, st), daemon=True).start()
         return {"handle": spec.session, "cwd": to_win(spec.cwd)}
 
     def _turn(self, spec: TurnSpec, st: dict) -> None:
-        cmd = self.command(spec.session, spec.prompt, spec.agent)
         cwd = to_win(spec.cwd) if sys.platform == "win32" else spec.cwd
         env = clean_env({"CASCADE_DEFAULT_MODEL_OVERRIDE": spec.agent["model"]})
-        sid = spec.session
         lines, stderr_text, rc = [], "", 0
         prog = {"tools": 0, "last_tool": None, "text": ""}
-
-        with spec.run_log.open("a", encoding="utf-8") as out, spec.run_log.with_suffix(".err").open("a", encoding="utf-8") as err:
+        with spec.run_log.open("a", encoding="utf-8") as out, \
+                spec.run_log.with_suffix(".err").open("a", encoding="utf-8") as err:
+            def take(line: str) -> None:
+                out.write(line)
+                out.flush()
+                lines.append(line)
+                if scan_agy_line(prog, line):
+                    self.sink.progress(spec.turn_id, dict(prog))
             try:
-                p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True, encoding="utf-8", env=env,
-                                     start_new_session=True)
-                st["p"] = p
+                if self.resident:
+                    stderr_text, rc = self._run_resident(spec, st, cwd, env, take)
+                else:
+                    stderr_text, rc = self._run_cold(spec, st, cwd, env, take)
+            except Exception as e:  # noqa: BLE001
+                rc, stderr_text = 1, f"start failed: {e}"
+            err.write(stderr_text)
+        self._finish(spec, st, cwd, lines, stderr_text, rc)
 
-                def _read_err():
-                    nonlocal stderr_text
-                    try:
-                        stderr_text = p.stderr.read()
-                        err.write(stderr_text)
-                        err.flush()
-                    except Exception:
-                        pass
+    def _run_cold(self, spec: TurnSpec, st: dict, cwd, env: dict, take) -> tuple[str, int]:
+        p = subprocess.Popen(self.command(spec.session, spec.prompt, spec.agent), cwd=cwd, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", env=env,
+                             start_new_session=True)
+        st["p"] = p
+        box = {"err": ""}
 
-                t_err = threading.Thread(target=_read_err, daemon=True)
-                t_err.start()
+        def read_err():
+            box["err"] = p.stderr.read()
+        t_err = threading.Thread(target=read_err, daemon=True)
+        t_err.start()
+        for line in p.stdout:
+            take(line)
+        p.wait()
+        t_err.join(timeout=2)
+        return box["err"], p.returncode
 
-                for line in p.stdout:
-                    out.write(line)
-                    out.flush()
-                    lines.append(line)
-                    if scan_agy_line(prog, line):
-                        self.sink.progress(spec.turn_id, dict(prog))
-
-                p.wait()
-                t_err.join(timeout=2)
-                rc = p.returncode
-            except Exception as e:
+    def _run_resident(self, spec: TurnSpec, st: dict, cwd, env: dict, take) -> tuple[str, int]:
+        """The agent's resident process, reused when it is alive and was started for this conversation, model, effort
+        and directory (a fresh session, or any of those changed: a new process). The turn ends at the result event;
+        end of output without one is a failed turn. A turn that did not succeed closes the process: its state is
+        unknown, the next wake starts a new one."""
+        aid = spec.agent["id"]
+        key = (str(cwd), spec.agent.get("model"), _effort(spec.agent))
+        with self.lock:
+            r = self.residents.get(aid)
+            if r is not None and not (r.alive() and r.key == key and spec.session and r.sid == spec.session):
+                r.close()
+                r = None
+            if r is None:
+                r = self.residents[aid] = Resident(self.resident_command(spec.session, spec.agent), cwd, env, key)
+                r.sid = spec.session
+            r.used = time.monotonic()
+        st["resident"] = r
+        while True:  # what an earlier turn left unread (warnings after its result) is not this turn's
+            try:
+                if r.lines.get_nowait() is None:
+                    r.lines.put(None)
+                    break
+            except queue.Empty:
+                break
+        r.err = []
+        ok = False
+        if r.alive():
+            r.send(spec.prompt)
+            while True:
+                line = r.lines.get()
+                if line is None:
+                    r.lines.put(None)  # stays at end of file for whoever reads next
+                    break
+                take(line)
+                if _is_result(line):
+                    ok = True
+                    break
+        rc = 0
+        if not ok:  # the process ended (or was killed by interrupt) before a result
+            try:
+                rc = r.p.wait(timeout=5) or 1
+                r.t_err.join(timeout=2)  # its last words ("not found", "quota") decide what the hub does next
+            except subprocess.TimeoutExpired:
                 rc = 1
-                stderr_text = f"start failed: {e}"
-                err.write(stderr_text)
+        r.used = time.monotonic()
+        return "".join(r.err), rc
 
+    def _finish(self, spec: TurnSpec, st: dict, cwd, lines: list[str], stderr_text: str, rc: int) -> None:
+        sid = spec.session
         end = None
         try:
             info, stream_usage = parse_stream(lines)
@@ -308,6 +444,11 @@ class AgyHeadless:
                 else:
                     last_convs = self._read_last_conversations()
                     sid = last_convs.get(str(cwd)) or last_convs.get(to_win(spec.cwd)) or f"session-{spec.turn_id}"
+            r = st.get("resident")
+            if r is not None:
+                r.sid = sid
+                if rc != 0 or not info.get("ok", False):
+                    self._drop(spec.agent["id"], r)
 
             # Only a turn agy did not report as a success is searched for these: the output carries tool results and
             # timings ("duration_seconds":0.082294294 once read as a 429 and paused a healthy agy for an hour).
@@ -326,7 +467,7 @@ class AgyHeadless:
                 else:
                     usage = Usage()
                     usage.input = len(spec.prompt) // 4
-                    usage.output = sum(len(l) for l in lines) // 4
+                    usage.output = sum(len(ln) for ln in lines) // 4
                     usage.context = usage.input + usage.output
                     usage.calls = 1
                     if any(t in "".join(lines) for t in CODE_TOOLS):
@@ -342,9 +483,11 @@ class AgyHeadless:
             if st["stop"].is_set():
                 end = TurnEnd(spec.turn_id, "interrupted", sid, usage, "interrupted by hub", note=note, reply=reply)
             elif is_unknown:
-                end = TurnEnd(spec.turn_id, "failed", sid, usage, "conversation not found", note=note, requeue="fresh", reply=reply)
+                end = TurnEnd(spec.turn_id, "failed", sid, usage, "conversation not found", note=note,
+                              requeue="fresh", reply=reply)
             elif is_quota:
-                end = TurnEnd(spec.turn_id, "failed", sid, usage, "quota exceeded", note=note, retry_at=time.time() + 3600, reply=reply)
+                end = TurnEnd(spec.turn_id, "failed", sid, usage, "quota exceeded", note=note,
+                              retry_at=time.time() + 3600, reply=reply)
             elif rc == 0 and info.get("ok", True):
                 end = TurnEnd(spec.turn_id, "succeeded", sid, usage, note=note, reply=reply)
             else:
@@ -357,6 +500,29 @@ class AgyHeadless:
             self.runs.pop(spec.turn_id, None)
             if end is not None:
                 self.sink.turn_ended(end)
+
+    def _drop(self, aid: str, r: Resident) -> None:
+        with self.lock:
+            if self.residents.get(aid) is r:
+                del self.residents[aid]
+        r.close()
+
+    def _reap(self) -> None:
+        """Close resident processes no wake used for agy_idle seconds (each holds a language server)."""
+        while not self.closing.wait(min(30.0, max(self.idle / 4, 0.05))):
+            busy = {id(st.get("resident")) for st in list(self.runs.values())}
+            with self.lock:
+                idle = [(a, r) for a, r in self.residents.items()
+                        if id(r) not in busy and time.monotonic() - r.used > self.idle]
+            for a, r in idle:
+                self._drop(a, r)
+
+    def close(self) -> None:
+        self.closing.set()
+        with self.lock:
+            rs, self.residents = list(self.residents.values()), {}
+        for r in rs:
+            r.close()
 
     def _read_last_conversations(self) -> dict:
         candidates = [
@@ -400,7 +566,9 @@ class AgyHeadless:
         if not st:
             return
         st["stop"].set()
-        if st.get("p") and st["p"].poll() is None:
+        if st.get("resident") is not None:  # stream-json has no interrupt event: the process goes, the next wake is cold
+            self._drop(st["aid"], st["resident"])
+        elif st.get("p") and st["p"].poll() is None:
             try:
                 os.killpg(st["p"].pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -483,4 +651,4 @@ class AgyDriver:
         return out
 
     def close(self) -> None:
-        pass
+        self.headless.close()
