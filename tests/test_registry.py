@@ -299,14 +299,16 @@ def test_join_takes_over_a_registered_member_or_conflicts(make):
     a = h.q("select bound_session, description, role from agents where id='dog'")[0]
     assert a == {"bound_session": "S-j", "description": "the coordinator", "role": "coordinator"}
     before = h.q("select count(*) n from agents")[0]["n"]
-    st, out = join(h, name="dog", session_id="S-2")  # already bound
-    assert st == 409 and out["error"] == "member_exists"
     st, out = join(h, name="dog", vendor="opencode")  # id taken by another vendor
     assert st == 409 and out["error"] == "member_exists"
     assert h.q("select count(*) n from agents")[0]["n"] == before
     assert h.q("select bound_session from agents where id='dog'")[0]["bound_session"] == "S-j"
-    # after /v1/leave it is free again and the same sidebar (or another) may take it over
-    assert call(h, "POST", "/v1/leave", {}, j["member_token"], "S-j")[0] == 200
+    # a sidebar on another session takes the bound member over; the old session's member token is refused now
+    assert join(h, name="dog", session_id="S-2")[0] == 200
+    assert h.q("select bound_session from agents where id='dog'")[0]["bound_session"] == "S-2"
+    assert call(h, "POST", "/v1/leave", {}, j["member_token"], "S-j")[0] == 409
+    # after /v1/leave it is free again and another sidebar may take it over
+    assert call(h, "POST", "/v1/leave", {}, j["member_token"], "S-2")[0] == 200
     assert join(h, name="dog", session_id="S-3")[0] == 200
 
 
