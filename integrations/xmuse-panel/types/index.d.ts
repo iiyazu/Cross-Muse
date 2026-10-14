@@ -10,8 +10,6 @@ declare module 'claude-code' {
       gen: number
       promoted: Record<string, string>
       lastRead: string
-      now: number
-      ticking: number
       light: boolean
       mention: string | null
       forced: string | null
@@ -23,12 +21,12 @@ declare module 'claude-code' {
       busy: Record<string, boolean>
       fold: Record<string, boolean>
       open: { busy: boolean; msg: string; error: string }
-      typed: { id: string; full: string; shown: number }
+      typed: { id: string; full: string; from: number; steps: number[]; run: number }
       done: Record<string, { tools: number; startedMs: number; endedMs: number }>
       brief: boolean
       older: { items: any[]; hasMore: boolean; loading: boolean }
       selfCtx: number
-      reveal: { id: number; shown: number }
+      reveal: { id: number; steps: number[]; run: number }
       modelPick: {
         member: string; current: string; options: { value: string; label?: string }[]; format: string; note: string
         loading: boolean; error: string
