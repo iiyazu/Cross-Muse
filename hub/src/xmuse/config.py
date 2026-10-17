@@ -36,10 +36,15 @@ DEFAULTS = {
     "body_limit": 4_000,             # chars per xmuse_send body; bigger content goes in a workspace file
     "session_notice_tokens": 400_000,  # one notice per session when its context first passes this
     "memoryos_url": "",              # MemoryOS base URL; empty = not used (contract XMUSE2-M2-MO-CONTRACT)
+    "memoryos_skip": [],             # capabilities to leave unused, e.g. ["curate.collab"] for the auditor alone
     "compact_drop_ratio": 0.5,       # a turn's context below this share of the last one's means the vendor compacted
     "recall_budget_tokens": 2_000,  # per over-cap layer, sent as /recall budget_tokens
     "curate_timeout_s": 480,         # /curate collab (background): 2 attempts x 200 s worst case (max_repairs 1)
     "similar_timeout_s": 30,         # /similar (background); a cold embedding cache takes ~3 s
+    "audit_timeout_s": 300,          # /audit (background): an expansion and a judge LLM call
+    "audit_top": 20,                 # messages the /audit judge reads per superseded entry (DepRecall: top-20)
+    "audit_poll_s": 5,               # the auditor looks for new supersedes this often, and after every send
+    "audit_retry_s": 60,             # a failed audit is tried once more, at the first poll this long after
     "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
     "route_by_duty": False,          # T8a H8: duty routing (route.pick, T4 §8.7) wakes unmentioned members; off by default
     "auto_compact_tokens": 500000,   # T8c H3: an idle member's session past this context is compacted once, automatically

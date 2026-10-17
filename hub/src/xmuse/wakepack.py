@@ -43,7 +43,8 @@ def render(conn, cfg: dict, agent: dict, wake_msgs: list[dict], session_id: int 
                         roster={a["id"]: a for a in db.rows(conn.execute("select * from agents where removed=0"))},
                         seq=align.current_seq(conn), seen=session_id and align.watermark(conn, session_id),
                         mode="none", tokens=0)
-    parts = [p for p in (f(x) for f in (relay, identity, brief, wip, alignment, messages, passive, share.hints)) if p]
+    parts = [p for p in (f(x) for f in (relay, identity, brief, wip, alignment, audits, messages, passive, share.hints))
+             if p]
     v = align.view(conn, {**cfg, "_mo": None}, agent["id"])  # entries in this agent's view now (curve data; recorded even when off)
     return SimpleNamespace(text="\n\n".join(parts), mode=x.mode, tokens=x.tokens, seq=x.seq,
                            view_entries=len(v["assigned"]) + sum(map(len, v["layers"].values())))
@@ -127,6 +128,29 @@ def alignment(x) -> str:
     if not text:
         x.mode = "none"
     return text
+
+
+AUDIT_SHOWN = 5
+
+
+def audits(x) -> str:
+    """The auditor's flags on this agent's own messages (audit.py): those newer than the session's watermark, or for
+    a new session those whose replacement is still in force. At most 5 lines, newest first."""
+    if not alignment_on(x.cfg):
+        return ""
+    sql = ("select f.*, n.statement new from audit_flags f join entries n on n.id=f.by_id where f.agent_id=? and "
+           + ("f.seq>? and f.seq<=?" if x.seen is not None else "n.status='active' and ?<=f.seq and f.seq<=?")
+           + " order by f.seq desc, f.message_id desc")
+    rs = db.rows(x.conn.execute(sql, (x.agent["id"], x.seen or 0, x.seq)))
+    if not rs:
+        return ""
+    lines = ["[audit] A decision you relied on was replaced. Check whether the work these messages of yours describe "
+             "must change, and redo it under the new decision if so:"]
+    lines += [f"- #{r['message_id']} relied on E{r['entry_id']}, replaced by E{r['by_id']} \"{_short(r['new'], 120)}\":"
+              f" \"{r['quote']}\"" for r in rs[:AUDIT_SHOWN]]
+    if len(rs) > AUDIT_SHOWN:
+        lines.append(f"…({len(rs) - AUDIT_SHOWN} more)")
+    return "\n".join(lines)
 
 
 def brief(x) -> str:
