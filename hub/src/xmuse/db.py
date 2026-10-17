@@ -75,8 +75,15 @@ create table if not exists entries(          -- alignment library (design §4.5.
   seq integer not null);                     -- alignment version of the last change
 create table if not exists entry_events(
   seq integer primary key,                   -- global monotonic alignment version
-  entry_id integer not null, op text not null,  -- add|supersede|resolve|archive|confirm|reject
-  at real not null);
+  entry_id integer not null, op text not null,  -- add|supersede|resolve|archive|confirm|reject|audit
+  at real not null);                         -- audit: a version for audit_flags only; the entry itself is unchanged
+create table if not exists audits(           -- one row per superseded entry the auditor handled (audit.py)
+  entry_id integer primary key, by_id integer, -- by_id: the entry that replaced it
+  state text not null,                       -- done|failed|skipped (skipped: before the hub started, or no replacement)
+  at real not null, result text);            -- result: JSON {flagged, candidates} from MemoryOS /audit
+create table if not exists audit_flags(      -- a message that relied on a superseded entry; shown to its author once
+  id integer primary key, entry_id integer not null, by_id integer, message_id integer not null,
+  agent_id text not null, quote text not null, seq integer not null);  -- seq: the entry_events 'audit' version
 create table if not exists seen(             -- watermark: alignment version this session has been shown
   session_id integer primary key, seq integer not null);
 create table if not exists curated(          -- last message of each thread already sent to MemoryOS /curate

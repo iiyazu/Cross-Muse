@@ -16,7 +16,7 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
-from . import agents, align, api, auth, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads
+from . import agents, align, api, audit, auth, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads
 from . import wakepack
 from . import room as rooms
 from .adapters.agy import AgyDriver
@@ -64,8 +64,9 @@ class Hub:
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
             for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
                 c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))
-        self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"])  # align.view reads it from cfg
+        self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"], self.cfg["memoryos_skip"])  # align.view reads it from cfg
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
+        self.auditor = audit.Auditor(self.mo, self.db, self.cfg)  # supersedes -> /audit, in its own thread
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
         self.stopping = threading.Event()
         self.done = threading.Event()  # serve() returns when set (signal, or /v1/admin/shutdown)
@@ -141,6 +142,7 @@ class Hub:
                             args.get("resolves"), args.get("depends_on"), via, new_members=args.get("members"),
                             notify=args.get("notify"), reply_to=args.get("reply_to"))
             self.curator.kick(out["thread_id"])
+            self.auditor.kick()
             self.engine.kick()
             return {"id": out["id"], "thread": out["thread_id"], "woken": out.get("woken", []),
                     **({"pushed": out["pushed"]} if out.get("pushed") else {}),
@@ -218,6 +220,7 @@ class Hub:
                         body.get("kind", "message"), body.get("mentions"), body.get("why"), body.get("idem"),
                         body.get("scope"), body.get("supersedes"), via=config.VIA_CLI)
         self.curator.kick(out["thread_id"])
+        self.auditor.kick()
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], "chain": out["chain_id"], "woken": out.get("woken", []),
                 **({"pushed": out["pushed"]} if out.get("pushed") else {}),
@@ -305,6 +308,7 @@ class Hub:
 
     def admin_align(self, body: dict):
         out = align.review(self.db(), body["op"], body["id"])
+        self.auditor.kick()  # a confirmed proposal may supersede an entry
         self.engine.kick()  # a confirmed entry may unblock a handoff (align.release)
         return out
 
@@ -702,6 +706,7 @@ class Hub:
         out = mail.send(self.db(), self.cfg, sender, to, text, "message", mentions, via=via,
                           reply_to=b.get("reply_to"))
         self.curator.kick(out["thread_id"])
+        self.auditor.kick()
         self.engine.kick()
         return {"id": out["id"], "thread": out["thread_id"], **({"routed_to": out["routed_to"]} if out.get("routed_to")
                                                                  else {})}
@@ -1218,6 +1223,7 @@ class Hub:
         self.engine.q.put(("stop",))
         self.loop.join(10)
         self.curator.stop()
+        self.auditor.stop()
         self.api.shutdown()
         for d in self.engine.drivers.values():
             d.close()
