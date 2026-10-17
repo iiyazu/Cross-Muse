@@ -95,11 +95,13 @@ def _to_coordinators(conn, mid: int, thread_id: str, sender: str) -> None:
 def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message",
          mentions: list | None = None, why: dict | None = None, idem: str | None = None, scope: str | None = None,
          supersedes: str | None = None, resolves: list | None = None, depends_on: list | None = None, via: str | None = None,
-         new_members: list | None = None, notify: str | None = None, reply_to: int | None = None) -> dict:
+         new_members: list | None = None, notify: str | None = None, reply_to: int | None = None,
+         follows: int | None = None) -> dict:
     """Write a message and its deliveries in one transaction. Returns the message (+duplicate flag).
     `new_members`: sending to a '#group' that does not exist yet makes it a private group of these members.
     `notify` (a host's handoff): batch | now, when the assignee's result wakes the host (dispatch.py).
-    `reply_to` (T8a H9): the message this one answers; whoever it mentioned, DM'd or handed work to wakes them."""
+    `reply_to` (T8a H9): the message this one answers; whoever it mentioned, DM'd or handed work to wakes them.
+    `follows`: a hub relay of that message (review gate): it stays on that message's causal chain."""
     mentions = list(dict.fromkeys(mentions or []))
     if notify is not None and (kind != "handoff" or notify not in ("batch", "now")):
         raise ToolError("invalid_arguments", "notify is batch or now, and needs kind=handoff")
@@ -145,7 +147,7 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
         if bad:
             raise ToolError("invalid_arguments", f"mentions must be members of {thread['id']}: "
                                                  f"{', '.join(m for m in mem if m not in (HUMAN, sender))}; got {bad}")
-        chain, depth = _chain(conn, cfg, sender, thread["id"], turn)
+        chain, depth = _chain(conn, cfg, sender, thread["id"], turn, follows)
         orig = None
         if reply_to is not None:
             if isinstance(reply_to, bool) or not isinstance(reply_to, int):
@@ -260,16 +262,32 @@ def _routed(conn, sender: str, kind: str, supersedes: str | None, resolves: list
     return out
 
 
-def _chain(conn, cfg, sender, thread_id, turn) -> tuple[dict, int]:
-    """Causal chain: a peer message continues the chain of the turn it was sent from."""
+def turn_depth(conn, turn: dict) -> int:
+    """The hop a turn is on its chain: one past the deepest message of that chain it was woken for. Messages of other
+    chains merged into the same turn do not count (they would carry their depth across chains)."""
+    return conn.execute("select coalesce(max(m.depth), -1) + 1 from deliveries d join messages m on m.id=d.message_id"
+                        " where d.turn_id=? and m.chain_id=?", (turn["id"], turn["chain_id"])).fetchone()[0]
+
+
+def _chain(conn, cfg, sender, thread_id, turn, follows=None) -> tuple[dict, int]:
+    """Causal chain: a peer message continues the chain of the turn it was sent from; a hub relay (`follows`, e.g.
+    the review gate) continues the chain of the message it relays, at that message's depth (it is no new hop)."""
     if turn is not None and turn["chain_id"] is not None:
         chain = db.row(conn.execute("select * from chains where id=?", (turn["chain_id"],)))
-        depth = conn.execute("select coalesce(max(m.depth), 0) from deliveries d join messages m"
-                             " on m.id=d.message_id where d.turn_id=?", (turn["id"],)).fetchone()[0]
-        return chain, depth + 1
+        return chain, turn_depth(conn, turn)
+    if follows is not None:
+        src = conn.execute("select chain_id, depth from messages where id=?", (follows,)).fetchone()
+        if src is not None:  # a done made outside a hub turn heads a chain with no budget yet (dispatch._limits)
+            conn.execute("update chains set max_wakes=?, max_tokens=?, max_depth=?, max_revisits=? where id=?"
+                         " and max_wakes=0 and max_tokens=0 and state='open'",
+                         (cfg["max_chain_wakes"], cfg["max_chain_tokens"], cfg["max_chain_depth"],
+                          cfg["max_chain_revisits"], src[0]))
+            return db.row(conn.execute("select * from chains where id=?", (src[0],))), src[1]
     origin = "human" if sender == HUMAN else ("hub" if sender == HUB else f"agent:{sender}")
-    cur = conn.execute("insert into chains(thread_id, origin, max_wakes, max_tokens, created_at) values(?,?,?,?,?)",
-                       (thread_id, origin, cfg["max_chain_wakes"], cfg["max_chain_tokens"], db.now()))
+    cur = conn.execute("insert into chains(thread_id, origin, max_wakes, max_tokens, max_depth, max_revisits,"
+                       " created_at) values(?,?,?,?,?,?,?)",
+                       (thread_id, origin, cfg["max_chain_wakes"], cfg["max_chain_tokens"], cfg["max_chain_depth"],
+                        cfg["max_chain_revisits"], db.now()))
     return db.row(conn.execute("select * from chains where id=?", (cur.lastrowid,))), 0
 
 
@@ -391,9 +409,7 @@ def done(conn, agent_id: str, summary: str, nxt: str, declares: list | None = No
             chain = turn["chain_id"]
             tid = conn.execute("select thread_id from chains where id=?", (chain,)).fetchone()[0]
             conn.execute("update turns set summary=? where id=?", (f"{summary} | next: {nxt}", turn["id"]))
-        depth = 0 if turn is None else conn.execute(
-            "select coalesce(max(m.depth), -1) + 1 from deliveries d join messages m on m.id=d.message_id"
-            " where d.turn_id=?", (turn["id"],)).fetchone()[0]
+        depth = 0 if turn is None or turn["chain_id"] is None else turn_depth(conn, turn)
         mid = conn.execute("insert into messages(thread_id, sender, kind, body, chain_id, depth, turn_id, idem_key,"
                            " created_at, stage) values(?,?,?,?,?,?,?,?,?,?)",
                            (tid, agent_id, "done", f"{summary}\nnext: {nxt}", chain, depth, turn and turn["id"], key,

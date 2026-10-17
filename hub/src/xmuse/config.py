@@ -19,8 +19,15 @@ DEFAULTS = {
     "review_gate": True,             # done next=none is handed to a member with role "reviewer" first (evidence.py)
     "stall_notice": True,            # a turn that ends with handoffs unreturned notifies the assigner (stall.py)
     "preset_tick": 2.0,             # seconds between checks of a running orchestration preset (preset.py)
-    "max_chain_wakes": 12,           # wakes per causal chain started by one human message
-    "max_chain_tokens": 20_000_000,  # processed tokens per chain
+    # Chain control plane (is the collaboration running away?): serial hand-offs and revisits, not wakes. A fan-out of
+    # five is one hop; A->B->C->D is a pipeline; A->B->A->B is a loop, which the revisit cap stops.
+    "max_chain_depth": 8,            # serial turns along one chain (a message's depth = the hop that sent it)
+    "max_chain_revisits": 3,         # turns one agent runs on one chain; its next wake caps the chain
+    "chain_host_renewals": 0,        # times a depth/revisit cap renews itself (one more set of the two limits) before
+                                     # it holds the chain for the human; never for the wake/token fuses below
+    # Fuses: a fan-out runaway and the cost insurance. A long focused single-agent task may well be token-heavy.
+    "max_chain_wakes": 40,           # wakes per causal chain
+    "max_chain_tokens": 100_000_000,  # processed tokens per chain
     "chat_warn_tokens": 50_000,      # chat wakes over this log a warning (M1c task 2)
     "code_warn_tokens": None,        # code wakes never warn (dsh 12-44w is normal); empty on purpose
     "agent_hourly_turns": 40,

@@ -164,6 +164,10 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            ("messages", "route_to", "text"), ("messages", "route_reason", "text"),
            # T8a H9: the message this one replies to (a reply wakes whoever it answers)
            ("messages", "reply_to", "integer"),
+           # chain control plane: serial depth and per-agent revisit limits (null: none, e.g. chains made before them),
+           # and how many times the host-renewal policy has extended them
+           ("chains", "max_depth", "integer"), ("chains", "max_revisits", "integer"),
+           ("chains", "renewals", "integer not null default 0"),
            # T8c H3: compaction state per session (auto-compact mark, in-flight flag)
            ("sessions", "auto_compacted", "integer not null default 0"),
            ("sessions", "compacting", "integer not null default 0"),

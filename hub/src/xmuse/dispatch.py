@@ -84,8 +84,9 @@ def hold(conn, mid: int, h: str) -> None:
 def _limits(conn, cfg: dict | None, mid: int) -> None:
     """A done outside a hub turn starts a chain with no wake budget (it never woke anyone); a result for the host does."""
     c = cfg or DEFAULTS
-    conn.execute("update chains set max_wakes=?, max_tokens=? where id=(select chain_id from messages where id=?)"
-                 " and max_wakes=0 and max_tokens=0 and state='open'", (c["max_chain_wakes"], c["max_chain_tokens"], mid))
+    conn.execute("update chains set max_wakes=?, max_tokens=?, max_depth=?, max_revisits=? where id=(select chain_id"
+                 " from messages where id=?) and max_wakes=0 and max_tokens=0 and state='open'",
+                 (c["max_chain_wakes"], c["max_chain_tokens"], c["max_chain_depth"], c["max_chain_revisits"], mid))
 
 
 def _wake(conn, cfg: dict | None, mid: int, h: str) -> None:
