@@ -44,6 +44,7 @@ DEFAULTS = {
     "audit_timeout_s": 300,          # /audit (background): an expansion and a judge LLM call
     "audit_top": 20,                 # messages the /audit judge reads per superseded entry (DepRecall: top-20)
     "audit_poll_s": 5,               # the auditor looks for new supersedes this often, and after every send
+    "audit_retry_s": 60,             # a failed audit is tried once more, at the first poll this long after
     "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
     "route_by_duty": False,          # T8a H8: duty routing (route.pick, T4 §8.7) wakes unmentioned members; off by default
     "auto_compact_tokens": 500000,   # T8c H3: an idle member's session past this context is compacted once, automatically

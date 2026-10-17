@@ -4,7 +4,10 @@ Runs in a background thread, off every turn: it polls entry_events for new 'supe
 each send), sends MemoryOS /audit the old and new statements plus the messages written while the old one was in
 force, and records what came back. The host gets one notice listing the flagged messages; each flagged message's
 author gets a line in its next wake pack (wakepack.audits). Supersedes that happened before the hub started are
-marked skipped, never audited late. MemoryOS failing means no audit, never a blocked or changed turn.
+marked skipped, never audited late. MemoryOS failing means no audit, never a blocked or changed turn; a failed
+audit is tried once more audit_retry_s later (E13: a supersede made while MemoryOS was down was lost for good).
+An author revising its own entry is audited without its own messages and those already flagged: in E13 members
+re-declared their module decisions while reworking an audit's flags, and those audits only flagged them again.
 Evidence for the retrieval and judge design: xmuse2-learn handson/exp-dep-recall (DepRecall rounds 1-3).
 """
 import json
@@ -17,6 +20,7 @@ from .config import HUB, alignment_on
 log = logging.getLogger("xmuse.audit")
 TEXT, WINDOW = 8000, 2000  # WINDOW: newest messages sent; 500 cut 3% of DepRecall dependents
 KINDS = ("decision", "convention", "assumption")  # a superseded question was answered: nothing relied on it
+TRIES = 2  # a failed audit: the first try and one retry
 
 
 def _text(conn, e: dict) -> str:
@@ -68,7 +72,8 @@ class Auditor:
             conn = self.pool()
             todo = [r[0] for r in conn.execute(
                 "select entry_id from entry_events where op='supersede' and entry_id not in (select entry_id from"
-                " audits) group by entry_id order by min(seq)")]
+                " audits where state != 'failed' or tries >= ? or at > ?) group by entry_id order by min(seq)",
+                (TRIES, db.now() - self.cfg["audit_retry_s"]))]
             for eid in todo:
                 if self.stopping.is_set():
                     break
@@ -89,6 +94,9 @@ class Auditor:
             "select * from messages where created_at>=? and created_at<? and kind != 'notice' and sender != ?"
             + (" and thread_id=?" if scoped else "") + " order by id desc limit ?",
             (old["recorded_at"], at, HUB, *([old["scope"][7:]] if scoped else []), WINDOW)))
+        if old["author"] == new["author"]:  # it knows its own messages; flagged ones are being reworked already
+            refs |= {r[0] for r in conn.execute("select message_id from audit_flags")}
+            msgs = [m for m in msgs if m["sender"] != new["author"]]
         msgs = [m for m in msgs if m["id"] not in refs][::-1]
         if not msgs:
             return self._record(conn, eid, new["id"], "done", {"flagged": [], "candidates": []})
@@ -115,8 +123,10 @@ class Auditor:
 
     def _record(self, conn, eid: int, by: int | None, state: str, result: dict | None,
                 flags: list | None = None) -> None:
-        with db.tx(conn):
-            conn.execute("insert or ignore into audits(entry_id, by_id, state, at, result) values(?,?,?,?,?)",
+        with db.tx(conn):  # only a failed row is ever replaced: by its retry
+            conn.execute("insert into audits(entry_id, by_id, state, at, result) values(?,?,?,?,?) on conflict(entry_id)"
+                         " do update set by_id=excluded.by_id, state=excluded.state, at=excluded.at,"
+                         " result=excluded.result, tries=tries+1 where state='failed'",
                          (eid, by, state, db.now(), json.dumps(result) if result is not None else None))
             if flags:  # one alignment version for the audit: wake packs show flags newer than their watermark
                 seq = conn.execute("insert into entry_events(entry_id, op, at) values(?,?,?)",

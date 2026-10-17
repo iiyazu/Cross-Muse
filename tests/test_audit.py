@@ -133,6 +133,72 @@ def test_a_failed_or_unusable_audit_changes_nothing(make, mo, mode):
     assert h.q("select * from messages where kind='notice' and body like 'audit:%'") == []
 
 
+
+def test_a_failed_audit_is_retried_once(make, mo):
+    fake = mo(caps=CAPS)
+    flag_quotes(fake, "integer cents")
+    fake.fail["/audit"] = "500"
+    h = hub(make, fake.url)
+    dep, _, _ = scenario(h)
+    h.hub.auditor.run_pending()
+    h.hub.auditor.run_pending()                                   # too soon: audit_retry_s has not passed
+    assert fake.paths() == ["/audit"] and h.q("select state, tries from audits") == [{"state": "failed", "tries": 1}]
+    del fake.fail["/audit"]                                       # MemoryOS is back
+    back = lambda: h.conn().execute("update audits set at=at-61")  # noqa: E731
+    back()
+    h.hub.auditor.run_pending()
+    assert fake.paths() == ["/audit"] * 2
+    assert h.q("select state, tries from audits") == [{"state": "done", "tries": 2}]
+    assert h.q("select message_id from audit_flags") == [{"message_id": dep}]
+    back()
+    h.hub.auditor.run_pending()                                   # done is final
+    assert fake.paths() == ["/audit"] * 2
+
+
+def test_a_failed_retry_is_final(make, mo):
+    fake = mo(caps=CAPS)
+    fake.fail["/audit"] = "500"
+    h = hub(make, fake.url)
+    scenario(h)
+    for _ in range(3):
+        h.hub.auditor.run_pending()
+        h.conn().execute("update audits set at=at-61")
+    assert fake.paths() == ["/audit"] * 2 and h.q("select state, tries from audits") == [{"state": "failed", "tries": 2}]
+
+
+def test_a_self_revision_leaves_out_its_own_and_already_flagged_messages(make, mo):
+    """E13: reworking members re-declared their module decisions; those audits re-flagged the reworked messages."""
+    fake = mo(caps=CAPS)
+    flag_quotes(fake, "integer cents")
+    h = hub(make, fake.url)
+    say(h, "claude-1", "Amounts are integer cents everywhere.", kind="decision")              # E1
+    mod = say(h, "claude-2", "parse() returns integer cents.", kind="decision")               # E2, claude-2 module
+    dep = say(h, "claude-2", DEP)
+    use = say(h, "claude-3", "The report sums parse() results as integer cents.")
+    say(h, "claude-1", "Amounts are decimal strings with two places.", kind="decision", supersedes="E1")  # E3
+    h.hub.auditor.run_pending()
+    assert {r["message_id"] for r in h.q("select message_id from audit_flags")} == {mod, dep, use}
+    late = say(h, "claude-3", "Added a total row, still integer cents from parse().")          # relies on E2
+    mine = say(h, "claude-2", "Reworking parse(): it no longer returns integer cents.")
+    say(h, "claude-2", "parse() returns decimal strings.", kind="decision", supersedes="E2")   # E4, self-revision
+    h.hub.auditor.run_pending()
+    first, second = [req for path, req in fake.calls if path == "/audit"]
+    assert first["old"]["id"] == "E1" and second["old"]["id"] == "E2"
+    ids = [i["id"] for i in second["items"]]
+    assert f"m{late}" in ids and not {f"m{mod}", f"m{dep}", f"m{use}", f"m{mine}"} & set(ids)
+    assert h.q("select message_id from audit_flags where entry_id=2") == [{"message_id": late}]
+    assert len(h.q("select id from messages where kind='notice' and body like 'audit:%'")) == 2
+
+
+def test_the_host_revising_its_own_convention_is_still_audited(make, mo):
+    """The usual case in E13: the same author (the host) declared the convention and replaced it."""
+    fake = mo(caps=CAPS)
+    flag_quotes(fake, "integer cents")
+    h = hub(make, fake.url)
+    dep, _, _ = scenario(h)                                       # claude-1 wrote both E1 and E2
+    h.hub.auditor.run_pending()
+    assert h.q("select message_id from audit_flags") == [{"message_id": dep}]
+
 def test_foreign_ids_and_invented_quotes_are_dropped(make, mo):
     fake = mo(caps=CAPS)
     h = hub(make, fake.url)

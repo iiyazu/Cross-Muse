@@ -80,7 +80,8 @@ create table if not exists entry_events(
 create table if not exists audits(           -- one row per superseded entry the auditor handled (audit.py)
   entry_id integer primary key, by_id integer, -- by_id: the entry that replaced it
   state text not null,                       -- done|failed|skipped (skipped: before the hub started, or no replacement)
-  at real not null, result text);            -- result: JSON {flagged, candidates} from MemoryOS /audit
+  at real not null, result text,             -- result: JSON {flagged, candidates} from MemoryOS /audit
+  tries integer not null default 1);         -- a failed audit is retried once (audit_retry_s)
 create table if not exists audit_flags(      -- a message that relied on a superseded entry; shown to its author once
   id integer primary key, entry_id integer not null, by_id integer, message_id integer not null,
   agent_id text not null, quote text not null, seq integer not null);  -- seq: the entry_events 'audit' version
@@ -171,7 +172,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # when the last hub-run compaction of the session succeeded: the size the view shows is stale until a turn
            ("sessions", "compacted_at", "real"),
            # the user took a message back (panel "撤回"): its body is replaced, this is when
-           ("messages", "retracted_at", "real")]
+           ("messages", "retracted_at", "real"),
+           # E13: a failed audit is retried once
+           ("audits", "tries", "integer not null default 1")]
 
 
 def init(path) -> sqlite3.Connection:
