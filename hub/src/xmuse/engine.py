@@ -148,11 +148,12 @@ class Engine:
             " where d.recipient=? and d.wake=1 and d.state='queued' order by m.id", (agent["id"],)))
         if not pending:
             return
-        for c in {p["chain_id"]: p for p in pending}.values():
-            why = ("max_chain_wakes" if c["cwakes"] >= c["max_wakes"] else
-                   "max_chain_tokens" if c["ctokens"] >= c["max_tokens"] else None)
-            if why:
-                self._cap_chain(conn, c["chain_id"], c["thread_id"], why)
+        for cid in {p["chain_id"] for p in pending}:
+            hop = max(p["depth"] for p in pending if p["chain_id"] == cid) + 1
+            tname = next(p["thread_id"] for p in pending if p["chain_id"] == cid)
+            while (why := self._over(conn, cid, agent["id"], hop)) and self._cap_chain(conn, cid, tname, why,
+                                                                                         agent["id"]):
+                pass  # renewed: check the other limits too
         pending = [p for p in pending if conn.execute(
             "select state from chains where id=?", (p["chain_id"],)).fetchone()[0] == "open"]
         if not pending or self._agent_capped(conn, agent):
@@ -245,13 +246,48 @@ class Engine:
             if sid:
                 conn.execute("insert or replace into seen values(?,?)", (sid, pack.seq))
 
-    def _cap_chain(self, conn, chain_id: int, thread_id: str, why: str) -> None:
+    def _over(self, conn, chain_id: int, agent_id: str, hop: int) -> str | None:
+        """Which chain limit waking `agent_id` at `hop` would pass. Control plane first (serial depth, revisits), then
+        the fuses (wakes, tokens). A revisit is a turn the agent ran on the chain; turns that were handed back
+        unhandled (quota, requeue) or failed are not counted."""
+        c = db.row(conn.execute("select * from chains where id=?", (chain_id,)))
+        if c["max_depth"] is not None and hop > c["max_depth"]:
+            return "max_chain_depth"
+        runs = conn.execute("select count(distinct d.turn_id) from deliveries d join messages m on m.id=d.message_id"
+                            " where m.chain_id=? and d.recipient=? and d.state='done'", (chain_id, agent_id)).fetchone()[0]
+        if c["max_revisits"] is not None and runs >= c["max_revisits"]:
+            return "max_chain_revisits"
+        return ("max_chain_wakes" if c["wakes"] >= c["max_wakes"] else
+                "max_chain_tokens" if c["tokens"] >= c["max_tokens"] else None)
+
+    def _path(self, conn, chain_id: int) -> str:
+        """The agents of a chain's turns, in order: how it unfolded (a loop shows as A->B->A->B). The sender's turn is
+        usually still running when its message is capped: admitted counts here."""
+        return "->".join(r[0] for r in conn.execute(
+            "select t.agent_id from turns t where t.id in (select d.turn_id from deliveries d join messages m on"
+            " m.id=d.message_id where m.chain_id=? and d.state in ('done', 'admitted')) order by t.id", (chain_id,)))
+
+    def _cap_chain(self, conn, chain_id: int, thread_id: str, why: str, next_agent: str | None = None) -> bool:
+        """Cap the chain (hold its queued deliveries, notify), or renew it under the host policy: True when renewed."""
+        path = self._path(conn, chain_id) + (f"->{next_agent}" if next_agent else "")
+        c = db.row(conn.execute("select renewals from chains where id=?", (chain_id,)))
+        allowed = self.cfg.get("chain_host_renewals", 0)
+        if why in ("max_chain_depth", "max_chain_revisits") and c["renewals"] < allowed:
+            # host renewal policy: the control-plane limits extend by one more set, a bounded number of times; the
+            # wake and token fuses never do. The host sees the notice; the user decides after the last renewal.
+            with db.tx(conn):
+                conn.execute("update chains set renewals=renewals+1, max_depth=max_depth+?, max_revisits=max_revisits+?"
+                             " where id=?", (self.cfg["max_chain_depth"], self.cfg["max_chain_revisits"], chain_id))
+            mail.notice(conn, thread_id, f"chain {chain_id} renewed by the host policy ({c['renewals'] + 1}/{allowed})"
+                                         f" after {why}; path {path}", chain_id)
+            return True
         with db.tx(conn):
             conn.execute("update chains set state='capped', note=? where id=?", (why, chain_id))
             conn.execute("update deliveries set state='held', updated_at=? where state='queued' and message_id in"
                          " (select id from messages where chain_id=?)", (db.now(), chain_id))
-        mail.notice(conn, thread_id, f"chain {chain_id} capped ({why}); its pending messages are held. "
+        mail.notice(conn, thread_id, f"chain {chain_id} capped ({why}); path {path}; its pending messages are held. "
                                      "Send a new message to continue.", chain_id)
+        return False
 
     def _agent_capped(self, conn, agent: dict) -> bool:
         since = db.now() - 3600
