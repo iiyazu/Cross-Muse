@@ -355,5 +355,5 @@ def request_review(conn, cfg: dict, agent_id: str, message_id: int, summary: str
         "tradeoff": "costs one reviewer wake; catches claims nobody checked",
         "open_questions": f"evidence {st}" + (f": {'; '.join(problems)}" if problems else ""),
         "next_action": f"accept with xmuse_done(next=none) or send {agent_id} the defects"},
-        idem=f"review:{message_id}")
+        idem=f"review:{message_id}", follows=message_id)  # a review loop stays on one chain (revisit cap)
     return reviewer
