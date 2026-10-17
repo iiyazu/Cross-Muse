@@ -1,4 +1,4 @@
-"""Fake MemoryOS 0.4.0 for hub tests: /health, /recall, /similar and /curate (profile collab) per
+"""Fake MemoryOS 0.4.0 for hub tests: /health, /recall, /similar, /curate (profile collab) and /audit per
 XMUSE2-M2-MO-CONTRACT, on a random port in a thread. Records every request in `calls` as (path, body).
 
 Knobs: `caps` (what /health reports), `fail[path]` = "500" | "slow" | "garbage" | "empty", `curate` (callable
@@ -16,6 +16,10 @@ class FakeMemoryOS:
     def __init__(self, caps=("curate", "curate.collab", "recall", "similar")):
         self.caps, self.calls, self.fail, self.pairs = list(caps), [], {}, []
         self.curate = lambda req: {"schema_version": "memoryos_curate/v1", "scope_id": req["scope_id"], "memories": []}
+        self.audit = lambda req: {"schema": "memoryos_audit/v1", "flagged": [],
+                                  "candidates": [i["id"] for i in req["items"]][:req["k"]],
+                                  "diagnostics": {"queries": 1, "expanded": 0, "dense": False, "judged": 0,
+                                                  "dropped_quotes": 0}}
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -39,6 +43,7 @@ class FakeMemoryOS:
                     return self._send(200, {"ranked": [], "pairs": []})
                 self._send(200, {"/health": lambda: {"status": "ok", "version": "0.4.0", "capabilities": fake.caps},
                                  "/recall": lambda: fake.recall(body), "/curate": lambda: fake.curate(body),
+                                 "/audit": lambda: fake.audit(body),
                                  "/similar": lambda: {"schema": "memoryos_similar/v1", "pairs": fake.pairs,
                                                       "diagnostics": {"dense": True}}}[path]())
 

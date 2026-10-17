@@ -22,11 +22,11 @@ _in = lambda xs: ",".join("?" * len(xs))  # noqa: E731
 
 
 class Client:
-    def __init__(self, url: str):
+    def __init__(self, url: str, skip=()):
         self.url, self.caps, self.timeout = url.rstrip("/"), set(), 2.0
         if self.url:  # an unreachable MemoryOS at start means "not used" until the hub restarts
             caps = (self.call(None, "/health", None, 5) or {}).get("capabilities")
-            self.caps = set(caps) if isinstance(caps, (list, dict)) else set()
+            self.caps = (set(caps) if isinstance(caps, (list, dict)) else set()) - set(skip)
             log.info("memoryos %s: capabilities %s", self.url, sorted(self.caps) or "none (disabled)")
 
     def call(self, cap: str | None, path: str, body: dict | None, timeout: float | None = None) -> dict | None:

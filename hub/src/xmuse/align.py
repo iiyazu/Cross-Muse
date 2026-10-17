@@ -206,7 +206,7 @@ def delta(conn, agent_id: str, since: int) -> dict:
     created and invalidated inside the window were never shown, so they are not reported."""
     scopes = _scopes(conn, agent_id)
     rs = db.rows(conn.execute(
-        f"select e.*, v.op from entry_events v join entries e on e.id=v.entry_id where v.seq>? and "
+        f"select e.*, v.op from entry_events v join entries e on e.id=v.entry_id where v.seq>? and v.op != 'audit' and "
         f"(e.scope in ({','.join('?' * len(scopes))}) or e.assignee=? or {_OWN_MODULE}) order by v.seq",
         (since, *scopes, agent_id, agent_id)))
     ops, ents = {}, {}
