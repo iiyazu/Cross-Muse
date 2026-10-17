@@ -135,8 +135,8 @@ def test_manual_compact_ok_busy_unsupported_and_auth(make, monkeypatch):
     gate.set()
     h.wait(lambda: h.q("select compacting from sessions where vendor_session='ses-oc'")[0]["compacting"] == 0,
            what="flag cleared")
-    assert any("opencode-1 已压缩" in m["body"] for m in
-               h.q("select body from messages where kind='notice'"))  # the notice
+    h.wait(lambda: any("opencode-1 已压缩" in m["body"] for m in  # the notice: written after the flag clears
+                       h.q("select body from messages where kind='notice'")), what="notice")
     assert h.q("select compacted_at is not null c from sessions where vendor_session='ses-oc'") == [{"c": 1}]
     assert calls and calls[0][1] == "ses-oc"
     with db.tx(h.conn()) as c:  # busy: a running turn
