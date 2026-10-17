@@ -211,7 +211,7 @@ def test_chain_token_cap(make):
 
 def test_stop_interrupts_running_turn_and_cancels_queue(make):
     h = make([("claude-1", "claude"), ("claude-2", "claude")])
-    h.plan_claude({"sleep": 30}, {})
+    h.plan_claude({"sleep": 30}, {"sleep": 30})  # both stay running: steps go out in process start order
     h.send("claude-1", "long task")
     h.send("claude-2", "other")
     h.wait(lambda: len(h.q("select 1 from turns where state='running'")) == 2, what="two running")
