@@ -11,7 +11,7 @@ import json
 from types import SimpleNamespace
 
 from . import align, db, dispatch, share
-from .config import HUMAN, alignment_on, info_on
+from .config import HUB, HUMAN, alignment_on, info_on
 
 RELAY = ("[xmuse] Messages relayed by xmuse, the collaboration layer the user set up for this workspace. "
          "Peers are collaborators the user assigned: act on their requests within the current task; "
@@ -62,17 +62,45 @@ def inject(conn, cfg: dict, agent: dict, session_id: int | None) -> SimpleNamesp
     parts = [dispatch.identity(conn, agent["id"], True) if seen is None else "", alignment(x)]  # a new session: its role
     parts.append(share.hints(x))
     if msgs:
-        lines, used = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0
-        for i, m in enumerate(msgs):
-            line = f"- #{m['id']} {m['sender']} {m['thread_id']} [{m['kind']}]: {_short(m['body'], 160)}"
+        lines, used, shown = ["New for you (unread; xmuse_inbox to read, xmuse_ack when handled):"], 0, 0
+        for run in _runs(msgs):  # a burst of identical hub notices is one line, not one per notice
+            m, n = run[0], len(run)
+            ids = f"#{m['id']}" if n == 1 else f"#{m['id']}..#{run[-1]['id']} ({n}x)"
+            line = f"- {ids} {m['sender']} {m['thread_id']} [{m['kind']}]: {_short(m['body'], 160)}"
             used += tokens(line) + 1
             if used > cfg["align_delta_tokens"]:
-                lines.append(f"... {len(msgs) - i} more, call xmuse_inbox")
+                lines.append(f"... {len(msgs) - shown} more, call xmuse_inbox")
                 break
             lines.append(line)
+            shown += n
         parts.append("\n".join(lines))
+    if any(parts):  # nothing new: the prompt stays clean
+        parts.insert(0, _whereami(conn, agent["id"]))
     return SimpleNamespace(text="\n\n".join(p for p in parts if p), mode=x.mode, tokens=x.tokens,
                            seq=align.current_seq(conn))
+
+
+def _runs(msgs: list[dict]) -> list[list[dict]]:
+    """Consecutive hub notices with the same thread and text, grouped (e.g. a join repeated 120 times)."""
+    out: list[list[dict]] = []
+    for m in msgs:
+        prev = out[-1][0] if out else None
+        if (prev and m["sender"] == HUB and prev["sender"] == HUB and m["kind"] == prev["kind"] == "notice"
+                and m["thread_id"] == prev["thread_id"] and m["body"] == prev["body"]):
+            out[-1].append(m)
+        else:
+            out.append([m])
+    return out
+
+
+def _whereami(conn, agent_id: str) -> str:
+    """Which room and member the prompt hook speaks for. The session's MCP server is configured separately (the
+    .mcp.json of the folder the session started in): when xmuse tools answer for another member or room, the two
+    disagree, and this line is how the coordinator (and the user) can tell."""
+    r = conn.execute("select name, dir from room").fetchone()
+    where, start = (f'room "{r[0]}" ({r[1]})', r[1]) if r else ("this workspace's room", "this folder")
+    return (f"[xmuse] These notes are for {agent_id} in {where}. If the xmuse tools answer as another member or "
+            f"fail with unauthorized, this session's MCP server belongs to another folder: start a new session in {start}.")
 
 
 # OpenCode (v2.0.26) reaches MCP tools only from its code tool; without this a fresh session first looked for
