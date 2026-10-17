@@ -3,7 +3,9 @@
 // env: XMUSE_STATE (hub state dir), XMUSE_AGENT (this agent's id), XMUSE_CHANNEL=1 (Claude only),
 // XMUSE_DESKTOP=1 (Claude desktop app coordinator: different instructions text).
 // - Tool schemas come from <state>/tools.json (written by `xmuse init` from the hub's Python schemas).
-// - Hub address is re-read from <state>/hub.json on every call, so a hub restart is transparent.
+// - Hub address and this agent's token are re-read from <state>/hub.json and <state>/tokens/<agent> on every
+//   call, so a hub restart or a re-issued token is transparent (a token read once at start goes stale and every
+//   call then fails with `unauthorized` until the MCP server is restarted).
 // - In an interactive Claude Code session (CLAUDE_CODE_ENTRYPOINT=cli) with XMUSE_CHANNEL=1 it
 //   declares `claude/channel`, listens on a dynamic loopback port and registers that endpoint with
 //   the hub (M0: a fixed port collides between the TUI and headless runs). Only POSTs carrying the
@@ -23,7 +25,8 @@ const AGENT = process.env.XMUSE_AGENT ?? ''
 const DESKTOP = process.env.XMUSE_DESKTOP === '1'
 const CHANNEL = process.env.XMUSE_CHANNEL === '1' && process.env.CLAUDE_CODE_ENTRYPOINT === 'cli'
 const SESSION = process.env.CLAUDE_CODE_SESSION_ID ?? null
-const TOKEN = readFileSync(join(STATE, 'tokens', AGENT), 'utf8').trim()
+const token = () => readFileSync(join(STATE, 'tokens', AGENT), 'utf8').trim()
+token() // fail at start, as before, when the agent has no token at all
 const TOOLS = JSON.parse(readFileSync(join(STATE, 'tools.json'), 'utf8'))
 
 async function hub(path: string, body: unknown, attempts = 3): Promise<any> {
@@ -33,7 +36,7 @@ async function hub(path: string, body: unknown, attempts = 3): Promise<any> {
       const { port } = JSON.parse(readFileSync(join(STATE, 'hub.json'), 'utf8'))
       const r = await fetch(`http://127.0.0.1:${port}${path}`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        headers: { authorization: `Bearer ${token()}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(30_000),
       })
@@ -68,7 +71,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   // Retries are safe: the hub dedupes a repeated send within one turn.
   const out = await hub(`/v1/tools/${req.params.name}`, { args: req.params.arguments ?? {} })
   const isError = 'error' in out
-  const payload = isError ? out.error : out.result
+  let payload = isError ? out.error : out.result
+  if (isError && ['unauthorized', 'not_bound_session'].includes(payload?.code)) {
+    // The prompt hook and this server are configured separately (.claude/settings.json of the session's current
+    // folder vs .mcp.json of the folder it started in); say who this server speaks as, so a mix-up is visible.
+    payload = { ...payload, speaks_as: AGENT, state: STATE,
+                hint: 'compare with the room and member the [xmuse] prompt notes name; if they differ, this session ' +
+                      "moved folders after its MCP server started: start a new session in the room's folder" }
+  }
   return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError }
 })
 
