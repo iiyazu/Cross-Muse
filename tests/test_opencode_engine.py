@@ -365,3 +365,51 @@ def test_env_prefixed_harmless_shell_is_auto_approved(make):
     assert h.q("select state, decision from approvals")[0] == {"state": "decided", "decision": "once"}
     assert not any("per_a" in n["body"] for n in h.q("select body from messages where kind='notice'"))
     h.admin("stop")
+
+
+def test_write_config_denies_the_question_tool(tmp_path):
+    from xmuse.adapters.opencode import write_config
+    ws, state = tmp_path / "ws", tmp_path / "state"
+    ws.mkdir()
+    write_config(ws, {"id": "oc-1", "settings": "{}"}, state)
+    rules = json.loads((ws / "opencode.json").read_text(encoding="utf-8"))["permissions"]
+    assert {"action": "question", "resource": "*", "effect": "deny"} in rules
+    assert rules[0]["action"] == "xmuse_*" and rules[-1]["action"] == "shell"
+
+
+def _question_turn(h):
+    h.oc.plan = [{"result": "hang"}]
+    h.send("opencode-1", "long")
+    h.wait(lambda: h.q("select 1 from turns where state='running'"), what="running")
+    h.wait(lambda: h.hub.engine.drivers["opencode"].headless.turns, what="tracked")
+
+
+def _notices(h):
+    return [r["body"] for r in h.q("select body from messages where kind='notice' and thread_id=?",
+                                   "dm:human+opencode-1")]
+
+
+def test_question_tool_call_is_interrupted_and_relayed_once(make):
+    h = make(OC)
+    _question_turn(h)
+    qs = {"questions": [{"header": "Pick", "question": "Which database?",
+                         "options": [{"label": "Postgres", "description": "x"}, {"label": "SQLite", "description": "y"}]}]}
+    h.oc._frame("ses_fake1", "session.tool.input.started", name="question", id="call_q")
+    h.oc._frame("ses_fake1", "session.tool.called", id="call_q", input=qs)
+    h.wait(lambda: _notices(h), what="notice")
+    h.oc._frame("ses_fake1", "session.tool.called", id="call_q", input=qs)
+    h.wait_quiet()
+    assert h.oc.interrupts == ["ses_fake1"]
+    [body] = _notices(h)
+    assert "Which database?" in body and "Postgres" in body and "SQLite" in body and "cannot be answered" in body
+
+
+def test_other_tool_calls_are_left_alone(make):
+    h = make(OC)
+    _question_turn(h)
+    h.oc._frame("ses_fake1", "session.tool.input.started", name="read", id="call_r")
+    h.oc._frame("ses_fake1", "session.tool.called", id="call_r", input={"path": "x"})
+    time.sleep(0.5)
+    assert h.oc.interrupts == [] and _notices(h) == []
+    h.admin("stop", agent="opencode-1")
+    h.wait_quiet()

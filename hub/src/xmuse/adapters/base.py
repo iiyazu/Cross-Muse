@@ -93,6 +93,8 @@ class Sink(Protocol):
     def progress(self, turn_id: int, update: dict) -> None:
         """Live turn progress (H4): tools run so far, last tool name, latest text fragment. ..."""
     def compacted(self, vendor_session: str) -> None: ...
+    def notice(self, agent_id: str, text: str) -> None:
+        """Leave a hub notice for the user in the member's private chat with the human (never wakes anyone)."""
 
 
 class Adapter(Protocol):
