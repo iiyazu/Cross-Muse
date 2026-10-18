@@ -280,7 +280,7 @@ def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | No
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
-                        # headless : nobody can answer OpenCode's  tool and v2.0.26 has no answer
+                        # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
                         # route, so the turn would hang; deny hides the tool from the model (measured)
                         QUESTION_DENY,
                         *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
@@ -503,7 +503,7 @@ class OpenCodePrompt:
                 self.sink.kick()
 
     def _question_slipped(self, sid: str, t: Tracked, d: dict) -> None:
-        """The built-in  tool ran although it is denied (a user config overrode it). Nobody can answer it
+        """The built-in `question` tool ran although it is denied (a user config overrode it). Nobody can answer it
         headless, so stop the turn and leave the user the question in the member's chat."""
         try:
             self.server.api("POST", f"/api/session/{sid}/interrupt")
