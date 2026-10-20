@@ -64,6 +64,10 @@ class Engine:
         """The vendor compacted this session: its next wake gets a full alignment snapshot."""
         self.q.put(("compacted", vendor_session))
 
+    def notice(self, agent_id: str, text: str) -> None:
+        """A hub notice for the user in the member's private chat (from an adapter thread)."""
+        mail.notice(self.db(), mail.dm_id(agent_id, HUMAN), text)
+
     def _on_compacted(self, vendor_session: str) -> None:
         conn = self.db()
         for r in conn.execute("select id from sessions where vendor_session=?", (vendor_session,)).fetchall():

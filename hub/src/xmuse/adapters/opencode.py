@@ -7,6 +7,7 @@ metadata is a human, and admission waits for that execution to end.
 import base64
 import fnmatch
 import json
+import logging
 import re
 import secrets
 import shlex
@@ -23,6 +24,8 @@ from ..config import SHIM
 from ..env import clean_env
 from ..risk import risky
 from .base import Presence, TurnEnd, TurnSpec, Usage
+
+log = logging.getLogger(__name__)
 
 END = {"session.execution.succeeded": "succeeded", "session.execution.failed": "failed",
        "session.execution.interrupted": "interrupted"}
@@ -237,6 +240,23 @@ def instance_dir(state: Path, agent_id: str) -> Path:
     return state / "oc" / agent_id
 
 
+QUESTION_DENY = {"action": "question", "resource": "*", "effect": "deny"}
+
+
+def ensure_question_deny(ws: Path) -> None:
+    """Add the question deny rule to an existing workspace opencode.json (idempotent; other content untouched)."""
+    f = ws / "opencode.json"
+    try:
+        cfg = json.loads(f.read_text(encoding="utf-8"))
+        rules = cfg.setdefault("permissions", [])
+        if QUESTION_DENY in rules or not isinstance(rules, list):
+            return
+        rules.insert(next((i + 1 for i, r in enumerate(rules) if r.get("action") == "xmuse_*"), 0), QUESTION_DENY)
+        f.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError, AttributeError):
+        pass  # no workspace file yet (write_config makes it) or not ours to fix
+
+
 def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | None = None) -> list[Path]:
     """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
     v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
@@ -260,6 +280,9 @@ def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | No
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
         "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
+                        # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
+                        # route, so the turn would hang; deny hides the tool from the model (measured)
+                        QUESTION_DENY,
                         *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
                         {"action": "shell", "resource": "*", "effect": "ask"}],
     }
@@ -284,6 +307,7 @@ class Server:
         self.base = base or f"http://127.0.0.1:{port or _free_port()}"
 
     def start(self, timeout: float = 60) -> None:
+        ensure_question_deny(self.ws)  # rooms created before the rule existed get it on the next server start
         port = self.base.rsplit(":", 1)[1]
         log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a", encoding="utf-8")
         self.proc = proc.popen(
@@ -351,6 +375,8 @@ class Tracked:
     def __init__(self, spec: TurnSpec):
         self.spec, self.usage, self.seen, self.delivered, self.log = spec, Usage(), set(), False, spec.run_log.open("w", encoding="utf-8")
         self.tools, self.last_tool, self.reply = 0, None, None  # H4 progress, H13 last assistant text
+        self.calls: dict[str, str] = {}  # tool call id -> tool name (input.started); session.tool.called has no name
+        self.asked: set[str] = set()  # question call ids already relayed
         self.partial = ""  # the text block being written (text.delta so far), shown live as the member's draft
 
 
@@ -439,8 +465,14 @@ class OpenCodePrompt:
             if d.get("name") in CODE_TOOLS:
                 t.usage.mode = "code"
             t.last_tool = d.get("name") or t.last_tool
+            if d.get("id") and d.get("name"):
+                t.calls[d["id"]] = d["name"]
         elif typ == "session.tool.called" and t is not None:
             t.tools += 1
+            # executed:false = the deny rule refused a hallucinated call; the model recovers on its own
+            if t.calls.get(d.get("id")) == "question" and d.get("executed") is not False and d["id"] not in t.asked:
+                t.asked.add(d["id"])
+                self._question_slipped(sid, t, d)
         elif typ == "session.text.started" and t is not None:
             t.partial = ""
         elif typ == "session.text.delta" and t is not None and isinstance(d.get("delta"), str):
@@ -470,6 +502,27 @@ class OpenCodePrompt:
                 self.sink.turn_ended(TurnEnd(t.spec.turn_id, END[typ], sid, t.usage, err, reply=t.reply))
             elif was_human:
                 self.sink.kick()
+
+    def _question_slipped(self, sid: str, t: Tracked, d: dict) -> None:
+        """The built-in `question` tool ran although it is denied (a user config overrode it). Nobody can answer it
+        headless, so stop the turn and leave the user the question in the member's chat."""
+        try:
+            self.server.api("POST", f"/api/session/{sid}/interrupt")
+        except Exception:  # noqa: BLE001 - the notice still matters
+            log.exception("interrupt after a question tool call failed (session %s)", sid)
+        lines = []
+        for q in (d.get("input") or {}).get("questions") or []:
+            lines.append(f"- {q.get('header') + ': ' if q.get('header') else ''}{q.get('question', '')}")
+            labels = [str(o.get("label")) for o in q.get("options") or [] if isinstance(o, dict) and o.get("label")]
+            if labels:
+                lines.append("  options: " + " / ".join(labels))
+        agent = t.spec.agent["id"]
+        try:
+            self.sink.notice(agent, f"{agent} asked with its own question tool, which cannot be answered in xmuse, so "
+                                    "its turn was stopped. Its question:\n" + "\n".join(lines)
+                                    + "\nReply to it here.")
+        except Exception:  # noqa: BLE001
+            log.exception("question notice for %s failed", agent)
 
     def _agent(self, sid):
         t = self.turns.get(sid)
