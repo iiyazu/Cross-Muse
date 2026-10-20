@@ -469,7 +469,8 @@ class OpenCodePrompt:
                 t.calls[d["id"]] = d["name"]
         elif typ == "session.tool.called" and t is not None:
             t.tools += 1
-            if t.calls.get(d.get("id")) == "question" and d["id"] not in t.asked:
+            # executed:false = the deny rule refused a hallucinated call; the model recovers on its own
+            if t.calls.get(d.get("id")) == "question" and d.get("executed") is not False and d["id"] not in t.asked:
                 t.asked.add(d["id"])
                 self._question_slipped(sid, t, d)
         elif typ == "session.text.started" and t is not None:

@@ -404,6 +404,17 @@ def test_question_tool_call_is_interrupted_and_relayed_once(make):
     assert "Which database?" in body and "Postgres" in body and "SQLite" in body and "cannot be answered" in body
 
 
+def test_question_call_that_never_ran_is_left_alone(make):
+    h = make(OC)
+    _question_turn(h)
+    h.oc._frame("ses_fake1", "session.tool.input.started", name="question", id="call_q")
+    h.oc._frame("ses_fake1", "session.tool.called", id="call_q", input={}, executed=False)
+    time.sleep(0.5)
+    assert h.oc.interrupts == [] and _notices(h) == []
+    h.admin("stop", agent="opencode-1")
+    h.wait_quiet()
+
+
 def test_other_tool_calls_are_left_alone(make):
     h = make(OC)
     _question_turn(h)
