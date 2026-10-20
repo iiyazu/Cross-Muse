@@ -2,16 +2,16 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { ConnInfo } from '../types'
-import type { Pal, Tone } from './logic'
+import type { Pal, RailItem, Tone } from './logic'
 import {
   C_AMBER, C_BLUE, C_GREEN, C_ORANGE, C_RED, agoText, approvalHasAlways, approvalKindLabel, approvalText, approvalsOf, avatarSvg, backoffMs,
-  buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
-  isDoneMsg, isLoopbackUrl, isToClaude, lastLines, matchHubs, maxWakeId, membersOf, messagesFor, noiseSummary, parseHubs, parseMentions, replyLabel,
-  statusOf, summaryLine, tabsOf, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
-  workingMembers, changedWorker, doneLine, finishedMembers, textsOf, toPosix, typingSteps,
+  bigInputPlan, buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
+  isDoneMsg, isLoopbackUrl, isToClaude, matchHubs, maxWakeId, membersOf, messagesFor, noiseSummary, parseHubs, parseMentions, replyLabel,
+  statusOf, summaryLine, railOf, activeTabOf, dmThreadId, roomSvg, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
+  workingMembers, doneLine, finishedMembers, toPosix, structOf,
   badgeOf, completeMention, dayLabel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
   trailingMention, vendorKey, canCompact, ctxLevel, ctxText, mergeCompactInstructions, hubStartScript,
-  TONES, ctxBarSvg, noiseTitle, noiseTone, draftTail, freshMessage, revealSteps, shortModel,
+  TONES, ctxBarSvg, noiseTitle, noiseTone, freshMessage, revealSteps, shortModel, softWrap, clip,
 } from './logic'
 
 // xmuse panel (slice T8d): read-only view of the project's hub plus sending. Design: docs/design/XMUSE2-T8.zh.md §2.1, §3.
@@ -36,7 +36,7 @@ const STORE_SEEN = 'wakeSeen' // number: highest message id already handled (sub
 
 const connAtom = atom({ plugin: 'xmuse', key: 'conn' } as const, { phase: 'idle', error: '' } as ConnInfo)
 const viewAtom = atom({ plugin: 'xmuse', key: 'view' } as const, null as any)
-const tabAtom = atom({ plugin: 'xmuse', key: 'tab' } as const, 'all')
+const tabAtom = atom({ plugin: 'xmuse', key: 'tab' } as const, '#room') // the open rail entry: '#room', a dm: thread id, or 'all'
 const replyAtom = atom({ plugin: 'xmuse', key: 'replyTo' } as const, 0)
 const genAtom = atom({ plugin: 'xmuse', key: 'gen' } as const, 0)
 const promotedAtom = atom({ plugin: 'xmuse', key: 'promoted' } as const, {} as Record<string, string>)
@@ -55,7 +55,9 @@ let decisionN = 0
 const toastSeen = new Set<string>()
 let toastSeeded = false
 const sendNAtom = atom({ plugin: 'xmuse', key: 'sendN' } as const, 0) // goes into the Input key: a new key clears it
-const sendingAtom = atom({ plugin: 'xmuse', key: 'sending' } as const, false)
+// bumped by an @ completion: part of the Input key, so the field is remounted with the completed text
+const inputGenAtom = atom({ plugin: 'xmuse', key: 'inputGen' } as const, 0)
+const sendingAtom =atom({ plugin: 'xmuse', key: 'sending' } as const, false)
 const addOpenAtom = atom({ plugin: 'xmuse', key: 'addOpen' } as const, false)
 const expandedAtom = atom({ plugin: 'xmuse', key: 'expanded' } as const, '') // id of the member whose card is open under the chips, or ''
 const foldAtom = atom({ plugin: 'xmuse', key: 'fold' } as const, {} as Record<string, boolean>) // opened rows: done lines, noise runs, warnings
@@ -65,19 +67,23 @@ const STORE_BRIEF = 'briefMissing' // boolean: the room was opened and has no pr
 const TOOL = 'xmuse_send' // registered as mcp__xmuse__xmuse_send
 const TOOL_BRIEF = 'xmuse_brief' // mcp__xmuse__xmuse_brief: writes the project brief
 const openAtom = atom({ plugin: 'xmuse', key: 'open' } as const, { busy: false, msg: '', error: '' })
-// the typing effect of one member's partial output: run > 0 while a Client (grow.tsx) is typing it in, 0 when idle
-const typedAtom = atom({ plugin: 'xmuse', key: 'typed' } as const, { id: '', full: '', from: 0, steps: [] as number[], run: 0 })
+// The latest full view from the hub, kept outside the atom: its members' `progress` (text, tool, counts) changes every few
+// seconds, and every atom write redraws the whole panel. viewAtom holds structOf(view) and is written only when that changes;
+// the live parts (live.tsx Clients) read this through the ui.message hook.
+let liveView: any = null
+let structJson = ''
 const doneAtom = atom({ plugin: 'xmuse', key: 'done' } as const, {} as Record<string, { tools: number; startedMs: number; endedMs: number }>)
 const briefAtom = atom({ plugin: 'xmuse', key: 'brief' } as const, false) // mirrors STORE_BRIEF so the panel redraws
 const DONE_KEEP_MS = 30_000 // how long the grey "finished" line stays
-let typeRunN = 0 // run counter: part of the grow Client's key, a new run is a fresh instance
-let lastTexts: Record<string, string> = {} // partial output seen in the last view, per running member
 const POOL = 5000 // messages a tab can scroll through: the view's own plus every older page loaded
 const OLDER_PAGE = 100 // one "加载更早的消息" press
 const seenMsgs = new Map<number, any>() // every timeline item seen this load, by id (the newest copy wins)
 let seenRoom = ''
 // older pages fetched from /v1/timeline (oldest first), and whether the hub has still older ones
 const olderAtom = atom({ plugin: 'xmuse', key: 'older' } as const, { items: [] as any[], hasMore: true, loading: false })
+// messages drawn per conversation (newest first): a draw builds only these, the rest waits behind "显示更早的"
+const shownAtom = atom({ plugin: 'xmuse', key: 'shown' } as const, {} as Record<string, number>)
+const SHOW_STEP = 40
 const busyAtom =atom({ plugin: 'xmuse', key: 'busy' } as const, {} as Record<string, boolean>) // approval ids in flight
 const selfCtxAtom = atom({ plugin: 'xmuse', key: 'selfCtx' } as const, 0) // this session's own context fill (session.measure)
 // a member's message that just arrived, drawn growing to its full length (the vendors give no token stream for it)
@@ -88,8 +94,28 @@ const modelAtom = atom({ plugin: 'xmuse', key: 'modelPick' } as const, null as M
 let feedMaxId = -1 // highest timeline id seen this load; -1 until the first view sets the baseline (history: no effect)
 let revealRunN = 0
 const REVEAL_STEP_MS = 70
-const TYPE_STEP_MS = 150
 const NARROW_COLS = 56 // below this many cells (about 420 px) member chips shrink to avatar and state dot
+const RAIL_COLS = 22 // the vertical list's widest width, in cells (it shrinks with the pane: railW in drawPanel)
+const STORE_PROBE = 'probe' // boolean: the two probes (scroll events, the band above the prompt) are on; toggled by `/xmuse probe`
+const probeAtom = atom({ plugin: 'xmuse', key: 'probe' } as const, false) // mirrors STORE_PROBE so the panel and the band redraw
+type ScrollProbe = { n: number; by: number; offset: number; bodyRows: number; contentRows: number; origin: string }
+const scrollProbeAtom = atom({ plugin: 'xmuse', key: 'scrollProbe' } as const, { n: 0, by: 0, offset: 0, bodyRows: 0, contentRows: 0, origin: '' } as ScrollProbe)
+let scrollProbe: ScrollProbe = { n: 0, by: 0, offset: 0, bodyRows: 0, contentRows: 0, origin: '' } // every Pane ui.scroll seen this load
+let scrollProbeAt = -Infinity // host clock of the last write of scrollProbe to the atom
+let bandDraws = 0 // draws of the AbovePrompt probe band
+// Layouts: 'chat' (default: oldest message first, the newest and the composer at the bottom, the pane scrolls as a whole page and
+// follows the newest message) | 'flow' (newest first under the composer). A stored 'pinned' (an older layout) reads as 'chat'.
+const STORE_LAYOUT = 'layout' // toggled by `/xmuse layout`
+const layoutAtom = atom({ plugin: 'xmuse', key: 'layout' } as const, 'chat' as 'chat' | 'flow')
+// The rail can be folded by hand to avatars only (the `rail-fold` button); kept in the store across loads.
+const STORE_RAIL = 'railFold' // boolean
+const railFoldAtom = atom({ plugin: 'xmuse', key: 'railFold' } as const, false)
+const RAIL_FOLD_COLS = 6 // the folded rail's width in cells
+// Following the newest message: true while the person's last scroll left the window at the end (a plugin-made move does not count).
+let atBottom = true
+let pollMaxId = -1 // highest timeline id the poll has seen
+let pollDrafts = '' // ids of the members with a draft row at the last view
+let firstViewSeen = false // the first successful view of this loop has been handled
 const GROW_GRACE_MS =1500 // a grow Client that has not reported this long after its last step is dropped (growDone clears the atom)
 
 // ---- hub access ----------------------------------------------------------------------------------------------
@@ -134,13 +160,20 @@ async function probeToken($: any, url: string, token: string): Promise<'ok' | 'd
 
 /**
  * The member stays bound to the session that uses it: after the desktop app restarted (a new session id) the member
- * is moved over with /v1/rebind (the member token proves it is ours), once per session. Failing that, the panel still
+ * is moved over with /v1/rebind (the member token proves it is ours), once per load of this session (`rebound`): the
+ * store is shared, so two sessions open on one room would otherwise take the member back from each other on every poll
+ * (each take changes the view: both panels redraw without pause). /xmuse takes it over again. Failing that, the panel still
  * works on the operator token; only the model's xmuse_send would be refused as "bound to another session".
  * The rebind races a 3 s timeout like probeToken (no hang: see §3.2); the outcome goes to REBIND_MARK under DEV.
  */
+const rebound = new Set<string>() // '<room dir>|<session id>' already bound by this load: never taken back unasked
+
 async function ensureBound($: any, c: HubConn): Promise<HubConn> {
   const sid: string = await $.session.id()
   if (c.sid === sid || !c.memberToken) return c
+  const once = `${c.dir ?? ''}|${sid}`
+  if (rebound.has(once)) return c // another session took it later: leave it there
+  rebound.add(once)
   const mark = async (s: string) => {
     if (DEV) { try { await $.fs.write(REBIND_MARK, `${new Date().toISOString()} ${s}\n`) } catch { /* diagnostics only */ } }
   }
@@ -328,6 +361,7 @@ async function getConn($: any): Promise<HubConn> {
           memberToken: typeof data.member_token === 'string' ? data.member_token : undefined, sid }
         await $.store.set(connKey(roomDir), conn)
         await addKnown($, roomDir)
+        rebound.add(`${roomDir}|${sid}`)
         return conn
       }
       if (r.status === 404 && data?.error === 'no_room') throw new NoRoomError('hub 已启动，但还没有房间')
@@ -377,7 +411,7 @@ async function pollOnce($: any, gen: number, fails: number) {
   if ((await read($, genAtom)) !== gen) return // superseded by a newer loop (retry, reload)
   try {
     const cur = await read($, viewAtom)
-    const since = Number(cur?.version ?? 0)
+    const since = Number(liveView?.version ?? cur?.version ?? 0)
     const r = await callHub($, 'GET', `/v1/view?since=${since}&wait=25`)
     if ((await read($, genAtom)) !== gen) return
     if (r.status === 204) {
@@ -387,10 +421,17 @@ async function pollOnce($: any, gen: number, fails: number) {
     if (r.status !== 200 || !r.data) {
       throw new Error(`hub 返回 ${r.status}: ${String(r.data?.message ?? r.data?.error ?? '').slice(0, 120)}`)
     }
-    await trackDone($, cur, r.data)
-    await typeStart($, r.data) // before the view lands, so the new text is drawn from its typed prefix
-    await revealStart($, r.data) // likewise: a new member message is first drawn empty, then grows
-    await update($, viewAtom, () => r.data)
+    const oldLive = liveView
+    liveView = r.data // the live parts (live.tsx) read progress from here
+    await trackDone($, oldLive ?? cur, r.data) // needs the real progress (tool counts): full views
+    const grew = await newestGrew($, r.data)
+    await revealStart($, r.data) // before the view lands: a new member message is first drawn empty, then grows
+    // progress-only changes (text, tool, counts) do not write the atom: the panel is not redrawn for them
+    const s = structOf(r.data)
+    const j = JSON.stringify({ ...s, version: 0 })
+    if (j !== structJson) { structJson = j; await update($, viewAtom, () => s) }
+    if (!firstViewSeen) { firstViewSeen = true; scrollEndLater($) } // the first view: show the newest
+    else if (grew && atBottom) scrollEndLater($)
     await settleBusy($, r.data)
     await setConn($, 'ok', '')
     await wakeCheck($, r.data, false)
@@ -421,8 +462,49 @@ async function pollOnce($: any, gen: number, fails: number) {
 async function startLoop($: any) {
   const gen = (await read($, genAtom)) + 1
   await update($, genAtom, () => gen)
+  firstViewSeen = false
   await setConn($, 'connecting', '')
   void pollOnce($, gen, 0)
+}
+
+// ---- chat layout: following the newest message ----------------------------------------------------------------
+
+/** Scroll the pane to its end (the newest message) and follow it from here on. Never call inside a draw. */
+async function scrollToEnd($: any) {
+  try { await $.ui.scroll({ to: 'end', in: PANE }) } catch { /* no engine window (not open yet): nothing to scroll */ }
+  atBottom = true
+}
+
+/** Off the current handler: scroll to the end after the next tick, in the chat layout only (flow keeps the newest at the top). */
+function scrollEndLater($: any) {
+  $.clock.after(0, () => { void scrollEndIfChat($) })
+}
+
+async function scrollEndIfChat($: any) {
+  if ((await read($, layoutAtom)) === 'flow') return
+  await scrollToEnd($)
+}
+
+/** Did the open conversation gain a message or a draft row with this view? The first view only sets the baseline. */
+async function newestGrew($: any, view: any): Promise<boolean> {
+  const tl: any[] = Array.isArray(view?.timeline) ? view.timeline : []
+  const max = tl.reduce((n, m) => (typeof m?.id === 'number' && m.id > n ? m.id : n), 0)
+  const prev = pollMaxId
+  pollMaxId = Math.max(pollMaxId, max)
+  const tab = activeTabOf(view, await read($, tabAtom))
+  const item = railOf(view).find(t => t.id === tab)
+  const drafts = workingMembers(view).filter(m => (!item?.peer || item.peer === m.id) && m.progress?.has_text).map(m => m.id).join(',')
+  const prevDrafts = pollDrafts
+  pollDrafts = drafts
+  if (prev < 0) return false
+  const fresh = max > prev && messagesFor(view, item ? tab : '#room', POOL).some(m => m.id > prev && !m.retracted)
+  return fresh || (drafts !== '' && drafts !== prevDrafts)
+}
+
+async function toggleRailFold($: any) {
+  const on = !(await read($, railFoldAtom))
+  await $.store.set(STORE_RAIL, on)
+  await update($, railFoldAtom, () => on)
 }
 
 // ---- finished line and typing effect (T8f) ---------------------------------------------------------------------
@@ -450,24 +532,21 @@ async function expireDone($: any, id: string, endedMs: number) {
 }
 
 /**
- * Partial output of the last member whose text changed is typed in over 4 steps of TYPE_STEP_MS. The steps run in a
- * Client (grow.tsx), not here: the atom is written once at the start and once when the Client reports it is done.
+ * Fresh props for a live.tsx Client (the ui.message hook answers its post): the member's progress from the latest full
+ * view. A member that is gone or not working gets the same shape, empty.
  */
-async function typeStart($: any, newView: any) {
-  const ch = changedWorker(lastTexts, newView)
-  lastTexts = textsOf(newView)
-  if (!ch) return
-  const prev = await read($, typedAtom)
-  // Continue from what was on screen for this member; text that is not an extension of it appears at once.
-  let from = ch.text.length
-  if (ch.text.startsWith(ch.old)) {
-    from = ch.old.length
-    if (prev.run > 0 && prev.id === ch.id && prev.full === ch.old) from = Math.min(from, prev.from) // still typing: restart from its start
+async function liveProps($: any, part: string, id: string) {
+  const v = liveView ?? await read($, viewAtom)
+  const m = workingMembers(v).find(x => x.id === id)
+  const p = m?.progress
+  return {
+    part, id,
+    tool: typeof p?.last_tool === 'string' ? p.last_tool.trim() : '',
+    text: String(p?.text ?? ''),
+    tools: toolCount(p),
+    startedAt: elapsedStart(p?.started_at),
+    nowMs: Number(await $.clock.now()),
   }
-  if (from >= ch.text.length) { await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: [], run: 0 })); return }
-  const run = ++typeRunN
-  await update($, typedAtom, () => ({ id: ch.id, full: ch.text, from, steps: typingSteps(from, ch.text.length, 4), run }))
-  $.clock.after(4 * TYPE_STEP_MS + GROW_GRACE_MS, () => { void growDone($, { grown: `t:${ch.id}:${run}` }) }) // the Client never reported: end it
 }
 
 /**
@@ -492,10 +571,9 @@ async function revealStart($: any, view: any) {
 /** ui.message from a grow Client: it showed its last step; the atom goes idle and the normal rendering comes back. */
 async function growDone($: any, data: any) {
   const id = typeof data?.grown === 'string' ? data.grown : ''
-  const kind = id.slice(0, 2) // 't:<member>:<run>' | 'r:<message id>:<run>'
+  const kind = id.slice(0, 2) // 'r:<message id>:<run>'
   const n = Number(id.slice(id.lastIndexOf(':') + 1))
-  if (kind === 't:') await update($, typedAtom, t => (t.run === n ? { ...t, steps: [], run: 0 } : t))
-  else if (kind === 'r:') await update($, revealAtom, r => (r.run === n ? { id: 0, steps: [], run: 0 } : r))
+  if (kind === 'r:') await update($, revealAtom, r => (r.run === n ? { id: 0, steps: [], run: 0 } : r))
 }
 
 // ---- opening a room (H1) -------------------------------------------------------------------------------------
@@ -658,7 +736,7 @@ async function markRead($: any, threads: string[]) {
 
 /** Move the read cursor of what the current tab shows, once per (tab, view version). */
 async function autoRead($: any, view: any) {
-  const tab = await read($, tabAtom)
+  const tab = activeTabOf(view, await read($, tabAtom)) // the tab the pane shows, not a stale one
   const todo = unreadThreadsFor(view, tab)
   if (!todo.length) return
   const mark = `${tab}:${view.version ?? ''}`
@@ -669,7 +747,13 @@ async function autoRead($: any, view: any) {
 
 async function setTab($: any, tab: string) {
   await update($, tabAtom, () => tab)
-  await update($, replyAtom, () => 0)
+  scrollEndLater($)
+  if ((await read($, replyAtom)) !== 0) await update($, replyAtom, () => 0) // every write is a redraw: only a real one
+  // the network part runs off the press: switching shows at once
+  $.clock.after(0, () => { void markReadFor($, tab) })
+}
+
+async function markReadFor($: any, tab: string) {
   const view = await read($, viewAtom)
   if (view) await markRead($, unreadThreadsFor(view, tab))
 }
@@ -678,10 +762,54 @@ async function setReply($: any, id: number) {
   await update($, replyAtom, () => id)
 }
 
+/** The `say` body for the open conversation and the pending reply (null: nothing to send). Shared by the panel box and /x. */
+async function sayBody($: any, text: string) {
+  const view = await read($, viewAtom)
+  return buildSay(expandNewlines(text), activeTabOf(view, await read($, tabAtom)), await read($, replyAtom), view)
+}
+
+/** `/x <text>`: the same send as the panel's box, written in Claude's own prompt box. Answers the command's { text }. */
+async function sendFromCommand($: any, raw: string): Promise<{ text: string }> {
+  const text = raw.trim()
+  if (!text) return { text: '用法：/x 消息内容（@名字 可以指定成员）' }
+  try {
+    const body = await sayBody($, text)
+    if (!body) return { text: '发送失败：没有可发的内容' }
+    const r = await callHub($, 'POST', '/v1/act', body)
+    if (r.status !== 200) return { text: `发送失败 ${r.status}: ${String(r.data?.message ?? r.data?.error ?? '').slice(0, 100)}` }
+    await update($, replyAtom, () => 0)
+    scrollEndLater($)
+    const view = await read($, viewAtom)
+    const tab = activeTabOf(view, await read($, tabAtom))
+    const item = railOf(view).find(t => t.id === tab)
+    const label = item?.kind === 'dm' ? String(item.peer ?? item.label) : '大群'
+    return { text: `已发到 ${label}` }
+  } catch (err) {
+    return { text: `发送失败: ${errText(err)}` }
+  }
+}
+
+/** `⤢ 大输入框`: the panel's draft moves into Claude's own multi-line prompt box as `/x <draft>` (Enter there sends it). */
+async function openBigInput($: any) {
+  try {
+    const cur = await $.prompt.read()
+    const plan = bigInputPlan(draftLive, String(cur?.text ?? ''))
+    if (!plan.ok) { $.ui.toast('先清空 Claude 输入框里的内容'); return }
+    const r = await $.prompt.fill({ text: plan.text, mode: 'replace' })
+    if (r?.isFilled === false) { $.ui.toast('没能放进 Claude 输入框'); return }
+    const view = await read($, viewAtom)
+    const tab = activeTabOf(view, await read($, tabAtom))
+    const it = railOf(view).find(t => t.id === tab)
+    const label = it?.kind === 'dm' ? String(it.peer ?? it.label) : '大群'
+    $.ui.toast(`已放进 Claude 输入框：Shift+Enter 换行，回车发到「${label}」`)
+  } catch (err) {
+    $.ui.toast(`没能放进 Claude 输入框: ${errText(err)}`)
+  }
+}
+
 async function sendMsg($: any, text: string) {
   if (await read($, sendingAtom)) return // a send is in flight: ignore the repeat press
-  const view = await read($, viewAtom)
-  const body = buildSay(expandNewlines(text), await read($, tabAtom), await read($, replyAtom), view)
+  const body = await sayBody($, text)
   if (!body) return
   await update($, sendingAtom, () => true)
   try {
@@ -691,6 +819,7 @@ async function sendMsg($: any, text: string) {
       return
     }
     await update($, replyAtom, () => 0)
+    scrollEndLater($)
     draftLive = ''
     await update($, mentionAtom, () => null)
     await update($, forcedAtom, () => null)
@@ -895,8 +1024,7 @@ async function loadOlder($: any) {
   if (!ids.length) return
   await update($, olderAtom, o => ({ ...o, loading: true }))
   try {
-    const tabId = await read($, tabAtom)
-    const activeTab = tabsOf(view).some(t => t.id === tabId) ? tabId : 'all'
+    const activeTab = activeTabOf(view, await read($, tabAtom))
     let before = Math.min(...ids)
     let got: any[] = []
     let hasMore = true
@@ -919,15 +1047,49 @@ async function loadOlder($: any) {
     }
     if (!shows && hasMore && pages >= OLDER_MAX_PAGES) $.ui.toast(`更早的 ${pages * OLDER_PAGE} 条都是通知，已折叠；再点继续`)
     await update($, olderAtom, o => ({ items: [...got, ...o.items], hasMore, loading: false }))
+    const more = messagesFor({ ...view, timeline: got }, activeTab, POOL).length // what was fetched for this conversation shows
+    if (more) await update($, shownAtom, m => ({ ...m, [activeTab]: (m[activeTab] ?? SHOW_STEP) + more }))
   } catch (err) {
     $.ui.toast(`加载失败: ${errText(err)}`)
     await update($, olderAtom, o => ({ ...o, loading: false }))
   }
 }
 
+/** "显示更早的": the next SHOW_STEP messages of the open conversation that are already here (no hub call). */
+async function showMore($: any, tab: string) {
+  await update($, shownAtom, m => ({ ...m, [tab]: (m[tab] ?? SHOW_STEP) + SHOW_STEP }))
+}
+
 /** A member chip pressed: its full card opens (one at a time); pressing the open one closes it. */
 async function toggleExpand($: any, id: string) {
   await update($, expandedAtom, v => (v === id ? '' : id))
+}
+
+/**
+ * The member menu's 暂停 / 恢复 / 移出 (hub acts pause, resume, remove). 移出 takes two presses: the first turns the
+ * button into "确认移出", the second removes (the member's history stays; its token stops working).
+ */
+async function memberAct($: any, id: string, act: 'pause' | 'resume' | 'remove') {
+  const busy = await read($, busyAtom)
+  if (busy[`ma${id}`]) return
+  if (act === 'remove' && !busy[`rmq${id}`]) {
+    await update($, busyAtom, m => ({ ...m, [`rmq${id}`]: true }))
+    return
+  }
+  await update($, busyAtom, m => ({ ...m, [`ma${id}`]: true }))
+  const label = act === 'pause' ? '暂停' : act === 'resume' ? '恢复' : '移出'
+  try {
+    const r = await callHub($, 'POST', '/v1/act', { act, member: id })
+    if (r.status !== 200) $.ui.toast(`${label}失败 ${r.status}: ${String(r.data?.message ?? r.data?.error ?? '').slice(0, 100)}`)
+    else {
+      $.ui.toast(`已${label} ${displayName(id)}`)
+      if (act === 'remove') { await update($, tabAtom, () => '#room'); await update($, expandedAtom, () => '') }
+    }
+  } catch (err) {
+    $.ui.toast(`${label}失败: ${errText(err)}`)
+  } finally {
+    await update($, busyAtom, m => { const n = { ...m }; delete n[`ma${id}`]; delete n[`rmq${id}`]; return n })
+  }
 }
 
 async function toggleAddOpen($: any) {
@@ -959,8 +1121,13 @@ async function pendingForMe($: any, view: any): Promise<number> {
   return wakeCandidates(view, typeof seen === 'number' ? seen : maxWakeId(view)).length
 }
 
+let lastStatus: string | null = null // the status line as last set: set again only when its text changes
+
 async function refreshStatus($: any, view: any) {
-  $.ui.status(summaryLine(view, await pendingForMe($, view), (await $.store.get(STORE_AUTO)) === true))
+  const line = summaryLine(view, await pendingForMe($, view), (await $.store.get(STORE_AUTO)) === true)
+  if (line === lastStatus) return
+  lastStatus = line
+  $.ui.status(line)
 }
 
 /** Messages for the panel newer than the handled mark: submit one turn for all of them (auto on, or `force`). */
@@ -1110,7 +1277,13 @@ async function openPanel($: any) {
 // ---- theme, avatars, copy, draft, toasts ---------------------------------------------------------------------
 
 /** The `theme` row of /config decides the palette; read at start, after each view and on config.set. */
-async function refreshTheme($: any) {
+let themeAt = -Infinity // host clock of the last look at the theme: polls look at most every THEME_EVERY_MS
+const THEME_EVERY_MS = 30_000
+
+async function refreshTheme($: any, force = false) {
+  const now = await $.clock.now()
+  if (!force && now - themeAt < THEME_EVERY_MS) return
+  themeAt = now
   try {
     const rows = await $.config.list()
     const row = rows.find((r: any) => r.key === 'theme')
@@ -1186,12 +1359,17 @@ async function inputChanged($: any, v: string) {
   if (q !== (await read($, mentionAtom))) await update($, mentionAtom, () => q)
 }
 
-/** A member picked from the @ list: the trailing @word becomes "@id ", drawn as the same Input's new value (it keeps focus). */
+/**
+ * A member picked from the @ list: the trailing @word becomes "@id " (completeMention ends with one space). The Input is
+ * remounted (new key via inputGen) and refocused: a freshly mounted field puts the caret at the end of its text, whereas a
+ * new `value` on the same field would leave the caret where it was ("@op|encode").
+ */
 async function pickMention($: any, id: string) {
   draftLive = completeMention(draftLive, id)
   await update($, forcedAtom, () => draftLive)
+  await update($, inputGenAtom, n => n + 1)
   await update($, mentionAtom, () => null)
-  refocusInput($) // in case the surface still moved the ring (Enter went to the field's submit)
+  refocusInput($) // the remounted field has no focus yet
 }
 
 /**
@@ -1205,7 +1383,7 @@ function refocusInput($: any) {
 
 async function focusInput($: any) {
   let res: unknown
-  try { res = await $.ui.focus({ requestId: PANE, key: `xm-in-${await read($, sendNAtom)}` }) } catch (err) { res = errText(err) }
+  try { res = await $.ui.focus({ requestId: PANE, key: `xm-in-${await read($, sendNAtom)}-${await read($, inputGenAtom)}` }) } catch (err) { res = errText(err) }
   if (DEV) { try { await $.fs.write(FOCUS_MARK, `${new Date().toISOString()} ${JSON.stringify(res)}\n`) } catch { /* diagnostics only */ } }
 }
 
@@ -1237,28 +1415,76 @@ async function toggleFold($: any, key: string) {
   await update($, foldAtom, m => ({ ...m, [key]: !m[key] }))
 }
 
+let drawStage = '' // the last step drawPanel reached (shown when a draw throws or does not settle)
+
 async function drawPanel($: any, e: any) {
+  drawStage = 'resolve'
   const ui = $.ui.resolve(e) as any
   const { Box, Text, Button, Input, Markdown, Code, Select, Client } = ui
-  // the pane's width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide)
-  const cols = Number(e?.viewport?.columns ?? 0)
+  const desk = e?.surface === 'desktop'
+  // a shrinkable one-line text part of a row; `shrink` 0 keeps it whole (a short name), `grow` takes the free room
+  const cut = (key: string, text: string, tp: Record<string, unknown> = {}, o: { grow?: boolean; shrink?: number } = {}) => (
+    <Box key={key} flexGrow={o.grow ? 1 : 0} flexShrink={o.shrink ?? 1} minWidth={0} overflow="hidden"><Text wrap="truncate-end" {...tp}>{text}</Text></Box>
+  )
+  // a part of a row that never shrinks (a time, an icon, a button, a Client)
+  const fix = (key: string, node: any) => <Box key={key} flexShrink={0}>{node}</Box>
+  // a member name: whole when short, truncated when long
+  const nameShrink = (id: string) => (displayName(id).length > 14 ? 1 : 0)
+  // the pane's own width in cells (a code-font advance each, about 7 px; absent before the first layout: then wide).
+  // Not viewport.columns: beside a docked pane that is the transcript's column, which widens as the pane narrows.
+  const cols = Number(e?.props?.bodyColumns ?? e?.viewport?.columns ?? 0)
   const narrow = cols > 0 && cols < NARROW_COLS
-  const view = await read($, viewAtom)
-  const conn = await read($, connAtom)
-  const tab = await read($, tabAtom)
-  const replyTo = await read($, replyAtom)
-  const promoted = await read($, promotedAtom)
-  const typed = await read($, typedAtom)
-  const done = await read($, doneAtom)
-  const fold = await read($, foldAtom)
-  const light = await read($, themeAtom)
+  // the conversation list is always vertical beside the main column; it narrows with the pane and goes compact (one row per entry)
+  const railFold = (await read($, railFoldAtom)) === true // folded by hand to avatars only
+  const railW = railFold ? RAIL_FOLD_COLS : cols > 0 ? Math.max(12, Math.min(RAIL_COLS, Math.round(cols * 0.24))) : RAIL_COLS
+  const railCompact = railW < 17
+  const bodyRows = Number(e?.props?.scroll?.bodyRows ?? e?.viewport?.rows ?? 0)
+  drawStage = 'read view'
+  // every value the draw reads, at once: one round trip to the host instead of one per value (a draw ran ~30 in a row)
+  const [view, conn, tab, replyTo, promoted, done, fold, light, _avatarVer, open, briefFlag, briefStored, older, nowMs, sendN, sending, addOpen, expanded, busy, decision, mq, forced, autoStored, seenRaw, selfCtx, reveal, mp, shown, probeOn, sp, layout, inputGen] = await Promise.all([
+    read($, viewAtom),
+    read($, connAtom),
+    read($, tabAtom),
+    read($, replyAtom),
+    read($, promotedAtom),
+    read($, doneAtom),
+    read($, foldAtom),
+    read($, themeAtom),
+    read($, avatarVerAtom),
+    read($, openAtom),
+    read($, briefAtom),
+    $.store.get(STORE_BRIEF),
+    read($, olderAtom),
+    $.clock.now(),
+    read($, sendNAtom),
+    read($, sendingAtom),
+    read($, addOpenAtom),
+    read($, expandedAtom),
+    read($, busyAtom),
+    read($, decisionAtom),
+    read($, mentionAtom),
+    read($, forcedAtom),
+    $.store.get(STORE_AUTO),
+    $.store.get(STORE_SEEN),
+    read($, selfCtxAtom),
+    read($, revealAtom),
+    read($, modelAtom),
+    read($, shownAtom),
+    read($, probeAtom),
+    read($, scrollProbeAtom),
+    read($, layoutAtom),
+    read($, inputGenAtom),
+  ])
+  const chat = layout !== 'flow' // chat order (newest at the bottom); 'flow' draws the newest first
+  drawStage = 'read state'
   const pal = palOf(light)
-  await read($, avatarVerAtom) // redraw when a custom avatar file has been picked up
 
-  const open = await read($, openAtom)
-  const briefMissing = (await read($, briefAtom)) || (await $.store.get(STORE_BRIEF)) === true
+  drawStage = 'store brief'
+  const briefMissing = briefFlag || briefStored === true
   const noRoom = conn.phase === 'noroom'
+  drawStage = 'room target'
   const target = noRoom ? await roomTarget($) : ''
+  drawStage = `build (view ${view ? 'yes' : 'no'}, conn ${conn.phase})`
   // "no room here yet" with the button, the progress of opening it, or why it failed
   const roomBar = (noRoom || open.busy || open.error) ? (
     <Box flexDirection="column" gap={1}>
@@ -1319,41 +1545,34 @@ async function drawPanel($: any, e: any) {
   const members = membersOf(view)
   const hostId: string = view.room?.host ?? ''
   const meId: string = view.me?.id ?? ''
-  const tabs = tabsOf(view)
-  const activeTab = tabs.some(t => t.id === tab) ? tab : 'all'
+  const rail = railOf(view)
+  const activeTab = activeTabOf(view, tab)
+  const activeItem = rail.find(t => t.id === activeTab)!
+  const peerOf = activeItem.peer
   // the view's recent page plus any older pages loaded with the button at the bottom
   // (the view carries only the latest page, so every message seen is kept: one that slid out of the page stays)
-  const older = await read($, olderAtom)
   if (seenRoom !== String(view.room?.id ?? '')) { seenRoom = String(view.room?.id ?? ''); seenMsgs.clear() }
   for (const m of older.items) if (typeof m?.id === 'number' && !seenMsgs.has(m.id)) seenMsgs.set(m.id, m)
   for (const m of (Array.isArray(view.timeline) ? view.timeline : [])) if (typeof m?.id === 'number') seenMsgs.set(m.id, m)
   const histView = { ...view, timeline: [...seenMsgs.values()].sort((a, b) => a.id - b.id) }
   const hasOlder = older.items.length ? older.hasMore : !!view.timeline_cursor?.has_more
-  const msgs = messagesFor(histView, activeTab, POOL).reverse() // newest first (see the layout note below)
+  const tabMsgs = messagesFor(histView, activeTab, POOL).reverse() // newest first (see the layout note below)
+  const msgs = tabMsgs.slice(0, shown[activeTab] ?? SHOW_STEP) // only these are built: a long history costs nothing per draw
+  const hiddenHere = tabMsgs.length - msgs.length
   const rows = buildRows(msgs)
-  const replied = msgs.find(m => m.id === replyTo)
+  const replied = tabMsgs.find(m => m.id === replyTo)
   const replySnip = replied ? `${displayName(replied.from)}：${String(replied.text ?? '').replace(/\s+/g, ' ').slice(0, 40)}` : ''
-  const activeLabel = tabs.find(t => t.id === activeTab)?.label ?? activeTab
-  const placeholder = narrow ? '说点什么…（@ 指定成员）' : '说点什么…  @ 指定成员 · Enter 发送 · \\n 换行'
+  const activeLabel = activeItem.kind === 'room' ? '全员' : activeItem.kind === 'all' ? '全员（大群）' : activeItem.label
+  const placeholder = narrow ? '说点什么' : '说点什么，@ 指定成员'
+  const probeLine = probeOn
+    ? `探针 · 滚动事件 ${sp.n ? `${sp.n}（by ${sp.by}，窗口 ${sp.bodyRows}/${sp.contentRows} 行，来源 ${sp.origin}）` : '未收到'} · 横幅绘制 ${bandDraws} 次`
+    : ''
   const approvals = approvalsOf(view)
   const working = workingMembers(view)
-  const nowMs = await $.clock.now() // the host clock; the per-second times are drawn by the elapsed Client (elapsed.tsx)
-  const sendN = await read($, sendNAtom)
-  const sending = await read($, sendingAtom)
-  const addOpen = await read($, addOpenAtom)
-  const expanded = await read($, expandedAtom)
-  const busy = await read($, busyAtom)
-  const decision = await read($, decisionAtom)
-  const mq = await read($, mentionAtom)
-  const forced = await read($, forcedAtom)
-  const autoWake = (await $.store.get(STORE_AUTO)) === true
-  const seenRaw = await $.store.get(STORE_SEEN)
+  const autoWake = autoStored === true
   const wakePending = wakeCandidates(view, typeof seenRaw === 'number' ? seenRaw : maxWakeId(view)).length
   const stale = conn.phase === 'error' // the view is old: no live-looking states
   const cands = mq !== null ? mentionCandidates(view, mq, 6) : []
-  const selfCtx = await read($, selfCtxAtom)
-  const reveal = await read($, revealAtom)
-  const mp = await read($, modelAtom)
   const cpBusy = (id: string) => !!busy[`cp${id}`]
 
   // one message: optional header, bubble, hover actions. `head` false = continuation inside a group
@@ -1380,10 +1599,10 @@ async function drawPanel($: any, e: any) {
     const bg = mine ? pal.mine : toMe ? pal.toClaude : pal.bubble
     const bd = mine ? pal.mineBorder : toMe ? C_ORANGE : mixHex(pal.bubbleBorder, nc(from), 0.35)
     const actions = (
-      <Box flexDirection="row" gap={1}>
+      <Box flexDirection="row" gap={1} flexShrink={0}>
         {head ? null : <Text dimColor>{fmtClock(m.at)}</Text>}
         <Button key={`re-${m.id}`} plain onPress={() => setReply($, m.id)}>回复</Button>
-        {decided ? null : <Button key={`pr-${m.id}`} plain onPress={() => promote($, m.id)}>{busy[`pr${m.id}`] ? '处理中…' : '设为决定'}</Button>}
+        {decided ? null : <Button key={`pr-${m.id}`} plain onPress={() => promote($, m.id)}>{busy[`pr${m.id}`] ? '处理中…' : narrow ? '决定' : '设为决定'}</Button>}
         <Button key={`cp-${m.id}`} plain onPress={(p: any) => copyText($, full, p?.surface)}>复制</Button>
         {mine ? <Button key={`rt-${m.id}`} plain hover={{ color: C_RED }} onPress={() => retractMsg($, m.id, full)}>{busy[`rt${m.id}`] ? '撤回中…' : '撤回'}</Button> : null}
       </Box>
@@ -1397,11 +1616,11 @@ async function drawPanel($: any, e: any) {
       <Box flexDirection="row" justifyContent={mine ? 'flex-end' : 'flex-start'}>{hoverActs}</Box>
     )
     const bubble = (
-      <Box backgroundColor={bg} borderStyle="round" borderColor={bd} paddingX={1} flexDirection="column">
+      <Box backgroundColor={bg} borderStyle="round" borderColor={desk && !toMe ? bg : bd} paddingX={1} flexDirection="column" minWidth={0}>
         {quote ? <Text dimColor wrap="truncate-end">{quote}</Text> : null}
         {blocks.map((b, i) => b.kind === 'diff'
           ? <Code key={`cd-${m.id}-${i}`} source={b.text} format="diff" />
-          : <Markdown key={`md-${m.id}-${i}`} text={hardBreaks(b.text)} />)}
+          : <Markdown key={`md-${m.id}-${i}`} text={hardBreaks(softWrap(b.text))} />)}
         {growing ? (
           <Client key={`gr-m-${m.id}`} module="./grow.tsx"
             props={{ id: `r:${m.id}:${reveal.run}`, text: full, from: 0, stepMs: REVEAL_STEP_MS, steps: reveal.steps, mode: 'md' }} />
@@ -1416,13 +1635,14 @@ async function drawPanel($: any, e: any) {
     )
     if (mine) {
       return (
-        <Box key={`m-${m.id}`} flexDirection="row" justifyContent="flex-end" marginLeft={8}>
-          <Box flexDirection="column" flexGrow={1}>
+        <Box key={`m-${m.id}`} flexDirection="row" justifyContent="flex-end" marginLeft={narrow ? 4 : 8}>
+          <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
             {head ? (
-              <Box flexDirection="row" gap={1} justifyContent="flex-end" alignItems="center">
+              <Box flexDirection="row" gap={1} justifyContent="flex-end" alignItems="center" minWidth={0}>
                 {hoverActs}
-                {decided ? <Text color={C_AMBER}>{`◆ 已决定 ${decided}`}</Text> : null}
-                <Text dimColor>{`你 → ${toLabel(m)} · ${fmtClock(m.at)}`}</Text>
+                {decided ? fix(`dc-${m.id}`, <Text color={C_AMBER}>{`◆ ${clip(decided, 12)}`}</Text>) : null}
+                {cut(`to-${m.id}`, `你 → ${toLabel(m)}`, { dimColor: true })}
+                {fix(`at-${m.id}`, <Text dimColor>{fmtClock(m.at)}</Text>)}
               </Box>
             ) : decided ? <Text color={C_AMBER}>{`◆ 已决定 ${decided}`}</Text> : null}
             {overlay}
@@ -1432,19 +1652,21 @@ async function drawPanel($: any, e: any) {
       )
     }
     const header = head ? (
-      <Box flexDirection="row" gap={1} alignItems="center">
-        <Text bold color={nc(from)}>{displayName(from)}</Text>
-        {isAutoForward(m) ? <Text dimColor>自动转发</Text> : null}
-        <Text color={toMe ? C_ORANGE : undefined} dimColor={!toMe}>{`→ ${toLabel(m)} · ${fmtClock(m.at)}`}</Text>
-        {decided ? <Text color={C_AMBER}>{`◆ 已决定 ${decided}`}</Text> : null}
+      <Box flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+        {cut(`nm-${m.id}`, displayName(from), { bold: true, color: nc(from) }, { shrink: nameShrink(from) })}
+        {isAutoForward(m) ? fix(`af-${m.id}`, <Text dimColor>自动转发</Text>) : null}
+        {cut(`to-${m.id}`, `→ ${toLabel(m)}`, { color: toMe ? C_ORANGE : undefined, dimColor: !toMe })}
+        {fix(`at-${m.id}`, <Text dimColor>{fmtClock(m.at)}</Text>)}
+        {decided ? fix(`dc-${m.id}`, <Text color={C_AMBER}>{`◆ ${clip(decided, 12)}`}</Text>) : null}
         <Box flexGrow={1} />
         {hoverActs}
       </Box>
     ) : decided ? <Text color={C_AMBER}>{`◆ 已决定 ${decided}`}</Text> : null
     return (
       <Box key={`m-${m.id}`} flexDirection="row" gap={1} marginLeft={head ? 0 : 5}>
-        {head ? avatar(ui, from, 28, look) : null}
-        <Box flexDirection="column" flexGrow={1}>
+        {/* top-aligned with the name: the desktop centres an image in a stretched row */}
+        {head ? <Box flexShrink={0} alignSelf="flex-start">{avatar(ui, from, 28, look)}</Box> : null}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           {header}
           {overlay}
           {bubble}
@@ -1458,14 +1680,14 @@ async function drawPanel($: any, e: any) {
   const eventCard = (key: string, tone: Tone, title: string, at: number | undefined,
     o: { fold?: string; foldLabel?: string; titleColor?: string; who?: string; detail?: any } = {}) => (
     <Box key={key} flexDirection="column" borderStyle="round" borderColor={tone.border} backgroundColor={tone.bg} paddingX={1}>
-      <Box flexDirection="row" gap={1} alignItems="center">
-        <Text color={tone.fg} bold>{tone.icon}</Text>
-        {o.who ? <Text color={nc(o.who)} bold>{displayName(o.who)}</Text> : null}
-        <Box flexGrow={1} flexShrink={1}>
+      <Box flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+        {fix(`${key}-ic`, <Text color={tone.fg} bold>{tone.icon}</Text>)}
+        {o.who ? cut(`${key}-who`, displayName(o.who), { color: nc(o.who), bold: true }, { shrink: nameShrink(o.who) }) : null}
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text wrap="truncate-end" color={o.titleColor} dimColor={!o.titleColor}>{title}</Text>
         </Box>
-        {at ? <Text dimColor>{fmtClock(at)}</Text> : null}
-        {o.fold ? <Button key={`${key}-b`} plain dimColor onPress={() => toggleFold($, o.fold!)}>{o.foldLabel ?? '展开'}</Button> : null}
+        {at ? fix(`${key}-at`, <Text dimColor>{fmtClock(at)}</Text>) : null}
+        {o.fold ? fix(`${key}-fb`, <Button key={`${key}-b`} plain dimColor onPress={() => toggleFold($, o.fold!)}>{o.foldLabel ?? '展开'}</Button>) : null}
       </Box>
       {o.detail ?? null}
     </Box>
@@ -1473,34 +1695,35 @@ async function drawPanel($: any, e: any) {
 
   // Live drafts, newest of all so at the top: each member at work (in this tab) as a bubble in the making, with what
   // it is writing (the latest part, typed in) or the tool it runs, and three dots that step with the clock.
-  const peerOf = tabs.find(t => t.id === activeTab)?.peer
-  const drafts = stale ? [] : working.filter(w => activeTab === 'all' || peerOf === w.id).map(w => {
-    const p = w.progress
-    const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
-    const raw = String(p?.text ?? '')
-    const typing = typed.run > 0 && typed.steps.length > 0 &&typed.id === w.id && typed.full === raw // a grow Client types it in
-    const text = typing ? raw : draftTail(raw)
+  // a member with nothing written yet is only a state, which the working strip above already shows (its first two)
+  // The text and the clock are live.tsx Clients (they refresh themselves once a second without a panel redraw); this tree
+  // only gives them their first props, from the latest full view (liveView) so the first second is not blank.
+  const liveOf = (id: string, part: string) => {
+    const m = workingMembers(liveView ?? view).find(x => x.id === id)
+    const p = m?.progress
+    return { part, id, tool: typeof p?.last_tool === 'string' ? p.last_tool.trim() : '', text: String(p?.text ?? ''), tools: toolCount(p),
+      startedAt: elapsedStart(p?.started_at), nowMs: Number(nowMs) }
+  }
+  const drafts = stale ? [] : working.filter(w => (!peerOf || peerOf === w.id)
+    // has_text is structural (structOf): the row appears with the first written word, one redraw per turn
+    && (!!w.progress?.has_text || liveOf(w.id, 'draft').text.trim() !== '' || working.indexOf(w) >= 2)).map(w => {
+    const lv = liveOf(w.id, 'draft')
     return (
       <Box key={`dr-${w.id}`} flexDirection="row" gap={1}>
-        {avatar(ui, w.id, 28, look)}
-        <Box flexDirection="column" flexGrow={1}>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text bold color={nc(w.id)}>{displayName(w.id)}</Text>
-            <Text color={C_BLUE}>{lt ? `正在调用 ${lt}` : text ? '正在写' : '正在思考'}</Text>
-            <Client key={`el-${w.id}-dots`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'dots' }} />
+        <Box flexShrink={0} alignSelf="flex-start">{avatar(ui, w.id, 28, look)}</Box>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+            {cut(`dr-nm-${w.id}`, displayName(w.id), { bold: true, color: nc(w.id) }, { shrink: nameShrink(w.id) })}
+            {cut(`dr-st-${w.id}`, w.progress?.has_text || lv.text.trim() ? '正在写' : '正在执行', { color: C_BLUE })}
           </Box>
-          {text ? (
-            <Box borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.5)} paddingX={1}>
-              {typing ? (
-                <Client key={`gr-t-${w.id}-${typed.run}`} module="./grow.tsx"
-                  props={{ id: `t:${w.id}:${typed.run}`, text: raw, from: typed.from, stepMs: TYPE_STEP_MS, steps: typed.steps, mode: 'draft' }} />
-              ) : <Text dimColor>{`${text} ▍`}</Text>}
-            </Box>
-          ) : null}
+          <Box borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.5)} paddingX={1} minWidth={0}>
+            <Client key={`lv-dr-${w.id}`} module="./live.tsx" props={lv} />
+          </Box>
         </Box>
       </Box>
     )
   })
+
 
   // message rows with day dividers between them
   const msgNodes: any[] = []
@@ -1514,21 +1737,21 @@ async function drawPanel($: any, e: any) {
       const last = row.items[row.items.length - 1]
       const tone = TONES[noiseTone(row.items)]
       msgNodes.push(
-        <Box key={row.key} flexDirection="column" alignItems="center">
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text color={tone.fg}>{tone.icon}</Text>
-            <Text dimColor wrap="truncate-end">{`${noiseTitle(row.items)}${last?.at ? ' · ' + fmtClock(last.at) : ''}`}</Text>
-            {openable ? (
+        <Box key={row.key} flexDirection="column" alignItems="stretch">
+          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="center" minWidth={0}>
+            {fix(`${row.key}-ic`, <Text color={tone.fg}>{tone.icon}</Text>)}
+            {cut(`${row.key}-t`, `${noiseTitle(row.items)}${last?.at ? ' · ' + fmtClock(last.at) : ''}`, { dimColor: true })}
+            {openable ? fix(`${row.key}-fb`, (
               <Button key={`${row.key}-b`} plain dimColor onPress={() => toggleFold($, row.key)}>
                 {isOpen ? '收起' : nCmd ? `${nCmd} 条命令 ›` : '详情 ›'}
               </Button>
-            ) : null}
+            )) : null}
           </Box>
           {isOpen ? (
             <Box flexDirection="column" gap={1} width="100%" borderStyle="round" borderColor={tone.border} backgroundColor={tone.bg} paddingX={1}>
               {row.items.map(it => (
                 <Box key={`${row.key}-${it.id}`} flexDirection="column">
-                  <Text dimColor>{`${fmtClock(it.at)}  ${it.text}`}</Text>
+                  <Text dimColor>{`${fmtClock(it.at)}  ${softWrap(it.text, false)}`}</Text>
                   {it.cmds?.length ? (
                     <Box backgroundColor={pal.codeBg} paddingX={1}>
                       <Code source={it.cmds.join('\n')} language="bash" wrap="wrap" />
@@ -1555,7 +1778,7 @@ async function drawPanel($: any, e: any) {
       msgNodes.push(eventCard(`m-${m.id}`, tone, n.text, m.at, {
         titleColor: tone.fg,
         fold: n.raw !== n.text ? `w${m.id}` : undefined, foldLabel: isOpen ? '收起' : '详情',
-        detail: isOpen ? <Text dimColor>{n.raw}</Text> : null,
+        detail: isOpen ? <Text dimColor>{softWrap(n.raw, false)}</Text> : null,
       }))
     } else if (isDoneMsg(row.m)) {
       // a member ended its turn with xmuse_done: one card, the full report on demand
@@ -1567,7 +1790,7 @@ async function drawPanel($: any, e: any) {
       const report = isOpen ? (
         <Box flexDirection="column" marginBottom={1}>
           <Box backgroundColor={pal.bubble} borderStyle="round" borderColor={pal.bubbleBorder} paddingX={1}>
-            <Markdown key={`md-${m.id}`} text={hardBreaks(String(m.text ?? ''))} />
+            <Markdown key={`md-${m.id}`} text={hardBreaks(softWrap(String(m.text ?? '')))} />
           </Box>
           <Box flexDirection="row">
             <Button key={`dn-${m.id}-cp`} plain dimColor onPress={(p: any) => copyText($, String(m.text ?? ''), p?.surface)}>复制全文</Button>
@@ -1583,13 +1806,13 @@ async function drawPanel($: any, e: any) {
         const tone = TONES.done
         msgNodes.push(
           <Box key={`m-${m.id}`} flexDirection="column">
-            <Box flexDirection="row" gap={1} alignItems="center" backgroundColor={tone.bg} paddingRight={1}>
-              <Text color={tone.fg}>▌</Text>
-              <Text color={tone.fg}>{tone.icon}</Text>
-              <Text color={nc(m.from ?? '?')} bold>{displayName(m.from ?? '?')}</Text>
-              <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{title}</Text></Box>
-              <Text dimColor>{fmtClock(m.at)}</Text>
-              <Button key={`m-${m.id}-b`} plain dimColor onPress={() => toggleFold($, `d${m.id}`)}>{isOpen ? '收起' : '报告 ›'}</Button>
+            <Box flexDirection="row" gap={1} alignItems="center" backgroundColor={tone.bg} paddingRight={1} minWidth={0}>
+              {fix(`m-${m.id}-bar`, <Text color={tone.fg}>▌</Text>)}
+              {fix(`m-${m.id}-ic`, <Text color={tone.fg}>{tone.icon}</Text>)}
+              {cut(`m-${m.id}-who`, displayName(m.from ?? '?'), { color: nc(m.from ?? '?'), bold: true }, { shrink: nameShrink(m.from ?? '?') })}
+              <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{title}</Text></Box>
+              {fix(`m-${m.id}-at`, <Text dimColor>{fmtClock(m.at)}</Text>)}
+              {fix(`m-${m.id}-fb`, <Button key={`m-${m.id}-b`} plain dimColor onPress={() => toggleFold($, `d${m.id}`)}>{isOpen ? '收起' : '报告 ›'}</Button>)}
             </Box>
             {report}
           </Box>,
@@ -1617,9 +1840,9 @@ async function drawPanel($: any, e: any) {
     const label = `${displayName(a.member)}: ${text.replace(/\s+/g, ' ').slice(0, 40)}`
     return (
       <Box key={`ap-${a.id}`} flexDirection="column" borderStyle="round" borderColor={C_AMBER} paddingX={1}>
-        <Box flexDirection="row" gap={1}>
+        <Box flexDirection="row" columnGap={1} flexWrap="wrap">
           <Text color={C_AMBER}>⚠</Text>
-          <Text color={a.member ? nc(a.member) : undefined}>{a.member ? displayName(a.member) : '?'}</Text>
+          <Text color={a.member ? nc(a.member) : undefined}>{a.member ? clip(displayName(a.member), 20) : '?'}</Text>
           <Text color={C_AMBER}>{`请求${approvalKindLabel(a.kind)}`}</Text>
           {risky ? <Text color={C_RED}>风险:高</Text> : null}
           {ago ? <Text dimColor>{ago}</Text> : null}
@@ -1631,14 +1854,14 @@ async function drawPanel($: any, e: any) {
         ) : (
           <Text wrap={isOpen ? 'wrap' : 'truncate-end'}>{text}</Text>
         )}
-        <Box flexDirection="row" gap={1}>
+        <Box flexDirection="row" columnGap={1} flexWrap="wrap">
           {long ? <Button key={`ap-${a.id}-more`} plain dimColor onPress={() => toggleFold($, `ap-${a.id}`)}>{isOpen ? '收起' : '展开'}</Button> : null}
           <Button key={`ap-${a.id}-cp`} plain dimColor onPress={(p: any) => copyText($, text, p?.surface)}>{isShell ? '复制命令' : '复制'}</Button>
         </Box>
         {busy[a.id] ? (
           <Text dimColor>处理中…</Text>
         ) : (
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row" columnGap={1} flexWrap="wrap">
             <Button key={`ap-${a.id}-once`} variant="primary" onPress={() => approve($, a.id, 'once', label)}>
               {approvalHasAlways(a) ? '批准一次' : '批准'}
             </Button>
@@ -1676,30 +1899,30 @@ async function drawPanel($: any, e: any) {
     return (
       <Box key={`mate-${m.id}`} flexDirection="row" gap={1} alignItems="center" borderStyle="round"
         borderColor={b.running ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.6) : pal.bubbleBorder}
-        backgroundColor={pal.bubble} paddingX={1} minWidth={26}>
+        backgroundColor={pal.bubble} paddingX={1}>
         {avatar(ui, m.id, 32, look)}
-        <Box flexDirection="column" flexGrow={1}>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text bold color={nc(m.id)}>{m.id}</Text>
-            {m.id === hostId ? <Text color={C_AMBER}>★ 主控</Text> : null}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Box flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+            {cut(`cd-nm-${m.id}`, m.id, { bold: true, color: nc(m.id) })}
+            {m.id === hostId ? fix(`cd-host-${m.id}`, <Text color={C_AMBER}>★ 主控</Text>) : null}
           </Box>
-          <Box flexDirection="row">
+          <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
             <Text color={b.dot}>{b.st.dot}</Text>
             <Text dimColor>{` ${stale ? '未知' : b.st.label}`}</Text>
             {b.running ? (
               <Client key={`el-${m.id}-card`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} />
             ) : null}
-            {b.running ? <Text dimColor>{` · ${toolCount(m.progress)} 个工具`}</Text> : null}
+            {b.running ? <Client key={`lv-tools-${m.id}`} module="./live.tsx" props={liveOf(m.id, 'tools')} /> : null}
             {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
           </Box>
           {/* its model, a button that opens the picker; this session's own Claude is the desktop app's to set */}
           {m.model && m.id !== meId ? (
             <Button key={`md-${m.id}`} plain dimColor={mp?.member !== m.id} hover={{ color: C_BLUE }} onPress={() => toggleModelPicker($, m.id)}>
-              {`${shortModel(m.model)} ${mp?.member === m.id ? '▴' : '▾'}`}
+              {`${narrow ? clip(shortModel(m.model), 14) : shortModel(m.model)} ${mp?.member === m.id ? '▴' : '▾'}`}
             </Button>
           ) : null}
           {!stale && (b.ctx || m.compacted || b.compacting) ? (
-            <Box flexDirection="row" gap={1} alignItems="center">
+            <Box flexDirection="row" columnGap={1} alignItems="center" flexWrap="wrap">
               {b.compacting ? <Text color={C_BLUE}>◌ 压缩中…</Text>
                 : m.compacted ? <Text dimColor>已压缩 · 待下次回复</Text>
                 : (
@@ -1721,10 +1944,209 @@ async function drawPanel($: any, e: any) {
     )
   }
   const openMember = members.find(x => x.id === expanded)
+  const peerMember = peerOf ? members.find(x => x.id === peerOf) : undefined
 
-  return (
+  // The conversation list: the room, one entry per member (the user's private chat with it), everything. Always a
+  // vertical list of cards beside the main column, as tall as the pane; its width follows the pane (railW) and a narrow
+  // one is compact (one row per entry, the status as a dot). Never folded. Only a Button takes a press (an avatar
+  // cannot), so the name is the target; the row Box has a key, which makes it a hover scope (the highlight needs no code).
+  const railIcon = (it: RailItem, size: number) => it.kind === 'room'
+    ? <ui.Svg source={roomSvg(size)} alt="大群" width={size} height={size} />
+    : it.peer ? avatar(ui, it.peer, size, look)
+    : <Box width={3} justifyContent="center"><Text dimColor>≡</Text></Box>
+  const unreadPill = (n: number) => (
+    <Text color={desk ? '#FFFFFF' : C_RED} backgroundColor={desk ? '#E5534B' : undefined} bold>{desk ? ` ${Math.min(n, 99)} ` : String(Math.min(n, 99))}</Text>
+  )
+  const railRow = (it: RailItem) => {
+    const sel = it.id === activeTab
+    const m = it.peer ? members.find(x => x.id === it.peer) : undefined
+    const b = m ? bitsOf(m) : null
+    const key = it.kind === 'dm' ? `rail-dm-${it.peer}` : `rail-${it.kind}`
+    const name = it.kind === 'room' ? '大群' : it.kind === 'all' ? '全部' : it.label
+    const sub = it.kind === 'room' ? `${members.length} 位成员` :it.kind === 'all' ? '所有消息' : stale ? '未知' : (b?.st.label ?? '')
+    if (railFold) {
+      // avatars only: a blank Button over the whole cell is the click target (a Button cannot hold an image), painted last
+      return (
+        <Box key={`rw-${key}`} position="relative" alignItems="center" justifyContent="center" paddingY={1} width="100%"
+          {...(sel ? { backgroundColor: pal.bubble } : {})} hover={{ backgroundColor: pal.hoverBg }}>
+          {it.kind === 'all'
+            ? <Box key={`${key}-ic`} width={4} height={2} alignItems="center" justifyContent="center"><Text dimColor>≡</Text></Box>
+            : railIcon(it, 28)}
+          {sel ? <Box key={`${key}-sel`} position="absolute" left={0} top={1}><Text color={C_BLUE}>▍</Text></Box> : null}
+          {it.unread > 0 ? <Box key={`${key}-un`} position="absolute" top={0} right={0}>{unreadPill(it.unread)}</Box> : null}
+          {b ? <Box key={`${key}-dot`} position="absolute" bottom={0} right={0}><Text color={b.dot}>●</Text></Box> : null}
+          <Box key={`${key}-hit`} position="absolute" top={0} left={0} right={0} bottom={0}>
+            <Button key={key} plain onPress={() => setTab($, it.id)} label={'　　'} />
+          </Box>
+        </Box>
+      )
+    }
+    return (
+      <Box key={`rw-${key}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} paddingY={0} marginX={1} marginBottom={1}
+        borderStyle="round" borderColor={sel ? pal.bubble : '#00000000'} {...(sel ? { backgroundColor: pal.bubble } : {})}
+        hover={{ backgroundColor: pal.hoverBg }}>
+        {fix(`${key}-ic`, railIcon(it, railCompact ? 24 : 28))}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Button key={key} plain dimColor={!sel} onPress={() => setTab($, it.id)}>
+            <Text bold={sel} color={m ? nc(m.id) : undefined}>{clip(name, railCompact ? railW - 7 : railW - 9)}</Text>
+            {railCompact && b ? <Text color={b.dot}>{' ●'}</Text> : null}
+          </Button>
+          {railCompact ? null : b ? (
+            <Box flexDirection="row" columnGap={1} minWidth={0}>
+              {fix(`rs-${key}-dot`, <Text color={b.dot}>●</Text>)}
+              {cut(`rs-${key}`, sub, { dimColor: true })}
+            </Box>
+          ) : cut(`rs-${key}`, sub, { dimColor: true })}
+        </Box>
+        {it.unread > 0 ? fix(`${key}-un`, unreadPill(it.unread)) : null}
+      </Box>
+    )
+  }
+  // the fold control closes the rail
+  const railFoldBtn = (
+    <Box key="rw-rail-fold" flexDirection="row" justifyContent={railFold ? 'center' : 'flex-start'} marginX={railFold ? 0 : 1} flexShrink={0}>
+      <Button key="rail-fold" plain dimColor onPress={() => toggleRailFold($)}>{railFold ? '›' : '‹ 收起'}</Button>
+    </Box>
+  )
+  // chat: the entries sit at the bottom of the column, which is as tall as the pane (the root stretches it); the fold toggle is last
+  const railNode = (
+    <Box flexDirection="column" flexShrink={0} width={railW} backgroundColor={pal.codeBg} paddingY={1}
+      {...(chat ? { justifyContent: 'flex-end' } : {})}>
+      {rail.map(railRow)}
+      {railFoldBtn}
+    </Box>
+  )
+
+  // the decision line and the approval cards: the first one open, the rest behind one line (chat: above the composer; flow: in the top box)
+  const approvalsNode = (
     <Box flexDirection="column">
+      {decision.text ? <Box marginTop={1}><Text color={decision.ok ? C_GREEN : C_RED} wrap="truncate-end">{decision.text}</Text></Box> : null}
+      {shownApprovals.map(a => <Box key={`apw-${a.id}`} flexDirection="column" marginTop={1}>{approvalCard(a)}</Box>)}
+      {approvals.length > 1 ? (
+        <Box flexDirection="row" gap={1} alignItems="center" marginTop={1}>
+          <Text color={C_AMBER}>{allOpen ? `共 ${approvals.length} 条待审批` : `还有 ${approvals.length - 1} 条待审批`}</Text>
+          <Button key="ap-all-toggle" plain onPress={() => toggleFold($, 'ap-all')}>{allOpen ? '只看第一条' : '全部展开'}</Button>
+        </Box>
+      ) : null}
+    </Box>
+  )
+
+  // The controls of the header, as parts: the flow layout draws them in the top box, the chat layout in actionsNode just above
+  // the composer (the chat follows the bottom, so they must not sit at the far top). Each key is drawn once per tree.
+  // Every unit (a notice with its buttons, the header's button group) is one unbreakable box: when the pane is too
+  // narrow the row wraps between units, never inside one. Buttons are plain text buttons; the one solid button in the
+  // area is the main action of a notice.
+  const wakeNotice = !autoWake && wakePending > 0 ? (
+    <Box key="wake-notice" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+      <Text color={C_AMBER}>{`⚠ ${wakePending} 条待处理`}</Text>
+      <Button key="wake-banner" variant="primary" onPress={() => wakeNow($)}>{busy.wake ? '处理中…' : '处理'}</Button>
+    </Box>
+  ) : null
+  const briefNotice = briefMissing ? (
+    <Box key="brief-notice" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+      <Text color={C_AMBER}>无项目简介</Text>
+      <Button key="brief-ask" plain onPress={() => askBrief($)}>写一份</Button>
+      <Button key="brief-skip" plain dimColor onPress={() => dismissBrief($)}>忽略</Button>
+    </Box>
+  ) : null
+  // flow: one line of notices
+  const noticesRow = wakeNotice || briefNotice ? (
+    <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+      {wakeNotice}
+      {briefNotice}
+    </Box>
+  ) : null
+  // a member tab's 操作 button
+  const peerMenuBtn = peerMember ? fix('peer-menu-f', (
+    <Button key={`peer-menu-${peerMember.id}`} plain dimColor={chat} hover={chat ? { color: C_BLUE } : undefined} onPress={() => toggleExpand($, peerMember.id)}>
+      {expanded === peerMember.id ? '收起 ▴' : '操作 ▾'}
+    </Button>
+  )) : null
+  // the room's buttons
+  // in the chat layout they are a quiet toolbar: dim, with a hover colour; the flow layout keeps them as they were
+  const roomActions = (
+    <Box key="room-actions" flexDirection="row" alignItems="center" columnGap={chat ? 2 : 3} flexShrink={0}>
+      {members.length ? <Button key="add-toggle" plain dimColor={chat} hover={chat ? { color: C_BLUE } : undefined} onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 助手'}</Button> : null}
+      <Button key="auto-wake" plain dimColor={chat} hover={chat ? { color: C_BLUE } : undefined} onPress={() => toggleAuto($)}>
+        {autoWake ? <Text>{chat ? <Text dimColor>自动叫醒 </Text> : '自动叫醒 '}<Text color={C_GREEN}>●</Text></Text> : <Text dimColor>自动叫醒 ○</Text>}
+      </Button>
+    </Box>
+  )
+  const addRow = addOpen && members.length ? (
+    <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+      <Text dimColor>添加</Text>
+      {busy.add ? <Text color={C_BLUE}>正在添加…</Text> : (
+        <Box flexDirection="row" columnGap={3}>
+          <Button key="add-opencode" plain onPress={() => addMember($, 'opencode')}>OpenCode</Button>
+          <Button key="add-dsh" plain onPress={() => addMember($, 'dsh')}>dsh</Button>
+          <Button key="add-agy" plain onPress={() => addMember($, 'agy')}>agy</Button>
+        </Box>
+      )}
+    </Box>
+  ) : null
+  const memberMenu = peerMember && openMember?.id === peerMember.id ? (
+    <Box flexDirection="column" marginTop={1}>
+      {cardOf(peerMember)}
+      <Box key={`menu-${peerMember.id}`} flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+        {peerMember.paused || peerMember.status === 'paused'
+          ? <Button key={`resume-${peerMember.id}`} plain onPress={() => memberAct($, peerMember.id, 'resume')}>▶ 恢复</Button>
+          : <Button key={`pause-${peerMember.id}`} plain onPress={() => memberAct($, peerMember.id, 'pause')}>⏸ 暂停</Button>}
+        {peerMember.id !== hostId ? (
+          <Button key={`remove-${peerMember.id}`} plain dimColor={!busy[`rmq${peerMember.id}`]} hover={{ color: C_RED }}
+            onPress={() => memberAct($, peerMember.id, 'remove')}>
+            {busy[`rmq${peerMember.id}`] ? '确认移出？再点一次' : '移出房间'}
+          </Button>
+        ) : null}
+        {busy[`ma${peerMember.id}`] ? <Text color={C_BLUE}>处理中…</Text> : null}
+      </Box>
+    </Box>
+  ) : null
+  // model picker of one member: the hub's options (its catalog, the defaults, what the room ran) or a typed
+  // name; a pick is saved at once and takes effect at the member's next turn
+  const modelPicker = mp && members.some(x => x.id === mp.member) ? (
+    <Box key="model-pick" flexDirection="column" borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.6)}
+      backgroundColor={pal.bubble} paddingX={1} gap={1} marginTop={1}>
+      <Box flexDirection="row" gap={1} alignItems="center" minWidth={0}>
+        {cut('mp-t', `更换 ${displayName(mp.member)} 的模型 · 下一轮起生效`, { bold: true }, { grow: true })}
+        {fix('mp-xf', <Button key="mp-x" plain dimColor onPress={() => toggleModelPicker($, mp.member)}>✕</Button>)}
+      </Box>
+      {mp.loading ? <Text color={C_BLUE}>读取可选模型…</Text> : (
+        <Box flexDirection="column" gap={1}>
+          {mp.options.length ? (
+            <Select key={`mp-sel-${mp.member}`} label="选择" value={mp.current}
+              options={mp.options.map(o => ({ value: o.value, label: o.value === mp.current ? `${o.label ?? o.value}（当前）` : (o.label ?? o.value) }))}
+              onSelect={(v: string) => setModel($, mp.member, v)} />
+          ) : null}
+          <Input key={`mp-in-${mp.member}`} placeholder={mp.format ? `或输入其他模型（格式 ${mp.format}）` : '或输入其他模型名'}
+            submitLabel="换成这个" onSubmit={(v: string) => setModel($, mp.member, v)} />
+        </Box>
+      )}
+      {busy[`md${mp.member}`] ? <Text color={C_BLUE}>正在更换…</Text> : null}
+      {mp.note ? <Text dimColor>{mp.note}</Text> : null}
+      {mp.error ? <Text color={C_RED}>{mp.error}</Text> : null}
+    </Box>
+  ) : null
+  // chat layout: above the composer card, only what needs attention — notices (when any), and the add row / member
+  // menu / model picker while open. The room's buttons live in the card's header row.
+  const actionsNode = (
+    <Box flexDirection="column">
+      {wakeNotice || briefNotice ? (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
+          {wakeNotice}
+          {briefNotice}
+        </Box>
+      ) : null}
+      {addRow}
+      {memberMenu}
+      {modelPicker}
+    </Box>
+  )
+
+  // The main column in parts (the chat layout draws them as top / feed / bottom, the flow layout as before):
+  // topBox (header, notices, approvals), the working strip, the composer, and the messages.
+  const topBox = (
      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+      {probeLine ? <Text key="probe-line" dimColor wrap="truncate-end">{probeLine}</Text> : null}
       {errorCard}
       {roomBar}
 
@@ -1749,213 +2171,263 @@ async function drawPanel($: any, e: any) {
       {/* Every unit below (a notice with its buttons, the header's button group) is one unbreakable box: when the
           pane is too narrow the row wraps between units, never inside one. Buttons are plain text buttons; the one
           solid button in the area is the main action of a notice. */}
-      {(!autoWake && wakePending > 0) || briefMissing ? (
-        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
-          {!autoWake && wakePending > 0 ? (
-            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-              <Text color={C_AMBER}>{`⚠ ${wakePending} 条待处理`}</Text>
-              <Button key="wake-banner" variant="primary" onPress={() => wakeNow($)}>{busy.wake ? '处理中…' : '处理'}</Button>
-            </Box>
-          ) : null}
-          {briefMissing ? (
-            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-              <Text color={C_AMBER}>无项目简介</Text>
-              <Button key="brief-ask" plain onPress={() => askBrief($)}>写一份</Button>
-              <Button key="brief-skip" plain dimColor onPress={() => dismissBrief($)}>忽略</Button>
-            </Box>
-          ) : null}
+      {chat ? null : noticesRow}
+      {/* the open conversation's header: the room (name, members, add an assistant, auto-wake), a member (its state and
+          the 操作 menu: model, compact, stop, pause, remove), or everything */}
+      {peerMember ? (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={2}>
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+            {fix('peer-av', avatar(ui, peerMember.id, 20, look))}
+            {cut('peer-nm', peerMember.id, { bold: true, color: nc(peerMember.id) }, { shrink: nameShrink(peerMember.id) })}
+            {peerMember.id === hostId ? fix('peer-host', <Text color={C_AMBER}>★ 主控</Text>) : null}
+            {fix('peer-dot', <Text color={bitsOf(peerMember).dot}>●</Text>)}
+            {fix('peer-st', <Text dimColor>{stale ? '未知' : bitsOf(peerMember).st.label}</Text>)}
+            {bitsOf(peerMember).ctx && !narrow ? fix('peer-ctx', <Text dimColor>{bitsOf(peerMember).ctx}</Text>) : null}
+          </Box>
+          {chat ? null : peerMenuBtn}
         </Box>
-      ) : null}
-      {/* header: the room on the left; add an assistant and auto-wake as two text buttons on the right, as one group */}
-      <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={3}>
-        <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-          <Text bold>{String(view.room?.name ?? 'xmuse')}</Text>
-          <Text dimColor>{`· ${members.length} 位成员`}</Text>
+      ) : (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" justifyContent="space-between" columnGap={3}>
+          <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+            {activeItem.kind === 'room' ? fix('room-svg', <ui.Svg source={roomSvg(20)} alt="大群" width={20} height={20} />) : null}
+            {cut('room-nm', activeItem.kind === 'all' ? '全部消息' : String(view.room?.name ?? 'xmuse'), { bold: true })}
+            {fix('room-n', <Text dimColor>{activeItem.kind === 'all' ? '· 含成员之间的私聊' : narrow ? `· ${members.length}` : `· ${members.length} 位成员`}</Text>)}
+          </Box>
+          {chat ? null : roomActions}
         </Box>
-        <Box flexDirection="row" alignItems="center" columnGap={3} flexShrink={0}>
-          {members.length ? <Button key="add-toggle" plain onPress={() => toggleAddOpen($)}>{addOpen ? '✕ 收起' : '＋ 助手'}</Button> : null}
-          <Button key="auto-wake" plain onPress={() => toggleAuto($)}>
-            {autoWake ? <Text color={C_GREEN}>自动叫醒 ●</Text> : <Text dimColor>自动叫醒 ○</Text>}
-          </Button>
-        </Box>
-      </Box>
-      {addOpen && members.length ? (
-        <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={3}>
-          <Text dimColor>添加</Text>
-          {busy.add ? <Text color={C_BLUE}>正在添加…</Text> : (
-            <Box flexDirection="row" columnGap={3}>
-              <Button key="add-opencode" plain onPress={() => addMember($, 'opencode')}>OpenCode</Button>
-              <Button key="add-dsh" plain onPress={() => addMember($, 'dsh')}>dsh</Button>
-              <Button key="add-agy" plain onPress={() => addMember($, 'agy')}>agy</Button>
-            </Box>
-          )}
-        </Box>
-      ) : null}
-
-      {/* members as chips: avatar, state dot, name, and the running time or the context size; a press opens that
-          member's full card below (one at a time, a second press closes it) */}
-      <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginTop={1}>
-        {members.map(m => {
-          const b = bitsOf(m)
-          const sel = expanded === m.id
-          // narrow pane: avatar and state dot only (the name and numbers are in the card a press opens)
-          return (
-            <Box key={`chip-wrap-${m.id}`} flexDirection="row" alignItems="center" gap={1} flexShrink={0} borderStyle="round"
-              borderColor={sel ? mixHex(pal.bubbleBorder, '#4C8DF6', 0.8) : pal.bubbleBorder} paddingX={1}
-              {...(sel ? { backgroundColor: pal.codeBg } : {})}>
-              {avatar(ui, m.id, 14, look)}
-              <Button key={`chip-${m.id}`} plain onPress={() => toggleExpand($, m.id)}>
-                <Text color={b.dot}>●</Text>
-                {narrow ? null : <Text bold={sel} color={nc(m.id)}>{` ${m.id}`}</Text>}
-                {!narrow && m.id === hostId ? <Text color={C_AMBER}>★</Text> : null}
-                {b.compacting ? <Text color={C_BLUE}>{' ◌'}</Text> : b.ctx && (!narrow || b.cl > 0) ? <Text color={b.cl === 2 ? C_RED : b.cl === 1 ? C_AMBER : undefined} dimColor={b.cl === 0}>{` ${b.ctx}`}</Text> : null}
-              </Button>
-              {b.running && !narrow ? <Client key={`el-${m.id}-chip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} /> : null}
-            </Box>
-          )
-        })}
-      </Box>
-      {openMember ? cardOf(openMember) : null}
+      )}
+      {chat ? null : addRow}
+      {chat ? null : memberMenu}
       </Box>
 
       {/* model picker of one member: the hub's options (its catalog, the defaults, what the room ran) or a typed
           name; a pick is saved at once and takes effect at the member's next turn */}
-      {mp && members.some(x => x.id === mp.member) ? (
-        <Box key="model-pick" flexDirection="column" borderStyle="round" borderColor={mixHex(pal.bubbleBorder, '#4C8DF6', 0.6)}
-          backgroundColor={pal.bubble} paddingX={1} gap={1} marginTop={1}>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text bold>{'更换 '}</Text>
-            <Text bold color={nc(mp.member)}>{displayName(mp.member)}</Text>
-            <Text bold>的模型</Text>
-            <Text dimColor>· 下一轮起生效</Text>
-            <Box flexGrow={1} />
-            <Button key="mp-x" plain dimColor onPress={() => toggleModelPicker($, mp.member)}>✕</Button>
-          </Box>
-          {mp.loading ? <Text color={C_BLUE}>读取可选模型…</Text> : (
-            <Box flexDirection="column" gap={1}>
-              {mp.options.length ? (
-                <Select key={`mp-sel-${mp.member}`} label="选择" value={mp.current}
-                  options={mp.options.map(o => ({ value: o.value, label: o.value === mp.current ? `${o.label ?? o.value}（当前）` : (o.label ?? o.value) }))}
-                  onSelect={(v: string) => setModel($, mp.member, v)} />
-              ) : null}
-              <Input key={`mp-in-${mp.member}`} placeholder={mp.format ? `或输入其他模型（格式 ${mp.format}）` : '或输入其他模型名'}
-                submitLabel="换成这个" onSubmit={(v: string) => setModel($, mp.member, v)} />
-            </Box>
-          )}
-          {busy[`md${mp.member}`] ? <Text color={C_BLUE}>正在更换…</Text> : null}
-          {mp.note ? <Text dimColor>{mp.note}</Text> : null}
-          {mp.error ? <Text color={C_RED}>{mp.error}</Text> : null}
-        </Box>
-      ) : null}
+      {chat ? null : modelPicker}
 
-      {/* tabs (which conversation the list and the composer show): bare text on a thin rule, the open one bold and
-          underlined, so they never read as the member chips above (those are boxed and open a card). A colour dot
-          marks a private chat, # a group. They stay apart from the chips as a filter of the messages, not of members. */}
-      <Box flexDirection="row" flexWrap="wrap" columnGap={3} marginTop={1}>
-        {tabs.map(t => (
-          <Button key={`tab-${t.id}`} plain onPress={() => setTab($, t.id)}>
-            {t.peer ? <Text color={nc(t.peer)}>● </Text> : t.group ? <Text dimColor># </Text> : null}
-            {activeTab === t.id ? <Text bold underline>{t.label}</Text> : <Text dimColor>{t.label}</Text>}
-            {t.unread > 0 ? <Text color={C_RED}>{` ${t.unread}`}</Text> : null}
-          </Button>
-        ))}
-      </Box>
-
-      {/* approval cards, pinned above the messages: the first one open, the rest behind one line */}
-      {decision.text ? <Box marginTop={1}><Text color={decision.ok ? C_GREEN : C_RED} wrap="truncate-end">{decision.text}</Text></Box> : null}
-      {shownApprovals.map(a => <Box key={`apw-${a.id}`} flexDirection="column" marginTop={1}>{approvalCard(a)}</Box>)}
-      {approvals.length > 1 ? (
-        <Box flexDirection="row" gap={1} alignItems="center" marginTop={1}>
-          <Text color={C_AMBER}>{allOpen ? `共 ${approvals.length} 条待审批` : `还有 ${approvals.length - 1} 条待审批`}</Text>
-          <Button key="ap-all-toggle" plain onPress={() => toggleFold($, 'ap-all')}>{allOpen ? '只看第一条' : '全部展开'}</Button>
-        </Box>
-      ) : null}
+      {chat ? null : approvalsNode}
      </Box>
+  )
 
-     {/* working strip and input sit right under the header: the desktop pane scrolls natively, so nothing can be
-         pinned; newest messages come first below them and scrolling down reads history */}
-     <Box flexDirection="column" flexShrink={0} marginBottom={1}>
-      {/* working strip: one line per running member (two at most): who, what it is doing, how long, stop */}
-      {working.length ? (
-        <Box flexDirection="column">
+  // working strip: one line per running member (two at most): who, what it is doing, how long, stop
+  const workingNode = working.length ? (
+        <Box key="wk-box" flexDirection="column">
           {working.slice(0, 2).map(m => {
-            const p = m.progress
-            const lt = typeof p?.last_tool === 'string' ? p.last_tool.trim() : ''
-            const tail = lastLines(String(p?.text ?? ''), 1) // the typing effect is the draft bubble's alone
             return (
-              <Box key={`wk-${m.id}`} flexDirection="row" alignItems="center" gap={1}>
-                <Text color={C_BLUE}>●</Text>
-                <Text color={nc(m.id)}>{m.id}</Text>
-                <Box flexGrow={1} flexShrink={1}><Text key={`wk-do-${m.id}`} dimColor wrap="truncate-end">{`正在：${lt || tail || '思考中'}`}</Text></Box>
-                <Client key={`el-${m.id}-strip`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(p?.started_at), baseMs: nowMs, kind: 'level' }} />
-                <Button key={`wk-stop-${m.id}`} plain hover={{ color: C_RED }} onPress={() => stopMember($, m.id)}>
-                  {busy[`st${m.id}`] ? '停止中…' : '■ 停止'}
-                </Button>
+              <Box key={`wk-${m.id}`} flexDirection="row" alignItems="center" gap={1} minWidth={0}>
+                {fix(`wk-dot-${m.id}`, <Text color={C_BLUE}>●</Text>)}
+                {cut(`wk-nm-${m.id}`, m.id, { color: nc(m.id) }, { shrink: nameShrink(m.id) })}
+                <Box key={`wk-do-${m.id}`} flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Client key={`lv-act-${m.id}`} module="./live.tsx" flexGrow={1} props={liveOf(m.id, 'act')} />
+                </Box>
+                {fix(`wk-sf-${m.id}`, (
+                  <Button key={`wk-stop-${m.id}`} plain hover={{ color: C_RED }} onPress={() => stopMember($, m.id)}>
+                    {busy[`st${m.id}`] ? '停止中…' : '■ 停止'}
+                  </Button>
+                ))}
               </Box>
             )
           })}
           {working.length > 2 ? <Text dimColor>{`另有 ${working.length - 2} 位在执行`}</Text> : null}
         </Box>
-      ) : null}
-      {Object.keys(done).filter(id => !working.some(w => w.id === id) && members.some(x => x.id === id)).map(id => (
-        <Text key={`dn-${id}`} dimColor>{doneLine(id, done[id]!.tools, done[id]!.startedMs, done[id]!.endedMs)}</Text>
-      ))}
+  ) : null
+  const doneNodes = Object.keys(done).filter(id => !working.some(w => w.id === id) && members.some(x => x.id === id)).map(id => (
+        <Text key={`dn-${id}`} dimColor wrap="truncate-end">{doneLine(id, done[id]!.tools, done[id]!.startedMs, done[id]!.endedMs)}</Text>
+  ))
 
-      {/* composer: a full-width card as an agent's prompt box: who it goes to (and the reply) on top, the field
-          across the whole width, the @ list inside it, the keys at the bottom. The platform's field is one line. */}
-      <Box flexDirection="column" marginTop={1}>
+  // composer: a full-width card as an agent's prompt box: who it goes to (and the reply) on top, the field
+  // across the whole width, the @ list inside it, the keys at the bottom. The platform's field is one line.
+  // chat: one round card; its header row holds the target and reply on the left (shrinks first) and the quiet buttons
+  // (add an assistant, auto-wake / 操作, expand) on the right as one unbreakable group; the row wraps when too narrow.
+  const composerNode = (
+      <Box flexDirection="column" marginTop={chat ? 0 : 1}
+        {...(chat ? { borderStyle: 'round', borderColor: pal.bubbleBorder, paddingX: 1 } : {})}>
         {/* one small line above the field: who it goes to (the open tab) and the reply it answers */}
-        <Box flexDirection="row" gap={1} alignItems="center">
-          <Text dimColor>发给</Text>
-          <Text color={activeTab === 'all' ? undefined : nc(tabs.find(t => t.id === activeTab)?.peer ?? '')} bold>
-            {activeTab === 'all' ? '全员' : activeLabel}
-          </Text>
-          {replyTo > 0 ? (
-            <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1}>
-              <Text color="permission" wrap="truncate-end">{`↩ #${replyTo} ${replySnip}`}</Text>
-              <Button key="re-cancel" plain dimColor onPress={() => setReply($, 0)}>✕</Button>
+        <Box flexDirection="row" gap={chat ? undefined : 1} columnGap={chat ? 2 : undefined} flexWrap={chat ? 'wrap' : undefined} alignItems="center" minWidth={0}>
+          <Box flexDirection="row" gap={1} alignItems="center" flexGrow={1} flexShrink={1} minWidth={0}>
+            {fix('to-lbl', <Text dimColor>发给</Text>)}
+            {cut('to-tab', activeLabel, { bold: true, color: peerOf ? nc(peerOf) : undefined }, { shrink: 0 })}
+            {peerOf ? fix('to-dm', <Text dimColor>（私聊）</Text>) : null}
+            {replyTo > 0 ? (
+              <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} flexGrow={1} minWidth={0}>
+                {cut('re-snip', `↩ #${replyTo} ${replySnip}`, { color: 'permission' }, { grow: true })}
+                {fix('re-cancel-f', <Button key="re-cancel" plain dimColor onPress={() => setReply($, 0)}>✕</Button>)}
+              </Box>
+            ) : <Box flexGrow={1} />}
+          </Box>
+          {chat ? (
+            <Box key="card-actions" flexDirection="row" alignItems="center" columnGap={2} flexShrink={0}>
+              {peerMember ? peerMenuBtn : roomActions}
+              <Button key="big-input" plain dimColor hover={{ color: C_BLUE }} onPress={() => openBigInput($)}>{narrow ? '⤢' : '⤢ 展开'}</Button>
             </Box>
-          ) : null}
+          ) : fix('big-input-f', <Button key="big-input" plain dimColor onPress={() => openBigInput($)}>⤢ 大输入框</Button>)}
         </Box>
-        {/* the Input draws its own send button (submitLabel) and takes the row's whole width; a completion or a retract
-            gives it a new value, not a new key, so it keeps the focus. The key hints are its placeholder. */}
-        <Box flexDirection="row" flexGrow={1}>
-          <Input key={`xm-in-${sendN}`} placeholder={placeholder}
+        {/* the Input draws its own send button (submitLabel) and takes the row's whole width; a retract gives it a new
+            value (same key), an @ completion a new key (inputGen) so the caret lands at the end. The key hints are its placeholder.
+            Chat: a column with stretch makes the leaf Input fill the card's width. */}
+        <Box flexDirection={chat ? 'column' : 'row'} alignItems={chat ? 'stretch' : undefined} width={chat ? '100%' : undefined} flexGrow={1}>
+          <Input key={`xm-in-${sendN}-${inputGen}`} placeholder={placeholder}
             {...(typeof forced === 'string' ? { value: forced } : {})}
             submitLabel={sending ? '发送中…' : '发送'} onInput={(v: string) => inputChanged($, v)} onSubmit={(v: string) => submitInput($, v)} />
         </Box>
         {cands.length ? (
-          <Box flexDirection="column" borderStyle="round" borderColor={pal.bubbleBorder} paddingX={1}>
+          <Box flexDirection="column" {...(chat ? {} : { borderStyle: 'round', borderColor: pal.bubbleBorder, paddingX: 1 })}>
             {cands.map((c, i) => (
               <Box key={`mc-${c.id}`} flexDirection="row" gap={1} alignItems="center">
                 {avatar(ui, c.id, 20, look)}
-                <Button key={`mcb-${c.id}`} plain onPress={() => pickMention($, c.id)}>
-                  <Text color={nc(c.id)} bold={i === 0}>{`@${c.id}`}</Text>
-                </Button>
-                <Text dimColor wrap="truncate-end">{c.description ? String(c.description) : statusOf(c).label}</Text>
-                {i === 0 ? <Text dimColor>↵</Text> : null}
+                {fix(`mcbf-${c.id}`, (
+                  <Button key={`mcb-${c.id}`} plain onPress={() => pickMention($, c.id)}>
+                    <Text color={nc(c.id)} bold={i === 0}>{`@${c.id}`}</Text>
+                  </Button>
+                ))}
+                {cut(`mcd-${c.id}`, c.description ? String(c.description) : statusOf(c).label, { dimColor: true }, { grow: true })}
+                {i === 0 ? fix(`mce-${c.id}`, <Text dimColor>↵</Text>) : null}
               </Box>
             ))}
           </Box>
         ) : null}
         {cands.length ? <Text dimColor>{`Enter 选 @${cands[0]!.id} · 继续输入缩小范围`}</Text> : null}
       </Box>
-     </Box>
+  )
 
-     {/* messages, newest first */}
-     <Box flexDirection="column">
-      <Box flexDirection="column" gap={1}>
-      {rows.length === 0 && !drafts.length ? <Text dimColor>{activeTab === 'all' ? '这里还没有消息：发一句话试试，@名字 可以指定对象' : `和 ${activeLabel} 说点什么吧`}</Text> : null}
-      {drafts}
-      {msgNodes}
-      {hasOlder ? (
+  const emptyText = rows.length === 0 && !drafts.length
+    ? <Text dimColor>{peerOf ? `和 ${peerOf} 的私聊：只有你们两个看得到` : '这里还没有消息：发一句话试试，@名字 可以指定对象'}</Text> : null
+  // the "load earlier" control (flow: under the oldest message; chat: above it)
+  const olderControl = hiddenHere > 0 ? (
+        <Box flexDirection="row" justifyContent="center">
+          <Button key="show-more" variant="secondary" onPress={() => showMore($, activeTab)}>{`显示更早的 ${Math.min(SHOW_STEP, hiddenHere)} 条`}</Button>
+        </Box>
+      ) : hasOlder ? (
         <Box flexDirection="row" justifyContent="center">
           <Button key="older" variant="secondary" onPress={() => loadOlder($)}>{older.loading ? '加载中…' : '加载更早的消息'}</Button>
         </Box>
-      ) : rows.length ? <Box flexDirection="row" justifyContent="center"><Text dimColor>── 没有更早的消息了 ──</Text></Box> : null}
-      </Box>
-     </Box>
+      ) : rows.length ? <Box flexDirection="row" justifyContent="center"><Text dimColor>── 没有更早的消息了 ──</Text></Box> : null
 
+  if (chat) {
+    // chat order: header on top, the conversation oldest to newest, working strip / approvals / composer at the bottom.
+    // msgNodes is newest first with each day's divider after that day's oldest row: reversed, the feed reads oldest to
+    // newest and every divider heads its day (a group's own items are already oldest first).
+    const chrono = msgNodes.slice().reverse()
+    return (
+      <Box flexDirection="row" columnGap={1} alignItems="stretch" minHeight={bodyRows > 0 ? bodyRows : undefined}>
+        {railNode}
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+          {topBox}
+          <Box key="xm-feed" flexDirection="column" rowGap={1}>
+            {emptyText}
+            {olderControl}
+            {chrono}
+            {drafts}
+          </Box>
+          <Box flexDirection="column" flexShrink={0} marginTop={1} paddingBottom={1}>
+            {workingNode}
+            {doneNodes}
+            {approvalsNode}
+            {actionsNode}
+            {composerNode}
+          </Box>
+        </Box>
+      </Box>
+    )
+  }
+  {
+    return (
+      <Box flexDirection="row" gap={1} alignItems="stretch" minHeight={bodyRows > 0 ? bodyRows : undefined}>
+      {railNode}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+       {topBox}
+
+       {/* working strip and input sit right under the header: the desktop pane scrolls natively, so nothing can be
+           pinned; newest messages come first below them and scrolling down reads history */}
+       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        {workingNode}
+        {doneNodes}
+        {composerNode}
+       </Box>
+
+       {/* messages, newest first */}
+       <Box flexDirection="column">
+        <Box flexDirection="column" gap={1}>
+        {emptyText}
+        {drafts}
+        {msgNodes}
+        {olderControl}
+        </Box>
+       </Box>
+
+      </Box>
+      </Box>
+    )
+  }
+}
+
+// ---- probes (/xmuse probe) -----------------------------------------------------------------------------------
+
+async function toggleProbe($: any): Promise<{ text: string }> {
+  const on = (await $.store.get(STORE_PROBE)) !== true
+  await $.store.set(STORE_PROBE, on)
+  await update($, probeAtom, () => on)
+  return { text: on ? 'xmuse 探针已开：滚动面板、看 Claude 输入框上方' : 'xmuse 探针已关' }
+}
+
+/** `/xmuse layout`: chat (newest at the bottom) <-> flow (newest first). */
+async function toggleLayout($: any): Promise<{ text: string }> {
+  const next = (await read($, layoutAtom)) === 'flow' ? 'chat' : 'flow'
+  await $.store.set(STORE_LAYOUT, next)
+  await update($, layoutAtom, () => next)
+  if (next === 'chat') scrollEndLater($)
+  return { text: next === 'chat' ? 'xmuse 布局：聊天（新消息在底部）' : 'xmuse 布局：最新在上' }
+}
+
+/** Record a Pane scroll event; with the probe on, show it in the panel at most once a second. */
+async function noteScroll($: any, e: any) {
+  scrollProbe = { n: scrollProbe.n + 1, by: Number(e.by ?? 0), offset: Number(e.offset ?? 0), bodyRows: Number(e.bodyRows ?? 0),
+    contentRows: Number(e.contentRows ?? 0), origin: String(e.origin?.kind ?? '') }
+  if (!(await read($, probeAtom))) return
+  const now = Number(await $.clock.now())
+  if (now - scrollProbeAt < 1000) return
+  scrollProbeAt = now
+  await update($, scrollProbeAtom, () => scrollProbe)
+}
+
+/** The probe band: one row that says whether the area above the prompt box can be drawn into, and how wide and tall. */
+async function drawBand($: any, e: any) {
+  const { Box, Text } = $.ui.resolve(e) as any
+  bandDraws++
+  return (
+    <Box flexDirection="row" columnGap={1}>
+      <Text color="warning">xmuse 探针</Text>
+      <Text>{`看得到这一行 = 输入框上方的横幅可用（宽 ${e.props?.bodyColumns ?? '?'} 列，最多 ${e.props?.maxRows ?? '?'} 行）`}</Text>
+    </Box>
+  )
+}
+
+/**
+ * Pending approvals in the band above the prompt: the first one with its buttons (a decision never needs the panel
+ * open), the rest behind one dim line. Every part truncates: the band is only as wide as the column it sits in.
+ */
+async function drawApprovalBand($: any, e: any, pending: any[]) {
+  const { Box, Text, Button } = $.ui.resolve(e) as any
+  const busy = await read($, busyAtom)
+  const a = pending[0]
+  const text = approvalText(a).replace(/\s+/g, ' ')
+  const label = `${displayName(a.member)}: ${text.slice(0, 40)}`
+  const always = approvalHasAlways(a)
+  const line = (key: string, s: string, tp: Record<string, unknown> = {}) => (
+    <Box key={key} flexShrink={1} minWidth={0} overflow="hidden"><Text wrap="truncate-end" {...tp}>{s}</Text></Box>
+  )
+  return (
+    <Box flexDirection="column" minWidth={0} overflow="hidden">
+      {line('band-ap-title', `⚠ xmuse 审批（${pending.length}）`, { color: C_AMBER })}
+      {line('band-ap-who', `${displayName(a.member)} 请求${approvalKindLabel(a.kind)}`)}
+      {line('band-ap-text', text, { dimColor: true })}
+      {busy[a.id] ? <Text dimColor>处理中…</Text> : (
+        <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+          <Button key="band-ap-once" variant="primary" onPress={() => approve($, a.id, 'once', label)}>{always ? '批准一次' : '批准'}</Button>
+          {always ? <Button key="band-ap-always" variant="secondary" onPress={() => approve($, a.id, 'always', label)}>总是批准</Button> : null}
+          <Button key="band-ap-reject" plain dimColor onPress={() => approve($, a.id, 'reject', label)}>拒绝</Button>
+        </Box>
+      )}
+      {pending.length > 1 ? line('band-ap-more', `还有 ${pending.length - 1} 条，在 xmuse 面板里看`, { dimColor: true }) : null}
     </Box>
   )
 }
@@ -1969,8 +2441,12 @@ export const register: Register = on => {
       try { await $.fs.write(LOAD_MARK, `xmuse loaded ${new Date().toISOString()}\n`) } catch { /* diagnostics only */ }
     }
     await $.command.register({ name: 'xmuse', description: 'Open the xmuse collaboration panel' })
+    await $.command.register({ name: 'x', description: '发到 xmuse 当前会话（@名字 指定成员）', argumentHint: '<消息>' })
+    if ((await $.store.get(STORE_PROBE)) === true) await update($, probeAtom, () => true)
+    if ((await $.store.get(STORE_LAYOUT)) === 'flow') await update($, layoutAtom, () => 'flow')
+    if ((await $.store.get(STORE_RAIL)) === true) await update($, railFoldAtom, () => true)
     await registerTool($)
-    await refreshTheme($)
+    await refreshTheme($, true)
     await openPanel($)
     // a reload keeps the last view: its avatars are looked up now, not at the next change in the room
     const kept = await read($, viewAtom)
@@ -1981,10 +2457,12 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => compactHook($, e, next))
 
-  // a grow Client (grow.tsx) showed its last step: e.data is { grown: '<t|r>:<id>:<run>' }
+  // a grow Client (grow.tsx) showed its last step: e.data is { grown: 'r:<id>:<run>' }; a live Client (live.tsx) asks for
+  // fresh props once a second: e.data is { live: 'act' | 'draft', id } and the answer reaches it without a panel redraw
   on('ui.message', async ($, e, next) => {
     const d: any = e.data
     if (typeof d?.grown === 'string') await growDone($, d) // validated there: kind and run must match the live atom
+    if (d?.live === 'act' || d?.live === 'draft' || d?.live === 'tools') return { props: await liveProps($, d.live, String(d.id ?? '')) }
     return next(e)
   })
 
@@ -2006,12 +2484,57 @@ export const register: Register = on => {
     return r
   })
 
-  on('command.run', { command: 'xmuse' }, async $ => {
+  on('command.run', { command: 'x' }, async ($, e) => sendFromCommand($, String(e.args ?? '')))
+
+  on('command.run', { command: 'xmuse' }, async ($, e) => {
+    if (String(e.args ?? '').trim() === 'probe') return toggleProbe($)
+    if (String(e.args ?? '').trim() === 'layout') return toggleLayout($)
+    rebound.clear() // opened by hand here: this session takes the member back once
     avatarTried = {} // pick up avatar files added since the last load
     await openPanel($)
     await startLoop($)
+    scrollEndLater($)
     return { text: 'xmuse panel opened' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => drawPanel($, e))
+  // Probe 1 (`/xmuse probe`): do the pane's scroll events reach us, and with what numbers? Observes only; the move is never changed.
+  on('ui.scroll', async ($, e, next) => {
+    if (e.component === 'Pane' && e.requestId === PANE) {
+      if (e.origin?.kind === 'plugin') return next(e) // our own scroll to the end
+      if (e.origin?.kind === 'person') atBottom = Number(e.offset ?? 0) + Number(e.bodyRows ?? 0) >= Number(e.contentRows ?? 0) - 2
+      await noteScroll($, e)
+    }
+    return next(e)
+  })
+
+  // The band above Claude's prompt box: pending approvals with their buttons; else the probe line while the probe is on.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props?.hasSurvey) return next(e)
+    const sv = await read($, viewAtom) // read: the band redraws when the approvals change
+    const pending = approvalsOf(liveView ?? sv)
+    if (pending.length) return drawApprovalBand($, e, pending)
+    if (!(await read($, probeAtom))) return next(e)
+    return drawBand($, e)
+  })
+
+  // A throw would leave the pane to the engine's "Nothing to show yet" with no reason: show the error and the last step.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    drawStage = 'start'
+    const failed = (title: string, detail: string) => {
+      const { Box, Text } = $.ui.resolve(e) as any
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text color={C_RED}>{title}</Text>
+          <Text wrap="wrap">{detail.slice(0, 2000)}</Text>
+        </Box>
+      )
+    }
+    // no timeout race: a timer per draw is one more host call on every redraw, and the hook's own budget already ends
+    // a draw that hangs (the engine then draws its own and logs why)
+    try {
+      return await drawPanel($, e)
+    } catch (err: any) {
+      return failed('xmuse 面板绘制出错', `${String(err?.stack ?? err)}\n停在：${drawStage}`)
+    }
+  })
 }

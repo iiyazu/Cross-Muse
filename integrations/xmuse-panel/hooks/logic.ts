@@ -307,6 +307,50 @@ export function tabsOf(view: any): Tab[] {
   return out
 }
 
+/** The private chat between the user and a member, as the hub names it (mail.dm_id): `dm:` + the two ids sorted. */
+export function dmThreadId(member: string): string {
+  return 'dm:' + ['human', member].sort().join('+')
+}
+
+/** One entry of the left rail: the room, a member (its private chat with the user), or everything. */
+export type RailItem = { id: string; kind: 'room' | 'dm' | 'all'; label: string; unread: number; peer?: string }
+
+/**
+ * The left rail, IM style: the room (#room) first, then one entry per member (the user's private chat with it, which
+ * the hub creates on the first message), then "全部" (every thread the user can see, the other members' DMs included).
+ * Unread counts come from the view's threads; a chat that does not exist yet has none.
+ */
+export function railOf(view: any): RailItem[] {
+  const ths = threadsOf(view)
+  const unread = (id: string) => Number(ths.find(t => t.id === id)?.unread ?? 0)
+  const out: RailItem[] = [{ id: '#room', kind: 'room', label: String(view?.room?.name ?? '') || '大群', unread: unread('#room') }]
+  for (const m of membersOf(view)) {
+    const id = dmThreadId(m.id)
+    out.push({ id, kind: 'dm', label: m.id, unread: unread(id), peer: m.id })
+  }
+  // threads that are neither the room nor one of the user's chats (members' DMs, groups): only counted under 全部
+  const mine = new Set(out.map(x => x.id))
+  const rest = ths.filter(t => !mine.has(t.id)).reduce((n, t) => n + Number(t.unread ?? 0), 0)
+  out.push({ id: 'all', kind: 'all', label: '全部', unread: rest })
+  return out
+}
+
+/** The stored tab if the rail still has it, else '#room' (a tab from the former tab bar, e.g. a `#plan` group, is not on the rail). */
+export function activeTabOf(view: any, tab: string): string {
+  return railOf(view).some(t => t.id === tab) ? tab : '#room'
+}
+
+/** The room's avatar: a disc with three heads, the group's mark in the rail and the room header. */
+export function roomSvg(size: number): string {
+  const head = (x: number, y: number, r: number) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#FFFFFF"/>`
+  const body = (x: number, y: number, w: number) =>
+    `<path d="M${x - w} ${y + 6} C${x - w} ${y} ${x + w} ${y} ${x + w} ${y + 6} Z" fill="#FFFFFF"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 32 32">`
+    + `<circle cx="16" cy="16" r="16" fill="#3D8B6E"/>`
+    + `<g opacity="0.75">${head(9.5, 13, 3)}${body(9.5, 18, 4.5)}${head(22.5, 13, 3)}${body(22.5, 18, 4.5)}</g>`
+    + `${head(16, 11.5, 3.6)}${body(16, 17, 5.6)}</svg>`
+}
+
 /** Thread id to use for `say` and `read` on a tab. */
 export function threadForTab(tab: string): string {
   return tab === 'all' ? '#room' : tab
@@ -330,6 +374,8 @@ export function toLabel(m: Msg): string {
   const ments = Array.isArray(m.mentions) ? m.mentions : []
   const to = Array.isArray(m.to) ? m.to : []
   const th = m.thread ?? ''
+  // in the room everyone reads it: @ only says whom it wakes, so it must not read as a private message
+  if ((th === '#room' || th === '') && ments.length) return `全员 · @${ments.map(displayName).join(' @')}`
   let who: string[]
   if (ments.length) who = ments
   else if (th.startsWith('dm:')) who = to
@@ -508,6 +554,21 @@ export function draftTail(text: string, max = 280): string {
   return '…' + s
 }
 
+/**
+ * The view without the live parts: a shallow copy whose members' `progress` keeps only `started_at`. A view that
+ * differs from the last one only in progress text / tool / tool counts is the same structure: it does not redraw the panel.
+ */
+export function structOf(view: any): any {
+  if (!view || typeof view !== 'object') return view
+  if (!Array.isArray(view.members)) return { ...view }
+  return {
+    ...view,
+    members: view.members.map((m: any) => (m && typeof m === 'object' && 'progress' in m
+      ? { ...m, progress: m.progress && typeof m.progress === 'object' ? { started_at: m.progress.started_at, has_text: String(m.progress.text ?? '').trim() !== '' } : m.progress }
+      : m)),
+  }
+}
+
 /** Last n non-empty lines of the member's partial output ('' when there is none). */
 export function lastLines(text: string | undefined, n = 2): string {
   const ls = String(text ?? '').split('\n').map(x => x.trimEnd()).filter(x => x.trim())
@@ -584,10 +645,24 @@ export function expandNewlines(text: string): string {
   return text.replace(/\\n/g, '\n')
 }
 
+/**
+ * The big-input button moves the panel's draft into Claude's own (multi-line) prompt box as `/x <draft>`. Allowed when that
+ * box is empty or already a /x line (it is replaced); any other text there is never overwritten.
+ */
+export function bigInputPlan(draft: string, promptText: string): { ok: true; text: string } | { ok: false } {
+  const p = promptText.trim()
+  if (p && !(p === '/x' || p.startsWith('/x ') || p.startsWith('/x\n'))) return { ok: false }
+  return { ok: true, text: '/x ' + draft }
+}
+
 export function buildSay(text: string, tab: string, replyTo: number, view: any): SayBody | null {
   const t = text.trim()
   if (!t) return null
-  const body: SayBody = { act: 'say', to: threadForTab(tab), text: t, mentions: parseMentions(t, view) }
+  const to = threadForTab(tab)
+  let mentions = parseMentions(t, view)
+  // a private chat has two members: an @ of anyone else is just text there (the hub refuses mentions outside a thread)
+  if (to.startsWith('dm:')) mentions = mentions.filter(m => to.slice(3).split('+').includes(m))
+  const body: SayBody = { act: 'say', to, text: t, mentions }
   if (replyTo > 0) body.reply_to = replyTo
   return body
 }
@@ -617,6 +692,49 @@ export function hardBreaks(text: string): string {
     out.push(brk ? line + '  ' : line)
   }
   return out.join('\n')
+}
+
+const URL_RE = /^(https?:\/\/[^\s<>()]+?)([.,;:!?)\]，。；：！？）」』]*)$/
+const ZWSP = '​'
+
+/** The label a long bare URL is drawn with: host, the last path part, '…' between (the link keeps the full target). */
+export function urlLabel(url: string, max = 28): string {
+  const m = /^https?:\/\/([^/?#]+)(.*)$/.exec(url)
+  if (!m) return clip(url, max)
+  const host = m[1]!, rest = m[2]!
+  if ((host + rest).length <= max) return host + rest
+  const last = rest.split(/[/?#]/).filter(Boolean).pop() ?? ''
+  return clip(`${host}/…/${last}`, max)
+}
+
+/**
+ * Text the pane can wrap at any width. The desktop draws Markdown with the browser's line breaking, which never breaks
+ * inside a long run of letters (a path, a hash, a URL): the bubble then grows past the pane. Outside ``` / ~~~ fences
+ * and inline code, a bare URL longer than 40 characters becomes a link with a short label, and any other run of 28 or
+ * more non-space characters gets a zero-width break every 16. Copy uses the original text. `links` false (plain Text,
+ * not Markdown): URLs get breaks like any other run.
+ */
+export function softWrap(text: string, links = true): string {
+  const lines = String(text ?? '').split('\n')
+  let fence = ''
+  return lines.map(line => {
+    const m = line.match(/^\s{0,3}(`{3,}|~{3,})/)
+    if (fence) { if (m && m[1]![0] === fence[0] && m[1]!.length >= fence.length) fence = ''; return line }
+    if (m) { fence = m[1]!; return line }
+    if (!/\S{28,}/.test(line)) return line
+    return line.split(/(\s+)/).map(tok => {
+      if (tok.length < 28 || /\s/.test(tok) || tok.includes('`') || tok.includes('](') || tok.startsWith('<')) return tok
+      const u = links ? URL_RE.exec(tok) : null
+      if (u) return u[1]!.length > 40 ? `[${urlLabel(u[1]!)}](${u[1]})${u[2]}` : tok
+      return tok.replace(/[^\s　-鿿＀-￯]{16}(?=[^\s　-鿿＀-￯])/g, s => s + ZWSP)
+    }).join('')
+  }).join('\n')
+}
+
+/** At most `n` characters, '…' as the last one when cut (for labels the layout cannot truncate: a tab, a button). */
+export function clip(s: string, n: number): string {
+  const t = String(s ?? '')
+  return t.length > n ? t.slice(0, Math.max(1, n - 1)) + '…' : t
 }
 
 // ---- retry ---------------------------------------------------------------------------------------------------
