@@ -549,6 +549,21 @@ export function draftTail(text: string, max = 280): string {
   return '…' + s
 }
 
+/**
+ * The view without the live parts: a shallow copy whose members' `progress` keeps only `started_at`. A view that
+ * differs from the last one only in progress text / tool / tool counts is the same structure: it does not redraw the panel.
+ */
+export function structOf(view: any): any {
+  if (!view || typeof view !== 'object') return view
+  if (!Array.isArray(view.members)) return { ...view }
+  return {
+    ...view,
+    members: view.members.map((m: any) => (m && typeof m === 'object' && 'progress' in m
+      ? { ...m, progress: m.progress && typeof m.progress === 'object' ? { started_at: m.progress.started_at, has_text: String(m.progress.text ?? '').trim() !== '' } : m.progress }
+      : m)),
+  }
+}
+
 /** Last n non-empty lines of the member's partial output ('' when there is none). */
 export function lastLines(text: string | undefined, n = 2): string {
   const ls = String(text ?? '').split('\n').map(x => x.trimEnd()).filter(x => x.trim())
@@ -625,6 +640,16 @@ export function expandNewlines(text: string): string {
   return text.replace(/\\n/g, '\n')
 }
 
+/**
+ * The big-input button moves the panel's draft into Claude's own (multi-line) prompt box as `/x <draft>`. Allowed when that
+ * box is empty or already a /x line (it is replaced); any other text there is never overwritten.
+ */
+export function bigInputPlan(draft: string, promptText: string): { ok: true; text: string } | { ok: false } {
+  const p = promptText.trim()
+  if (p && !(p === '/x' || p.startsWith('/x ') || p.startsWith('/x\n'))) return { ok: false }
+  return { ok: true, text: '/x ' + draft }
+}
+
 export function buildSay(text: string, tab: string, replyTo: number, view: any): SayBody | null {
   const t = text.trim()
   if (!t) return null
@@ -662,6 +687,49 @@ export function hardBreaks(text: string): string {
     out.push(brk ? line + '  ' : line)
   }
   return out.join('\n')
+}
+
+const URL_RE = /^(https?:\/\/[^\s<>()]+?)([.,;:!?)\]，。；：！？）」』]*)$/
+const ZWSP = '​'
+
+/** The label a long bare URL is drawn with: host, the last path part, '…' between (the link keeps the full target). */
+export function urlLabel(url: string, max = 28): string {
+  const m = /^https?:\/\/([^/?#]+)(.*)$/.exec(url)
+  if (!m) return clip(url, max)
+  const host = m[1]!, rest = m[2]!
+  if ((host + rest).length <= max) return host + rest
+  const last = rest.split(/[/?#]/).filter(Boolean).pop() ?? ''
+  return clip(`${host}/…/${last}`, max)
+}
+
+/**
+ * Text the pane can wrap at any width. The desktop draws Markdown with the browser's line breaking, which never breaks
+ * inside a long run of letters (a path, a hash, a URL): the bubble then grows past the pane. Outside ``` / ~~~ fences
+ * and inline code, a bare URL longer than 40 characters becomes a link with a short label, and any other run of 28 or
+ * more non-space characters gets a zero-width break every 16. Copy uses the original text. `links` false (plain Text,
+ * not Markdown): URLs get breaks like any other run.
+ */
+export function softWrap(text: string, links = true): string {
+  const lines = String(text ?? '').split('\n')
+  let fence = ''
+  return lines.map(line => {
+    const m = line.match(/^\s{0,3}(`{3,}|~{3,})/)
+    if (fence) { if (m && m[1]![0] === fence[0] && m[1]!.length >= fence.length) fence = ''; return line }
+    if (m) { fence = m[1]!; return line }
+    if (!/\S{28,}/.test(line)) return line
+    return line.split(/(\s+)/).map(tok => {
+      if (tok.length < 28 || /\s/.test(tok) || tok.includes('`') || tok.includes('](') || tok.startsWith('<')) return tok
+      const u = links ? URL_RE.exec(tok) : null
+      if (u) return u[1]!.length > 40 ? `[${urlLabel(u[1]!)}](${u[1]})${u[2]}` : tok
+      return tok.replace(/[^\s　-鿿＀-￯]{16}(?=[^\s　-鿿＀-￯])/g, s => s + ZWSP)
+    }).join('')
+  }).join('\n')
+}
+
+/** At most `n` characters, '…' as the last one when cut (for labels the layout cannot truncate: a tab, a button). */
+export function clip(s: string, n: number): string {
+  const t = String(s ?? '')
+  return t.length > n ? t.slice(0, Math.max(1, n - 1)) + '…' : t
 }
 
 // ---- retry ---------------------------------------------------------------------------------------------------

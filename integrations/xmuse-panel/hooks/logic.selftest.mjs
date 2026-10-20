@@ -70,4 +70,29 @@ eq('say in a dm', [buildSay('hi', 'dm:dsh+human', 0, rv).to, buildSay('@agy @dsh
 eq('to label', [toLabel({ id: 1, thread: '#room', mentions: ['dsh'] }), toLabel({ id: 2, thread: '#room' }),
   toLabel({ id: 3, thread: 'dm:dsh+human', to: ['dsh'] })], ['全员 · @dsh', '全员', 'dsh'])
 eq('room svg', roomSvg(28).startsWith('<svg') && roomSvg(28).includes('width="28"'), true)
+import { softWrap, urlLabel, clip } from './logic.ts'
+const LONG_URL = 'https://example.com/a/very/long/url/that/should/not/overflow/the/pane/at/all'
+eq('soft url', softWrap(`see ${LONG_URL}.`), `see [example.com/…/all](${LONG_URL}).`)
+eq('soft short url', softWrap('https://example.com/x/aaaaaaaaaaaaaa'), 'https://example.com/x/aaaaaaaaaaaaaa')
+eq('soft token', softWrap('a' + 'b'.repeat(40)).split('​').map(s => s.length), [16, 16, 9])
+eq('soft code kept', [softWrap('`' + 'x'.repeat(40) + '`'), softWrap('```\n' + 'y'.repeat(40) + '\n```')], ['`' + 'x'.repeat(40) + '`', '```\n' + 'y'.repeat(40) + '\n```'])
+eq('soft cjk', softWrap('中'.repeat(40)), '中'.repeat(40))
+eq('soft plain url', softWrap(LONG_URL, false).includes('​') && !softWrap(LONG_URL, false).includes(']('), true)
+eq('soft md link', softWrap(`[x](${LONG_URL})`), `[x](${LONG_URL})`)
+eq('url label', [urlLabel('https://a.io/b'), urlLabel(LONG_URL).length <= 28], ['a.io/b', true])
+eq('clip', [clip('abcdef', 4), clip('ab', 4)], ['abc…', 'ab'])
+import { structOf } from './logic.ts'
+{
+  const full = { version: 3, timeline: [1], members: [{ id: 'a', progress: { started_at: 5, text: 'x', last_tool: 't', tools: 2 } }, { id: 'b', progress: null }, { id: 'c' }] }
+  const s = structOf(full)
+  eq('structOf', [s.version, s.timeline, s.members[0], s.members[1].progress, 'progress' in s.members[2], full.members[0].progress.text],
+    [3, [1], { id: 'a', progress: { started_at: 5, has_text: true } }, null, false, 'x'])
+}
+import { bigInputPlan } from './logic.ts'
+eq('big empty', bigInputPlan('hi\nthere', ''), { ok: true, text: '/x hi\nthere' })
+eq('big blank', bigInputPlan('hi', '  \n'), { ok: true, text: '/x hi' })
+eq('big own /x', bigInputPlan('new', '/x old text'), { ok: true, text: '/x new' })
+eq('big bare /x', bigInputPlan('', '/x'), { ok: true, text: '/x ' })
+eq('big other', bigInputPlan('hi', 'fix the bug'), { ok: false })
+eq('big /xmuse', bigInputPlan('hi', '/xmuse layout'), { ok: false })
 console.log(bad2 ? 'FAILED' : 'ok2')
