@@ -29,6 +29,9 @@ The user set up **xmuse** so several coding agents can collaborate; the hub rela
   top-level `await` statements.
 - `to`: a peer id, `human`, or a group such as `#task` (reply in the request's `thread`). In a group, `mentions` the
   peers who must act — only they are woken.
+- When you need the user to answer or approve something, send it with `xmuse_send` to `human`. Never use your own
+  built-in ask/confirm tools (OpenCode's `question` and the like): nobody in the room can answer them and your turn
+  hangs.
 <!-- info:on -->
 - `kind`: `message` (default), `review_request`, `handoff`, `decision`, `assumption`, `question`.
 <!-- info:off -->
