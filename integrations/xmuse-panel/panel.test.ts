@@ -226,7 +226,57 @@ test('/x sends its text to the open conversation and answers where it went', asy
   // and never runs the callback, and it has no engine window to take a ui.scroll, so that call cannot be observed here.
 })
 
-test('with the probe on the panel draws the probe line', async ($, on) => {
+test('a stored tab that is not on the rail sends to the room, as the pane shows', async ($, on) => {
+  const stored: Record<string, unknown> = {
+    setup: { stateDir: '/state', distro: 'd', python: '' },
+    knownRooms: ['/room'],
+    'conn:/room': { url: 'http://127.0.0.1:9', token: 't', member: 'claude', memberToken: 'm', dir: '/room', sid: 'S' },
+  }
+  const files: Record<string, string> = {
+    'install.json': '{}',
+    'hubs.json': JSON.stringify({ hubs: [{ url: 'http://127.0.0.1:9', dir: '/room', started_at: 1 }] }),
+  }
+  const sent: any[] = []
+  on('clock.now', async () => ({ value: T0 }))
+  on('store.get', async (_$: any, e: any) => ({ value: stored[e.key] ?? null }))
+  on('session.cwd', async () => ({ value: '/room' }))
+  on('session.id', async () => ({ value: 'S' }))
+  on('fs.read', async (_$: any, e: any, next: any) => {
+    const name = String(e.path).replace(/\\/g, '/').split('/').pop() ?? ''
+    return name in files ? { value: files[name] } : next(e)
+  })
+  on('http.fetch', async (_$: any, e: any) => { if (String(e.url).endsWith('/v1/act')) sent.push(e.init?.body ? JSON.parse(String(e.init.body)) : JSON.parse(String(e.body ?? '{}'))); return { value: { status: 200, text: '{"ok":true}' } } })
+  on('state.get', async (_$: any, e: any, next: any) => {
+    if (e.key === 'view') return { value: { value: widthView(), version: 1 } }
+    if (e.key === 'tab') return { value: { value: '#plan', version: 1 } } // a tab of the former tab bar, not on the rail
+    return next(e)
+  })
+  const r = await $.command.run({ command: 'x', args: 'hello' })
+  expect(r?.text).toBe('已发到 大群')
+  expect(sent).toHaveLength(1)
+  expect(sent[0].to).toBe('#room')
+})
+
+test('the expanded card of a running member shows its tool count, live', async ($, on) => {
+  on('clock.now', async () => ({ value: T0 }))
+  on('store.get', async () => ({ value: null }))
+  on('state.get', async (_$: any, e: any, next: any) => {
+    if (e.key === 'view') return { value: { value: view, version: 1 } }
+    return next(e)
+  })
+  const ui = await $.ui.mount({ plugin: 'xmuse', surface: 'terminal', component: 'Pane', requestId: 'xmuse', props: {} })
+  await ui.press({ key: 'rail-dm-opencode' })
+  await ui.redraw()
+  await ui.press({ key: 'peer-menu-opencode' }) // opens the member card
+  await ui.redraw()
+  const key = 'lv-tools-opencode'
+  expect(await ui.find({ type: 'Client', key })).toBeDefined()
+  await ui.post({ live: 'tools', id: 'opencode' }, { in: key })
+  expect((await ui.find({ type: 'Text', text: '2 个工具', in: key }))?.text).toContain('2 个工具')
+  await ui.unmount()
+})
+
+test('with the probe on the panel draws the probe line',async ($, on) => {
   on('clock.now', async () => ({ value: T0 }))
   on('store.get', async () => ({ value: null }))
   on('state.get', async (_$: any, e: any, next: any) => {

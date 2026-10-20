@@ -66,6 +66,8 @@ const rv = { room: { name: 'dev', host: 'claude' }, me: { id: 'claude' }, member
   threads: [{ id: '#room', unread: 2 }, { id: 'dm:dsh+human', kind: 'dm', unread: 1 }, { id: 'dm:claude+dsh', kind: 'dm', unread: 4 }] }
 eq('dm id', [dmThreadId('dsh'), dmThreadId('opencode')], ['dm:dsh+human', 'dm:human+opencode'])
 eq('rail', railOf(rv).map(x => [x.id, x.kind, x.unread]), [['#room', 'room', 2], ['dm:dsh+human', 'dm', 1], ['dm:agy+human', 'dm', 0], ['all', 'all', 4]])
+import { activeTabOf } from './logic.ts'
+eq('active tab', [activeTabOf(rv, '#plan'), activeTabOf(rv, 'dm:dsh+human'), activeTabOf(rv, 'all'), activeTabOf(rv, '')], ['#room', 'dm:dsh+human', 'all', '#room'])
 eq('say in a dm', [buildSay('hi', 'dm:dsh+human', 0, rv).to, buildSay('@agy @dsh hi', 'dm:dsh+human', 0, rv).mentions], ['dm:dsh+human', ['dsh']])
 eq('to label', [toLabel({ id: 1, thread: '#room', mentions: ['dsh'] }), toLabel({ id: 2, thread: '#room' }),
   toLabel({ id: 3, thread: 'dm:dsh+human', to: ['dsh'] })], ['全员 · @dsh', '全员', 'dsh'])

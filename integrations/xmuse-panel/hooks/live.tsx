@@ -3,13 +3,14 @@ import type { ClientModule } from 'claude-code'
 // Surface module (a Client region): the live parts of a working member, drawn without redrawing the panel.
 //   part 'act'   : "正在：<tool or last line> · m:ss" (the working strip)
 //   part 'draft' : the member's latest partial output, typed in a few steps (the draft bubble body)
+//   part 'tools' : " · N 个工具" (the running member card's tool count)
 // One timer per instance (every 250 ms): every 4th tick it posts { live: part, id } and the ui.message hook in
 // register.tsx answers with fresh props (liveProps), so the panel itself is not redrawn. The draft's typing runs on the
 // same timer. The elapsed time is computed from the latest props (nowMs is the host clock when the hook answered).
 // startMsOf, fmtElapsed, elapsedLevel, draftTail and softBreak are copies of ./logic.ts / ./elapsed.tsx (a surface module
 // has no documented import): keep them in step.
 
-type LiveProps = { part: string; id: string; tool: string; text: string; startedAt: number; nowMs: number }
+type LiveProps = { part: string; id: string; tool: string; text: string; tools?: number; startedAt: number; nowMs: number }
 type LiveState = { shown: number; text: string }
 
 const C_AMBER = 'warning'
@@ -111,6 +112,7 @@ const Live: ClientModule<LiveProps, LiveState> = (p, surface) => {
     const prefix = clean(p.text.slice(0, shownOf(st, p.text)))
     return <Text dimColor>{`${softBreak(draftTail(prefix))} ▍`}</Text>
   }
+  if (p.part === 'tools') return <Text dimColor>{` · ${Number(p.tools ?? 0)} 个工具`}</Text>
   const lvl = elapsedLevel(p.startedAt, p.nowMs)
   return (
     <Box flexDirection="row" minWidth={0}>

@@ -7,7 +7,7 @@ import {
   C_AMBER, C_BLUE, C_GREEN, C_ORANGE, C_RED, agoText, approvalHasAlways, approvalKindLabel, approvalText, approvalsOf, avatarSvg, backoffMs,
   bigInputPlan, buildRows, buildSay, buildWakePrompt, displayName, doneInfo, expandNewlines, fmtClock, hardBreaks, isAutoForward,
   isDoneMsg, isLoopbackUrl, isToClaude, matchHubs, maxWakeId, membersOf, messagesFor, noiseSummary, parseHubs, parseMentions, replyLabel,
-  statusOf, summaryLine, railOf, dmThreadId, roomSvg, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
+  statusOf, summaryLine, railOf, activeTabOf, dmThreadId, roomSvg, toLabel, toolCount, unreadThreadsFor, wakeCandidates, zhNotice,
   workingMembers, doneLine, finishedMembers, toPosix, structOf,
   badgeOf, completeMention, dayLabel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
   trailingMention, vendorKey, canCompact, ctxLevel, ctxText, mergeCompactInstructions, hubStartScript,
@@ -491,7 +491,7 @@ async function newestGrew($: any, view: any): Promise<boolean> {
   const max = tl.reduce((n, m) => (typeof m?.id === 'number' && m.id > n ? m.id : n), 0)
   const prev = pollMaxId
   pollMaxId = Math.max(pollMaxId, max)
-  const tab = await read($, tabAtom)
+  const tab = activeTabOf(view, await read($, tabAtom))
   const item = railOf(view).find(t => t.id === tab)
   const drafts = workingMembers(view).filter(m => (!item?.peer || item.peer === m.id) && m.progress?.has_text).map(m => m.id).join(',')
   const prevDrafts = pollDrafts
@@ -543,6 +543,7 @@ async function liveProps($: any, part: string, id: string) {
     part, id,
     tool: typeof p?.last_tool === 'string' ? p.last_tool.trim() : '',
     text: String(p?.text ?? ''),
+    tools: toolCount(p),
     startedAt: elapsedStart(p?.started_at),
     nowMs: Number(await $.clock.now()),
   }
@@ -735,7 +736,7 @@ async function markRead($: any, threads: string[]) {
 
 /** Move the read cursor of what the current tab shows, once per (tab, view version). */
 async function autoRead($: any, view: any) {
-  const tab = await read($, tabAtom)
+  const tab = activeTabOf(view, await read($, tabAtom)) // the tab the pane shows, not a stale one
   const todo = unreadThreadsFor(view, tab)
   if (!todo.length) return
   const mark = `${tab}:${view.version ?? ''}`
@@ -763,7 +764,8 @@ async function setReply($: any, id: number) {
 
 /** The `say` body for the open conversation and the pending reply (null: nothing to send). Shared by the panel box and /x. */
 async function sayBody($: any, text: string) {
-  return buildSay(expandNewlines(text), await read($, tabAtom), await read($, replyAtom), await read($, viewAtom))
+  const view = await read($, viewAtom)
+  return buildSay(expandNewlines(text), activeTabOf(view, await read($, tabAtom)), await read($, replyAtom), view)
 }
 
 /** `/x <text>`: the same send as the panel's box, written in Claude's own prompt box. Answers the command's { text }. */
@@ -778,7 +780,7 @@ async function sendFromCommand($: any, raw: string): Promise<{ text: string }> {
     await update($, replyAtom, () => 0)
     scrollEndLater($)
     const view = await read($, viewAtom)
-    const tab = await read($, tabAtom)
+    const tab = activeTabOf(view, await read($, tabAtom))
     const item = railOf(view).find(t => t.id === tab)
     const label = item?.kind === 'dm' ? String(item.peer ?? item.label) : '大群'
     return { text: `已发到 ${label}` }
@@ -796,7 +798,7 @@ async function openBigInput($: any) {
     const r = await $.prompt.fill({ text: plan.text, mode: 'replace' })
     if (r?.isFilled === false) { $.ui.toast('没能放进 Claude 输入框'); return }
     const view = await read($, viewAtom)
-    const tab = await read($, tabAtom)
+    const tab = activeTabOf(view, await read($, tabAtom))
     const it = railOf(view).find(t => t.id === tab)
     const label = it?.kind === 'dm' ? String(it.peer ?? it.label) : '大群'
     $.ui.toast(`已放进 Claude 输入框：Shift+Enter 换行，回车发到「${label}」`)
@@ -1022,8 +1024,7 @@ async function loadOlder($: any) {
   if (!ids.length) return
   await update($, olderAtom, o => ({ ...o, loading: true }))
   try {
-    const tabId = await read($, tabAtom)
-    const activeTab = railOf(view).some(t => t.id === tabId) ? tabId : '#room'
+    const activeTab = activeTabOf(view, await read($, tabAtom))
     let before = Math.min(...ids)
     let got: any[] = []
     let hasMore = true
@@ -1545,7 +1546,7 @@ async function drawPanel($: any, e: any) {
   const hostId: string = view.room?.host ?? ''
   const meId: string = view.me?.id ?? ''
   const rail = railOf(view)
-  const activeTab = rail.some(t => t.id === tab) ? tab : '#room'
+  const activeTab = activeTabOf(view, tab)
   const activeItem = rail.find(t => t.id === activeTab)!
   const peerOf = activeItem.peer
   // the view's recent page plus any older pages loaded with the button at the bottom
@@ -1700,7 +1701,7 @@ async function drawPanel($: any, e: any) {
   const liveOf = (id: string, part: string) => {
     const m = workingMembers(liveView ?? view).find(x => x.id === id)
     const p = m?.progress
-    return { part, id, tool: typeof p?.last_tool === 'string' ? p.last_tool.trim() : '', text: String(p?.text ?? ''),
+    return { part, id, tool: typeof p?.last_tool === 'string' ? p.last_tool.trim() : '', text: String(p?.text ?? ''), tools: toolCount(p),
       startedAt: elapsedStart(p?.started_at), nowMs: Number(nowMs) }
   }
   const drafts = stale ? [] : working.filter(w => (!peerOf || peerOf === w.id)
@@ -1911,7 +1912,7 @@ async function drawPanel($: any, e: any) {
             {b.running ? (
               <Client key={`el-${m.id}-card`} module="./elapsed.tsx" props={{ startedAt: elapsedStart(m.progress?.started_at), baseMs: nowMs, kind: 'plain' }} />
             ) : null}
-            {b.running ? <Text dimColor>{` · ${toolCount(m.progress)} 个工具`}</Text> : null}
+            {b.running ? <Client key={`lv-tools-${m.id}`} module="./live.tsx" props={liveOf(m.id, 'tools')} /> : null}
             {q > 0 ? <Text color={C_AMBER}>{` · 排队 ${q}`}</Text> : null}
           </Box>
           {/* its model, a button that opens the picker; this session's own Claude is the desktop app's to set */}
@@ -2461,7 +2462,7 @@ export const register: Register = on => {
   on('ui.message', async ($, e, next) => {
     const d: any = e.data
     if (typeof d?.grown === 'string') await growDone($, d) // validated there: kind and run must match the live atom
-    if (d?.live === 'act' || d?.live === 'draft') return { props: await liveProps($, d.live, String(d.id ?? '')) }
+    if (d?.live === 'act' || d?.live === 'draft' || d?.live === 'tools') return { props: await liveProps($, d.live, String(d.id ?? '')) }
     return next(e)
   })
 

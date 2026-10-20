@@ -335,6 +335,11 @@ export function railOf(view: any): RailItem[] {
   return out
 }
 
+/** The stored tab if the rail still has it, else '#room' (a tab from the former tab bar, e.g. a `#plan` group, is not on the rail). */
+export function activeTabOf(view: any, tab: string): string {
+  return railOf(view).some(t => t.id === tab) ? tab : '#room'
+}
+
 /** The room's avatar: a disc with three heads, the group's mark in the rail and the room header. */
 export function roomSvg(size: number): string {
   const head = (x: number, y: number, r: number) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#FFFFFF"/>`
