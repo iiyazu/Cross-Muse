@@ -101,6 +101,17 @@ uv sync --project hub --group otel
 
 接了 MemoryOS 时，导出打开后 hub 对 MemoryOS 的每次调用也是一个 span（`xmuse.memoryos.call`），挂在引起它的回合或消息下面，并通过 `traceparent` 请求头传给 MemoryOS。MemoryOS 也打开追踪时（见 MemoryOS Lite README 的“追踪”一节），它的请求、提炼图的各个节点和 LLM 调用会接在这个 span 下面，同一条消息在后端里是一棵树。两边默认都进 Phoenix 项目 `xmuse`，hub 这边可在配置里用 `"otel": {"project": "..."}` 改。
 
+想直接看效果：`docker compose -f scripts/demo/docker-compose.yml up -d --build` 起 Phoenix 和一个打开了追踪的 MemoryOS（文件开头写了 hub 配置怎么指过去）。hub 本身在本机运行，不进容器。
+
+## 技术栈
+
+- hub：Python 3.12、FastAPI、Uvicorn、SQLite、PyJWT、tree-sitter、zstandard
+- agent 接入：MCP（Node.js stdio shim，`@modelcontextprotocol/sdk`）、Claude Code、OpenCode server API、agy、dsh
+- 界面：Claude 桌面 App 面板（TypeScript）
+- 记忆：MemoryOS Lite（HTTP 服务）
+- 观测：OpenTelemetry、OTLP/HTTP、OpenInference、Arize Phoenix
+- 运行与开发：uv、systemd 用户单元、WSL、Docker Compose、pytest、Node.js test runner、GitHub Actions
+
 ## 局限
 
 - 单机、单用户。agent 和 hub 以同一个系统用户运行，权限模型只防误操作，不防有意绕过的 agent。

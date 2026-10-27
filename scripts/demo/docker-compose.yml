@@ -1,0 +1,53 @@
+# xmuse demo backends: Phoenix and a MemoryOS Lite that traces into it.
+#
+# The hub itself runs on the host (it drives the local agent CLIs); point it at these two:
+#   docker compose -f scripts/demo/docker-compose.yml up -d --build
+#   hub config.json:  "memoryos_url": "http://127.0.0.1:8000",
+#                     "otel": {"enabled": true, "endpoint": "http://localhost:6006"}
+#   Phoenix:          http://localhost:6006, project "xmuse"
+#   Tear down:        docker compose -f scripts/demo/docker-compose.yml down
+#
+# /curate and /audit need a chat model: export OPENAI_API_KEY (and OPENAI_BASE_URL / MEMORYOS_MODEL), or
+# DEEPSEEK_API_KEY / OPENCODE_API_KEY with MEMORYOS_LLM_PROVIDER, before `up`. Without one, MemoryOS offers
+# /recall only and the hub uses what it advertises.
+#
+# MEMORYOS_SRC builds MemoryOS from another checkout (default: the GitHub main branch);
+# PHOENIX_PORT / MEMORYOS_PORT move the host ports.
+services:
+  phoenix:
+    image: arizephoenix/phoenix:20.26.1
+    ports:
+      - "${PHOENIX_PORT:-6006}:6006"   # UI at /, OTLP/HTTP traces at /v1/traces
+    environment:
+      PHOENIX_PORT: "6006"
+    volumes:
+      - phoenix-data:/root/.phoenix
+    healthcheck:  # no shell in the image; MemoryOS waits for this before it starts exporting
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  memoryos:
+    build:
+      context: ${MEMORYOS_SRC:-https://github.com/iiyazu/MemryOS-lite.git#main}
+      args:
+        EXTRAS: "--extra remote --extra otel"
+    ports:
+      - "${MEMORYOS_PORT:-8000}:8000"
+    environment:
+      MEMORYOS_OTEL_ENABLED: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:6006
+      MEMORYOS_OTEL_PROJECT: xmuse
+      MEMORYOS_LLM_PROVIDER: ${MEMORYOS_LLM_PROVIDER:-auto}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      MEMORYOS_MODEL: ${MEMORYOS_MODEL:-gpt-4o-mini}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+    depends_on:
+      phoenix:
+        condition: service_healthy
+
+volumes:
+  phoenix-data:

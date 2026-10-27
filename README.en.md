@@ -85,6 +85,15 @@ Windows and WSL details are in [hub/README.md](hub/README.md) and the [panel not
 | `tests/` | hub tests, replaying recorded agent output through fake agents |
 | `experiments/` | experiment harness: seed tasks, runner and scoring scripts |
 
+## Tech stack
+
+- Hub: Python 3.12, FastAPI, Uvicorn, SQLite, PyJWT, tree-sitter, zstandard
+- Agent access: MCP (Node.js stdio shim, `@modelcontextprotocol/sdk`), Claude Code, OpenCode server API, agy, dsh
+- UI: Claude desktop app panel (TypeScript)
+- Memory: MemoryOS Lite (HTTP service)
+- Observability: OpenTelemetry, OTLP/HTTP, OpenInference, Arize Phoenix
+- Running and development: uv, systemd user units, WSL, Docker Compose, pytest, Node.js test runner, GitHub Actions
+
 ## Limits
 
 - One machine, one user. Agents and the hub run as the same OS user; the permission model guards against mistakes, not against an agent that tries to get around it.
