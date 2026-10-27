@@ -19,6 +19,7 @@ from pathlib import Path
 from . import agents, align, api, audit, auth, config, db, dispatch, hublock, mail, memoryos, otel, peer, preset, registry
 from . import share, threads
 from . import wakepack
+from . import otel_remote
 from . import room as rooms
 from .adapters.agy import AgyDriver
 from .adapters.claude import ClaudeDriver
@@ -66,6 +67,7 @@ class Hub:
             for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
                 c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))
         self.mo = self.cfg["_mo"] = memoryos.Client(self.cfg["memoryos_url"], self.cfg["memoryos_skip"])  # align.view reads it from cfg
+        otel_remote.install(self)  # optional: MemoryOS calls in the traces when export is on (otel_remote.py)
         self.curator = memoryos.Curator(self.mo, self.db, self.cfg)
         self.auditor = audit.Auditor(self.mo, self.db, self.cfg)  # supersedes -> /audit, in its own thread
         self.relay_cv = threading.Condition()  # notified after every request; /v1/relay/poll re-checks the db
