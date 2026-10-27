@@ -61,7 +61,8 @@ class Auditor:
         self.wake.set()
 
     def stop(self) -> None:
-        self.stopping.set()  # also keeps a late kick from starting the thread after shutdown
+        with self.starting:  # a late kick either finished starting the thread before this, or never starts it
+            self.stopping.set()
         if self.thread.is_alive():
             self.wake.set()
             self.thread.join(5)

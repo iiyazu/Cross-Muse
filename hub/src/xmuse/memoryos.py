@@ -172,7 +172,8 @@ class Curator:
             self.thread.start()
 
     def stop(self) -> None:
-        self.stopped = True
+        with self.lock:  # a kick either finished starting and queueing before this, or sees `stopped` after it
+            self.stopped = True
         if self.thread.is_alive():
             self.q.put(None)
             self.thread.join(5)
@@ -182,9 +183,9 @@ class Curator:
         if not self.mo.ready("curate.collab") or not config.alignment_on(self.cfg):
             return
         with self.lock:
+            if self.stopped:  # shut down: nothing would take the job
+                return
             if not self.thread.is_alive():
-                if self.stopped:  # shut down: nothing would take the job
-                    return
                 self.thread.start()  # MemoryOS came up after the hub
             conn = self.pool()
             last = (conn.execute("select msg_id from curated where thread_id=?", (tid,)).fetchone() or [0])[0]

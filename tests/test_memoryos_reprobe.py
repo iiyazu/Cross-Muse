@@ -1,6 +1,7 @@
 """A MemoryOS that is unreachable when the hub starts (it started later, or was down) is picked up without a hub
 restart: the client asks /health again at most every REPROBE_S, and the curator and auditor start their workers on
 the first kick after their capability appears. One that answers with no capabilities stays disabled."""
+import threading
 import time
 
 import pytest
@@ -89,6 +90,21 @@ def test_an_unreachable_memoryos_is_asked_again_at_most_every_reprobe_interval(m
     assert probes == [1]
 
 
+def test_stop_waits_for_a_kick_that_is_starting_a_worker(make):
+    """stop() and a late start share one lock: a kick in the middle of starting (and, for the curator, queueing)
+    finishes first, so stop() then sees a live worker and shuts it down; it never returns while a start is pending."""
+    h = hub(make, DOWN)
+    for lock, worker in ((h.hub.curator.lock, h.hub.curator), (h.hub.auditor.starting, h.hub.auditor)):
+        lock.acquire()                         # a kick holds it
+        stopper = threading.Thread(target=worker.stop)
+        stopper.start()
+        stopper.join(0.3)
+        assert stopper.is_alive()              # stop() waits for the kick
+        lock.release()
+        stopper.join(5)
+        assert not stopper.is_alive()
+
+
 def test_no_worker_starts_after_shutdown(make, mo, monkeypatch):
     monkeypatch.setattr(memoryos, "REPROBE_S", 0)
     h = hub(make, DOWN)
@@ -98,3 +114,4 @@ def test_no_worker_starts_after_shutdown(make, mo, monkeypatch):
     talk(h, 8)
     h.hub.auditor.kick()
     assert not h.hub.curator.thread.is_alive() and not h.hub.auditor.thread.is_alive()
+    assert h.hub.curator.q.empty() and not h.hub.curator.busy  # nothing queued for a worker that will not come
