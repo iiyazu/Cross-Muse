@@ -99,6 +99,8 @@ uv sync --project hub --group otel
 
 `xmuse doctor` 会检查依赖和端点是否可达。`xmuse trace export --state <dir|hub.db> [--endpoint URL] [--since TS] [--room-id ID]` 把任意一份 hub.db 事后回放进后端，只读不写。消息正文默认不导出，需要时在配置里打开 `capture_content`。
 
+接了 MemoryOS 时，导出打开后 hub 对 MemoryOS 的每次调用也是一个 span（`xmuse.memoryos.call`），挂在引起它的回合或消息下面，并通过 `traceparent` 请求头传给 MemoryOS。MemoryOS 也打开追踪时（见 MemoryOS Lite README 的“追踪”一节），它的请求、提炼图的各个节点和 LLM 调用会接在这个 span 下面，同一条消息在后端里是一棵树。两边默认都进 Phoenix 项目 `xmuse`，hub 这边可在配置里用 `"otel": {"project": "..."}` 改。
+
 ## 局限
 
 - 单机、单用户。agent 和 hub 以同一个系统用户运行，权限模型只防误操作，不防有意绕过的 agent。
