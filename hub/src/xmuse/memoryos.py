@@ -4,12 +4,15 @@ entries from a background thread, /similar finds near-duplicates for it.
 MemoryOS is never on the correctness path: any failure (down, timeout, non-2xx, malformed reply) means
 "memory unavailable" and the hub keeps its deterministic behaviour. It holds no state; the hub sends everything.
 """
+import contextlib
+import contextvars
 import json
 import logging
 import queue
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import align, config, db, mail
@@ -21,29 +24,90 @@ EVERY, WINDOW, CONTEXT, ACTIVE, SIMILAR = 8, 32, 8, 60, 0.88
 _in = lambda xs: ",".join("?" * len(xs))  # noqa: E731
 
 
+_cause: contextvars.ContextVar[tuple[str, int] | None] = contextvars.ContextVar("memoryos_cause", default=None)
+
+
+@contextlib.contextmanager
+def cause(kind: str, row_id: int | None):
+    """Mark the calls made inside the block as caused by a hub row: ("turn", 88) or ("message", 412).
+
+    Only observers read it (the client never does); a None id means no known cause.
+    """
+    token = _cause.set(None if row_id is None else (kind, row_id))
+    try:
+        yield
+    finally:
+        _cause.reset(token)
+
+
+def _error_type(e: Exception) -> str:
+    """The kind of failure, never its text (bodies and URLs stay out of telemetry)."""
+    if isinstance(e, urllib.error.HTTPError):
+        return "http_5xx" if e.code >= 500 else "http_4xx" if e.code >= 400 else "other"
+    if isinstance(e, urllib.error.URLError) and isinstance(e.reason, BaseException):
+        e = e.reason
+    if isinstance(e, TimeoutError):
+        return "timeout"
+    if isinstance(e, ConnectionRefusedError):
+        return "refused"
+    if isinstance(e, ValueError):  # json.JSONDecodeError, or a body that is not UTF-8
+        return "bad_json"
+    return "other"
+
+
 class Client:
-    def __init__(self, url: str, skip=()):
-        self.url, self.caps, self.timeout = url.rstrip("/"), set(), 2.0
+    """`observer` (optional) watches every call: observer.start(call) before it is sent, returning extra request
+    headers or None, and observer.end(call, outcome) after it. `call` is a dict (cap, path, cause, started_at) the
+    observer may add its own keys to; `outcome` has ok, status, error (see _error_type; "bad_json" also for a
+    reply that is not an object), ms and ended_at. An observer that raises is logged and ignored."""
+    cause = staticmethod(cause)
+
+    def __init__(self, url: str, skip=(), observer=None):
+        self.url, self.caps, self.timeout, self.observer = url.rstrip("/"), set(), 2.0, observer
         if self.url:  # an unreachable MemoryOS at start means "not used" until the hub restarts
             caps = (self.call(None, "/health", None, 5) or {}).get("capabilities")
             self.caps = (set(caps) if isinstance(caps, (list, dict)) else set()) - set(skip)
             log.info("memoryos %s: capabilities %s", self.url, sorted(self.caps) or "none (disabled)")
 
+    def _observe(self, method: str, *args):
+        try:
+            return getattr(self.observer, method)(*args)
+        except Exception:  # noqa: BLE001 - telemetry never changes what the call does
+            log.warning("memoryos observer %s failed", method, exc_info=True)
+            return None
+
     def call(self, cap: str | None, path: str, body: dict | None, timeout: float | None = None) -> dict | None:
         if cap and cap not in self.caps:
             return None
         t0 = time.monotonic()
+        headers = {"content-type": "application/json"}
+        seen = None if self.observer is None else {"cap": cap, "path": path, "cause": _cause.get(),
+                                                   "started_at": time.time()}
+        if seen is not None:
+            extra = self._observe("start", seen)
+            if isinstance(extra, dict):
+                headers.update({str(k): str(v) for k, v in extra.items()})
+        status, error = None, None
         try:
-            req = urllib.request.Request(self.url + path, data=body and json.dumps(body).encode(),
-                                         headers={"content-type": "application/json"})
+            req = urllib.request.Request(self.url + path, data=body and json.dumps(body).encode(), headers=headers)
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+                status = r.status
                 out = json.load(r)
             log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": True}))
+            if not isinstance(out, dict):
+                error = "bad_json"
             return out if isinstance(out, dict) else None
         except Exception as e:  # noqa: BLE001 - every failure has the same meaning
+            error = _error_type(e)
+            if isinstance(e, urllib.error.HTTPError):
+                status = e.code
             log.warning("memoryos %s failed: %r", path, e)
             log.info("memoryos-call %s", json.dumps({"path": path, "ms": int((time.monotonic() - t0) * 1000), "ok": False}))
             return None
+        finally:
+            if seen is not None:
+                self._observe("end", seen, {"ok": error is None, "status": status, "error": error,
+                                            "ms": int((time.monotonic() - t0) * 1000), "ended_at": time.time()})
 
     def rank(self, es: list[dict], scope: str, role: str, query: str, cap: int, budget: int) -> list[str] | None:
         """Ids ("E12") MemoryOS keeps from one over-cap layer, best first; None means use the newest-by-seq cut."""
@@ -135,6 +199,10 @@ class Curator:
                 f"Near-duplicate active entries, consider proposing a merge: {pairs}"} if pairs else None
 
     def _curate(self, tid: str, win: list[dict], ctx: list[dict], active: list[dict]) -> None:
+        with cause("message", win[-1]["id"]):  # every call of one curation is for the window's last message
+            self._curate_window(tid, win, ctx, active)
+
+    def _curate_window(self, tid: str, win: list[dict], ctx: list[dict], active: list[dict]) -> None:
         note = self._similar(active)
         r = self.mo.call("curate.collab", "/curate", {
             "scope_id": tid, "profile": "collab",
