@@ -21,6 +21,7 @@ log = logging.getLogger("xmuse.memoryos")
 KINDS = ("decision", "convention", "assumption", "question", "lesson")  # what collab may propose
 MSGS = ("message", "handoff", "review_request", "decision", "assumption", "question")  # what curate reads
 EVERY, WINDOW, CONTEXT, ACTIVE, SIMILAR = 8, 32, 8, 60, 0.88
+REPROBE_S = 30.0  # an unreachable MemoryOS is asked for its capabilities again at most this often
 _in = lambda xs: ",".join("?" * len(xs))  # noqa: E731
 
 
@@ -64,10 +65,31 @@ class Client:
 
     def __init__(self, url: str, skip=(), observer=None):
         self.url, self.caps, self.timeout, self.observer = url.rstrip("/"), set(), 2.0, observer
-        if self.url:  # an unreachable MemoryOS at start means "not used" until the hub restarts
-            caps = (self.call(None, "/health", None, 5) or {}).get("capabilities")
-            self.caps = (set(caps) if isinstance(caps, (list, dict)) else set()) - set(skip)
-            log.info("memoryos %s: capabilities %s", self.url, sorted(self.caps) or "none (disabled)")
+        self.skip, self.retry_at, self.probing = set(skip), None, threading.Lock()
+        if self.url:
+            self._probe()
+
+    def _probe(self) -> None:
+        """Read the capabilities from /health. A MemoryOS that answers with none is disabled for good; one that does
+        not answer (down, or started after the hub) is not used until ready() asks again REPROBE_S later."""
+        r = self.call(None, "/health", None, 5)
+        caps = (r or {}).get("capabilities")
+        self.caps = (set(caps) if isinstance(caps, (list, dict)) else set()) - self.skip
+        self.retry_at = None if r is not None else time.monotonic() + REPROBE_S
+        log.info("memoryos %s: capabilities %s", self.url,
+                 sorted(self.caps) or ("none (disabled)" if r is not None else "none yet (unreachable, will retry)"))
+
+    def ready(self, cap: str) -> bool:
+        """Whether `cap` can be used now. After a failed probe the first caller past retry_at asks again; the rest
+        go on without waiting for it."""
+        if cap not in self.caps and self.retry_at is not None and time.monotonic() >= self.retry_at \
+                and self.probing.acquire(blocking=False):
+            try:
+                if self.retry_at is not None and time.monotonic() >= self.retry_at:
+                    self._probe()
+            finally:
+                self.probing.release()
+        return cap in self.caps
 
     def _observe(self, method: str, *args):
         try:
@@ -77,7 +99,7 @@ class Client:
             return None
 
     def call(self, cap: str | None, path: str, body: dict | None, timeout: float | None = None) -> dict | None:
-        if cap and cap not in self.caps:
+        if cap and not self.ready(cap):
             return None
         t0 = time.monotonic()
         headers = {"content-type": "application/json"}
@@ -145,20 +167,25 @@ class Curator:
     def __init__(self, mo: Client, pool, cfg: dict):
         self.mo, self.pool, self.cfg = mo, pool, cfg
         self.q, self.busy, self.lock = queue.Queue(), set(), threading.Lock()
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread, self.stopped = threading.Thread(target=self._run, daemon=True), False
         if "curate.collab" in mo.caps:
             self.thread.start()
 
     def stop(self) -> None:
+        self.stopped = True
         if self.thread.is_alive():
             self.q.put(None)
             self.thread.join(5)
 
     def kick(self, tid: str, closed: bool = False) -> None:
         """Queue a curation if the thread has 8 new messages, a new handoff, or was just closed."""
-        if "curate.collab" not in self.mo.caps or not config.alignment_on(self.cfg):
+        if not self.mo.ready("curate.collab") or not config.alignment_on(self.cfg):
             return
         with self.lock:
+            if not self.thread.is_alive():
+                if self.stopped:  # shut down: nothing would take the job
+                    return
+                self.thread.start()  # MemoryOS came up after the hub
             conn = self.pool()
             last = (conn.execute("select msg_id from curated where thread_id=?", (tid,)).fetchone() or [0])[0]
             sql = f"select * from messages where thread_id=? and kind in ({_in(MSGS)}) and id"
