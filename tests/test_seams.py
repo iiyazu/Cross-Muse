@@ -236,7 +236,7 @@ def test_built_in_sources_and_marks_are_unchanged(make, sources):
     h.send("claude-1", "hello")
     got = otel.spans(h.conn())
     assert [s.name for s in got] and all(otel.mark_key(s) is not None for s in got)
-    assert [b.__name__ for b, _ in otel._SOURCES] == ["_turn_spans", "_message_spans", "_approval_spans",
-                                                       "_capped_spans"]
+    assert [b.__name__ for b, _ in otel._SOURCES][:4] == ["_turn_spans", "_message_spans", "_approval_spans",
+                                                           "_capped_spans"]  # others register after them
     assert "openinference.project.name" not in got[0].resource.attributes
     assert json.loads(got[0].to_json())["resource"]["attributes"]["service.name"] == otel.SERVICE_NAME
