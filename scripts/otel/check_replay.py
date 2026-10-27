@@ -1,4 +1,4 @@
-"""Probe check for `xmuse trace export` (design docs/design/XMUSE2-OTEL.zh.md §7).
+"""Probe check for `xmuse trace export`.
 
 For each run, derive the spans locally from its hub.db (the same otel.spans() replay uses) and compare them with
 what the backend holds, read back through Phoenix's REST API:

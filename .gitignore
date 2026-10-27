@@ -7,6 +7,6 @@ __pycache__/
 # archived e2e: disposable workspaces and hub state rebuilt by its scenario scripts
 archive/e2e/ws-*/
 archive/e2e/state-*/
-# experiments: runner hub state (results/ is committed; results/_prev/ holds voided or replaced runs)
+# experiments: runner hub state and run results (kept locally, not committed)
 experiments/state-*/
-experiments/results/_prev/
+experiments/results/

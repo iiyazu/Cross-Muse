@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-// xmuse 侧栏：OpenCode 2.x TUI 插件。约定 v0（docs/design/XMUSE2-VIEW-API.zh.md）。
+// xmuse 侧栏：OpenCode 2.x TUI 插件。侧栏接口约定 v0。
 // 薄渲染层：只画画、把操作转成 /v1/view、/v1/act、rooms/join 请求。令牌只在 ctx.storage.store + 插件文件存储里。
 import { Plugin } from "@opencode/plugin/tui"
 import { HubClient } from "./lib/hub.mjs"

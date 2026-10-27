@@ -1,4 +1,4 @@
-"""OTel export, stage 1 (design docs/design/XMUSE2-OTEL.zh.md §6).
+"""OTel export, stage 1.
 
 Mapping tests build rows directly (agents paused, no drivers run); behaviour
 tests (restart, failure, disabled) go through the real engine/hub paths.

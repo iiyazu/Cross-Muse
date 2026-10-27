@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// xmuse 2 mock hub：按 docs/design/XMUSE2-VIEW-API.zh.md（约定 v0 + 第 8 节 v0.1）实现的内存假 hub。
+// xmuse 2 mock hub：按侧栏接口约定（v0 + v0.1）实现的内存假 hub。
 // 无依赖，只监听 127.0.0.1。三家侧栏在真 hub 之外都用它开发和测试；字段名、返回形状、错误码照真 hub。
 // 用法见同目录 README.md。
 import http from 'node:http'

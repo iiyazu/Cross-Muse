@@ -5,8 +5,8 @@
 # Tear down:    docker compose -f scripts/otel/docker-compose.yml down
 #
 # The hub speaks standard OTLP/HTTP (protobuf) and needs no backend SDK; this
-# file only affects where the traces land. Phoenix is the default backend
-# (design docs/design/XMUSE2-OTEL.zh.md §2): single container, SQLite by
+# file only affects where the traces land. Phoenix is the default backend:
+# single container, SQLite by
 # default, Postgres for production use. Image pinned (2026-10-25).
 services:
   phoenix:

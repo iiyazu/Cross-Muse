@@ -1,4 +1,4 @@
-"""OpenTelemetry trace export (design docs/design/XMUSE2-OTEL.zh.md).
+"""OpenTelemetry trace export.
 
 Spans are *derived* from hub.db rows after they reach their terminal state; the
 hub never reads spans back and a failed export never affects hub behaviour.

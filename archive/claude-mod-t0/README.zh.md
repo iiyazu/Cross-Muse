@@ -4,7 +4,7 @@
 
 插件名 `xmuse`。在 Claude Code（终端版和桌面版 Code 标签页）里给当前会话加一个 xmuse 侧栏：看房间成员、时间线、审批、对齐条目，开房间、发邀请、加入房间；别的成员 @ 你时，空闲的会话会被自动唤醒，用 xmuse 工具回复。
 
-对接 hub 的接口只按 `docs/design/XMUSE2-VIEW-API.zh.md`（约定 v0）。真 hub（D2）完成前用假 hub `tools/mock-hub/mock-hub.mjs` 开发和测试。
+对接 hub 的接口只按侧栏接口约定 v0。真 hub（D2）完成前用假 hub `tools/mock-hub/mock-hub.mjs` 开发和测试。
 
 ## 文件
 

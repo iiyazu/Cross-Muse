@@ -83,23 +83,13 @@ Windows and WSL details are in [hub/README.md](hub/README.md) and the [panel not
 | `integrations/dsh-bundle/` | the dsh desktop plugin bundle |
 | `skill/`, `templates/` | the collaboration skill and AGENTS.md section written into a project |
 | `tests/` | hub tests, replaying recorded agent output through fake agents |
-| `experiments/`, `docs/design/` | experiments, design notes and reports |
-
-## Evidence
-
-Checked with mechanism probes: a small simulated project, one feature per probe, outcomes judged by a program, 10 runs per cell.
-
-- **Changed agreements reach everyone.** The user tells one member in private that the division of work changed. Without the hub, the other member stayed out of date in 10 of 10 runs; members passed the change on in only 1 run, and even then the peer did not act on it. Through the hub, all 10 runs were in sync (one-sided Fisher test, p=0.006). During the rounds around the change, the hub group woke once and used about 46% fewer tokens than broadcasting to everyone.
-- **Agreement entries are followed more than plain messages.** The same format rule, sent as a plain message, was judged "not a team rule" and ignored by 9 of 40 members; sent as an agreement entry, it was broken by 0 of 20 (p=0.019).
-- **Agreements are cheap.** In multi-agent coding runs, the agreement section took at most 0.4% of the tokens of a wake.
-
-Data and validity notes: the "S 系列阶段分析" section of [HANDOFF-BASE-REPORT.zh.md](docs/HANDOFF-BASE-REPORT.zh.md) and the [M2b report](docs/design/XMUSE2-M2B-EXP-REPORT.zh.md); probe design in [XMUSE2-PROBES.zh.md](docs/design/XMUSE2-PROBES.zh.md) (all in Chinese).
+| `experiments/` | experiment harness: seed tasks, runner and scoring scripts |
 
 ## Limits
 
 - One machine, one user. Agents and the hub run as the same OS user; the permission model guards against mistakes, not against an agent that tries to get around it.
 - The panel depends on Claude Code's plugin interface and is developed and tested on the Windows desktop app with WSL.
-- The evidence comes from small simulated projects; it has not been measured systematically on large real projects.
+- So far it has been tested on small simulated projects, not systematically on large real ones.
 
 ## Development
 

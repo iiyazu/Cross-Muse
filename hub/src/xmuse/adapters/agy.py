@@ -37,7 +37,7 @@ CODE_TOOLS = {"run_command", "write_to_file", "replace_file_content", "edit_file
 # the agent's own token) and stays stdlib-only: agy may run it with any python. agy runs headless, so a command the
 # user has to approve is denied with the reason, and the agent is told to ask the user through xmuse. When the hub
 # cannot answer, the call is denied: the gate fails closed.
-# Input (docs/adapters/agy.zh.md 1.5): {"tool_name", "tool_input": {"CommandLine", "Cwd", ...}, "workspace_paths"}.
+# Input: {"tool_name", "tool_input": {"CommandLine", "Cwd", ...}, "workspace_paths"}.
 HOOK_BODY = '''
 import json
 import os

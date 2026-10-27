@@ -1,4 +1,4 @@
-"""Sharing the user's private messages (T3, contract docs/design/XMUSE2-VIEW-API.zh.md 8.6).
+"""Sharing the user's private messages (T3).
 
 What the user sends a member in a DM (thread dm:<member>+human, sender human) stays with that member. The member
 may ask to share it (`xmuse_share`): if the user marked the message shareable it is delivered at once, else the

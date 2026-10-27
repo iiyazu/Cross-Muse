@@ -3,7 +3,7 @@ import { findRoom, isKeyShape, isLoopbackUrl, normDir, parseHubs, registryDirFro
 import { doneMd, messageMd, renderHostWait, renderMembers } from './src/format'
 
 // The hub is faked at the bottom ($.http.fetch). Paths and shapes follow
-// docs/design/XMUSE2-VIEW-API.zh.md (v0 + v0.1 §8).
+// the sidebar view API (v0 + v0.1).
 
 const CWD = '/proj'
 const SID = 'sess-1'

@@ -1,6 +1,6 @@
 # xmuse 假 hub（mock-hub）
 
-按 `docs/design/XMUSE2-VIEW-API.zh.md`（约定 v0，加第 8 节 v0.1）实现的内存假 hub，无依赖，只监听 `127.0.0.1`。D2 真 hub 完成前，三家侧栏（Claude mod / OpenCode / dsh）都用它开发和测试。重启即清空。
+按侧栏接口约定（v0，加 v0.1）实现的内存假 hub，无依赖，只监听 `127.0.0.1`。D2 真 hub 完成前，三家侧栏（Claude mod / OpenCode / dsh）都用它开发和测试。重启即清空。
 
 ## 启动
 

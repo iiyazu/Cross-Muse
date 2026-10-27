@@ -1,4 +1,4 @@
-"""Sidebar API (D2, contract docs/design/XMUSE2-VIEW-API.zh.md v0): rooms, invitations, member vs operator tokens,
+"""Sidebar API (D2): rooms, invitations, member vs operator tokens,
 session binding, the long-polled view and the acts."""
 import json
 import threading

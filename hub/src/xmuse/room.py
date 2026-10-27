@@ -1,4 +1,4 @@
-"""Rooms, invitations, sidebar tokens and the sidebar view (D2; contract docs/design/XMUSE2-VIEW-API.zh.md v0).
+"""Rooms, invitations, sidebar tokens and the sidebar view (D2).
 
 A room is this workspace: one hub, one state directory, one `room` row (created by the first sidebar's
 POST /v1/rooms, or synthesized for a workspace set up with `xmuse init`). Three kinds of callers:

@@ -1,5 +1,5 @@
 // 纯函数：解析 /v1/view、时间线去重、@ 检测、侧栏文本组装。
-// 无依赖、无网络，可单元测试。约定见 docs/design/XMUSE2-VIEW-API.zh.md v0。
+// 无依赖、无网络，可单元测试。按侧栏接口约定 v0。
 
 export function parseSlash(input) {
   const parts = String(input || "").trim().split(/\s+/).filter(Boolean)

@@ -347,7 +347,7 @@ def run(state: Path | None) -> list[Check]:
 
 
 def otel_checks(cfg: dict) -> list[Check]:
-    """OTel export readiness (design docs/design/XMUSE2-OTEL.zh.md §4).
+    """OTel export readiness.
 
     Degradation is graceful by design, so problems are warns, never FAILs.
     Never prints headers (they may carry the backend's credentials).

@@ -1,4 +1,4 @@
-"""DM sharing (T3, contract XMUSE2-VIEW-API.zh.md 8.6): xmuse_share, the share approval, share_mark, delivery with
+"""DM sharing (T3): xmuse_share, the share approval, share_mark, delivery with
 provenance, the rejection notice and the rule-based suggestions."""
 import json
 

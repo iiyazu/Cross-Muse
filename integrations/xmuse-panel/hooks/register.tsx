@@ -14,7 +14,7 @@ import {
   TONES, ctxBarSvg, noiseTitle, noiseTone, freshMessage, revealSteps, shortModel, softWrap, clip, sendPayload, sendOutcome,
 } from './logic'
 
-// xmuse panel (slice T8d): read-only view of the project's hub plus sending. Design: docs/design/XMUSE2-T8.zh.md §2.1, §3.
+// xmuse panel (slice T8d): read-only view of the project's hub plus sending.
 // Windowing rule from experiments: `$` may only be passed to functions declared at the top level of this file.
 // T8e: approval cards, working strip, add-assistant, wake Claude. T8f: typing effect and done line. H1: open-room button.
 // T8 wrap-up: stop, retract, compaction (context size per member, the 压缩 button, the session.compact hook), the hub
