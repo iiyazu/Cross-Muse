@@ -291,6 +291,7 @@ def test_hub_takes_the_policy_from_its_environment_only(make, monkeypatch):
     assert json.loads((h.state / "hub.json").read_text(encoding="utf-8"))["shell_policy"] == "blocklist-experiment"
     monkeypatch.setenv("XMUSE_SHELL_POLICY", "yolo")
     from xmuse.server import Hub
+    h.stop_hub()
     with pytest.raises(SystemExit, match="XMUSE_SHELL_POLICY"):  # refused before any driver starts
         Hub(h.state, oc_base=h.oc.base)
 

@@ -14,8 +14,9 @@ LIMIT = 300
 MIN_STATEMENT = 12  # shortest first-sentence prefix worth keeping when a long statement is cut
 
 
-def _move(conn, eid: int, op: str, status: str) -> None:
-    seq = conn.execute("insert into entry_events(entry_id, op, at) values(?,?,?)", (eid, op, db.now())).lastrowid
+def _move(conn, eid: int, op: str, status: str, msg: int | None = None) -> None:
+    seq = conn.execute("insert into entry_events(entry_id, op, at, msg) values(?,?,?,?)",
+                       (eid, op, db.now(), msg)).lastrowid
     conn.execute("update entries set status=?, seq=?, invalid_at=? where id=?",
                  (status, seq, None if status in ("active", "proposed") else db.now(), eid))
 
@@ -47,9 +48,10 @@ def add(conn, kind: str, scope: str, tid: str, statement: str, msg: int | list, 
         (kind, scope, tid, statement, json.dumps(msg if isinstance(msg, list) else [msg]), author, status, supersedes,
          assignee, json.dumps(depends_on) if depends_on else None, json.dumps(resolves) if resolves else None,
          db.now(), db.now(), via)).lastrowid
-    _move(conn, eid, "add", status)
+    m = msg if isinstance(msg, int) and not isinstance(msg, bool) else None
+    _move(conn, eid, "add", status, m)
     if supersedes and status == "active":
-        _move(conn, supersedes, "supersede", "superseded")
+        _move(conn, supersedes, "supersede", "superseded", m)
     return eid
 
 
@@ -125,9 +127,9 @@ def release(conn) -> list[str]:
     return out
 
 
-def resolve(conn, refs: list) -> None:
+def resolve(conn, refs: list, msg: int | None = None) -> None:
     for eid in [_ref(conn, r, kinds=("question", "assignment")) for r in refs]:
-        _move(conn, eid, "resolve", "resolved")
+        _move(conn, eid, "resolve", "resolved", msg)
 
 
 def review(conn, op: str, ref: str) -> dict:

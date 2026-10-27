@@ -16,7 +16,8 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
-from . import agents, align, api, audit, auth, config, db, dispatch, mail, memoryos, peer, preset, registry, share, threads
+from . import agents, align, api, audit, auth, config, db, dispatch, hublock, mail, memoryos, otel, peer, preset, registry
+from . import share, threads
 from . import wakepack
 from . import room as rooms
 from .adapters.agy import AgyDriver
@@ -35,7 +36,7 @@ log = logging.getLogger("xmuse.hub")
 class Hub:
     def __init__(self, state: Path, claude_bin: str | None = None, oc_base: str | None = None,
                  human_check: bool = True):
-        self.lock = None  # the single-hub lock (hublock) is not wired in yet
+        self.lock = hublock.acquire(state)  # first: one hub per state dir (raises HubLocked); closed by shutdown()
         try:
             self._setup(state, claude_bin, oc_base, human_check)
         except BaseException:
@@ -1213,6 +1214,9 @@ class Hub:
             log.warning("cannot create the sidebar key in %s", registry.directory(), exc_info=True)
         self.reg_sync()
         self.engine.kick()
+        self.otel = otel.Exporter(self.state, self.cfg)  # disabled by default: start() is a no-op, hub unchanged
+        self.otel.start()
+        self.engine.otel_kick = self.otel.kick if self.otel.oc["enabled"] else None
 
     def shutdown(self) -> None:
         try:  # first: sidebars stop finding a hub that is going away (hub.json goes last: `hub stop` waits for it)
@@ -1224,12 +1228,27 @@ class Hub:
         self.loop.join(10)
         self.curator.stop()
         self.auditor.stop()
+        if getattr(self, "otel", None) is not None:
+            self.otel.stop()
         self.api.shutdown()
         for d in self.engine.drivers.values():
             d.close()
-        (self.state / "hub.json").unlink(missing_ok=True)
+        self._drop_hub_json()
         self.db.close()
         self.close_lock()  # last: a new hub may take over only once hub.json is gone
+
+    def _drop_hub_json(self) -> None:
+        """Remove hub.json only while it still names this process: one another hub wrote is not ours to delete."""
+        path = self.state / "hub.json"
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("pid") != os.getpid():
+                log.warning("hub.json names another hub; leaving it")
+                return
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, AttributeError):
+            pass  # unreadable or not ours to parse: it describes no live hub, remove it as before
+        path.unlink(missing_ok=True)
 
     def serve(self) -> None:
         errors = self.precheck()

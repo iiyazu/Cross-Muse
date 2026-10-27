@@ -82,7 +82,8 @@ def test_family_follows_the_model_not_the_shell(make):
     assert peers["dsh-1"] == "opencode"
     with db.tx(h.conn()) as c:  # a database written before T8
         c.execute("update agents set family='deepseek' where id='dsh-1'")
-    Hub(h.state)  # opening it repairs the stored family
+    h.stop_hub()
+    Hub(h.state).close_lock()  # opening it repairs the stored family
     assert h.q("select family from agents where id='dsh-1'")[0]["family"] == "opencode"
 
 

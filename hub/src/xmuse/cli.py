@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -14,10 +15,15 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, mail, preflight, proc
+from . import config, db, hublock, mail, preflight, proc
 from .env import clean_env
 
 HUB_START_TIMEOUT_S = 600  # a module constant so tests can shorten it
+HUB_LOCKED_EXIT = 3  # `hub run` exit code: another hub already holds <state>/hub.lock
+
+
+def _pid_text(pid: int) -> str:
+    return f"pid {pid}" if pid > 0 else "pid unknown"
 
 
 def call(state: Path, path: str, body: dict | None = None, token: str = "_admin") -> dict:
@@ -70,6 +76,10 @@ def hub_start(state: Path, unit: str | None = None) -> None:
             print(f"hub already running (pid {pid})")
             return
         (state / "hub.json").unlink()
+    other = hublock.holder(state)
+    if other is not None:  # a hub is still starting (e.g. in its model precheck): no second one
+        print(f"hub already running ({_pid_text(other)}, still starting)")
+        return
     checks, fixed = preflight.run(state)
     for line in fixed:
         print(f"fixed: {line}")
@@ -109,6 +119,15 @@ def hub_start(state: Path, unit: str | None = None) -> None:
             print(f"hub started: {json.loads((state / 'hub.json').read_text(encoding='utf-8'))}")
             return
         if gone():
+            other = hublock.holder(state)
+            if other is not None:  # lost the race to another hub: wait for it instead of failing
+                print(f"hub already running ({_pid_text(other)}, still starting)")
+                while time.time() < deadline:
+                    if (state / "hub.json").exists():
+                        print(f"hub already running: {json.loads((state / 'hub.json').read_text(encoding='utf-8'))}")
+                        return
+                    time.sleep(0.25)
+                raise SystemExit(f"hub ({_pid_text(other)}) did not start in {HUB_START_TIMEOUT_S} s; see {log_path}")
             tail = log_path.read_text(encoding="utf-8").strip().splitlines()[-6:]
             raise SystemExit("hub exited:\n" + "\n".join(tail))
         time.sleep(0.25)
@@ -299,6 +318,42 @@ def usage(state: Path, as_json: bool) -> None:
               f" {r['cache_read']:11,} {r['output']:8,} {r['max_context']:8,}")
 
 
+def trace_export(state: Path | None, dbpath: Path | None, endpoint: str | None, since: str | None,
+                 capture: bool, body_clip: int, room_id: str | None = None, room_name: str = "") -> None:
+    """`xmuse trace export`: replay any hub.db through the same spans() as real-time export.
+
+    Read-only: the DB file is opened mode=ro and otel_marks is never touched."""
+    from datetime import datetime
+
+    from . import otel as _otel
+    if dbpath is not None:
+        dbpath = Path(dbpath)
+        dbfile = dbpath / "hub.db" if dbpath.is_dir() else dbpath
+    else:
+        if state is None:
+            raise SystemExit("no state dir: pass --state or run inside a workspace")
+        dbfile = state / "hub.db"
+    if not dbfile.exists():
+        raise SystemExit(f"no hub.db at {dbfile}")
+    ts = None
+    if since is not None:
+        try:
+            ts = float(since)
+        except ValueError:
+            try:
+                ts = datetime.fromisoformat(since).timestamp()
+            except ValueError:
+                raise SystemExit(f"--since: unix seconds or ISO time, got {since!r}")
+    # an experiment run dir holds hub.db but no config.json: replay it with env/default settings
+    cfg = _otel.otel_config(config.load(state) if state is not None and (state / "config.json").exists() else {})
+    try:
+        out = _otel.replay(dbfile, endpoint or cfg["endpoint"], since=ts, capture=capture,
+                            body_clip=body_clip, headers=cfg["headers"],
+                            room=(room_id, room_name) if room_id else None)
+    except Exception as e:
+        raise SystemExit(f"trace export failed: {e}")
+    print(json.dumps(out, indent=1))
+
 def transcript(state: Path, agent: str, path: Path | None = None, clip: int = 2000,
                thread: str | None = None) -> str:
     """An agent's current session as readable text (read-only; see transcript.py)."""
@@ -396,6 +451,10 @@ def main(argv=None) -> None:
     p = sub.add_parser("approve")
     p.add_argument("id")
     p.add_argument("decision", choices=["once", "always", "reject"])
+    p = sub.add_parser("config", help="set a config.json key (hot keys apply without a hub restart)")
+    p.add_argument("action", choices=["set"])
+    p.add_argument("key")
+    p.add_argument("value")
     p = sub.add_parser("attach")
     p.add_argument("agent")
     p.add_argument("--thread", help="the thread whose bound session to attach (default: latest current session)")
@@ -411,6 +470,15 @@ def main(argv=None) -> None:
     p.add_argument("name", help="send, inbox, ack, thread, context, whoami, done (with or without xmuse_)")
     p.add_argument("--args-file", help="JSON arguments (default: piped stdin, else {})")
     sub.add_parser("doctor", help="check the install and this workspace; prints a fix for each problem (read-only)")
+    p = sub.add_parser("trace", help="replay hub.db rows as OTLP traces (read-only, no marks written)")
+    p.add_argument("action", choices=["export"])
+    p.add_argument("--state", type=Path, help="state dir or hub.db file (default: this workspace's state)")
+    p.add_argument("--endpoint", help="OTLP/HTTP base, e.g. http://localhost:6006 (default: config or env)")
+    p.add_argument("--since", help="only rows at/after this unix time or ISO time")
+    p.add_argument("--capture-content", action="store_true", help="include message bodies (user DMs still need share marks)")
+    p.add_argument("--body-clip", type=int, default=2000)
+    p.add_argument("--room-id", help="trace namespace for DBs without a room row (e.g. an experiment run id)")
+    p.add_argument("--room-name", default="")
     p = sub.add_parser("transcript", help="an agent's current session as readable text (read-only)")
     p.add_argument("agent")
     p.add_argument("--thread", help="the thread whose bound session to read (default: latest current session)")
@@ -453,7 +521,20 @@ def main(argv=None) -> None:
     if a.cmd == "hub" and a.action == "run":
         from .server import Hub
         logging.basicConfig(level=logging.INFO)  # hub service process only: stderr is hub.log (memoryos-call lines)
-        Hub(Path(os.environ["XMUSE_STATE"])).serve()
+        st = Path(os.environ["XMUSE_STATE"])
+        try:
+            hub = Hub(st)
+        except hublock.HubLocked as e:
+            print(f"another hub already runs for {st} ({_pid_text(e.pid or -1)}); not starting", file=sys.stderr)
+            sys.exit(HUB_LOCKED_EXIT)
+        hub.serve()
+        return
+    if a.cmd == "trace" and a.state:  # replay works outside any workspace: resolve --state first
+        st = Path(a.state).expanduser()
+        if st.is_dir() and (st / "hub.db").exists():
+            trace_export(st, None, a.endpoint, a.since, a.capture_content, a.body_clip, a.room_id, a.room_name)
+        else:
+            trace_export(None, st, a.endpoint, a.since, a.capture_content, a.body_clip, a.room_id, a.room_name)
         return
     state = config.find_state(a.ws)
     if a.cmd == "agent":
@@ -528,6 +609,27 @@ def main(argv=None) -> None:
         raise SystemExit("timeout")
     elif a.cmd == "approve":
         print(json.dumps(call(state, "/v1/admin/approve", {"id": a.id, "decision": a.decision})))
+    elif a.cmd == "config":
+        try:
+            value = json.loads(a.value)
+        except ValueError:
+            value = a.value  # not JSON: keep the raw string
+        cfg_path = state / "config.json"
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
+        except ValueError as e:
+            raise SystemExit(f"config.json is broken ({e}); fix it first, nothing written")
+        if not isinstance(raw, dict):
+            raise SystemExit("config.json is not a JSON object; nothing written")
+        raw[a.key] = value
+        tmp = cfg_path.with_name("config.json.tmp")
+        tmp.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if cfg_path.exists():
+            shutil.copymode(cfg_path, tmp)  # keep the file's permissions (e.g. 0600) across the replace
+        os.replace(tmp, cfg_path)
+        print(f"config {a.key} = {value!r}")
+        if a.key not in config.HOT_KEYS:
+            print(f"note: {a.key} is not hot-reloadable; restart the hub to apply it")
     elif a.cmd == "watch":
         sys.exit(watch(state, a.agent, a.interval, once=a.once))
     elif a.cmd == "tool":
@@ -536,6 +638,13 @@ def main(argv=None) -> None:
                          indent=2, ensure_ascii=False))
     elif a.cmd == "transcript":
         print(transcript(state, a.agent, a.path, a.clip, a.thread))
+    elif a.cmd == "trace":
+        st = Path(a.state).expanduser() if a.state else None
+        if st is None or (st.is_dir() and (st / "hub.db").exists()):
+            trace_export(st if st is not None else state, None,
+                         a.endpoint, a.since, a.capture_content, a.body_clip, a.room_id, a.room_name)
+        else:
+            trace_export(None, st, a.endpoint, a.since, a.capture_content, a.body_clip, a.room_id, a.room_name)
     elif a.cmd == "attach":
         print(call(state, "/v1/admin/attach", {"agent": a.agent, "thread": a.thread})["command"])
     elif a.cmd == "new-session":

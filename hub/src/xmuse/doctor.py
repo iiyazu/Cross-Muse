@@ -7,6 +7,8 @@ import json
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -340,7 +342,46 @@ def run(state: Path | None) -> list[Check]:
                             "xmuse init <workspace>"))
     else:
         checks += workspace(state)
+        checks += otel_checks(cfg)
     return checks
+
+
+def otel_checks(cfg: dict) -> list[Check]:
+    """OTel export readiness (design docs/design/XMUSE2-OTEL.zh.md §4).
+
+    Degradation is graceful by design, so problems are warns, never FAILs.
+    Never prints headers (they may carry the backend's credentials).
+    """
+    from . import otel as _otel
+    oc = _otel.otel_config(cfg)
+    if not oc["enabled"]:
+        return [Check("ok", "otel", "disabled (otel.enabled is false; hub exports nothing)")]
+    out = []
+    try:
+        _otel._require_sdk()
+        import opentelemetry.sdk.version as _v
+        out.append(Check("ok", "otel deps", f"opentelemetry-sdk {_v.__version__} (semconv pinned in hub/pyproject.toml)"))
+    except ImportError:
+        out.append(Check("warn", "otel deps", "opentelemetry is not installed; hub runs, nothing is exported",
+                         "uv sync --project hub --group otel"))
+        return out
+    try:
+        base = urllib.parse.urlparse(oc["endpoint"])
+        root = f"{base.scheme}://{base.netloc}/"
+        req = urllib.request.Request(root, method="GET")
+        try:
+            urllib.request.urlopen(req, timeout=3)
+            out.append(Check("ok", "otel endpoint", f"{oc['endpoint']} reachable"))
+        except urllib.error.HTTPError:
+            out.append(Check("ok", "otel endpoint", f"{oc['endpoint']} reachable (root path answers HTTP)"))
+        except (urllib.error.URLError, OSError, TimeoutError) as e:
+            out.append(Check("warn", "otel endpoint", f"{oc['endpoint']} unreachable ({e}); spans queue as marks"
+                             " and ship on recovery",
+                             "start the backend (scripts/otel/docker-compose.yml) or fix otel.endpoint"))
+    except Exception as e:  # a malformed endpoint must not break doctor
+        out.append(Check("warn", "otel endpoint", f"cannot check {oc['endpoint']!r}: {e}",
+                         "fix otel.endpoint in the hub config"))
+    return out
 
 
 def report(checks: list[Check], out=sys.stdout) -> int:

@@ -11,7 +11,7 @@ import {
   workingMembers, doneLine, finishedMembers, toPosix, structOf,
   badgeOf, completeMention, dayLabel, foldLong, isLightTheme, memberColor, mentionCandidates, mixHex, palOf, rowAt, splitBlocks,
   trailingMention, vendorKey, canCompact, ctxLevel, ctxText, mergeCompactInstructions, hubStartScript,
-  TONES, ctxBarSvg, noiseTitle, noiseTone, freshMessage, revealSteps, shortModel, softWrap, clip,
+  TONES, ctxBarSvg, noiseTitle, noiseTone, freshMessage, revealSteps, shortModel, softWrap, clip, sendPayload, sendOutcome,
 } from './logic'
 
 // xmuse panel (slice T8d): read-only view of the project's hub plus sending. Design: docs/design/XMUSE2-T8.zh.md §2.1, §3.
@@ -1207,26 +1207,12 @@ async function callAsMember($: any, args: Record<string, unknown>): Promise<{ st
 }
 
 async function sendTool($: any, e: any): Promise<any> {
-  const kind = typeof e?.kind === 'string' && e.kind ? e.kind : 'message'
-  if (kind !== 'message') return { deny: '面板工具暂只支持 message' }
-  const to = typeof e?.to === 'string' ? e.to.trim() : ''
-  const text = typeof e?.body === 'string' ? e.body.trim() : ''
-  if (!to) return { deny: '缺少 to（#room、群 id 或成员 id）' }
-  if (!text) return { deny: '缺少 body' }
   const view = await read($, viewAtom)
-  const ments: string[] = Array.isArray(e?.mentions) ? e.mentions.filter((x: unknown) => typeof x === 'string') : parseMentions(text, view)
-  const body: Record<string, unknown> = { act: 'say', to, text, mentions: ments }
-  if (typeof e?.reply_to === 'number' && e.reply_to > 0) body.reply_to = e.reply_to
+  const built = sendPayload(e, view)
+  if ('deny' in built) return built
   try {
-    const r = await callAsMember($, { to, body: text, mentions: ments, ...(body.reply_to ? { reply_to: body.reply_to } : {}) })
-    const brief = r.data ? JSON.stringify(r.data).slice(0, 300) : ''
-    // A tool error comes back as 200 with {error: {code, message}}: report it as a failure, never as "sent".
-    const err = r.data?.error
-    if (r.status !== 200 || err) {
-      const why = typeof err === 'object' && err ? `${err.code ?? ''} ${err.message ?? ''}`.trim() : String(r.data?.message ?? err ?? brief)
-      return { deny: `发送失败 ${r.status}: ${why.slice(0, 200)}` }
-    }
-    return { result: `已发送到 ${to}${brief ? `：${brief}` : ''}` }
+    const r = await callAsMember($, built.args)
+    return sendOutcome(r, String(built.args.to))
   } catch (err) {
     return { deny: `发送失败: ${errText(err)}` }
   }
@@ -1236,7 +1222,7 @@ async function registerTool($: any) {
   try {
     await $.tool.register({
       name: TOOL,
-      description: '通过 xmuse 协作室发消息给其他助手或用户（以本会话成员身份）。to 填 "#room"、群 id 或成员 id；回复某条消息时带 reply_to。',
+      description: '通过 xmuse 协作室发消息给其他助手或用户（以本会话成员身份）。to 填 "#room"、群 id 或成员 id；回复某条消息时带 reply_to。kind 可为 message、handoff、review_request、decision、assumption、question：交接用 kind=handoff 并带 why；决定/假设/问题用对应 kind 并可带 scope、supersedes、resolves。',
       isDeferred: false,
       inputSchema: {
         type: 'object',
@@ -1245,7 +1231,16 @@ async function registerTool($: any) {
           body: { type: 'string', description: '消息正文' },
           mentions: { type: 'array', items: { type: 'string' }, description: '要 @ 的成员 id；省略时按正文里的 @名字 自动识别' },
           reply_to: { type: 'number', description: '回复的消息 id' },
-          kind: { type: 'string', description: '默认 message；面板暂只支持 message' },
+          kind: { type: 'string', enum: ['message', 'handoff', 'review_request', 'decision', 'assumption', 'question'], description: '默认 message' },
+          scope: { type: 'string', description: '决定/假设/问题的生效范围' },
+          supersedes: { type: 'string', description: '被取代的条目 id（如 E7）' },
+          resolves: { type: 'array', items: { type: 'string' }, description: '解决的问题/分派 id' },
+          depends_on: { type: 'array', items: { type: 'string' }, description: '依赖的条目 id（仅 handoff）' },
+          notify: { type: 'string', enum: ['batch', 'now'], description: 'host 交接的回执方式' },
+          members: { type: 'array', items: { type: 'string' }, description: '新建私群时的成员' },
+          why: { type: 'object', description: 'Why-First 交接（kind=handoff 时必填）',
+                 properties: { what: { type: 'string' }, why: { type: 'string' }, tradeoff: { type: 'string' },
+                               open_questions: { type: 'string' }, next_action: { type: 'string' } } },
         },
         required: ['to', 'body'],
       },

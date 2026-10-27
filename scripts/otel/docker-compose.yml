@@ -1,0 +1,24 @@
+# xmuse OTel backend (Phoenix, default)
+#
+# One command:  docker compose -f scripts/otel/docker-compose.yml up -d
+# Open:         http://localhost:6006
+# Tear down:    docker compose -f scripts/otel/docker-compose.yml down
+#
+# The hub speaks standard OTLP/HTTP (protobuf) and needs no backend SDK; this
+# file only affects where the traces land. Phoenix is the default backend
+# (design docs/design/XMUSE2-OTEL.zh.md §2): single container, SQLite by
+# default, Postgres for production use. Image pinned (2026-10-25).
+services:
+  phoenix:
+    image: arizephoenix/phoenix:20.26.1
+    ports:
+      - "6006:6006"   # UI at /, OTLP/HTTP traces at /v1/traces
+      - "4317:4317"   # OTLP/gRPC (unused by the hub, kept for tooling)
+    environment:
+      PHOENIX_PORT: "6006"
+      PHOENIX_GRPC_PORT: "4317"
+    volumes:
+      - phoenix-data:/root/.phoenix  # PHOENIX_WORKING_DIR: SQLite persistence
+
+volumes:
+  phoenix-data:

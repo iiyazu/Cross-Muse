@@ -491,7 +491,8 @@ class OpenCodePrompt:
             if typ == "session.compaction.ended":  # `failed` keeps the context, so the watermark stays
                 self.sink.compacted(sid)
         elif typ == "permission.asked":
-            self.sink.approval(self._agent(sid), sid, d)
+            agent, ancestors, human = self._resolve_owner(sid)
+            self.sink.approval(agent, sid, d, ancestors, human)
         elif typ in END:
             was_human = self.human.pop(sid, False)
             if t is not None and t.delivered:
@@ -524,9 +525,32 @@ class OpenCodePrompt:
         except Exception:  # noqa: BLE001
             log.exception("question notice for %s failed", agent)
 
-    def _agent(self, sid):
-        t = self.turns.get(sid)
-        return t.spec.agent["id"] if t else None
+    def _resolve_owner(self, sid):
+        """The owner of a session: (agent_id, ancestors, human).
+
+        agent_id comes from the hub turn running the session, else None. ancestors is sid plus each parent up the
+        `task`-tool chain (the engine matches them against its sessions table, so a child of a known-but-idle
+        session still finds its member). human is True when the session or an ancestor has human input in flight:
+        the user is driving it themselves and can answer the request in their own UI.
+        One GET per unknown session, only on the permission path."""
+        ancestors, seen, cur, human = [], set(), sid, False
+        while cur and cur not in seen:
+            seen.add(cur)
+            ancestors.append(cur)
+            t = self.turns.get(cur)
+            if t is not None:
+                return t.spec.agent["id"], ancestors, human
+            human = human or cur in self.human
+            try:
+                info = self.server.api("GET", f"/api/session/{cur}")
+            except Exception:  # noqa: BLE001 - unknown or gone session: no owner
+                log.warning("permission from unknown session %s (no parent info)", cur)
+                return None, ancestors, human
+            data = info.get("data") if isinstance(info, dict) else None
+            if not isinstance(data, dict):
+                return None, ancestors, human
+            cur = data.get("parentID") or data.get("parentId")
+        return None, ancestors, human
 
 
 class _AllReady:

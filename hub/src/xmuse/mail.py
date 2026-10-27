@@ -205,7 +205,7 @@ def send(conn, cfg: dict, sender: str, to: str, body: str, kind: str = "message"
                                 modules)
         else:
             eids = []
-        align.resolve(conn, resolves or [])
+        align.resolve(conn, resolves or [], mid)
         blocked = []
         if kind == "handoff" and depends_on:  # no work is handed out before what it needs is there (T14)
             for e in db.rows(conn.execute(f"select * from entries where id in ({','.join('?' * len(eids))})", eids)):

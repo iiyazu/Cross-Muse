@@ -72,8 +72,14 @@ class Harness:
                       " values(?,?,?,?,?,?,?)", (aid, vendor, model, family(vendor, model), json.dumps(settings or {}),
                                                  digest(tok), time.time()))
 
+    def stop_hub(self):
+        """Shut the hub down now: one hub per state dir, so a test that opens another Hub here stops this one first."""
+        if self.hub is not None:
+            self.hub.shutdown()
+            self.hub = None
+
     def close(self):
-        self.hub.shutdown()
+        self.stop_hub()
         if self.oc:
             self.oc.close()
 

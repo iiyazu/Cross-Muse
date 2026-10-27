@@ -1,4 +1,5 @@
 import { test, expect } from 'claude-code/testing'
+import { sendOutcome, sendPayload } from './hooks/logic'
 
 // The live parts of a running member (hooks/live.tsx: the working strip's "正在：… m:ss" and the draft bubble's text) run inside
 // Client modules that ask the ui.message hook for fresh props once a second, so progress never redraws the whole panel.
@@ -534,4 +535,37 @@ test('the band above the prompt draws a pending approval with its buttons', asyn
   expect((await ui.find({ type: 'Text', text: 'git status -s' }))?.text).toContain('git status -s')
   expect(await ui.find({ type: 'Text', text: '还有 1 条' })).toBeDefined()
   await ui.unmount()
+})
+
+// ---- xmuse_send kinds: what sendTool forwards to the hub (register.tsx sendTool composes these two) ----
+
+test('sendPayload forwards a handoff with its why untouched', async () => {
+  const why = { what: 'w', why: 'y', tradeoff: 't', open_questions: 'q', next_action: 'n' }
+  expect(sendPayload({ to: '#task', body: 'do it', kind: 'handoff', mentions: ['opencode'], why }, { members: [] }))
+    .toEqual({ args: { to: '#task', body: 'do it', mentions: ['opencode'], kind: 'handoff', why } })
+})
+
+test('sendPayload forwards a decision with scope and supersedes, never on_behalf_of', async () => {
+  expect(sendPayload({ to: '#room', body: 'decided', kind: 'decision', scope: 'global', supersedes: 'E7' }, { members: [] }))
+    .toEqual({ args: { to: '#room', body: 'decided', mentions: [], kind: 'decision', scope: 'global', supersedes: 'E7' } })
+  const out = sendPayload({ to: 'human', body: 'hi', on_behalf_of: 'human' }, { members: [] })
+  expect('deny' in out).toBe(false)
+  if ('args' in out) {
+    expect(out.args.kind).toBe('message')
+    expect('on_behalf_of' in out.args).toBe(false)
+  }
+})
+
+test('sendPayload still rejects a call with no target or body', async () => {
+  expect(sendPayload({ to: '', body: 'x' }, { members: [] })).toEqual({ deny: '缺少 to（#room、群 id 或成员 id）' })
+  expect(sendPayload({ to: '#room', body: '  ' }, { members: [] })).toEqual({ deny: '缺少 body' })
+})
+
+test('sendOutcome turns a hub error into deny, success into sent', async () => {
+  expect(sendOutcome({ status: 200, data: { error: { code: 'bad', message: 'nope' } } }, '#room'))
+    .toEqual({ deny: '发送失败 200: bad nope' })
+  const down = sendOutcome({ status: 500, data: null }, '#room')
+  expect('deny' in down && down.deny.startsWith('发送失败 500')).toBe(true)
+  const ok = sendOutcome({ status: 200, data: { result: { id: 1 } } }, '#room')
+  expect('result' in ok && ok.result.startsWith('已发送到 #room')).toBe(true)
 })

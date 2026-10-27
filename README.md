@@ -95,6 +95,20 @@ Windows 加 WSL 的细节见 [hub/README.md](hub/README.md) 和 [面板说明](i
 
 数据和效度讨论见 [HANDOFF-BASE-REPORT.zh.md](docs/HANDOFF-BASE-REPORT.zh.md) 的"S 系列阶段分析"一节和 [M2b 实验报告](docs/design/XMUSE2-M2B-EXP-REPORT.zh.md)，探针设计见 [XMUSE2-PROBES.zh.md](docs/design/XMUSE2-PROBES.zh.md)。
 
+## 观测
+
+hub.db 是唯一的事实来源；`hub/src/xmuse/otel.py` 把终态行（回合、消息、审批、被拦的链）派生成标准 OpenTelemetry trace，交给现成的 LLM 观测后端展示。默认关闭，打开也不影响 hub 行为：导出失败只记一条警告，下次 kick 重试（`otel_marks` 去重，至少一次）。
+
+```bash
+# 1. 起默认后端（Phoenix，单容器）：http://localhost:6006
+docker compose -f scripts/otel/docker-compose.yml up -d
+# 2. 装导出依赖
+uv sync --project hub --group otel
+# 3. 在 hub 配置里打开（config.json 顶层加 "otel": {"enabled": true}），或临时 XMUSE_OTEL_ENABLED=1
+```
+
+`xmuse doctor` 会检查依赖和端点可达性（headers 可能含后端密钥，从不打印）。`xmuse trace export --state <dir|hub.db> [--endpoint URL] [--since TS] [--room-id ID]` 把任意一份 hub.db（例如实验的 `runs/*/hub.db`）事后回放进后端，只读不写；实验 run 没有房间，用 `--room-id <run 名>` 区分，否则不同 run 的 trace id 会撞在一起。`scripts/otel/check_replay.py` 从 Phoenix 的 REST 接口读回 span，和 hub.db 逐行对账。属性为锁定的 semconv（`opentelemetry-semantic-conventions==0.66b1`，Development）加 `openinference.span.kind`；消息正文默认不导出（`capture_content` 打开后用户私信仍需 share 标记）。详见 [XMUSE2-OTEL.zh.md](docs/design/XMUSE2-OTEL.zh.md)。
+
 ## 局限
 
 - 单机、单用户。agent 和 hub 以同一个系统用户运行，权限模型只防误操作，不防有意绕过的 agent。

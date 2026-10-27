@@ -1,9 +1,12 @@
 """Paths, defaults and the per-workspace state directory."""
 import hashlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 HUMAN = "human"
 HUB = "hub"
@@ -55,6 +58,11 @@ DEFAULTS = {
     "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
     "route_by_duty": False,          # T8a H8: duty routing (route.pick, T4 §8.7) wakes unmentioned members; off by default
     "auto_compact_tokens": 500000,   # T8c H3: an idle member's session past this context is compacted once, automatically
+    # OTel trace export (docs/design/XMUSE2-OTEL.zh.md): off unless enabled. headers may carry the backend's
+    # credentials: never print them, never write them to logs. Endpoint: file config, else the standard
+    # OTEL_EXPORTER_OTLP_* env vars, else a local Phoenix.
+    "otel": {"enabled": False, "endpoint": "", "headers": {}, "capture_content": False,
+             "body_clip": 2000, "interval": 5},
 }
 
 MODELS = {"claude": "claude-opus-5-5", "opencode": "opencode-go/muse-spark-1.3-contributor",
@@ -116,6 +124,51 @@ def find_state(start: Path | None = None) -> Path:
 def load(state: Path) -> dict:
     cfg = json.loads((state / "config.json").read_text(encoding="utf-8"))
     return {**DEFAULTS, **cfg}
+
+
+# Keys a running hub picks up without a restart (refresh() below). Everything else still needs one: a half-applied
+# workspace or model change is worse than a restart notice.
+HOT_KEYS = ("agent_hourly_turns", "agent_hourly_tokens")
+
+
+def refresh(state: Path, cfg: dict) -> bool:
+    """Re-read HOT_KEYS from config.json when the file changed. Updates cfg in place (it is shared with the engine,
+    curator and auditor, and carries runtime keys like _mo) and never swaps the object. A broken file or a wrongly
+    typed value keeps the old value and logs one warning per file version; never raises. Returns True when a key
+    changed."""
+    path = state / "config.json"
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    mark = (st.st_mtime_ns, st.st_size)
+    if cfg.get("_config_mark") == mark:
+        return False
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        if cfg.get("_config_bad_mark") != mark:
+            log.warning("xmuse config refresh: cannot parse %s (%s); keeping previous values", path, e)
+            cfg["_config_bad_mark"] = mark
+        return False
+    if not isinstance(raw, dict):
+        if cfg.get("_config_bad_mark") != mark:
+            log.warning("xmuse config refresh: %s is not a JSON object; keeping previous values", path)
+            cfg["_config_bad_mark"] = mark
+        return False
+    changed = False
+    for key in HOT_KEYS:
+        if key not in raw:
+            continue
+        value = raw[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            log.warning("xmuse config refresh: ignoring %s=%r (need a number); keeping %r", key, value, cfg.get(key))
+            continue
+        if value != cfg.get(key):
+            cfg[key] = value
+            changed = True
+    cfg["_config_mark"] = mark
+    return changed
 
 
 def info_on(cfg: dict) -> bool:

@@ -19,7 +19,7 @@ jobs:
           cache: npm
           cache-dependency-path: shim/package-lock.json
       - name: hub venv
-        run: uv sync --project hub --python 3.12
+        run: uv sync --project hub --group otel --python 3.12
       - name: shim deps
         run: npm ci --prefix shim --no-audit --no-fund
       - name: doctor (informational)

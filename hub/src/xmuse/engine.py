@@ -15,7 +15,7 @@ from . import align, db, dispatch, mail, stall, wakepack
 from . import compact
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
-from .config import HUMAN
+from .config import HUMAN, refresh as refresh_config
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class Engine:
         self.adapters = {}  # turn id -> adapter that runs it
         self.shell_policy = "auto"  # Hub sets it from its own environment (XMUSE_SHELL_POLICY), never from config
         self.progress_state = cfg["_progress"] = {}  # H4: turn_id -> {tools, last_tool, text}; memory only
+        self.otel_kick = None  # Hub sets this to the OTel exporter's kick when export is enabled; else None
         self._progress_lock = threading.Lock()
         self._progress_tick = 0.0
         self._recover()
@@ -38,8 +39,8 @@ class Engine:
     def turn_ended(self, end: TurnEnd) -> None:
         self.q.put(("end", end))
 
-    def approval(self, agent_id, session: str, request: dict) -> None:
-        self.q.put(("approval", agent_id, session, request))
+    def approval(self, agent_id, session: str, request: dict, ancestors=(), human: bool = False) -> None:
+        self.q.put(("approval", agent_id, session, request, ancestors, human))
 
     def progress(self, turn_id: int, update: dict) -> None:
         """Live turn progress from an adapter thread (H4). Memory only; the DB fingerprint moves at most once a
@@ -114,6 +115,7 @@ class Engine:
 
     # ---- admission -----------------------------------------------------------------
     def _on_kick(self) -> None:
+        refresh_config(self.state, self.cfg)  # hourly caps stay tunable while running
         conn = self.db()
         dispatch.tick(conn, self.cfg)  # the host's batches that are due (timeouts included: sweeps kick too)
         for agent in db.rows(conn.execute("select * from agents where paused=0 and coalesce(paused_until, 0)<=? order by id",
@@ -121,6 +123,8 @@ class Engine:
             if mail.running_turn(conn, agent["id"]) is None:
                 self._admit(conn, agent)
         self._compact_tick(conn)
+        if self.otel_kick is not None:  # OTel export rides the same wakeups (plus its own interval); kick only
+            self.otel_kick()
 
     def _compact_tick(self, conn) -> None:
         """T8c H3 auto-compact: idle sessions past the threshold get one background compaction each.
@@ -399,19 +403,47 @@ class Engine:
                         u.input, u.cache_read, u.cache_write, u.output)
         self._on_kick()
 
-    def _on_approval(self, agent_id, session: str, req: dict) -> None:
+    def _on_approval(self, agent_id, session: str, req: dict, ancestors=(), human: bool = False) -> None:
         conn = self.db()
+        if agent_id is None and human:
+            # No running turn owns it and the user is driving the session (or an ancestor) themselves: they answer in
+            # their own UI. Even a member's stored session is left alone: recording it could auto-approve the
+            # user's own request or show it twice.
+            log.info("ignoring permission %s from human-driven session %s", req.get("id"), session)
+            return
         if agent_id is None:
             agent_id = (conn.execute("select agent_id from sessions where vendor_session=?", (session,)).fetchone()
                         or [None])[0]
+        if agent_id is None and ancestors:
+            # A child of a known-but-idle session (no turn running): the nearest registered ancestor owns it.
+            found = {r[0]: r[1] for r in conn.execute(
+                f"select vendor_session, agent_id from sessions where vendor_session in ({','.join('?' for _ in ancestors)})",
+                tuple(ancestors))}
+            for anc in ancestors:
+                if anc in found:
+                    agent_id = found[anc]
+                    break
         row = db.row(conn.execute("select * from agents where id=?", (agent_id,))) if agent_id else None
+        if row is None:
+            # Nobody owns this session (a subsession whose parent is gone, or an unknown one): reject it so the
+            # request does not hang until it times out. No approvals row (agent_id is NOT NULL) and no notice:
+            # there is nobody who could act on one.
+            try:
+                self.drivers["opencode"].approve(session, req["id"], "reject", None)
+            except Exception:  # noqa: BLE001 - its server is gone; the log line below still records it
+                log.exception("rejecting orphan permission %s (session %s) failed", req.get("id"), session)
+            log.warning("rejected permission %s from unknown session %s (no owning member)",
+                        req.get("id"), session)
+            return
         auto = auto_decision(req.get("action"), req.get("resources"), self.shell_policy,
-                             str(db.workdir(row, self.ws) if row else self.ws)) \
+                             str(db.workdir(row, self.ws))) \
             if "opencode" in self.drivers else None
         with db.tx(conn):
-            conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources, created_at)"
-                         " values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
-                                                  json.dumps(req.get("resources")), db.now()))
+            cur = conn.execute("insert or ignore into approvals(id, agent_id, vendor_session, action, resources,"
+                               " created_at) values(?,?,?,?,?,?)", (req["id"], agent_id, session, req.get("action"),
+                                                                    json.dumps(req.get("resources")), db.now()))
+            if cur.rowcount == 0:
+                log.warning("approval %s already registered; keeping the existing row", req["id"])
         if self.shell_policy == "open-experiment" and req.get("action") == "shell" and \
                 any(isinstance(c, str) and names_runner(c) for c in req.get("resources") or []):
             log.warning("open-experiment: %s runs a build/test runner (approved, flagged): %s", agent_id,

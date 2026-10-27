@@ -28,6 +28,7 @@ class FakeOpenCode:
         self.state, self.plan, self.n, self.record = state, [], 0, record
         self.subs: list[queue.Queue] = []
         self.sessions, self.prompts, self.replies, self.interrupts = {}, [], [], []
+        self.session_info: dict[str, dict] = {}  # sid -> extra GET /api/session fields (e.g. parentID)
         self.stop_flags: dict[str, threading.Event] = {}
         self.messages: dict[str, list] = {}
         fake = self
@@ -55,6 +56,10 @@ class FakeOpenCode:
                 if m:  # the v2 shape, one page; messages are whatever a test put in fake.messages[sid]
                     return self._json(200, {"data": fake.messages.get(m.group(1), []),
                                             "cursor": {"previous": None, "next": None}})
+                m = re.fullmatch(r"/api/session/([^/?]+)", self.path)
+                if m:  # one session: the hub reads parentID here to own subsession permissions
+                    sid = m.group(1)
+                    return self._json(200, {"data": {"id": sid, **fake.session_info.get(sid, {})}})
                 if self.path != "/api/event":
                     return self._json(404, {})
                 q = queue.Queue()
@@ -174,6 +179,10 @@ class FakeOpenCode:
     def ask_permission(self, sid: str, rid: str = "per_1", command: str = "git push origin main"):
         self.emit({"type": "permission.asked", "data": {"id": rid, "sessionID": sid, "action": "shell",
                                                          "resources": [command], "save": ["git push *"]}})
+
+    def subsession(self, parent_sid: str, child_sid: str):
+        """Register a task-tool subsession: GET /api/session/<child> reports its parentID."""
+        self.session_info[child_sid] = {"parentID": parent_sid}
 
     def tool(self, agent: str, name: str, args: dict):
         port = json.loads((self.state / "hub.json").read_text(encoding="utf-8"))["port"]

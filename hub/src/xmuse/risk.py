@@ -13,7 +13,8 @@ the user when any simple command in it (in a list, pipeline, subshell, loop, fun
   - a write outside the workspace and /tmp: a > >> &> >| <> redirection, tee, cp/mv/install/ln, -o/--output, sed -i
   - find -delete/-exec outside the workspace; xargs rm/mv/cp/sh (paths never seen); a shell reading its input
   - a credential or xmuse's own state: ~/.ssh, ~/.claude, ~/.aws, ~/.gnupg, .netrc, .git-credentials, id_rsa /
-    id_ed25519, xmuse's state directory or sidebar.key; the admin `xmuse send` / `xmuse approve`
+    id_ed25519, xmuse's state directory or sidebar.key; the admin `xmuse send` / `xmuse approve` / `xmuse config`
+    (also with --ws, via python -m xmuse, or under uv run / uvx)
 A command this module cannot read for sure is asked too: $( ), backticks, <( ), eval, source, a command name that is
 an expansion, a PowerShell/cmd inner script, a line that does not parse (unbalanced quotes...). A bash `-c` script
 with a literal body is parsed and checked like the outer line.
@@ -148,6 +149,82 @@ def _flags(args: list[str]) -> set[str]:
     return f
 
 
+# interpreter options that take a separate value (`python -X utf8 -m xmuse ...`)
+_PY_VALUED = {"-X", "-W", "--check-hash-based-pycs"}
+
+
+def _xmuse_sub(name: str, args: list[str]) -> str | None:
+    """The xmuse subcommand, skipping wrapper noise: `python [-I] [-u]... -m xmuse` and the global options
+    (`--ws <dir>` / `--ws=<dir>`, any other dash-flag). The first remaining positional is the subcommand."""
+    rest = args
+    if name.startswith("python"):
+        mod: str | None = None
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "-m" and i + 1 < len(rest):
+                mod, rest = rest[i + 1], rest[i + 2:]
+                break
+            if a.startswith("-m") and len(a) > 2:  # joined form: -mxmuse
+                mod, rest = a[2:], rest[i + 1:]
+                break
+            if a in _PY_VALUED:  # -X utf8, -W ignore: the value is not a script
+                i += 2
+                continue
+            if a.startswith("-"):
+                i += 1
+                continue
+            return None  # a script path (or -c code): not a module run
+        if mod != "xmuse":
+            return None
+    elif name != "xmuse":
+        return None
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--ws":
+            i += 2
+        elif a.startswith("-"):
+            i += 1
+        else:
+            return a
+    return None
+
+
+# options of `uv run` / `uvx` that take a value (also as --opt=value)
+_UV_VALUED = {"--project", "--with", "--python", "--directory", "--package", "--env-file", "--group", "--extra",
+              "--with-requirements", "--from", "-p"}
+
+
+def _strip_uv(argv: list[str]) -> list[str]:
+    """Drop a `uv run [opts]` / `uvx [opts]` launcher: what remains is judged on its own (xmuse, python -m xmuse,
+    or whatever the launcher would execute). Bare `uv ...` is left alone for the package-install rule."""
+    if not argv:
+        return argv
+    if argv[0] == "uvx":
+        rest = argv[1:]
+    elif len(argv) > 1 and argv[0] == "uv" and argv[1] == "run":
+        rest = argv[2:]
+    elif len(argv) > 2 and argv[0] == "uv" and argv[1:3] == ["tool", "run"]:
+        rest = argv[3:]  # the formal spelling of uvx
+    else:
+        return argv
+    valued = _UV_VALUED
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--":
+            return rest[i + 1:]
+        if a.startswith("--"):
+            name, eq, _ = a.partition("=")
+            i += 1 if eq or name not in valued or i + 1 >= len(rest) else 2
+        elif len(a) > 1 and a.startswith("-"):
+            i += 2 if a in valued and i + 1 < len(rest) else 1
+        else:
+            return rest[i:]
+    return []
+
+
 def _one(argv: list[str], ws: Where, depth: int) -> str | None:
     """One simple command (its redirections are file_redirect nodes, checked on their own)."""
     while argv and _ASSIGN.match(argv[0]):
@@ -156,6 +233,7 @@ def _one(argv: list[str], ws: Where, depth: int) -> str | None:
         argv = argv[1:]
         while argv and (argv[0].startswith("-") or _ASSIGN.match(argv[0]) or re.fullmatch(r"\d+[smhd]?", argv[0])):
             argv = argv[1:]
+    argv = _strip_uv(argv)
     if not argv:
         return None
     name = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
@@ -173,8 +251,9 @@ def _one(argv: list[str], ws: Where, depth: int) -> str | None:
         return f"{name} -c: {why}" if why else None
     if name in _SHELLS and not [a for a in args if not a.startswith("-")]:
         return f"{name} runs a script from its input"
-    if name == "xmuse" and args[:1] and args[0] in ("send", "approve"):
-        return f"xmuse {args[0]} (admin command)"
+    sub = _xmuse_sub(name, args)
+    if sub in ("send", "approve", "config"):
+        return f"xmuse {sub} (admin command)"
     for i, a in enumerate(args):  # -o FILE / --output=FILE / find -fprint FILE: a write, wherever the tool
         path = a.split("=", 1)[1] if a.startswith("--output=") else \
             args[i + 1] if a in _OUT_FLAGS and i + 1 < len(args) else None

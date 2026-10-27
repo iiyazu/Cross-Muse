@@ -667,6 +667,42 @@ export function buildSay(text: string, tab: string, replyTo: number, view: any):
   return body
 }
 
+// ---- the model's xmuse_send tool (register.tsx sendTool): args building and result mapping, pure for tests ----
+
+/** Fields sendTool forwards to hub /v1/tools/xmuse_send besides to/body/mentions/reply_to (hub validates them). */
+const SEND_EXTRA = ['kind', 'scope', 'supersedes', 'resolves', 'depends_on', 'notify', 'members', 'why'] as const
+
+/** Validate a tool call and build the hub args. kind defaults to 'message'; extra fields pass through untouched. */
+export function sendPayload(e: any, view: any): { deny: string } | { args: Record<string, unknown> } {
+  const to = typeof e?.to === 'string' ? e.to.trim() : ''
+  const text = typeof e?.body === 'string' ? e.body.trim() : ''
+  if (!to) return { deny: '缺少 to（#room、群 id 或成员 id）' }
+  if (!text) return { deny: '缺少 body' }
+  const mentions: string[] = Array.isArray(e?.mentions)
+    ? e.mentions.filter((x: unknown) => typeof x === 'string')
+    : parseMentions(text, view)
+  const args: Record<string, unknown> = {
+    to, body: text, mentions,
+    kind: typeof e?.kind === 'string' && e.kind ? e.kind : 'message',
+  }
+  if (typeof e?.reply_to === 'number' && e.reply_to > 0) args.reply_to = e.reply_to
+  for (const k of SEND_EXTRA.slice(1)) if (e?.[k] !== undefined) args[k] = e[k]
+  return { args }
+}
+
+/** Map the hub's answer to the tool result: a tool error (or non-200) is a deny, never "sent". */
+export function sendOutcome(r: { status: number; data: any }, to: string): { result: string } | { deny: string } {
+  const brief = r.data ? JSON.stringify(r.data).slice(0, 300) : ''
+  const err = r.data?.error
+  if (r.status !== 200 || err) {
+    const why = typeof err === 'object' && err
+      ? `${err.code ?? ''} ${err.message ?? ''}`.trim()
+      : String(r.data?.message ?? err ?? brief)
+    return { deny: `发送失败 ${r.status}: ${why.slice(0, 200)}` }
+  }
+  return { result: `已发送到 ${to}${brief ? `：${brief}` : ''}` }
+}
+
 // ---- display -------------------------------------------------------------------------------------------------
 
 /**

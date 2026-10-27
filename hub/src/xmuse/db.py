@@ -110,6 +110,8 @@ create table if not exists operators(        -- sidebar operator tokens: the use
 create table if not exists invites(          -- one-time invitation codes (/v1/act invite -> /v1/join)
   code text primary key, vendor text not null, role text not null default '', description text not null default '',
   name text, created_by text, created_at real not null, expires_at real not null, used_at real, used_by text);
+create table if not exists otel_marks(      -- OTel export dedup (otel.py): rows already shipped
+  kind text not null, id text not null, primary key(kind, id));
 create table if not exists meta(key text primary key, value text not null);  -- view_version
 create table if not exists share_marks(      -- user DMs released for sharing (T3, share.py); target '' = to anyone
   message_id integer not null, target text not null default '', created_at real not null,
@@ -178,7 +180,9 @@ COLUMNS = [("turns", "view_entries", "integer"),  # entries in the agent's view 
            # the user took a message back (panel "撤回"): its body is replaced, this is when
            ("messages", "retracted_at", "real"),
            # E13: a failed audit is retried once
-           ("audits", "tries", "integer not null default 1")]
+           ("audits", "tries", "integer not null default 1"),
+           # entry_events.msg: the message whose send caused this op (otel span events stay stable across replays)
+           ("entry_events", "msg", "integer")]
 
 
 def init(path) -> sqlite3.Connection:
