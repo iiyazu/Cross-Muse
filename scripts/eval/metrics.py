@@ -1,8 +1,7 @@
 """Pure metric functions over one exported eval transcript.
 
 Every function takes a transcript dict produced by ``run_eval.py`` (schema
-``eval_transcript/v1``) and returns a plain value; no I/O and no network.  The metric
-definitions follow ``docs/xmuse/eval-design.md`` §2.
+``eval_transcript/v1``) and returns a plain value; no I/O and no network.
 
 Transcript shape (only the fields this module reads)::
 

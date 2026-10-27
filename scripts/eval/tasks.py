@@ -1,7 +1,7 @@
 """Fixed evaluation tasks for the broadcast-vs-addressed Room eval harness.
 
 This module is the source of truth for the seven task prompts and their pre-registered
-rubrics from ``docs/xmuse/eval-design.md`` §1.  The T3 postmortem and the T5 failure log
+rubrics.  The T3 postmortem and the T5 failure log
 are frozen in-code appendix texts so every run posts byte-identical prompts.
 
 Pure data plus a few pure helpers; no imports outside the standard library.

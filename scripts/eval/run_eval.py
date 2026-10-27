@@ -23,7 +23,7 @@ Endpoints used (verified against the repo sources in July 2026):
   ``timeline_items[]``, ``participants[].mention_handle`` and ``page`` cursors.
 - ``GET {base}/conversations/{cid}/events?after_seq=&limit=``; used only for
   ``latest_seq`` stability.  Room sequence and frontend event sequence are
-  different domains (``docs/xmuse/frontend/FRONTEND_API.md``).
+  different domains.
 
 Ordering rules from design §3: one seeded task shuffle shared by both modes,
 mode order alternates per task block, and the two modes are never run

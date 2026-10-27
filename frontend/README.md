@@ -57,8 +57,7 @@ Rules the UI keeps (they are product invariants, not styling):
 
 The unified local lifecycle currently supports Linux and WSL and requires Node.js 20.9+ and
 npm. Backend setup is in
-[QUICKSTART.md](../QUICKSTART.md); the current wire contract is in
-[FRONTEND_API.md](../docs/xmuse/frontend/FRONTEND_API.md).
+[QUICKSTART.md](../QUICKSTART.md).
 
 ## Build and run
 
