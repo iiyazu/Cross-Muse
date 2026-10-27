@@ -41,19 +41,29 @@ class Auditor:
     def __init__(self, mo, pool, cfg: dict):
         self.mo, self.pool, self.cfg = mo, pool, cfg
         self.wake, self.stopping, self.lock = threading.Event(), threading.Event(), threading.Lock()
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread, self.since, self.starting = threading.Thread(target=self._run, daemon=True), db.now(), \
+            threading.Lock()
         if "audit" in mo.caps and alignment_on(cfg):
-            with db.tx(pool()) as c:  # only what is superseded from now on gets audited
-                c.execute("insert or ignore into audits(entry_id, state, at) select distinct entry_id, 'skipped', ?"
-                          " from entry_events where op='supersede'", (db.now(),))
-            self.thread.start()
+            self._start()
+
+    def _start(self) -> None:
+        with db.tx(self.pool()) as c:  # only what is superseded while this hub runs gets audited
+            c.execute("insert or ignore into audits(entry_id, state, at) select distinct entry_id, 'skipped', ?"
+                      " from entry_events where op='supersede' and at <= ?", (db.now(), self.since))
+        self.thread.start()
 
     def kick(self) -> None:
+        if not self.thread.is_alive() and not self.stopping.is_set() and self.mo.ready("audit") \
+                and alignment_on(self.cfg):
+            with self.starting:  # MemoryOS came up after the hub: what was superseded since then is audited now
+                if not self.thread.is_alive() and not self.stopping.is_set():
+                    self._start()
         self.wake.set()
 
     def stop(self) -> None:
-        if self.thread.is_alive():
+        with self.starting:  # a late kick either finished starting the thread before this, or never starts it
             self.stopping.set()
+        if self.thread.is_alive():
             self.wake.set()
             self.thread.join(5)
 
