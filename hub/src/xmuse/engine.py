@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import align, db, dispatch, mail, stall, wakepack
+from . import align, db, dispatch, mail, memoryos, stall, wakepack
 from . import compact
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
@@ -228,7 +228,8 @@ class Engine:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
         # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
         cwd = db.workdir(agent, self.ws)
-        pack = wakepack.render(conn, self.cfg, agent, mine, None if fresh else session["id"], str(cwd))
+        with memoryos.cause("turn", tid):  # MemoryOS calls while building the wake pack are for this turn
+            pack = wakepack.render(conn, self.cfg, agent, mine, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
             conn.execute("update deliveries set read_at=? where recipient=? and state='passive' and read_at is null",
                          (db.now(), agent["id"]))

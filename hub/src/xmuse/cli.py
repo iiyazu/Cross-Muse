@@ -345,7 +345,10 @@ def trace_export(state: Path | None, dbpath: Path | None, endpoint: str | None, 
             except ValueError:
                 raise SystemExit(f"--since: unix seconds or ISO time, got {since!r}")
     # an experiment run dir holds hub.db but no config.json: replay it with env/default settings
-    cfg = _otel.otel_config(config.load(state) if state is not None and (state / "config.json").exists() else {})
+    raw = config.load(state) if state is not None and (state / "config.json").exists() else {}
+    cfg = _otel.otel_config(raw)
+    from . import otel_remote
+    otel_remote.prepare_replay(dbfile, raw)  # optional: MemoryOS calls and their shared Phoenix project
     try:
         out = _otel.replay(dbfile, endpoint or cfg["endpoint"], since=ts, capture=capture,
                             body_clip=body_clip, headers=cfg["headers"],

@@ -18,6 +18,7 @@ import time
 import urllib.parse
 from importlib import metadata as _metadata
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import db
 
@@ -199,6 +200,26 @@ def _released(conn, mid: int) -> bool:
                              (mid,)).fetchone())
 
 
+# ---- span sources ---------------------------------------------------------------
+# spans() concatenates what each source builds, in registration order. A source is a pair: build(sc) returns its
+# ReadableSpans, mark(span) returns the otel_marks (kind, id) of a span it built (None for any other span). `sc`
+# carries spans()'s arguments and the shared helpers (see spans()). The four built-in sources are registered below;
+# code outside this module adds its own with register_source().
+_SOURCES: list[tuple] = []
+_RESOURCE: dict = {}  # extra resource attributes from register_resource()
+
+
+def register_source(build, mark) -> None:
+    """Add a span source after the ones already registered; registering the same `build` again does nothing."""
+    if all(b is not build for b, _ in _SOURCES):
+        _SOURCES.append((build, mark))
+
+
+def register_resource(attrs: dict) -> None:
+    """Extra resource attributes on every span; service.name, service.version and the room ids always win."""
+    _RESOURCE.update(attrs)
+
+
 def spans(conn, since: float | None = None, capture: bool = False, body_clip: int = 2000,
           unmarked: bool = False, room: tuple[str, str] | None = None):
     """Map every terminal hub.db row to a deterministic ReadableSpan.
@@ -212,21 +233,18 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
     leaves it False and needs no marks table). `room`
     overrides the room row (experiment DBs have none; replay then namespaces
     each run explicitly, otherwise colliding ids would overwrite each other).
+    The spans come from the registered sources, in order (built-in: turns,
+    messages, approvals, capped chains).
     """
     from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import Event, ReadableSpan
-    from opentelemetry.trace import Link, SpanContext, SpanKind, Status, StatusCode, TraceFlags
+    from opentelemetry.trace import SpanContext, TraceFlags
 
     room = {"id": room[0], "name": room[1]} if room is not None else _room(conn)
     rid = room["id"]
-    resource = Resource.create({"service.name": SERVICE_NAME, "service.version": _version(),
+    resource = Resource.create({**_RESOURCE, "service.name": SERVICE_NAME, "service.version": _version(),
                                 "xmuse.room.id": rid, "xmuse.room.name": room["name"]})
-    agents = {r["id"]: r for r in db.rows(conn.execute("select * from agents"))}
-    sessions = {r["id"]: r for r in db.rows(conn.execute("select * from sessions"))}
-    chains = {r["id"]: r for r in db.rows(conn.execute("select * from chains"))}
-    usage = {r["turn_id"]: r for r in db.rows(conn.execute("select * from usage"))}
 
-    def _exclude(kind: str, table: str):
+    def exclude(kind: str, table: str):
         # a correlated NOT EXISTS against the (kind, id) primary key: the query stays the same size however many
         # rows were exported (an `id not in (...)` list hits SQLite's variable limit in a long-lived room)
         if not unmarked:
@@ -237,18 +255,27 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
     def ctx(trace: int, sid: int) -> SpanContext:
         return SpanContext(trace_id=trace, span_id=sid, is_remote=False, trace_flags=TraceFlags(0x01))
 
-    def msg_ctx(m: dict) -> SpanContext:
-        return ctx(_trace_id(rid, m["chain_id"]), _span_id(rid, MARK_MESSAGES, m["id"]))
+    sc = SimpleNamespace(conn=conn, since=since, capture=capture, body_clip=body_clip, unmarked=unmarked,
+                         rid=rid, resource=resource, exclude=exclude, ctx=ctx)
+    return [s for build, _ in list(_SOURCES) for s in build(sc)]
 
-    # every turn's chain, terminal or not: message parents are computed from the
-    # row, so a message sent mid-turn keeps its parent when the turn later ends
-    turn_chains = {r[0]: r[1] for r in conn.execute("select id, chain_id from turns")}
-    entry_index = _entry_events_indexed(conn)
 
-    # ---- invoke_agent (turns) -------------------------------------------------
-    turn_spans: dict[int, object] = {}
-    turn_traces: dict[int, int] = {}
-    t_ex, t_args = _exclude(MARK_TURNS, "turns")
+def _msg_ctx(sc, m: dict):
+    return sc.ctx(_trace_id(sc.rid, m["chain_id"]), _span_id(sc.rid, MARK_MESSAGES, m["id"]))
+
+
+def _turn_spans(sc) -> list:
+    """invoke_agent: one per terminal turn."""
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import Link, SpanKind, Status, StatusCode
+
+    conn, rid, since = sc.conn, sc.rid, sc.since
+    agents = {r["id"]: r for r in db.rows(conn.execute("select * from agents"))}
+    sessions = {r["id"]: r for r in db.rows(conn.execute("select * from sessions"))}
+    chains = {r["id"]: r for r in db.rows(conn.execute("select * from chains"))}
+    usage = {r["turn_id"]: r for r in db.rows(conn.execute("select * from usage"))}
+    out: list = []
+    t_ex, t_args = sc.exclude(MARK_TURNS, "turns")
     for t in db.rows(conn.execute("select * from turns where 1=1" + t_ex + " order by id", t_args)):
         if t["state"] not in TERMINAL_TURNS:
             continue
@@ -294,27 +321,37 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
             same = [m for m in wake if m["chain_id"] == cid]
             rest = [m for m in wake if m["chain_id"] != cid]
             if same:
-                parent = msg_ctx(same[0])
+                parent = _msg_ctx(sc, same[0])
                 rest = [m for m in wake if m is not same[0]]
             for m in rest:
-                links.append(Link(msg_ctx(m)))
+                links.append(Link(_msg_ctx(sc, m)))
         if t["state"] != "succeeded":
             attrs[A_TURN_STATE] = t["state"]
         status = {"succeeded": Status(StatusCode.OK),
                   "failed": Status(StatusCode.ERROR, (t["error"] or "")[:500] or t["state"])}.get(
                       t["state"], Status(StatusCode.UNSET))
-        turn_traces[t["id"]] = trace
-        turn_spans[t["id"]] = ReadableSpan(
-            name=f"{OP_INVOKE_AGENT} {t['agent_id']}", context=ctx(trace, _span_id(rid, MARK_TURNS, t["id"])),
-            parent=parent, resource=resource, attributes=attrs, links=links, kind=SpanKind.INTERNAL,
-            status=status, start_time=_ns(t["started_at"]), end_time=_ns(t["ended_at"]))
+        out.append(ReadableSpan(
+            name=f"{OP_INVOKE_AGENT} {t['agent_id']}", context=sc.ctx(trace, _span_id(rid, MARK_TURNS, t["id"])),
+            parent=parent, resource=sc.resource, attributes=attrs, links=links, kind=SpanKind.INTERNAL,
+            status=status, start_time=_ns(t["started_at"]), end_time=_ns(t["ended_at"])))
+    return out
 
-    # ---- xmuse.message --------------------------------------------------------
-    msg_spans: list = []
-    m_ex, m_args = _exclude(MARK_MESSAGES, "messages")
+
+def _message_spans(sc) -> list:
+    """xmuse.message: one per message, with its entry events."""
+    from opentelemetry.sdk.trace import Event, ReadableSpan
+    from opentelemetry.trace import Link, SpanKind, Status, StatusCode
+
+    conn, rid = sc.conn, sc.rid
+    # every turn's chain, terminal or not: message parents are computed from the
+    # row, so a message sent mid-turn keeps its parent when the turn later ends
+    turn_chains = {r[0]: r[1] for r in conn.execute("select id, chain_id from turns")}
+    entry_index = _entry_events_indexed(conn)
+    out: list = []
+    m_ex, m_args = sc.exclude(MARK_MESSAGES, "messages")
     messages = db.rows(conn.execute("select * from messages where 1=1" + m_ex + " order by id", m_args))
-    if since is not None:
-        messages = [m for m in messages if m["created_at"] >= since]
+    if sc.since is not None:
+        messages = [m for m in messages if m["created_at"] >= sc.since]
     for m in messages:
         trace = _trace_id(rid, m["chain_id"])
         attrs = {A_MSG_ID: m["id"], A_MSG_KIND: m["kind"], A_MSG_THREAD: m["thread_id"],
@@ -323,8 +360,8 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
                  A_MSG_CHARS: len(m["body"] or ""), ATTR_OI_KIND: OI_CHAIN}
         if m.get("via"):
             attrs[A_MSG_VIA] = m["via"]
-        if capture and not (_is_user_dm(conn, m) and not _released(conn, m["id"])):
-            attrs[A_MSG_BODY] = (m["body"] or "")[:body_clip]
+        if sc.capture and not (_is_user_dm(conn, m) and not _released(conn, m["id"])):
+            attrs[A_MSG_BODY] = (m["body"] or "")[:sc.body_clip]
         parent, links = None, []
         # the parent comes from the turns row, whatever its state: a message
         # sent mid-turn is exported at once and keeps this parent forever
@@ -332,7 +369,7 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
             t_cid = turn_chains[m["turn_id"]]
             if t_cid is not None:
                 t_trace = _trace_id(rid, t_cid)
-                pctx = ctx(t_trace, _span_id(rid, MARK_TURNS, m["turn_id"]))
+                pctx = sc.ctx(t_trace, _span_id(rid, MARK_TURNS, m["turn_id"]))
                 if t_trace == trace:
                     parent = pctx
                 else:
@@ -342,19 +379,26 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
                          **({"supersedes": e["supersedes"]} if e["supersedes"] is not None else {})},
                         _ns(m["created_at"]))
                   for e in entry_index.get(m["id"], [])]
-        msg_spans.append(ReadableSpan(
-            name=f"xmuse.message {m['kind']}", context=msg_ctx(m),
-            parent=parent, resource=resource, attributes=attrs, events=events, links=links,
+        out.append(ReadableSpan(
+            name=f"xmuse.message {m['kind']}", context=_msg_ctx(sc, m),
+            parent=parent, resource=sc.resource, attributes=attrs, events=events, links=links,
             kind=SpanKind.INTERNAL, status=Status(StatusCode.UNSET),
             start_time=_ns(m["created_at"]), end_time=_ns(m["created_at"])))
+    return out
 
-    # ---- xmuse.approval (decided only) -----------------------------------------
-    appr_spans: list = []
-    a_ex, a_args = _exclude(MARK_APPROVALS, "approvals")
+
+def _approval_spans(sc) -> list:
+    """xmuse.approval: decided approvals only, under the turn that asked."""
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    conn, rid = sc.conn, sc.rid
+    out: list = []
+    a_ex, a_args = sc.exclude(MARK_APPROVALS, "approvals")
     for a in db.rows(conn.execute("select * from approvals where 1=1" + a_ex + " order by created_at", a_args)):
         if not a.get("decided_at"):
             continue
-        if since is not None and a["decided_at"] < since:
+        if sc.since is not None and a["decided_at"] < sc.since:
             continue
         t = db.row(conn.execute(
             "select id, chain_id from turns where agent_id=? and started_at<=? and (ended_at is null or ended_at>=?)"
@@ -370,16 +414,23 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
                  A_APPR_DECISION: a.get("decision") or "",
                  A_APPR_WAIT: max(0.0, a["decided_at"] - a["created_at"]), ATTR_OI_KIND: OI_AGENT}
         ok = a.get("decision") in ("once", "always")
-        appr_spans.append(ReadableSpan(
-            name="xmuse.approval", context=ctx(trace, _span_id(rid, MARK_APPROVALS, a["id"])),
-            parent=ctx(trace, _span_id(rid, MARK_TURNS, t["id"])), resource=resource, attributes=attrs,
+        out.append(ReadableSpan(
+            name="xmuse.approval", context=sc.ctx(trace, _span_id(rid, MARK_APPROVALS, a["id"])),
+            parent=sc.ctx(trace, _span_id(rid, MARK_TURNS, t["id"])), resource=sc.resource, attributes=attrs,
             kind=SpanKind.INTERNAL,
             status=Status(StatusCode.OK) if ok else Status(StatusCode.ERROR, (a.get("decision") or "decided")),
             start_time=_ns(a["created_at"]), end_time=_ns(a["decided_at"])))
+    return out
 
-    # ---- xmuse.chain.capped ----------------------------------------------------
-    cap_spans: list = []
-    c_ex, c_args = _exclude(MARK_CHAINS, "chains")
+
+def _capped_spans(sc) -> list:
+    """xmuse.chain.capped: capped or stopped chains, under their last message."""
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    conn, rid = sc.conn, sc.rid
+    out: list = []
+    c_ex, c_args = sc.exclude(MARK_CHAINS, "chains")
     for c in db.rows(conn.execute("select * from chains where state in ('capped','stopped')" + c_ex +
                                   " order by id", c_args)):
         last = db.row(conn.execute("select id, created_at from messages where chain_id=? order by id desc limit 1",
@@ -388,26 +439,34 @@ def spans(conn, since: float | None = None, capture: bool = False, body_clip: in
         attrs = {A_CHAIN_ID: c["id"], A_CHAIN_STATE: c["state"], ATTR_OI_KIND: OI_CHAIN}
         if c.get("note"):
             attrs[A_CHAIN_NOTE] = c["note"]
-        parent = ctx(_trace_id(rid, c["id"]), _span_id(rid, MARK_MESSAGES, last["id"])) if last else None
-        cap_spans.append(ReadableSpan(
-            name="xmuse.chain.capped", context=ctx(_trace_id(rid, c["id"]), _span_id(rid, MARK_CHAINS, c["id"])),
-            parent=parent, resource=resource, attributes=attrs, kind=SpanKind.INTERNAL,
+        parent = sc.ctx(_trace_id(rid, c["id"]), _span_id(rid, MARK_MESSAGES, last["id"])) if last else None
+        out.append(ReadableSpan(
+            name="xmuse.chain.capped", context=sc.ctx(_trace_id(rid, c["id"]), _span_id(rid, MARK_CHAINS, c["id"])),
+            parent=parent, resource=sc.resource, attributes=attrs, kind=SpanKind.INTERNAL,
             status=Status(StatusCode.UNSET), start_time=_ns(at), end_time=_ns(at)))
+    return out
 
-    return [*turn_spans.values(), *msg_spans, *appr_spans, *cap_spans]
+
+def _marker(kind: str, attr: str, match):
+    def mark(s) -> tuple[str, str] | None:
+        a = s.attributes or {}
+        return (kind, str(a[attr])) if match(s.name) and attr in a else None
+    return mark
+
+
+for _build, _mark in ((_turn_spans, _marker(MARK_TURNS, A_TURN_ID, lambda n: n.startswith(OP_INVOKE_AGENT))),
+                      (_message_spans, _marker(MARK_MESSAGES, A_MSG_ID, lambda n: n.startswith("xmuse.message"))),
+                      (_approval_spans, _marker(MARK_APPROVALS, A_APPR_ID, lambda n: n == "xmuse.approval")),
+                      (_capped_spans, _marker(MARK_CHAINS, A_CHAIN_ID, lambda n: n == "xmuse.chain.capped"))):
+    register_source(_build, _mark)
+del _build, _mark
 
 
 def mark_key(s) -> tuple[str, str] | None:
-    """otel_marks (kind, id) for a built span; None when the span carries no row id."""
-    a = s.attributes or {}
-    if s.name.startswith(OP_INVOKE_AGENT) and A_TURN_ID in a:
-        return (MARK_TURNS, str(a[A_TURN_ID]))
-    if s.name.startswith("xmuse.message") and A_MSG_ID in a:
-        return (MARK_MESSAGES, str(a[A_MSG_ID]))
-    if s.name == "xmuse.approval" and A_APPR_ID in a:
-        return (MARK_APPROVALS, str(a[A_APPR_ID]))
-    if s.name == "xmuse.chain.capped" and A_CHAIN_ID in a:
-        return (MARK_CHAINS, str(a[A_CHAIN_ID]))
+    """otel_marks (kind, id) for a built span; None when no source claims it (the span carries no row id)."""
+    for _, mark in list(_SOURCES):
+        if (key := mark(s)) is not None:
+            return key
     return None
 
 

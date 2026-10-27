@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 
-from . import db, mail
+from . import db, mail, memoryos
 from .config import HUB, alignment_on
 
 log = logging.getLogger("xmuse.audit")
@@ -101,10 +101,13 @@ class Auditor:
         if not msgs:
             return self._record(conn, eid, new["id"], "done", {"flagged": [], "candidates": []})
         items = [_item(m) for m in msgs]
-        r = self.mo.call("audit", "/audit", {"schema": "memoryos_audit/v1", "k": self.cfg["audit_top"],
-                                             "old": {"id": f"E{eid}", "text": _text(conn, old)},
-                                             "new": {"id": f"E{new['id']}", "text": _text(conn, new)},
-                                             "items": items}, self.cfg["audit_timeout_s"])
+        sent = conn.execute("select msg from entry_events where entry_id=? and op='supersede' order by at desc"
+                            " limit 1", (eid,)).fetchone()
+        with memoryos.cause("message", sent and sent[0]):  # the message whose send superseded the entry, if known
+            r = self.mo.call("audit", "/audit", {"schema": "memoryos_audit/v1", "k": self.cfg["audit_top"],
+                                                 "old": {"id": f"E{eid}", "text": _text(conn, old)},
+                                                 "new": {"id": f"E{new['id']}", "text": _text(conn, new)},
+                                                 "items": items}, self.cfg["audit_timeout_s"])
         if r is None:
             return self._record(conn, eid, new["id"], "failed", None)
         text, by_id = {i["id"]: i["text"] for i in items}, {f"m{m['id']}": m for m in msgs}
