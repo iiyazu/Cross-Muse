@@ -13,7 +13,9 @@ Read-only on both sides. Exit status 1 on any mismatch.
   hub/.venv/bin/python scripts/otel/check_replay.py [--endpoint URL] [--project NAME] RUN_DIR[=ROOM_ID] ...
 
 ROOM_ID is the --room-id the run was replayed with. Without it, a db with a room row (a room's state dir, exported
-live) uses that room; one without (an experiment run) uses the run directory's name.
+live) uses that room; one without (an experiment run) uses the run directory's name. Without --project, each run is
+looked up where the hub sends it: the shared project (otel.project, default "xmuse") for a db that recorded MemoryOS
+calls, Phoenix's "default" for any other.
 """
 import argparse
 import collections
@@ -130,18 +132,39 @@ def memoryos_side(local: list, answered: set[str], remote: dict[str, dict], prob
             "memoryos_spans_by_path": dict(below)}
 
 
+def project_of(run: Path) -> str:
+    """The Phoenix project the hub sends this db's spans to: the shared one (otel.project in the run's config.json,
+    else $XMUSE_OTEL_PROJECT, else "xmuse") once it recorded MemoryOS calls, else Phoenix's "default"."""
+    dbfile = run / "hub.db" if run.is_dir() else run
+    if otel_remote is None:
+        return "default"
+    conn = sqlite3.connect(f"file:{dbfile}?mode=ro", uri=True)
+    try:
+        if not otel_remote._has_table(conn):
+            return "default"
+    finally:
+        conn.close()
+    cfg = dbfile.parent / "config.json"
+    return otel_remote.project(json.loads(cfg.read_text(encoding="utf-8")) if cfg.exists() else {})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--endpoint", default="http://localhost:6006")
-    ap.add_argument("--project", default="default")
+    ap.add_argument("--project", help="Phoenix project for every run (default: where the hub sent each one)")
     ap.add_argument("runs", nargs="+", help="RUN_DIR[=ROOM_ID]")
     a = ap.parse_args()
-    remote = phoenix_spans(a.endpoint, a.project)
+    remote: dict[str, dict] = {}
     out = []
     for spec in a.runs:
         path, eq, room = spec.partition("=")
-        out.append(check(Path(path).expanduser(), room if eq else None, remote))
-    print(json.dumps({"backend_spans": len(remote), "runs": out}, indent=1, ensure_ascii=False))
+        run = Path(path).expanduser()
+        project = a.project or project_of(run)
+        if project not in remote:
+            remote[project] = phoenix_spans(a.endpoint, project)
+        out.append({"project": project, **check(run, room if eq else None, remote[project])})
+    print(json.dumps({"backend_spans": {p: len(s) for p, s in remote.items()}, "runs": out}, indent=1,
+                     ensure_ascii=False))
     sys.exit(1 if any(r["problems"] for r in out) else 0)
 
 
