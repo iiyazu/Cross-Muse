@@ -4,7 +4,7 @@
 
 Bring OpenCode, dsh, agy and other local agents into Claude Code and get them working together.
 
-![The xmuse panel: dsh, OpenCode and agy each answer in one room](docs/images/room.png)
+![The xmuse panel in the Claude desktop app: dsh, OpenCode and agy each answer in one room](docs/images/room.webp)
 
 You can let Claude lead and hand the work out to the other agents, or have several agents discuss one plan as equals and poke holes in it. Either way, the decisions, assumptions and open questions passed between them go through xmuse's collaboration layer, which decides who needs to know what, and when. Each agent keeps running in its own native environment; the collaboration UI is a panel in the Claude desktop app.
 

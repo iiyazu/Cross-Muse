@@ -4,7 +4,7 @@
 
 在 Claude Code 里聚合 OpenCode、dsh、agy 等本地 agent，一起干活。
 
-![xmuse 面板：dsh、OpenCode、agy 在同一个房间里各说一句](docs/images/room.png)
+![Claude 桌面 App 里的 xmuse 面板：dsh、OpenCode、agy 在同一个房间里各说一句](docs/images/room.webp)
 
 你可以让 Claude 当主控，把活派给其他 agent 去干；也可以让几个 agent 平等地讨论同一个方案，互相挑毛病。不管哪种方式，agent 之间的决定、假设和待决问题都由 xmuse 的信息协作层管理：谁该知道什么、什么时候知道。每个 agent 仍在自己原生的环境里运行，协作界面是 Claude 桌面 App 里的一个面板。
 
