@@ -294,8 +294,9 @@ class Server:
     """One agent's dedicated OpenCode server (own port, password file and config; never the user's service)."""
 
     def __init__(self, ws: Path, state: Path, agent_id: str, port: int | None = None, base: str | None = None,
-                 binary: str = "opencode"):
+                 binary: str = "opencode", cwd: Path | None = None):
         self.ws, self.state, self.agent_id, self.binary, self.proc = ws, state, agent_id, binary, None
+        self.cwd = cwd  # member workdir (own git worktree); the serve process runs there, not in ws
         self.dir = instance_dir(state, agent_id)
         self.dir.mkdir(parents=True, exist_ok=True)
         pw = self.dir / "oc.pass"
@@ -312,7 +313,7 @@ class Server:
         log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a", encoding="utf-8")
         self.proc = proc.popen(
             [*proc.argv(self.binary), "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
-            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text(encoding="utf-8").strip(),
+            cwd=self.cwd or self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text(encoding="utf-8").strip(),
                                         "OPENCODE_CONFIG": str(self.dir / "opencode.json")}),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             encoding="utf-8", errors="replace")
@@ -604,8 +605,10 @@ class OpenCodeDriver:
         with self.lock:
             srv = self.servers.get(agent_id)
             if srv is None:  # agent added while the hub runs
+                a = db.row(self.sink.db().execute("select * from agents where id=?", (agent_id,)))
                 srv = self.servers[agent_id] = Server(self.sink.ws, self.sink.state, agent_id,
-                                                      binary=self.sink.cfg.get("opencode_bin", "opencode"))
+                                                       binary=self.sink.cfg.get("opencode_bin", "opencode"),
+                                                       cwd=db.workdir(a, self.sink.ws))
                 if self.autostart:
                     srv.start()
             if srv.base not in self.prompts:

@@ -93,11 +93,11 @@ class Hub:
                         "open-experiment" else "bypassable blocklist for unattended experiments")
         self.preset = preset.Orchestrator(self)
         self.engine.drivers["claude"] = ClaudeDriver(self.engine, self.db, claude_bin, self.ws)
-        ocs = [r[0] for r in self.db().execute("select id from agents where vendor='opencode' order by id")]
+        ocs = [r for r in self.db().execute("select * from agents where vendor='opencode' order by id")]
         if ocs:  # one server per OpenCode agent (T12); oc_base: an already running server (tests), str or {agent: url}
             binary = self.cfg.get("opencode_bin", "opencode")
-            servers = {a: Server(self.ws, state, a, binary=binary,
-                                 base=oc_base.get(a) if isinstance(oc_base, dict) else oc_base) for a in ocs}
+            servers = {a["id"]: Server(self.ws, state, a["id"], binary=binary, cwd=db.workdir(a, self.ws),
+                                 base=oc_base.get(a["id"]) if isinstance(oc_base, dict) else oc_base) for a in ocs}
             if oc_base is None:
                 for srv in servers.values():
                     srv.start()

@@ -210,16 +210,19 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
     cfg = config.load(state)
     ws = Path(cfg["workspace"])
     settings = dict(settings or {})
-    if "cwd" in settings and vendor != "claude":
-        raise SystemExit("--cwd is only for --vendor claude (a member directory holding its own .mcp.json)")
+    if "cwd" in settings and vendor not in ("claude", "opencode", "dsh", "agy"):
+        raise SystemExit("--cwd is only for member agents (claude, opencode, dsh, agy)")
     if settings.get("effort") and vendor != "claude":
         print(f"--effort is only passed to claude; ignored for {vendor} agent {agent_id}")
     if vendor != "claude":
         settings.pop("effort", None)
     elif settings.get("effort") is not None and settings["effort"] not in claude.EFFORTS:
         raise SystemExit(f"--effort must be one of: {', '.join(claude.EFFORTS)}")
-    if vendor == "claude":
+    if vendor in ("claude", "opencode", "dsh", "agy"):
         member = _member_cwd(ws, settings["cwd"]) if settings.get("cwd") else None
+        if vendor == "dsh" and member is not None and not _dsh_ws_ok(member):
+            raise SystemExit(f"--cwd {member}: dsh also needs the member directory on a Windows drive "
+                             f"(under /mnt/<drive>/), like the workspace")
         settings.pop("cwd", None)
         settings.update({"cwd": str(member)} if member else {})
     conn = db.connect(state / "hub.db")
@@ -235,7 +238,7 @@ def add_agent(state: Path, agent_id: str, vendor: str, model: str | None = None,
                     f"per directory). Give {agent_id} its own directory: xmuse agent add {agent_id} --vendor claude "
                     f"--cwd <dir>, with <dir> inside the workspace or a git worktree of it "
                     f"(git -C {ws} worktree add <dir>)")
-    if vendor == "dsh" and not _dsh_ws_ok(ws):  # dsh cannot write through the wsl.localhost UNC form
+    if vendor == "dsh" and not _dsh_ws_ok(ws):
         raise SystemExit(
             "dsh needs the workspace on a Windows drive (under /mnt/<drive>/, e.g. /mnt/c/), not " + str(ws) + ": "
             "dsh runs as a Windows app and its sandbox cannot write through the wsl.localhost UNC form "

@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import align, db, dispatch, mail, memoryos, stall, wakepack
+from . import align, db, dispatch, mail, memoryos, overlap, stall, wakepack
 from . import compact
 from .adapters.base import TurnEnd, TurnSpec
 from .adapters.opencode import auto_decision, names_runner
@@ -30,6 +30,7 @@ class Engine:
         self.otel_kick = None  # Hub sets this to the OTel exporter's kick when export is enabled; else None
         self._progress_lock = threading.Lock()
         self._progress_tick = 0.0
+        self._overlap_pre = {}  # turn id -> (snapshot entries, head): taken before adapter.start
         self._recover()
 
     # ---- events from other threads -------------------------------------------------
@@ -228,6 +229,12 @@ class Engine:
                 conn.execute("update chains set wakes=wakes+1 where id=?", (c,))
         # settings.cwd: an agent working in its own git worktree (plan-split-integrate executors, T13)
         cwd = db.workdir(agent, self.ws)
+        if self.cfg.get("file_overlap_notice", True):
+            try:
+                pre = overlap.snapshot(cwd)
+                self._overlap_pre[tid] = (pre[0], pre[1])
+            except Exception:
+                log.exception("overlap snapshot failed for turn %s", tid)
         with memoryos.cause("turn", tid):  # MemoryOS calls while building the wake pack are for this turn
             pack = wakepack.render(conn, self.cfg, agent, mine, None if fresh else session["id"], str(cwd))
         with db.tx(conn):  # passive messages are now summarized to the agent; the session has seen this alignment
@@ -357,6 +364,10 @@ class Engine:
         self.adapters.pop(turn["id"], None)
         with self._progress_lock:
             self.progress_state.pop(turn["id"], None)
+        pre = self._overlap_pre.pop(end.turn_id, None)
+        if pre is not None and self.cfg.get("file_overlap_notice", True):
+            overlap.record_turn_end(self.db(), self.cfg, turn["agent_id"], end.turn_id,
+                                    db.workdir(agent, self.ws), pre, turn["started_at"], db.now())
         stall.on_turn_end(conn, self.cfg, turn, end)
         thread = turn["chain_id"] and conn.execute("select thread_id from chains where id=?",
                                                    (turn["chain_id"],)).fetchone()[0]
