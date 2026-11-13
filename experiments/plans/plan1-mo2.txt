@@ -1,2 +1,0 @@
-# lane mo2: long-L-mo again with curate result logging (memories returned vs added)
-long-L-mo 2
