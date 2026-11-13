@@ -8,8 +8,6 @@ Bring OpenCode, dsh, agy and other local agents into Claude Code and get them wo
 
 You can let Claude lead and hand the work out to the other agents, or have several agents discuss one plan as equals and poke holes in it. Either way, the decisions, assumptions and open questions passed between them go through xmuse's collaboration layer, which decides who needs to know what, and when. Each agent keeps running in its own native environment; the collaboration UI is a panel in the Claude desktop app.
 
-> v1 (the room runtime) is deprecated; its code is on the `v1` branch.
-
 ## The problem it works on
 
 When several independent agents work together, the hard part is context: what each agent should know, and when. If a decision changes and one agent misses it, that agent keeps working from the old one. If every chat message is forwarded to everyone, contexts grow without bound. xmuse spends its effort here and does not take the agents over: sessions, tools, permissions and context compaction stay with each vendor.
