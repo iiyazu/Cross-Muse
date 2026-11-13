@@ -231,8 +231,7 @@ class Engine:
         cwd = db.workdir(agent, self.ws)
         if self.cfg.get("file_overlap_notice", True):
             try:
-                pre = overlap.snapshot(cwd)
-                self._overlap_pre[tid] = (pre[0], pre[1])
+                self._overlap_pre[tid] = overlap.snapshot(cwd)  # (entries, head, too_many)
             except Exception:
                 log.exception("overlap snapshot failed for turn %s", tid)
         with memoryos.cause("turn", tid):  # MemoryOS calls while building the wake pack are for this turn

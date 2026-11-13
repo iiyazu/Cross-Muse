@@ -260,8 +260,10 @@ def ensure_question_deny(ws: Path) -> None:
 def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | None = None) -> list[Path]:
     """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
     v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
-    and carries only the permission rules. `compaction_prompt` (rewritten before every triggered compaction, T8c H3)
-    lands in agent.compaction.prompt, which the compact endpoint's summarizer uses."""
+    and carries only the permission rules. The permission rules are merged into the instance config as well, so they
+    apply wherever the member's cwd is (an outside worktree never loads the workspace project file).
+    `compaction_prompt` (rewritten before every triggered compaction, T8c H3) lands in agent.compaction.prompt, which
+    the compact endpoint's summarizer uses."""
     from .dsh import extra_mcp
     d = instance_dir(state, agent["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -275,16 +277,20 @@ def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | No
     inst: dict = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
     if compaction_prompt:
         inst["agent"] = {"compaction": {"prompt": compaction_prompt}}
+    permissions = [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
+                   # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
+                   # route, so the turn would hang; deny hides the tool from the model (measured)
+                   QUESTION_DENY,
+                   *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
+                   {"action": "shell", "resource": "*", "effect": "ask"}]
+    # The serve process runs in the member's workdir, which may be a worktree outside the workspace where the
+    # project-level opencode.json is never loaded: the permission rules live in the instance config too.
+    inst["permissions"] = permissions
     (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n", encoding="utf-8")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
-        "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
-                        # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
-                        # route, so the turn would hang; deny hides the tool from the model (measured)
-                        QUESTION_DENY,
-                        *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
-                        {"action": "shell", "resource": "*", "effect": "ask"}],
+        "permissions": permissions,
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     return [d / "opencode.json", ws / "opencode.json"]

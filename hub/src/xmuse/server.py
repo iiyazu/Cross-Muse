@@ -62,7 +62,7 @@ class Hub:
         self.db = db.Pool(state / "hub.db")
         db.init(state / "hub.db").close()
         from .init import sync_member_dirs
-        sync_member_dirs(self.ws, state, self.cfg)  # Claude members' worktrees outside the workspace
+        sync_member_dirs(self.ws, state, self.cfg)  # members' worktrees outside the workspace
         with db.tx(self.db()) as c:  # databases from before T8 stored the shell's family; peers see the model's
             for aid, vendor, model in c.execute("select id, vendor, model from agents").fetchall():
                 c.execute("update agents set family=? where id=?", (config.family(vendor, model), aid))

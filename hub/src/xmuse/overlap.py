@@ -76,15 +76,20 @@ def snapshot(workdir) -> tuple[dict[str, str] | None, str | None, bool]:
     parts = out.split("\0")
     entries: dict[str, str] = {}
     too_many = False
-    for field in parts:
+    i, n = 0, len(parts)
+    while i < n:
+        field = parts[i]
+        i += 1
         if not field:
             continue
         if len(entries) >= TOO_MANY:
             too_many = True
             break
         xy, path = field[:2], field[3:]
-        if " -> " in path and xy[0] in "RC":
-            path = path.split(" -> ")[-1]  # renamed: match on the new side
+        src = None
+        if xy[0] in "RC" and i < n:
+            # -z renames/copies are two fields: `XY <new>\0<old>\0` (no " -> " separator)
+            src, i = parts[i], i + 1
         full = root / path
         if "D" in xy or not full.exists():
             entries[path] = "deleted"
@@ -95,6 +100,9 @@ def snapshot(workdir) -> tuple[dict[str, str] | None, str | None, bool]:
                 entries[path] = _hash_file(full) if full.is_file() else "deleted"
             except OSError:
                 entries[path] = "deleted"
+        if src and xy[0] == "R":
+            entries[src] = "deleted"
+        # copies keep reading the source: no entry for it
     if too_many:
         log.warning("overlap snapshot of %s: over %d dirty files, skipping", workdir, TOO_MANY)
         return {}, head(workdir), True
@@ -114,7 +122,7 @@ def head_files(workdir: Path, old_head: str | None, new_head: str | None) -> set
 
 
 def record_turn_end(conn, cfg: dict, agent_id: str, turn_id: int, workdir,
-                    pre: tuple[dict | None, str | None], started_at: float, ended_at: float) -> list[str]:
+                    pre: tuple, started_at: float, ended_at: float) -> list[str]:
     """Snapshot, diff vs pre, store touched rows, check overlaps, notify. Any
     terminal turn state. Returns the notice lines (empty when nothing overlaps).
     Never raises: detection must not break turn bookkeeping."""
@@ -133,7 +141,9 @@ def _record(conn, cfg, agent_id, turn_id, workdir, pre, started_at, ended_at):
     if common is None:
         return []
     top = repo_root(workdir)
-    pre_entries, pre_head = pre
+    pre_entries, pre_head = pre[0], pre[1]
+    if len(pre) > 2 and pre[2]:
+        return []  # the start-of-turn snapshot overflowed: no baseline to diff against, skip this turn
     if pre_entries is None:
         pre_entries, pre_head, _ = snapshot(workdir)
         pre_entries = pre_entries or {}

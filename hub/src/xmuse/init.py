@@ -118,7 +118,7 @@ def _claude_md(d: Path) -> None:
 
 
 def sync_member_dir(ws: Path, d: Path, state: Path, cfg: dict) -> None:
-    """A Claude member working in its own git worktree outside the workspace gets what a worktree lacks (the generated
+    """A member working in its own git worktree outside the workspace gets what a worktree lacks (the generated
     files are untracked): .xmuse.json (the CLI and the agent's tools find the state through it), AGENTS.md and the
     skill, as the plan-split-integrate preset copies them. A member directory inside the workspace inherits them from
     the workspace root (CLAUDE.md and .xmuse.json are found upward) and gets nothing."""
@@ -135,7 +135,7 @@ def sync_member_dirs(ws: Path, state: Path, cfg: dict) -> None:
     """Hub start: refresh the member worktrees' prompts for the current config (see write_prompts)."""
     conn = db.connect(state / "hub.db")
     try:
-        agents = db.rows(conn.execute("select * from agents where vendor='claude'"))
+        agents = db.rows(conn.execute("select * from agents"))
     finally:
         conn.close()  # the hub starts in tests by the hundred: do not leave a descriptor per start
     for a in agents:

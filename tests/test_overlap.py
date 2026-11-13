@@ -214,3 +214,29 @@ def test_10_snapshot_500_dirty_files_under_point_two_seconds(tmp_path):
     dt = time.perf_counter() - t0
     print(f"\nsnapshot 500 dirty files: {len(entries or {})} files, {dt * 1000:.0f}ms")
     assert not too_many and len(entries) == 500 and dt < 0.2
+
+
+def test_11_rename_reports_both_sides_without_phantom(repo, hubdb):
+    d, wt = repo
+    conn = db.connect(hubdb)
+    pre = snap(d)
+    git(d, "mv", "a.txt", "c.txt")
+    assert overlap.record_turn_end(conn, cfg(), "a1", 1, d, pre, NOW - 10, NOW) == []
+    rows = {r[0] for r in conn.execute("select path from touched where turn_id=1")}
+    assert rows == {"a.txt", "c.txt"}
+
+
+def test_12_overflowed_start_snapshot_skips_the_turn(repo, hubdb):
+    d, wt = repo
+    conn = db.connect(hubdb)
+    for i in range(2001):
+        (d / f"f{i:05d}.txt").write_text("x", encoding="utf-8")
+    pre = overlap.snapshot(d)
+    assert pre[2] is True
+    for f in d.glob("f*.txt"):
+        f.unlink()
+    for i in range(10):
+        (d / f"g{i}.txt").write_text("y", encoding="utf-8")
+    assert overlap.record_turn_end(conn, cfg(), "a1", 1, d, pre, NOW - 10, NOW) == []
+    assert conn.execute("select count(*) from touched").fetchone()[0] == 0
+    assert conn.execute("select count(*) from messages").fetchone()[0] == 0
