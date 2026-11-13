@@ -10,3 +10,10 @@ archive/e2e/state-*/
 # experiments: runner hub state and run results (kept locally, not committed)
 experiments/state-*/
 experiments/results/
+# experiments harness, archived v1 code and their tests: kept locally, not published
+experiments/
+archive/
+tests/test_metrics.py
+tests/test_experiments_run.py
+tests/fakes/fake_memoryos_cmd.py
+tests/test_replay_mo.py
