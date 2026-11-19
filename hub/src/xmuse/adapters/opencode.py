@@ -260,8 +260,10 @@ def ensure_question_deny(ws: Path) -> None:
 def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | None = None) -> list[Path]:
     """Identity goes into the instance's own config (loaded by its server through OPENCODE_CONFIG, probe 10-11 on
     v2.0.21: /api/config lists it next to the project file); the workspace opencode.json is shared by every instance
-    and carries only the permission rules. `compaction_prompt` (rewritten before every triggered compaction, T8c H3)
-    lands in agent.compaction.prompt, which the compact endpoint's summarizer uses."""
+    and carries only the permission rules. The permission rules are merged into the instance config as well, so they
+    apply wherever the member's cwd is (an outside worktree never loads the workspace project file).
+    `compaction_prompt` (rewritten before every triggered compaction, T8c H3) lands in agent.compaction.prompt, which
+    the compact endpoint's summarizer uses."""
     from .dsh import extra_mcp
     d = instance_dir(state, agent["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -275,16 +277,20 @@ def write_config(ws: Path, agent: dict, state: Path, compaction_prompt: str | No
     inst: dict = {"$schema": "https://opencode.ai/config.json", "mcp": {"servers": servers}}
     if compaction_prompt:
         inst["agent"] = {"compaction": {"prompt": compaction_prompt}}
+    permissions = [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
+                   # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
+                   # route, so the turn would hang; deny hides the tool from the model (measured)
+                   QUESTION_DENY,
+                   *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
+                   {"action": "shell", "resource": "*", "effect": "ask"}]
+    # The serve process runs in the member's workdir, which may be a worktree outside the workspace where the
+    # project-level opencode.json is never loaded: the permission rules live in the instance config too.
+    inst["permissions"] = permissions
     (d / "opencode.json").write_text(json.dumps(inst, indent=2) + "\n", encoding="utf-8")
     cfg = {
         "$schema": "https://opencode.ai/config.json",
         # every shell command asks; the hub answers allowlisted ones itself (shell_auto_ok) and forwards the rest
-        "permissions": [{"action": "xmuse_*", "resource": "*", "effect": "allow"},
-                        # headless `opencode serve`: nobody can answer OpenCode's `question` tool and v2.0.26 has no answer
-                        # route, so the turn would hang; deny hides the tool from the model (measured)
-                        QUESTION_DENY,
-                        *({"action": f"{x['name']}_*", "resource": "*", "effect": "allow"} for x in extra),
-                        {"action": "shell", "resource": "*", "effect": "ask"}],
+        "permissions": permissions,
     }
     (ws / "opencode.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     return [d / "opencode.json", ws / "opencode.json"]
@@ -294,8 +300,9 @@ class Server:
     """One agent's dedicated OpenCode server (own port, password file and config; never the user's service)."""
 
     def __init__(self, ws: Path, state: Path, agent_id: str, port: int | None = None, base: str | None = None,
-                 binary: str = "opencode"):
+                 binary: str = "opencode", cwd: Path | None = None):
         self.ws, self.state, self.agent_id, self.binary, self.proc = ws, state, agent_id, binary, None
+        self.cwd = cwd  # member workdir (own git worktree); the serve process runs there, not in ws
         self.dir = instance_dir(state, agent_id)
         self.dir.mkdir(parents=True, exist_ok=True)
         pw = self.dir / "oc.pass"
@@ -312,7 +319,7 @@ class Server:
         log = (self.state / "logs" / f"opencode-{self.agent_id}.log").open("a", encoding="utf-8")
         self.proc = proc.popen(
             [*proc.argv(self.binary), "serve", "--hostname", "127.0.0.1", "--port", port, "--print-logs"],
-            cwd=self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text(encoding="utf-8").strip(),
+            cwd=self.cwd or self.ws, env=clean_env({"OPENCODE_SERVER_PASSWORD": self.pw.read_text(encoding="utf-8").strip(),
                                         "OPENCODE_CONFIG": str(self.dir / "opencode.json")}),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             encoding="utf-8", errors="replace")
@@ -604,8 +611,10 @@ class OpenCodeDriver:
         with self.lock:
             srv = self.servers.get(agent_id)
             if srv is None:  # agent added while the hub runs
+                a = db.row(self.sink.db().execute("select * from agents where id=?", (agent_id,)))
                 srv = self.servers[agent_id] = Server(self.sink.ws, self.sink.state, agent_id,
-                                                      binary=self.sink.cfg.get("opencode_bin", "opencode"))
+                                                       binary=self.sink.cfg.get("opencode_bin", "opencode"),
+                                                       cwd=db.workdir(a, self.sink.ws))
                 if self.autostart:
                     srv.start()
             if srv.base not in self.prompts:

@@ -378,6 +378,22 @@ def test_write_config_denies_the_question_tool(tmp_path):
     assert rules[0]["action"] == "xmuse_*" and rules[-1]["action"] == "shell"
 
 
+def test_instance_config_carries_permission_rules_for_outside_worktree(tmp_path):
+    import subprocess
+    from xmuse.adapters.opencode import write_config
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    subprocess.run(["git", "init", "-q", str(ws)], check=True)
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(ws), "worktree", "add", "-q", str(wt)], check=True)
+    agent = {"id": "oc-1", "settings": json.dumps({"cwd": str(wt)})}
+    inst, _ = write_config(ws, agent, tmp_path / "state")
+    perms = json.loads(inst.read_text(encoding="utf-8"))["permissions"]
+    assert {"action": "xmuse_*", "resource": "*", "effect": "allow"} in perms
+    assert {"action": "question", "resource": "*", "effect": "deny"} in perms
+    assert perms[-1] == {"action": "shell", "resource": "*", "effect": "ask"}
+
+
 def _question_turn(h):
     h.oc.plan = [{"result": "hang"}]
     h.send("opencode-1", "long")

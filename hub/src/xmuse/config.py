@@ -57,6 +57,8 @@ DEFAULTS = {
     "audit_retry_s": 60,             # a failed audit is tried once more, at the first poll this long after
     "host_batch_max_s": 600,         # completed results wait at most this long after the first for the host's batch (T0)
     "route_by_duty": False,          # T8a H8: duty routing (route.pick, T4 §8.7) wakes unmentioned members; off by default
+    "file_overlap_notice": True,   # per-turn git snapshot of the member workdir; overlapping edits notify the host
+    "overlap_window_s": 6 * 3600,  # two members touching the same repo-relative path within this are "overlapping"
     "auto_compact_tokens": 500000,   # T8c H3: an idle member's session past this context is compacted once, automatically
     # OTel trace export: off unless enabled. headers may carry the backend's
     # credentials: never print them, never write them to logs. Endpoint: file config, else the standard

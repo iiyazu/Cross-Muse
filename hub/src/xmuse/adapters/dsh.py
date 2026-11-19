@@ -436,8 +436,8 @@ class DshDriver:
         log = self.state / "logs" / f"precheck-{agent['id']}.jsonl"
         err = None
         for attempt in (0, 1):  # one retry: dsh headless sometimes exits 1 (empty stderr) on a cold start
-            info, _ = self.headless.run(ws, patch, None, "Reply with the single word OK.", log, retry=False,
-                                        limit=self.cfg.get("dsh_precheck_timeout_s", 120))
+            info, _ = self.headless.run(db.workdir(agent, ws), patch, None, "Reply with the single word OK.", log,
+                                        retry=False, limit=self.cfg.get("dsh_precheck_timeout_s", 120))
             if info.get("ok") and info["rc"] == 0:
                 return None
             err = info.get("error") or f"exit {info['rc']}"
@@ -530,7 +530,18 @@ class DshDriver:
                            for ev in ("SessionStart", "UserPromptSubmit", "Stop")}}
         (d / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
         (d / "xmuse-dsh-hook.py").write_text(DSH_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
-        return [d / "hooks.json", d / "xmuse-dsh-hook.py"]
+        out = [d / "hooks.json", d / "xmuse-dsh-hook.py"]
+        member = db.settings(agent).get("cwd")
+        if member and Path(member).resolve() != ws.resolve():
+            # headless runs execute with cwd=member workdir and hook commands resolve
+            # relative to the session cwd: mirror the hook entrypoint into the worktree
+            # so xmuse tools connect from there too
+            md = Path(member) / ".dsh"
+            md.mkdir(parents=True, exist_ok=True)
+            (md / "hooks.json").write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+            (md / "xmuse-dsh-hook.py").write_text(DSH_HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+            out += [md / "hooks.json", md / "xmuse-dsh-hook.py"]
+        return out
 
     def attach_command(self, agent: dict, session: str | None) -> str:
         return (f"dsh has no terminal UI: open the DeepSeek Harness desktop app"

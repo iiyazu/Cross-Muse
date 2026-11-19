@@ -170,7 +170,7 @@ def status(state: Path) -> dict:
             desktop.add(a["id"])
             a.update({"foreground": True} if db.settings(a).get("foreground") else {"desktop": True},
                      **mail.pending(conn, a["id"]))
-        a.update({k: v for k, v in db.settings(a).items() if k in ("cwd", "effort")})  # a Claude member's directory
+        a.update({k: v for k, v in db.settings(a).items() if k in ("cwd", "effort")})  # a member's work directory
         del a["settings"]
     return {
         "hub": json.loads((state / "hub.json").read_text(encoding="utf-8")) if (state / "hub.json").exists() else None,
@@ -406,9 +406,10 @@ def main(argv=None) -> None:
     p.add_argument("--description", help="what this member is responsible for (peers and the sidebars see it)")
     p.add_argument("--desktop", action="store_true", help="desktop session the hub never runs: Claude coordinator (--vendor claude) or dsh foreground (--vendor dsh)")
     p.add_argument("--allow", action="append", help="extra Claude --allowedTools rule (headless)")
-    p.add_argument("--cwd", type=Path, help="--vendor claude: the member's own directory (its .mcp.json and .claude/ "
-                                            "go there, its turns run there): inside the workspace, or a git worktree "
-                                            "of its repository; default: the workspace root (one Claude per directory)")
+    p.add_argument("--cwd", type=Path, help="member work directory: the member's own directory or a git worktree "
+                                            "of the workspace repository (its config and turns run there): inside "
+                                            "the workspace, or a git worktree of its repository; default: the "
+                                            "workspace root (claude: one member per directory)")
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"],
                    help="--vendor claude headless: passed to claude --effort; ignored for other vendors")
     p.add_argument("--extra-mcp", type=Path, help="dsh / opencode headless: JSON file with a list of extra stdio MCP "

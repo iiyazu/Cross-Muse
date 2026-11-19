@@ -12,7 +12,7 @@ import pytest
 
 from conftest import set_home, wsl_hub
 from test_init_cli import run
-from xmuse import doctor, init as xinit
+from xmuse import db, doctor, init as xinit
 from xmuse.adapters import claude
 from xmuse.config import SHIM
 
@@ -96,8 +96,9 @@ def test_cwd_must_exist_and_be_inside_or_a_worktree(ws, tmp_path):
     git(other_repo, "init", "-q")
     with pytest.raises(SystemExit, match="git worktree"):  # a repository, but not this one
         xinit.add_agent(state, "a", "claude", settings={"cwd": str(other_repo)})
-    with pytest.raises(SystemExit, match="--cwd is only for --vendor claude"):
-        xinit.add_agent(state, "oc", "opencode", settings={"cwd": str(ws)})
+    # feature: opencode/dsh/agy members may also live in the workspace or a worktree of it
+    oc = xinit.add_agent(state, "oc", "opencode", settings={"cwd": str(ws)})
+    assert db.settings(oc).get("cwd") is None  # the workspace root itself is stored as no cwd
     assert not (elsewhere / ".mcp.json").exists()
     git(ws, "commit", "-q", "--allow-empty", "-m", "init")
     git(ws, "worktree", "add", "-q", "-b", "dev-1", str(tmp_path / "wt-dev1"))

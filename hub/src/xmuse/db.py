@@ -63,6 +63,12 @@ create table if not exists usage(
   input integer not null, cache_read integer not null, cache_write integer not null,
   output integer not null, context integer not null, calls integer not null,
   created_at real not null);
+create table if not exists touched(  -- per-turn workdir changes for file-overlap detection (overlap.py)
+  turn_id integer not null, agent_id text not null, repo text not null, worktree text not null,
+  path text not null, at real not null);
+create table if not exists overlap_notified(  -- dedup per member pair x repo-relative path, windowed by at
+  a text not null, b text not null, repo text not null, path text not null, at real not null,
+  primary key(a, b, repo, path));
 create table if not exists entries(          -- alignment library (design §4.5.1); never deleted
   id integer primary key,                    -- shown as E<id>
   kind text not null,                        -- decision|convention|assumption|question|lesson|assignment
@@ -225,8 +231,12 @@ def rows(rs) -> list[dict]:
     return [dict(r) for r in rs]
 
 
-def settings(agent: dict) -> dict:
-    return json.loads(agent["settings"] or "{}")
+def settings(agent) -> dict:
+    try:
+        raw = agent["settings"]
+    except (KeyError, IndexError):
+        raw = None
+    return json.loads(raw or "{}")
 
 
 def workdir(agent: dict, ws) -> "Path":

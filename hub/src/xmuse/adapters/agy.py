@@ -648,6 +648,14 @@ class AgyDriver:
         hooks_cfg.write_text(json.dumps(hooks_data, indent=2), encoding="utf-8")
         out.append(hooks_cfg)
 
+        member = db.settings(agent).get("cwd")
+        if member and Path(member).resolve() != ws.resolve():
+            # the member process runs with cwd=member workdir and agy resolves
+            # project config relative to it: mirror .agents there too
+            dst = Path(member) / ".agents"
+            shutil.copytree(ws / ".agents", dst, dirs_exist_ok=True)
+            out += sorted(p for p in dst.rglob("*") if p.is_file())
+
         return out
 
     def close(self) -> None:
